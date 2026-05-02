@@ -11,16 +11,30 @@
 | 项 | 要求 | 检查命令 |
 |---|---|---|
 | 操作系统 | Linux（Ubuntu 22.04 / Debian 12 推荐） | `uname -a` |
-| Node.js | 20.x 或 22.x（25.x 也跑过但非长期支持） | `node -v` |
+| Node.js | 20.x 或 22.x（25.x 也跑过但非长期支持）| `node -v` |
 | npm | 跟 Node 一起来 | `npm -v` |
-| pm2 | 已装（用户已用 pm2 管别项目） | `pm2 --version` |
+| pm2 | 已装（多用户分别独立 daemon）| `pm2 --version` |
 | nginx | 1.18+ | `nginx -v` |
 | git | 任意现代版 | `git --version` |
+| **bubblewrap** | SDK sandbox OS 级隔离用（必装！）| `which bwrap` |
+| **socat** | SDK sandbox 网络 proxy 用（必装！）| `which socat` |
 | 端口 | 4001（内网）/ 80 / 443（公网经 nginx）| `lsof -i :4001` |
+
+```bash
+# 一次装齐 sandbox 依赖（不装 nodesign 起来后调 SDK 会报
+# "Sandbox required but unavailable: bubblewrap (bwrap) not installed"）
+sudo apt update
+sudo apt install -y bubblewrap socat
+```
 
 **防火墙**：
 - 公网开 80 + 443（nginx）
 - **不要**直接对外暴露 4001（nodesign 应该只在 localhost 监听 + nginx 反代）
+
+**用户权限**：
+- ⚠️ **不能用 root 跑 nodesign**——SDK 拒 root + `--dangerously-skip-permissions` 组合
+- 创建独立 service 用户：`sudo useradd -r -m -s /bin/bash -d /home/nodesign nodesign`
+- 项目放 `/home/nodesign/Nodesign`，pm2 daemon 也在该用户下跑（多 user 隔离）
 
 ---
 
@@ -338,6 +352,58 @@ Agent 跑通：
 ---
 
 ## 10. 故障排查（常见症状）
+
+### "Sandbox required but unavailable: bubblewrap (bwrap) not installed"
+
+```bash
+sudo apt install -y bubblewrap socat
+sudo -u nodesign env HOME=/home/nodesign pm2 restart nodesign
+```
+
+### "--dangerously-skip-permissions cannot be used with root/sudo privileges"
+
+SDK 拒 root + skip-permissions 组合。**必须**用 non-root service 用户跑（见 § 1
+环境准备 / § 5 pm2 启动）。如果误把 nodesign 起在 root pm2 daemon 下：
+
+```bash
+# root shell
+pm2 delete nodesign
+pm2 save
+sudo cp -r /root/NO_DESIGN_DEV /home/nodesign/Nodesign  # 或者 chown 原位置
+sudo chown -R nodesign:nodesign /home/nodesign/Nodesign
+sudo -iu nodesign
+cd ~/Nodesign && pm2 start ecosystem.config.cjs && pm2 save
+```
+
+### "Claude Code native binary not found at .../linux-x64-musl/claude"
+
+Ubuntu/Debian GLIBC 系统 SDK 的 platform detection **误判成 musl**。修法：
+
+```bash
+# 项目根目录
+npm install --no-save @anthropic-ai/claude-agent-sdk-linux-x64
+
+# 软链 musl 路径 → GLIBC binary
+rm -f node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude
+ln -sf ../claude-agent-sdk-linux-x64/claude \
+       node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude
+
+# 验证
+node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude --version
+# 期望: 2.x.x (Claude Code)
+
+sudo -u nodesign env HOME=/home/nodesign pm2 restart nodesign
+```
+
+### "ERR_MODULE_NOT_FOUND: Cannot find package '@anthropic-ai/claude-agent-sdk'"
+
+`npm install --omit=dev` 跳了 SDK（之前 SDK 误放在 devDependencies，现已挪到
+dependencies 但旧 node_modules 缓存可能仍漏）：
+
+```bash
+rm -rf node_modules
+npm install --omit=dev --include=optional
+```
 
 ### 4001 被占
 
