@@ -35,9 +35,11 @@ module.exports = {
       max_memory_restart: '1G',
       // node 跑 server/index.js 时载 .env（npm start 已经 --env-file-if-exists=.env）
       // pm2 直接 script 启动时需要在 node_args 里加上
-      node_args: '--env-file-if-exists=.env',
+      node_args: '--env-file-if-exists=.env --max-old-space-size=512',
       env: {
         NODE_ENV: 'production',
+        HOME: '/home/nodesign',
+        CLAUDE_CONFIG_DIR: '/home/nodesign/.claude',
       },
       // log 落 logs/ 目录（已加 .gitignore，不入仓）
       error_file: 'logs/nodesign-error.log',

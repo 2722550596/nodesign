@@ -289,12 +289,11 @@ export async function runAgent({
       ANTHROPIC_BASE_URL: baseUrlForBinary,
       ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
-      // H3：per-session 隔离 —— SDK binary 子进程把 JSONL 落到 sessions/<sid>/.claude/。
-      // session 自包含：删 session = 删 sessions/<sid>/ 子目录（含转录 + canvas + git）。
-      // 跨 session 共享配置（CLAUDE.md / agent-memory / assets）通过软链拿到，
-      // SDK settingSources: ['project'] 读 cwd/.claude/CLAUDE.md → 软链 → shared。
-      // NODESIGN_CONFIG_DIR env 可全局覆盖（生产容器统一持久化卷场景）。
-      CLAUDE_CONFIG_DIR: process.env.NODESIGN_CONFIG_DIR || path.join(cwdRoot, '.claude'),
+      // CLAUDE_CONFIG_DIR 必须与 session-loop.js 一致（统一指向全局 ~/.claude）。
+      // SDK binary 将 JSONL 落到 CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/<sid>.jsonl。
+      // 不能用 per-session 本地路径（cwdRoot/.claude），否则 resume 探测、
+      // sessions API 的 list/fork/delete 与实际存储位置分裂。
+      CLAUDE_CONFIG_DIR: process.env.NODESIGN_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude'),
       // ANTHROPIC_SMALL_FAST_MODEL（S9 保守版）：
       // SDK helper（promptSuggestions / agentProgressSummaries / askUserQuestion
       // classifier / title gen / WebFetch summarize 等）默认走 claude-haiku
@@ -446,6 +445,9 @@ export async function runAgent({
     //   resume: <sid>（下方 spread）→ 真生效（之前 persistSession=false 导致 resume 假装跑）
     persistSession: true,
     settingSources: ['project'],
+    settings: {
+      skipWebFetchPreflight: true,
+    },
 
     // 流增量（用于细粒度推 WS）
     includePartialMessages: true,
@@ -514,11 +516,11 @@ export async function runAgent({
     // 但行为不明。真跑 smoke 验证后如发现 sandbox 不拦命令级危险，回滚 hooks.js
     // 的删除（git revert 3d.2 commit），sandbox 部分保留（filesystem 限制仍有价值）。
     //
-    // 用户决策：failIfUnavailable: true —— 不静默降级。开发机不支持 sandbox 时
-    // NoDesign 直接拒绝跑（macOS sandbox-exec 通常可用 / Linux 需要 bubblewrap）。
+    // 暂时禁用 sandbox：bwrap 不解析 session root 中的 symlink（Glob/Read 看不到
+    // assets/ agent-memory/ 等指向 shared 的软链）。TODO: SDK 修复后重新启用。
     sandbox: {
-      enabled: true,
-      failIfUnavailable: true,
+      enabled: false,
+      failIfUnavailable: false,
 
       // 网络：MVP 阶段全域允许（'*'）让 agent 能 curl 下载外部资源到 ./assets/。
       // 生产可改具体白名单（unsplash / google-fonts / jsdelivr / pixabay 等）。
@@ -928,6 +930,10 @@ function handleSystemMessage(ctx, msg) {
 
     case 'mirror_error':
       // SessionStore mirror 失败，旁路（我们没用 SessionStore）
+      break;
+
+    case 'status':
+      // SDK 进度/心跳状态，旁路（前端不需要）
       break;
 
     default:

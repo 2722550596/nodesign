@@ -18,12 +18,13 @@
  *     └── sessions/<sid>/            ← session 独立沙盒
  *         ├── canvas.html
  *         ├── spec.json
+ *         ├── assets                 ← softlink → <abs shared>/assets（绝对路径）
+ *         ├── skills                 ← softlink → <abs shared>/.claude/skills（绝对路径）
+ *         ├── agents                 ← softlink → <abs shared>/.claude/agents（绝对路径）
+ *         ├── agent-memory           ← softlink → <abs shared>/.claude/agent-memory（绝对路径）
  *         ├── .claude/
- *         │   ├── CLAUDE.md          ← softlink → ../../../shared/.claude/CLAUDE.md
- *         │   ├── settings.json      ← softlink → ../../../shared/.claude/settings.json
- *         │   ├── skills             ← softlink → ../../../shared/.claude/skills
- *         │   ├── agents             ← softlink → ../../../shared/.claude/agents
- *         │   ├── agent-memory       ← softlink → ../../../shared/.claude/agent-memory
+ *         │   ├── CLAUDE.md          ← softlink → <abs shared>/.claude/CLAUDE.md（绝对路径）
+ *         │   ├── settings.json      ← softlink → <abs shared>/.claude/settings.json（绝对路径）
  *         │   └── projects/<encoded-cwd>/<sid>.jsonl ← SDK 自动写转录
  *         └── .git/                  ← per-session history
  *
@@ -133,8 +134,10 @@ async function mergeSettingsDefaults(settingsPath) {
   return true;
 }
 
-// 5 个共享子项软链名（CLAUDE.md / settings.json 是文件，其余是目录）
-const SHARED_LINKS = ['CLAUDE.md', 'settings.json', 'skills', 'agents', 'agent-memory'];
+// .claude/ 内只保留 SDK 原生支持的文件型软链（避免目录型软链触发 bwrap 冲突）
+const CLAUDE_DOT_LINKS = ['CLAUDE.md', 'settings.json'];
+// 目录型共享软链放 session root（bwrap 不会扫 session root 做 bind 冲突判断）
+const ROOT_DIR_LINKS = ['skills', 'agents', 'agent-memory'];
 
 // ── 路径 helpers ──
 
@@ -194,8 +197,9 @@ export async function ensureProjectWorkspace(projectId) {
 /**
  * 创建 session workspace（幂等）。完成后保证：
  *   - sessions/<sid>/.claude/projects/ 存在（SDK 落 JSONL 处）
- *   - sessions/<sid>/.claude/{CLAUDE.md, settings.json, skills, agents, agent-memory}
- *     是软链指向 shared/.claude/<name>（相对路径 ../../../shared/.claude/<name>）
+ *   - sessions/<sid>/.claude/{CLAUDE.md, settings.json} 文件型软链 → shared（绝对路径）
+ *   - sessions/<sid>/{skills, agents, agent-memory} 目录型软链 → shared（绝对路径）
+ *   - sessions/<sid>/assets 软链 → shared/assets/（绝对路径）
  *   - sessions/<sid>/.git/ 已 init + empty commit
  *
  * 调用前需先 ensureProjectWorkspace（保证 shared/.claude 子目录存在让软链有效）。
@@ -208,50 +212,62 @@ export async function ensureSessionWorkspace(projectId, sessionId) {
   const sessionRoot = getSessionWorkspace(projectId, sessionId);
   await fs.mkdir(path.join(sessionRoot, '.claude', 'projects'), { recursive: true });
 
-  // 软链 shared/.claude/<name> → sessions/<sid>/.claude/<name>
-  // 相对路径：从 sessions/<sid>/.claude/ 看 ../../../shared/.claude/<name>
+  // ── 软链策略（bwrap 兼容）──
+  // bwrap sandbox 会扫 .claude/ 并尝试 bind-mount 各子项；如果碰到目录型 symlink
+  // 会报 "Can't create file at .../<name>: Is a directory" 导致整个 sandbox 启动失败。
+  // 因此：
+  //   1. .claude/ 内只放文件型 symlink（CLAUDE.md / settings.json）
+  //   2. 目录型 symlink（skills / agents / agent-memory）放 session root
+  //   3. 全部使用绝对路径（bwrap 内相对路径 ../../ 无法遍历未 bind 的中间目录）
   //
-  // C2c：之前软链失败仅 warn 不阻塞 —— 隐性损坏 path 系统（agent 写到 sessions
-  // 本地真目录而不是 shared 软链下，前端 BrandCard / MemoryCard 读 shared 找不到，
-  // 用户体感"写完消失"但 agent 报"成功"。
-  // 改成 fail-loud：throw 让 ensureSessionWorkspace 失败前端能看到错。
-  // env NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级 warn（Windows / 不支持
-  // symlink 的边缘 docker volume 用）
+  // env NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级 warn（Windows / 部分 docker volume）
   const allowSymlinkFallback = process.env.NODESIGN_ALLOW_SYMLINK_FALLBACK === '1';
-  for (const name of SHARED_LINKS) {
+  const shared = getSharedDir(projectId);
+
+  // 1) .claude/ 内文件型软链（绝对路径）
+  for (const name of CLAUDE_DOT_LINKS) {
     const link = path.join(sessionRoot, '.claude', name);
     if (await pathExists(link)) continue;
-    const target = path.join('..', '..', '..', 'shared', '.claude', name);
+    const target = path.join(shared, '.claude', name);  // 绝对路径
     try {
       await fs.symlink(target, link);
     } catch (err) {
-      const msg = `symlink failed for ${name} (${err.code || err.message}); session 将看不到 shared/<${name}>，agent 写 memory 会丢`;
+      const msg = `symlink failed for .claude/${name} (${err.code || err.message})`;
       if (allowSymlinkFallback) {
-        console.warn(`[workspace] ${msg}（NODESIGN_ALLOW_SYMLINK_FALLBACK=1，已降级 warn）`);
+        console.warn(`[workspace] ${msg}（降级 warn）`);
       } else {
-        throw new Error(`[workspace] ${msg}。设 NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级（Windows / 部分 docker volume 不支持 symlink）`);
+        throw new Error(`[workspace] ${msg}。设 NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级`);
       }
     }
   }
 
-  // sessions/<sid>/assets → ../../shared/assets/
-  // 让 agent 用 prelude/SKILL.md 教的 `./assets/` 直接访问（Glob/Read），
-  // 不必关心 ../../shared/ 内部结构。修 H3 session-scoped 重构后的路径漂移
-  // —— 之前 prelude 教 `./assets/` 但实际路径是 `../../shared/assets/`，
-  // Glob `assets/**/*` 永远返 0 让 agent 误以为没素材，连带 Read 图片也
-  // 因 ENOENT 失败（用户报告的"Read 无法读取图片"）。
-  //
-  // 相对路径：从 sessions/<sid>/ 看 ../../shared/assets/（出 sid → 出 sessions → 入 shared）。
-  // additionalDirectories 已含 sharedRoot（loop.js），软链只是给 agent 一个
-  // 自然的 cwd-相对入口；权限走 SDK sandbox.allowRead。
+  // 2) session root 级目录型软链（绝对路径；bwrap 不冲突）
+  for (const name of ROOT_DIR_LINKS) {
+    const link = path.join(sessionRoot, name);
+    if (await pathExists(link)) continue;
+    const target = path.join(shared, '.claude', name);  // 绝对路径
+    try {
+      await fs.symlink(target, link);
+    } catch (err) {
+      const msg = `symlink failed for ${name} (${err.code || err.message}); agent 写 memory 会丢`;
+      if (allowSymlinkFallback) {
+        console.warn(`[workspace] ${msg}（降级 warn）`);
+      } else {
+        throw new Error(`[workspace] ${msg}。设 NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级`);
+      }
+    }
+  }
+
+  // 3) assets 软链（绝对路径）
   const assetsLink = path.join(sessionRoot, 'assets');
   if (!(await pathExists(assetsLink))) {
+    const assetsTarget = path.join(shared, 'assets');  // 绝对路径
     try {
-      await fs.symlink(path.join('..', '..', 'shared', 'assets'), assetsLink);
+      await fs.symlink(assetsTarget, assetsLink);
     } catch (err) {
-      const msg = `assets symlink failed (${err.code || err.message}); agent 将看不到 ./assets/，curl 下载也会写到错位置`;
+      const msg = `assets symlink failed (${err.code || err.message}); agent 将看不到 ./assets/`;
       if (allowSymlinkFallback) {
-        console.warn(`[workspace] ${msg}（NODESIGN_ALLOW_SYMLINK_FALLBACK=1，已降级 warn）`);
+        console.warn(`[workspace] ${msg}（降级 warn）`);
       } else {
         throw new Error(`[workspace] ${msg}。设 NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级`);
       }
