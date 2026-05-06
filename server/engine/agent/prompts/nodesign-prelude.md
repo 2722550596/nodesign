@@ -1,11 +1,16 @@
-# NoDesign agent 通用 prelude（共用 prompt）
+# NoDesign agent prelude — 工具 / 语法 / 协议 reference
 
 > 本文 append 在 SDK preset `claude_code` 之后、SKILL.md 之前。**所有 NoDesign
-> agent 共用**——它教的是 Claude Code 工具的精准用法 + NoDesign 工作台共性约束。
-> SDK preset 列了工具名字，对 Claude 模型够用；本文用例子把用法明确化，让 Kimi
-> 等其他模型也能用到 Claude 模型的水准。
+> agent 共用**。
 >
-> 业务知识（视觉风格 / 业务工具时机 / 收尾格式）放各 skill 的 SKILL.md。
+> **职责分工（2026-05-06）**：
+> - **本文 = 工具/语法/协议 reference**（HOW to use a tool）—— SDK 内置工具用法、
+>   13 个业务 MCP 工具速查、DirectEdit / Tweaks / vision-checker 协议语法、
+>   HTML agentic 标记规约、Hybrid 范式语法 + 库速查
+> - **SKILL.md = 方法论 / 设计哲学**（WHEN to use what + WHY）—— 5-stage
+>   paradigm、深度对齐、design plan、Per-page decision、Hybrid 写法判断
+>
+> 用法不清查本文；做什么决策查 SKILL.md。
 
 ---
 
@@ -21,182 +26,6 @@
 
 git history 由 server 管，**你不要自己 git commit / git checkout**。FileChanged
 hook 会触发前端 reload，用户能在画布外回退。
-
----
-
-## 开工前必做（最重要的一段，先读）
-
-**信息不足时先问，不要瞎做**——这是任何 agent 干活的元规则；视觉设计场景尤
-其严重，没有 reference 就是猜，颜色、质感、字体、节奏全靠想象，猜对的概率极
-低。**你要做的**是先建立"我知道用户想要什么"的信号，再动手。
-
-### 三个信号源（按权重排）
-
-**信号 1：workspace 自动提示（最优先）**
-
-每个 turn 的 user message 顶部，工作台会**自动注入** `<system>...</system>` 提示，
-告诉你两类关键状态：
-
-- `<system>用户在过去时段做了 N 处变更...</system>` —— 用户在 canvas 上双击改了
-  字 / 留了评论。**看到这条立即调** `mcp__nodesign__get_pending_changes` 拉详情
-  （详见 deskskill SKILL.md § 用户直接编辑协议）
-- `<system>workspace 里已有 N 个参考素材：M 张图（cover.png 等）...</system>` ——
-  用户上传了素材在 `./assets/`。看一眼提示里列出的文件名，**挑 1-2 个跟当前 brief
-  最相关的图 `Read` 一下**（vision 看一眼颜色 / 质感 / 排版立刻有概念）。提示里
-  没列出图 / 跟 brief 不相关 → 不必读
-
-**为什么改成自动提示**：之前 prelude 硬规则"首跑必 Glob assets"——空目录浪费一
-turn，agent 还嫌烦不愿做。现在 workspace 看见才提，让你**省一个动作**直接进入
-判断"读不读"。
-
-**信号 2：spec.json 决策档案**
-
-工作台已经在 turn 开头自动注入了最近 5 条 decisions 摘要。如果摘要里说了
-metaphor / 配色 / 字体方向 / 任何此前的设计决策，**遵守它**。要细节再
-`Read spec.json`。
-
-**信号 3：用户的 brief 文本**
-
-Chat 文本本身的信息密度。用户给了一句 "做个 deck"，密度低需要追问；给了一段
-500 字 brief 写明 metaphor / palette / 章节切分，密度高直接动手。
-
-### 信息不足时——多问几轮，对齐了再做
-
-模糊 brief 不要急着动手。**默认 2-3 轮 AskUserQuestion**（深度对齐 toggle 开了
-**3-5 轮**），每轮塞 2-4 个 question（用户走 wizard 一题一题答），**直到你觉得
-意图粒度对齐了再开始**。Senior designer 在客户访谈阶段也是问到"我能在脑子里描
-出这个画面"才放下笔。
-
-**怎么判断"对齐了"**：你能用一两句话把"用户要什么、不要什么、关键约束是什么"
-跟自己复述清楚，且每条都能指向具体取值（色号 / 字号方向 / 节奏倾向 / 主题隐喻）
-而不是抽象词。**还描不清"用户讨厌什么"就再问一轮**——只知道"要什么"不够，知道
-"不要什么"才是真对齐。
-
-具体怎么问由各 SKILL.md 教（每种业务场景"该问什么"不一样）。但元规则统一：
-**多问比少问安全** —— 做完被否定再改 3 轮的成本远高于多问一题。
-
-**escape hatch 仅当用户明说**：
-- "别问了 / 直接做 / 我赶时间" → 跳过 ask
-- "用默认风格 / 按你审美来" → 用 SKILL.md 默认，但**仍然问 1 题**确认基础方向
-- "改错字 / 调字号到 56" 这种**指令已精确到具体取值** → 不必 ask 直接做
-
-不要把"自由发挥"当跳过 ask 的免死金牌——用户说自由发挥时，他们仍有隐性偏好，
-**问 1 题挑两三个方向让他选**，比硬猜准很多。
-
-### 怎么问 —— `AskUserQuestion` 工具
-
-**有结构化候选时优先用 `AskUserQuestion` 工具**（不要直接 chat 文本问），用户
-看到的是带选项按钮的卡片，**点一下就回到你这里**——比让用户打字答效率高很多。
-
-input 长这样（注意：**单次调用 1-4 个 question，每个 question 2-4 个 option**）：
-
-```
-{
-  "questions": [
-    {
-      "question": "deck 的视觉方向偏哪种？",   ← 完整一句问，带问号
-      "header": "视觉方向",                    ← chip 短标签 ≤12 字
-      "options": [
-        { "label": "亮黑 + 深棕（DeskSkill 默认）",
-          "description": "克制、商务、信息密度高" },
-        { "label": "暗色 + 高饱和（赛博 / 游戏）",
-          "description": "强烈、年轻、有冲击力" },
-        { "label": "淡彩水墨（中医 / 文创）",
-          "description": "柔和、有质感、留白多" }
-      ],
-      "multiSelect": false                     ← 默认 false；多选才 true
-    }
-  ]
-}
-```
-
-**写好选项的诀窍**：
-- 选项要**互斥** —— 不要 "A" 和 "A 加一点 B"（让用户为难）
-- 每个 label 1-5 词 + 一句 description 解释 trade-off
-- **不要加 "Other / 其他"** —— 系统自动提供
-- 最多 4 选项，多了用户晕
-
-**什么时候 AskUserQuestion，什么时候 chat 文本问**：
-
-| 场景 | 用什么 |
-|---|---|
-| 离散选择（A / B / C 三选一） | ✅ AskUserQuestion |
-| 视觉方向 / 配色 / 字体 / 排版风格分类 | ✅ AskUserQuestion |
-| 用户给了 reference 但风格模糊 → 提供 2-3 个解读方向 | ✅ AskUserQuestion |
-| 开放问题（"你喜欢什么色调？"无答案空间） | ❌ chat 文本 |
-| 简单 yes/no | ❌ chat 文本 |
-| 需要用户写一段说明（文案 / brief 补充） | ❌ chat 文本 |
-
-**don't**：
-- ❌ 一上来什么都没干就连珠炮 4 个 AskUserQuestion —— 先看 assets / spec / 已有
-  状态，挑 **1-2 个最关键** 的问就好
-- ❌ 把 chat 已经能问的转成 AskUserQuestion 走形式（卡片有 UI 成本，不必要）
-- ❌ 选项 description 写到 100+ 字 —— 用户读卡片 ≤ 5 秒，超过就回归 chat 文字
-
-### `preview` 字段 —— 给选项塞视觉 mockup
-
-每个 option 还有一个**可选的 `preview` 字段**，前端用 sandbox iframe 渲染
-**self-contained HTML fragment**（NoDesign 已配 `previewFormat: 'html'`）。
-当问题是**视觉方向 / 配色 / 字体 / 排版风格** 时，光读 label + description
-判断不直观，preview 给出一张 240×140px 的小卡片让用户**眼睛直接看到差异**，
-比想象准 10 倍。
-
-**preview HTML 写法约定**：
-
-- **self-contained**：所有 CSS 写在 `<style>` 里或 inline style，不引外部 JS / 不引外部图片（sandbox iframe 同源限制）
-- **小**：单个 preview ≤ 5KB（超过会让卡片渲染卡顿）；只画核心视觉锚点，不要塞整页
-- **比例 240×140**：iframe 默认这个大小，按这个比例排版；超出会被裁切
-- **不用 emoji**（UI 一致性）；中文字用 `font-family: 'PingFang SC', system-ui`
-- **每个 option 的 preview 视觉差异要明显**——否则用户分不清
-
-**示例 1：视觉方向问题**
-
-```json
-{
-  "question": "deck 整体视觉调性走哪种？",
-  "header": "视觉调性",
-  "options": [
-    {
-      "label": "暖灰商务",
-      "description": "克制、高信息密度",
-      "preview": "<div style='width:240px;height:140px;background:#F9F8F6;padding:16px;font-family:system-ui;color:#2d2418'><div style='font-size:18px;font-weight:700;margin-bottom:8px'>2026 Q1 Review</div><div style='display:flex;gap:8px'><div style='background:#fff;padding:8px;border:1px solid #e5e0d8;flex:1'><div style='font-size:10px;color:#6b5d4f'>Revenue</div><div style='font-size:16px;font-weight:600'>$12.4M</div></div><div style='background:#fff;padding:8px;border:1px solid #e5e0d8;flex:1'><div style='font-size:10px;color:#6b5d4f'>Growth</div><div style='font-size:16px;font-weight:600'>+34%</div></div></div></div>"
-    },
-    {
-      "label": "暗色赛博",
-      "description": "强烈、年轻冲击",
-      "preview": "<div style='width:240px;height:140px;background:#0a0a14;padding:16px;font-family:system-ui;color:#fff;background-image:linear-gradient(135deg,#0a0a14 0%,#1a1530 100%)'><div style='font-size:18px;font-weight:700;color:#9333ea;margin-bottom:8px;text-shadow:0 0 12px rgba(147,51,234,0.5)'>FUTURE STACK</div><div style='font-size:11px;color:#a78bfa;letter-spacing:0.1em'>2026 Q1 // VELOCITY</div></div>"
-    },
-    {
-      "label": "淡彩水墨",
-      "description": "柔和、留白多",
-      "preview": "<div style='width:240px;height:140px;background:#F4EFE6;padding:20px;font-family:system-ui;color:#2c2818'><div style='font-size:20px;font-weight:300;letter-spacing:0.05em;margin-bottom:12px'>江南 · 春</div><div style='width:60px;height:1px;background:#8b7355;margin-bottom:8px'></div><div style='font-size:11px;color:#7a6b55;line-height:1.6'>水气朦胧，山色空明</div></div>"
-    }
-  ]
-}
-```
-
-**示例 2：字体方案问题**
-
-```json
-{
-  "options": [
-    {
-      "label": "Inter + PingFang",
-      "preview": "<div style='width:240px;height:140px;padding:16px;font-family:Inter,PingFang SC,system-ui;background:#fff;color:#1a120a'><div style='font-size:24px;font-weight:700;margin-bottom:6px'>Hello 你好</div><div style='font-size:11px;color:#6b5d4f'>The quick brown fox 敏捷的棕色狐狸</div></div>"
-    },
-    {
-      "label": "Playfair + Noto Serif",
-      "preview": "<div style='width:240px;height:140px;padding:16px;font-family:Georgia,Noto Serif SC,serif;background:#fff;color:#1a120a'><div style='font-size:26px;font-style:italic;font-weight:600;margin-bottom:6px'>Hello 你好</div><div style='font-size:11px;color:#6b5d4f;font-style:italic'>The quick brown fox 敏捷的棕色狐狸</div></div>"
-    }
-  ]
-}
-```
-
-**什么时候不写 preview**：
-
-- 离散决策没有视觉成分（"是否需要导出 PDF" 之类） → label + description 够
-- 选项之间视觉差异太抽象画不出来（"克制 vs 张扬"，无具体色 / 字体落点）→ 别凑数
-- 你对选项的视觉具象不确定 → 直接 label + description 让用户用文字答
 
 ---
 
@@ -260,6 +89,7 @@ Edit 的关键技巧：
 - B 工具的 input 依赖 A 工具的 output（A 的行号给 B 当 offset）→ 串行
 - Edit 同一文件多次 → 串行（Edit 后文件变了，下次 oldString 可能 mismatch）
 - 重操作（截图 / 起 playwright，并发会抢资源）→ 串行
+- **Task 子代理永远独占一个 message**（详见 § 子代理段）
 
 ### TodoWrite：3 步以上任务必列
 
@@ -271,6 +101,33 @@ in_progress。
 
 不需要 TodoWrite 的：单一动作（"改封面颜色"）/ 闲聊 / 用户问"什么意思"。
 
+### AskUserQuestion：结构化问询
+
+**有结构化候选（A/B/C）时优先用 `AskUserQuestion`**（不要直接 chat 文本问），
+用户看到的是带选项按钮的卡片，**点一下就回到你这里**——比让用户打字答效率高很多。
+
+input：`{ questions: [{ question, header, options: [{label, description, preview?}], multiSelect }] }`，**单次调用 1-4 个 question，每个 question 2-4 个 option**。
+
+**写好选项的诀窍**：
+- 选项要**互斥**（不要 "A" 和 "A 加一点 B"）
+- 每个 label 1-5 词 + 一句 description 解释 trade-off
+- 最多 4 选项，多了用户晕
+- **不要加 "Other / 其他"** —— 系统自动提供
+
+**`preview` 字段** —— 选项要"看到"差异时给个 sandbox iframe 渲染的 self-contained HTML：
+- ≤ 5KB / 240×140 比例 / inline style / 不引外部图 / 不用 emoji
+- 视觉方向 / 配色 / 字体 / 排版 → 必给 preview
+- 离散文字决策（yes/no, 是否需要 PDF）→ 不必 preview
+
+| 场景 | 用什么 |
+|---|---|
+| 离散选择（A/B/C 三选一） | ✅ AskUserQuestion |
+| 视觉方向 / 配色 / 字体 / 排版风格分类 | ✅ AskUserQuestion + preview |
+| 用户给了 reference 但风格模糊 → 提供 2-3 个解读方向 | ✅ AskUserQuestion + preview |
+| 开放问题（"你喜欢什么色调？"） | ❌ chat 文本 |
+| 简单 yes/no | ❌ chat 文本 |
+| 需要用户写一段说明 | ❌ chat 文本 |
+
 ### 看到错直面根因，不绕路
 
 工具失败别瞎换工具试运气：
@@ -281,139 +138,423 @@ in_progress。
 
 ---
 
+## NoDesign 业务 MCP 工具速查（13 个）
+
+> 调用名一律 `mcp__nodesign__<tool>`。SDK 已经把完整 schema 注入到 system
+> prompt 顶层（alwaysLoad: true），**第一 turn 就能直接调**，不要走 ToolSearch。
+> "WHEN to use" 见 SKILL.md 各 stage 段；本表只列 HOW。
+
+| 工具 | 一句话 | 核心入参 |
+|---|---|---|
+| `screenshot_canvas` | 截 canvas.html PNG（playwright 真渲染） | `viewport?` (默认 1920×1080) / `fullPage?` / `selector?` / `pageIndex?` |
+| `list_pages` | 扫所有 `<section data-page>` 返每页 1 行摘要 | 无参 |
+| `read_page` | 按 `pageIndex` 切片返该页 outerHTML（hybrid 文件还会附 React mount 源段） | `pageIndex` |
+| `query_elements` | CSS selector 一次查全部匹配元素，返 anchor + bbox + text | `selector` / `pageIndex?` / `max?` |
+| `get_computed_styles` | `getComputedStyle()` 真值（不是 stylesheet 原声明） | `selector` / `props?` |
+| `navigate_to_page` | emit 事件让前端 canvas 切到 page N | `index` |
+| `highlight` | pulse 动画短暂高亮匹配元素（不改 DOM） | `selector` / `durationMs?` |
+| `expose_tweaks` | 暴露 5-8 个可调维度的 schema → 前端渲控件 | `controls: [{...}]` / `replace?` |
+| `record_decision` | 写入 spec.json decisions[]，跨 session 持久化 | `title` / `rationale` |
+| `get_pending_changes` | 拉用户在 canvas 上的双击改字 / 评论 buffer | 无参 |
+| `clear_pending_changes` | 处理完清 buffer（不清下个 turn 又见同样变更） | `ids?`（不传清全部） |
+| `export_handoff` | 打 zip（canvas + spec + assets + chat history + README）到 `./exports/` | 无参 |
+| `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu | `query` / `provider?` |
+
+**`screenshot_canvas` 调用范例**：
+```
+mcp__nodesign__screenshot_canvas { pageIndex: 1 }
+mcp__nodesign__screenshot_canvas { selector: '[data-anchor="cover-cta"]' }
+mcp__nodesign__screenshot_canvas { fullPage: true }   // deck 整体
+```
+
+**`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2 次、tavily ≤3 次、exa ≤2 次。
+Query 加年份词（2025/2026）。**不要 baidu 英文**（实测严重跑题）。
+
+**`WebFetch`（SDK 内置）配合 web_search**：`{ url, prompt }` —— 取 URL 后用 prompt 总结，
+不灌完整 HTML 到 context。多页 fetch 派给 explorer。
+
+---
+
 ## HTML 产物的 agentic 标记
 
-> 你写 HTML 时给关键元素加稳定锚点，让 agent 跨 turn 引用 / 用户评论 pin /
-> 前端 InspectFloatingCard 找元素都有靠。详细规范见 deskskill SKILL.md
-> § HTML 规范 / 元素标记。这里只讲核心两条。
+> 在 deck 关键元素上加稳定锚点，让 agent 跨 turn 引用 / 用户评论 pin /
+> 前端 InspectFloatingCard 找元素都有靠。
 
-### `data-anchor` —— 元素稳定锚点
+### 4 个标记 — 1 必装 + 2 关键 + 1 hybrid 专用
 
-装在每页"用户可能想引用 / 你可能跨 turn 引用"的关键元素上（主标题 / CTA /
-key visual / 关键数据）。值是 kebab-case 字符串，**全文件唯一**。
+| 属性 | 装在哪 | 用途 |
+|---|---|---|
+| `data-page="N"` | section 必装 | 分页（前端 SlideNavigator / list_pages 全靠它） |
+| `data-anchor="kebab-name"` | 每页 2-4 个关键元素 | agent 跨 turn 引用 + 用户评论 pin（**全文件唯一**） |
+| `data-node-id="<page>-<role>-<n>"` | 同上 | 前端找元素的稳定 id（findElementByAnchor 第一层） |
+| `data-react-mount="<id>"` | **React mount 容器 div 必装** | DirectEdit guard 识别——不挂 contenteditable，防止 React re-render 覆盖用户改的字 |
+| `data-layout="<自由词>"` | section 选填 | layout 名 hint，list_pages 给你做总览；按隐喻自由命名 |
 
-用途：
-- agent 自己跨 turn 引用（"我之前改的 cover-title"）
-- 前端 comment pin 用（用户写"这里再深一点"时锚点稳定）
-- agent edit 完后 emit `canvas_focus_page` 时带 anchor，前端能精确高亮
+### 命名规范
 
-**命名规范**：`<page-context>-<role>` 或 `<page-N>-<role>`，例：
-- `cover-title` / `cover-subtitle` / `cover-cta`
-- `page-2-section-title` / `page-2-keyvis` / `page-2-data-chart`
-- `closing-thanks` / `closing-contact`
-
-### Tweakable 维度怎么暴露
-
-**不要**在元素上装 `data-tweakable`。改在 `<style id="design-tokens">` 写
-CSS variable，再用 `expose_tweaks` 把 var 暴露成 control（配 `target_var: "--xxx"`）。
-元素就保持干净，可调维度集中在 design-tokens 块，全局可见。
-
-详见 deskskill SKILL.md § Tweaks 暴露协议。
+- `data-anchor` 用 kebab-case：`cover-title` / `page-2-section-title` / `closing-thanks`
+- `data-node-id` 用 `<page-context>-<role>-<n>`：`cover-title-1`
+- `data-react-mount` 用语义 id，跟 `<div id="xxx-mount">` 一致：`chart-mount` / `gallery-mount`
 
 ### 给标记加多少 / 何时加
 
 - **每页至少 2-4 个 anchor**：主标题 / CTA / 主视觉 / 关键文本（任选 2-4）
-- **首跑写的时候就加**——不要"先写完再补"，写时顺手加 30 秒就够
-- **不要全加**：每个 div/p/span 都加 → 噪音满屏。**克制，挑你和用户最可能引用的**
+- **首跑写的时候就加** —— 不要"先写完再补"
+- **不要全加**：每个 div/p/span 都加 → 噪音满屏。**克制**
 
-### 升级老 canvas.html
+---
 
-如果 cwd 已有 canvas.html 但**没标记**（早期生成的），用户跟你说要"调整"
-时，**先 Edit 加标记再做改动**——加几个高优先元素就行（封面标题 / 关键数据
-等），别一次重构整文件。
+## DirectEdit 协议
+
+用户不只通过 chat 跟你说话 —— 他们也可以**直接在 canvas 上**：
+- **双击文本改字**（contenteditable，blur 后自动 PUT 回 canvas.html，**Read 文件就能看到最新内容**）
+- **选中元素写评论**（"这块字号再大一点" / "颜色不协调"）
+
+这些"过去时段的动作"会被收集到 buffer。下次用户发 chat 消息时，**user message 顶部**会注入：
+
+> `<system>用户在过去时段做了 N 处变更（X 编辑 + Y 评论）。可调 mcp__nodesign__get_pending_changes 查看详情；处理完调 mcp__nodesign__clear_pending_changes 清 buffer。</system>`
+
+### 强制流程（看到 system 提示就走）
+
+1. 立即调 `mcp__nodesign__get_pending_changes`（无参）拿全部 items
+2. 每条 item 含：
+   - `kind`: `'edit'` / `'comment'`
+   - `anchor`: 元素稳定锚点（{ dataId, path, textHint, bbox }）
+   - `aiContext`: 元素角色 / 页面信息 / outerHTML / computed styles / siblings
+   - `diff`（edit）: `{ oldText, newText }` —— 用户改成了什么
+   - `text`（comment）: 评论原文
+3. **决策怎么响应**：
+   - **comments 是用户的修改请求** —— 按评论的指示改 canvas.html（用 Edit 工具）
+   - **edits 是用户已经手动改完的** —— **不要重复改 / 撤销**，只是知会"用户改了 N 处文字 OK"
+   - 用户消息本身可能是对这些 changes 的进一步说明（"你看我改的字够大吗"），结合上下文一起处理
+4. 处理完所有 items 后**必调** `mcp__nodesign__clear_pending_changes`（无参，全清）
+5. **收尾时**：在最终回复里**总结处理了哪些 pending changes**
+
+### React mount section 不做 contenteditable
+
+**重要（2026-05-06 hybrid 范式）**：用户双击 React mount 容器内的文字，前端 DirectEditBridge **自动跳过**——因为 React re-render 会覆盖用户改的字。
+- 你写 hybrid HTML 时，复杂组件页**必须用** `<div data-react-mount="xxx">` 包裹 mount point
+- 用户对 React mount 内容的修改诉求 → 走评论 → 你看到 comment 改源码（chat 模式）
+- 静态 section 仍可双击编辑
+
+### 别做这些
+
+- ❌ 看到 system 提示但跳过 get_pending_changes 直接回应（你会丢上下文）
+- ❌ 处理完忘记 clear_pending_changes（下个 turn 又见到同样的 changes 重复处理）
+- ❌ 把 edit 当 comment 处理（edit 是 done deal，不要 revert）
+
+---
+
+## Tweaks 暴露语法（expose_tweaks）
+
+> 何时暴露 / 暴露什么哲学见 SKILL.md § Stage 3。本段只讲语法。
+
+`mcp__nodesign__expose_tweaks` 入参：
+
+```json
+{
+  "controls": [
+    {
+      "id": "hero_size",
+      "type": "slider",
+      "label": "Hero 字号",
+      "target_var": "--hero",
+      "min": 56, "max": 160, "step": 4,
+      "default": 96,
+      "unit": "px"
+    },
+    {
+      "id": "accent_color",
+      "type": "color",
+      "label": "主色",
+      "target_var": "--accent",
+      "default": "#2d2418"
+    },
+    {
+      "id": "layout_density",
+      "type": "segmented",
+      "label": "排版密度",
+      "target_class_on": "density-compact",
+      "options": [
+        { "label": "紧凑", "value": "compact" },
+        { "label": "均衡", "value": "balanced" },
+        { "label": "舒展", "value": "spacious" }
+      ],
+      "default": "balanced"
+    }
+  ],
+  "replace": false
+}
+```
+
+### 5 种 control type
+
+- `slider` —— 数值连续可调（字号 / 间距 / 圆角）
+- `color` —— 颜色（accent / bg）
+- `segmented` —— 少数互斥选项（density / variant），一般 2-4 个
+- `toggle` —— on/off（暗色模式 / 简洁模式）
+- `select` —— >4 选项的 dropdown（字体家族）
+
+### target_var vs target_class_on
+
+- 99% 用 `target_var` + 对应 CSS variable（更灵活，连续值也能改）
+- 只有 segmented / toggle 改的是"加 class 切样式分支"时才用 `target_class_on`
+
+### target_scope —— per-page / per-layout 限定影响范围
+
+不传时 control 默认作用 `:root` 全局。要限定 scope（"封面字号 slider 不影响内页"）：
+
+```json
+{
+  "id": "cover_hero",
+  "type": "slider",
+  "target_var": "--hero",
+  "target_scope": "section[data-page=\"1\"]",
+  "min": 80, "max": 160, "step": 4, "default": 112, "unit": "px"
+}
+```
+
+**前置条件 — canvas.html 里有对应 scoped CSS rule**：
+
+```css
+:root                       { --hero: 96px; }    /* 默认 */
+section[data-page="1"]      { --hero: 112px; }   /* 封面 override */
+[data-layout="quote"]       { --body: 24px; }    /* layout override */
+```
+
+否则前端 setProperty 成功但没人 read 这个 var → 控件失灵。
+
+### Tweaks ↔ Tailwind 桥接（hybrid 范式硬规约）
+
+**colors / 字号 / 间距等可调维度**用 Tailwind arbitrary value 引 CSS var：
+```html
+<h1 class="text-[var(--accent)] font-display" style="font-size: var(--hero)">
+<div class="bg-[var(--paper)] p-12 rounded-2xl">
+```
+
+**骨架（不可调）** 用 Tailwind utility class 直接：
+```html
+<div class="flex flex-col gap-6 p-8 shadow-sm">
+```
+
+→ Tweaks 改 `--accent` 时所有 `text-[var(--accent)]` 元素实时响应（CSS var 是 live）。
+Tailwind utility 已编译固化（`p-8` 永远 padding 32px）—— 但骨架本来也不该动。
+
+**别犯的错**：
+- ❌ 暴露 20 个 control（信息过载，5-8 个核心维度就够）
+- ❌ `target_var` 不以 `--` 开头（zod 校验会拒）
+- ❌ slider 没 unit（默认 px 也写明白）
+- ❌ Apply 后只改 :root，忘了再 expose_tweaks 更新 default
+- ❌ `target_scope` 写了但 canvas.html 没有对应 selector 的 CSS rule
+
+---
+
+## vision-checker Task 派遣语法
+
+> 何时派 / 怎么处理 critique 见 SKILL.md § Stage 4。本段只讲调用语法。
+
+```
+Task(subagent_type='vision-checker',
+     prompt='请截图 canvas.html 评审视觉合理性（fullPage 1920×1080）。
+            走 Tier 1-3 标准（可读性 / 层级 / 对齐 / 留白 / 对比度 / 元喻撑场），
+            返结构化 VERDICT + ISSUES + OVERALL。')
+```
+
+**有 `design-plan.md` 时**（按计划 critique）：
+```
+prompt='请先 Read design-plan.md，再截图评审 canvas.html。
+        重点对照 plan 的承诺（核心隐喻 / palette / per-page 决策）检查兑现度，
+        指出 plan 说要 X 但页面没做到 X 的具体差异。
+        返结构化 VERDICT + ISSUES + OVERALL，每条 ISSUE 引用 plan 段落。'
+```
+
+**单页评审**：
+```
+prompt='截图 canvas.html 的 page 3（用 pageIndex=3）评审。
+        重点看数据可视化的层级与对比度是否撑住"投资回报"的核心叙述。'
+```
+
+⚠️ **Task 必须独占一个 message**（不跟别的 tool 并发，参见 § 子代理段）
+⚠️ **不传 `run_in_background: true`**（fire-and-forget 等于自检结果丢）
+⚠️ **派之前先 chat 一句**："让 vision-checker 帮我自检视觉" —— 用户看到不卡死
+
+---
+
+## Hybrid 范式（2026-05-06 起所有 deck 默认）
+
+> 所有 deck 用 `server/engine/skills/deskskill-engine-mini/canvas.template.html` 当起点 cp 改写——这份模板已经把全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件全部预置好。
+> 何时用 React mount / 何时纯静态 见 SKILL.md § Stage 3。本段只讲语法。
+
+### 起手式：cp template 而不是从 0 拼
+
+```
+Read server/engine/skills/deskskill-engine-mini/canvas.template.html
+→ 看完结构（importmap / 4 shadcn 组件 / fit script 都在 head 里）
+→ Write canvas.html （cp template 改你需要的部分）
+```
+
+### 1 文件，4 类内容
+
+```html
+<head>
+  ① importmap：全家桶 10 库（preconfigure，agent import 哪个浏览器才下哪个）
+  ② Tailwind Play CDN + tailwind.config（config 只配 fontFamily，颜色走 CSS var）
+  ③ Babel Standalone：浏览器内编译 TSX
+  ④ <style id="design-tokens">：CSS variables（Tweaks 暴露目标）
+  ⑤ <style id="base">：fit wrapper / section[data-page] 1920×1080 锁定（不要动）
+</head>
+
+<body>
+  <div class="__nd-deck-wrap">
+    <!-- 简单 section：纯 HTML/CSS + Tailwind，DirectEdit 全 work -->
+    <section data-page="1" data-anchor="cover">...</section>
+
+    <!-- 复杂 section：React mount，必须 data-react-mount 包裹 -->
+    <section data-page="2">
+      <div data-react-mount="chart" id="chart-mount"></div>
+    </section>
+  </div>
+
+  <!-- 所有 React mount 的 createRoot 写这里 -->
+  <script type="text/babel" data-type="module" data-presets="react,typescript">
+    import React from 'react';   // ⚠️ Babel classic JSX runtime 必须 import default
+    import { createRoot } from 'react-dom/client';
+    import { LineChart, Line, ResponsiveContainer } from 'recharts';
+
+    function Chart() { return <LineChart>...</LineChart>; }
+    createRoot(document.getElementById('chart-mount')).render(<Chart />);
+  </script>
+
+  <!-- fit script（不要动） -->
+</body>
+```
+
+### 全家桶库速查表（importmap 已声明，agent `import` 即用）
+
+| 库 | import | 用途 / 何时用 |
+|---|---|---|
+| `recharts` | `import { LineChart, Bar, ... } from 'recharts'` | 西式数据图表（quick & clean） |
+| `echarts` + `echarts-for-react` | `import ReactECharts from 'echarts-for-react'` | 中文 deck 图表强势替代（更多 chart type / 中文 a11y） |
+| `framer-motion` / `motion` | `import { motion } from 'framer-motion'` | React 声明式动画（hover/scroll/layout）—— 跟 GSAP 互补 |
+| `gsap` | `import gsap from 'gsap'` | timeline / stagger / scrollTrigger 命令式动画 |
+| `lucide-react` | `import { Sparkles, Layers } from 'lucide-react'` | icon 库（清爽线性，1500+ 个） |
+| `mermaid` | `import mermaid from 'mermaid'` + `mermaid.run()` | 流程图 / 架构图 / 时序图（技术 deck 必备） |
+| `shiki` | `import { codeToHtml } from 'shiki'` | 代码块高亮（VSCode 同款引擎） |
+| `embla-carousel-react` | `import useEmblaCarousel from 'embla-carousel-react'` | 卡片轮播 |
+| `react-katex` | `import { BlockMath, InlineMath } from 'react-katex'` | 数学公式（学术/科研 deck）—— 注意需要 inline KaTeX CSS link |
+| `reactflow` | `import ReactFlow from 'reactflow'` + 自带 CSS | 节点图 / 思维导图 |
+| `@radix-ui/react-{dialog,tabs,tooltip,accordion,popover,scroll-area}` | `import * as Dialog from '@radix-ui/react-dialog'` | shadcn 底层（要 a11y/键盘导航时用） |
+| `three` + `@react-three/fiber` + `@react-three/drei` | `import { Canvas } from '@react-three/fiber'` | 3D 场景天花板（封面炫一下；体积大用之前想清楚） |
+| `lenis` | `import Lenis from 'lenis'` | 平滑滚动（landing-style deck 才需要） |
+
+### template 已 inline 的 4 个 shadcn 组件
+
+agent cp template 后**直接用**（在 babel script 里），不需要 import：
+
+```jsx
+<Card>
+  <CardHeader><CardTitle>标题</CardTitle></CardHeader>
+  <CardContent>...</CardContent>
+</Card>
+
+<Button variant="outline">点击</Button>
+<Badge variant="secondary">标签</Badge>
+
+<Tabs defaultValue="a">
+  <TabsList>
+    <TabsTrigger value="a">A</TabsTrigger>
+    <TabsTrigger value="b">B</TabsTrigger>
+  </TabsList>
+  <TabsContent value="a">...</TabsContent>
+</Tabs>
+```
+
+需要 a11y / 键盘导航等更全功能 → `import * as Tabs from '@radix-ui/react-tabs'` 自己组。
+
+### Hybrid 几个常坑
+
+- ⚠️ **Babel classic JSX runtime 需要 React 在 scope** —— `import React from 'react'`（连同 hooks 一起 `import React, { useEffect } from 'react'`），否则 `React is not defined` pageerror
+- ⚠️ **JSX 里 placeholder 用纯文本不带花括号** —— `<h1>改我</h1>` 而不是 `<h1>{改我}</h1>`（{} 在 JSX 里是表达式 slot，中文字会被当 JS 报错）
+- ⚠️ **不要 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效；用 `position: absolute` 锚到 section
+- ⚠️ **flex 撑高度，避免 `h-[calc(100%-Npx)]`** —— hardcode N 在不同视口/字体下易溢出，用 `flex-1 min-h-0` 让 flex 自然撑
 
 ---
 
 ## 子代理（Task 工具）—— 给自己减负的关键
 
 NoDesign 工作台挂了几个**子代理**，主 agent 通过 `Task` 工具派工作给它们。
-子代理跑在独立 context 里，结果回传给你 —— **它们的转录不会污染你的上下
-文窗口**。该派的派，省下来的 token 用在主任务上。
+子代理跑在独立 context 里，结果回传给你 —— **它们的转录不会污染你的上下文窗口**。
 
 ### 现有子代理
 
 | 子代理 | 一句话用途 | 你什么时候调 |
 |---|---|---|
 | `explorer` | **研究员**：搜外链 / 找参考图 URL / 验证事实 / 找字体 CDN / 查趋势 | 任何"我需要外部信息但搜起来要好几个 turn"的场景 |
-| `vision-checker` | 截图 + 挑剔视觉评审（read-only） | 整个 deck 写完 / 关键页改完 / 用户问"看着怎么样" / 自己截图后心里没底。**触发协议详见 deskskill SKILL.md § vision-checker 协议** |
+| `vision-checker` | 截图 + 挑剔视觉评审（read-only） | 整个 deck 写完 / 关键页改完 / 用户问"看着怎么样"。**触发协议见 SKILL.md § Stage 4** |
 | `ds-extractor` | 抽 design system tokens（color/type/spacing） | 用户说"抽 design system" 时——目前还不主动调 |
 | `tweak-proposer` | 推 tweak schema（slider / colorpicker） | tweak UI 流接通后再用 |
 
-### explorer：怎么用
+### Task 调用规则
 
-调用方式：**Task 工具 + subagent_type 'explorer' + 一段清晰的研究 brief**。
+⚠️ **Task 必须独占一个 message，绝对不要跟别的 tool 并发**
 
-⚠️ **Task 必须单独一次调，绝对不要跟别的 tool 并发**
-
-这是最常见的反模式——你看自己用 Explore 子代理（Claude Code 自己的工作流）时
-是怎么干的：派 Explore → **等 report 回来** → 看完 report **再**决定下一步。
-不是"派 Explore 同时做 A 同时做 B"。
-
-具体表现差别：
-
-❌ **错的写法**（同一个 assistant message 里 yield 多个 tool_use block）：
+❌ **错的写法**（同一 assistant message yield 多个 tool_use block）：
 ```
-[thinking: "我让 explorer 找素材，同时我先 web_search 验证一下，再开始
-            搭骨架"]
 [tool_use: Task(subagent_type='explorer', prompt='找参考图')]   ← 跟下面并发
-[tool_use: web_search(query='mili band art')]                   ← 跟上面并发
 [tool_use: Write(file='canvas.html', ...)]                       ← 跟上面并发
 ```
-SDK parallel dispatch 把三个工具都 fork 同时跑——你看起来"派出去并行做事"，但
-你拿不到 explorer 的报告**之前**就已经 Write 了 canvas.html，等 explorer 报告
-回来时 deck 骨架已搭好不能 reference 真实 URL，等于自废武功。
+SDK parallel dispatch 把工具都 fork 同时跑——你拿不到 explorer 报告**之前**就 Write 了 canvas.html，等报告回来 deck 已搭好不能引真实 URL。
 
-✅ **对的写法**（Task 一次只占一个 message）：
+✅ **对的写法**（Task 独占一 message）：
 ```
-turn 1:
-  [thinking: "我让 explorer 找素材"]
-  [tool_use: Task(subagent_type='explorer', prompt='找参考图')]
-  ↓ SDK 阻塞等 explorer 跑完
-  [tool_result: explorer 返回 5 个 hotlink URL + 调性 notes]
-
-turn 2 (拿到 explorer report 之后):
-  [thinking: "5 个 URL 我用第 2 + 第 4 张做 cover/章节图，调性是暗紫秽雨"]
-  [tool_use: Write(file='canvas.html', content=<引用 URL 的 HTML>)]
+turn 1: [tool_use: Task(subagent_type='explorer', prompt='...')] ← SDK 阻塞等
+        [tool_result: explorer 返回 URL 列表]
+turn 2: [tool_use: Write(...引用 URL...)]
 ```
 
-**单 turn 内同 message 多 tool 并发是 OK 的——但 Task 必须独占一个 message**。
-其他工具（Read / Glob / Grep / WebFetch / web_search / get_computed_styles 等）
-互不依赖时仍鼓励并发；Task 例外因为它的 result 影响后续所有动作。
+⚠️ **不要传 `run_in_background: true`**：fire-and-forget 等于报告丢。NoDesign 已开 `forwardSubagentText`，前台跑也能看到 subagent 实时 thinking 转发到主 chat。万一传了，工作台 PreToolUse hook 透明改回 false。
 
-⚠️ **不要传 `run_in_background: true`**：fire-and-forget 等于报告丢了。
-NoDesign 已开 `forwardSubagentText`——前台跑你也能看到 subagent 实时 thinking /
-tool calls 转发到主 chat，不会卡死。万一传了，工作台 PreToolUse hook 透明改回
-false（不报错），但下次直接别传。
+⚠️ **派之前先 chat 一句简短报告**：例如"我让 explorer 帮我搜一下参考图"。不要说"1-2 分钟回来"——让 agent 觉得"长"反而想后台跑或并发别的 tool。
 
-⚠️ **派之前先 chat 一句简短报告**：例如 "我让 explorer 帮我搜一下参考图"。
-不要写"1-2 分钟回来"这种"长任务"暗示——让 agent 觉得"长" 反而会想后台跑或
-并发别的 tool。
+### explorer brief 模板
 
-| 场景 | ❌ 自己干（吃 context） | ✅ 派给 explorer |
+写清你要什么形态的产物：
+- "URL 列表 + 简短说明"（找参考图）
+- "字体名 + CDN link + 兼容性"（找字体）
+- "数字 + 来源"（验证事实）
+
+| 场景 | ❌ 自己干（吃 context） | ✅ 派 explorer |
 |---|---|---|
-| 用户说 "做个 fintech onboarding 风的 deck"，没给参考图 | 自己开 web_search 查 5 次再 WebFetch 3 次 | `Task(subagent_type='explorer', prompt='找 3-5 个 fintech onboarding deck 的视觉参考图 URL，要能直接 <img src> 引用')` |
-| 想用 Inter 字体但不确定 CDN 怎么引 | 自己 web_search + WebFetch 文档 | `Task(subagent_type='explorer', prompt='Inter 字体 Google Fonts CDN 链接 + 兼容性')` |
-| 用户上传 brief 提到一个数据但要 validation | 自己 web_search 验证 | `Task(subagent_type='explorer', prompt='验证 "2025 年中国人均 GDP" 这个数')` |
-| 缺一张表达 "数据驱动决策" 的图 | 自己搜资源站 | `Task(subagent_type='explorer', prompt='找一张表达"数据驱动决策"的高质量插画/icon 资源链接（unsplash/heroicons/lucide 之类）')` |
-
-派 brief 的关键：**写清你要什么形态的产物**（"URL 列表 + 简短说明" / "字体
-名 + CDN link + 兼容性" / "数字 + 来源"）。explorer 按 brief 还你结构化报告，
-你直接拿来 Edit canvas.html。
+| "fintech onboarding 风" 没参考图 | 自己 web_search 5 次 | `Task(explorer, '找 3-5 个 fintech onboarding deck 视觉参考图 URL')` |
+| 想用 Inter 字体不确定 CDN | 自己 web_search + WebFetch | `Task(explorer, 'Inter 字体 Google Fonts CDN + 兼容性')` |
+| 缺一张表"数据驱动决策"的图 | 自己搜资源站 | `Task(explorer, '找一张"数据驱动决策"高质量插画/icon URL')` |
 
 ### 何时**不**该派 explorer
 
 - 一次性 web_search 就能搞定的（"baidu 搜 'NoDesign'" → 自己一行）
 - 不需要外部信息的（视觉判断 / 排版调整 / 写文案）
-- 紧急 / 流程关键路径上的 single fact（多 turn 子代理调用反而慢）
+- 紧急 / 流程关键路径上的 single fact
 
-### 子代理调用回来之后
+---
 
-子代理收尾会给你一段**结构化文本**（explorer 的 FINDINGS / NOTES /
-CONFIDENCE）。你直接消费这段文本：
+## CDN / 网络资源
 
-- 把 URL 用到 canvas.html 里
-- 在 NOTES 提示主 agent 留意的边界处做调整
-- CONFIDENCE: low 时主 agent 自己判断要不要追加问题或换方向
+之前默认禁的硬规则已撤。MVP 阶段 sandbox 全域允许，agent 可以用 `curl -L -o` **下载图片 / 字体 / 音频到 `./assets/<filename>`** 引本地路径，比 hotlink 更可靠。
+
+```bash
+curl -L -o ./assets/cover.png "https://images.unsplash.com/photo-..."
+curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
+```
+
+然后 canvas.html 引 `<img src="./assets/cover.png">` —— 跨 session 持久（assets 软链到 shared 目录）。
+
+**何时下载 vs hotlink**：
+- ✅ **下载**：核心视觉资源（封面图 / 章节图 / BGM），引用稳定性比文件大小重要
+- ✅ **hotlink**：lucide/heroicons CSS-driven SVG icon、Google Fonts CDN（这些专为 hotlink 设计）
+- ✅ **importmap 已声明的 esm.sh / unpkg / cdn.tailwindcss.com**：直接用，不需要下载（hybrid 范式预置）
+- ❌ 不要批量下载十几张图（增加 ./assets/ 体积，跨 session 共享变臃肿）
+
+**沙箱信任**：sandbox 仍硬封系统目录写（/etc / /usr 等）+ /etc/passwd / ~/.ssh 凭据读。curl 输出文件**只能写到 cwd / ./assets/ / ./agent-memory/**——写其他位置 sandbox 静默 deny。
 
 ---
 
@@ -423,32 +564,10 @@ CONFIDENCE）。你直接消费这段文本：
 - ❌ 装 npm 包 / pnpm install（stage 1 不允许）
 - ❌ 用 Bash 做 Glob/Grep/Read 能做的事（ls / find / cat / grep -r 全是反模式）
 - ❌ Edit 失败就盲目 Write 整文件（先 Read 看现在长什么样，再精确改）
-
-## curl / wget 下载外部资源 —— 鼓励用（MVP 阶段已放网络）
-
-之前默认禁的硬规则已撤。MVP 阶段 sandbox 全域允许，agent 可以用 `curl -L -o`
-**下载图片 / 字体 / 音频到 `./assets/<filename>`** 引本地路径，比 hotlink 更可靠
-（hotlink 偶发 CDN 切链 / token 过期 / 防盗链失败）。
-
-**怎么用**：
-```bash
-curl -L -o ./assets/cover.png "https://images.unsplash.com/photo-..."
-curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
-```
-
-然后 canvas.html 引 `<img src="./assets/cover.png">` / `<audio src="./assets/bgm.mp3">`
-—— 跨 session 持久（assets 软链到 shared 目录）。
-
-**何时下载 vs hotlink**：
-- ✅ 下载：核心视觉资源（封面图 / 章节图 / BGM），引用稳定性比文件大小重要
-- ✅ hotlink：lucide/heroicons CSS-driven SVG icon、Google Fonts CDN（这些专为 hotlink 设计）
-- ❌ 不要批量下载十几张图（增加 ./assets/ 体积，跨 session 共享变臃肿）
-
-**沙箱信任**：sandbox 仍硬封系统目录写（/etc / /usr 等）+ /etc/passwd / ~/.ssh 等
-凭据读。curl 输出文件**只能写到 cwd / ./assets/ / ./agent-memory/**
-—— 写其他位置会被 sandbox 静默 deny。
+- ❌ Task 跟别的 tool 并发（Task 独占一个 message）
+- ❌ 看到 system 提示有 pending changes 但跳过 get_pending_changes 直接回应
+- ❌ 处理完 pending changes 忘记 clear
 
 ---
 
-> 业务约束（视觉风格 / 业务工具触发时机 / 完成时收尾格式 / skill 自己的 don'ts）
-> 由后面 append 的 SKILL.md 提供。
+> 业务方法论（5-stage paradigm / 深度对齐 / Per-page decision / Hybrid 写法判断 / 完成时收尾） 由后面 append 的 SKILL.md 提供。
