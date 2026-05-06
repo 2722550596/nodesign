@@ -127,6 +127,16 @@
       --gap-md:   24px;
       --gap-lg:   48px;
       --gap-xl:   96px;
+
+      /* === Generated image slots（generate_image 的图建议落到这里方便 Tweaks 替换）=== */
+      /* 用法：style="background-image: var(--hero-image)"，或 <img src="assets/generated/x.png"> 直接引 */
+      --hero-image:        none;   /* 封面 / 大 hero */
+      --bg-image-1:        none;   /* section 1 背景 */
+      --bg-image-2:        none;
+      --bg-image-3:        none;
+      --decoration-1:      none;   /* 角落装饰 / spot illustration */
+      --frame-1:           none;   /* card 内嵌图 */
+      --pattern-tile:      none;   /* 纹理（配 background-repeat: repeat） */
     }
 
     /* per-page / per-layout scoped overrides 跟 expose_tweaks(target_scope) 配对 */
@@ -179,11 +189,13 @@
 <div class="__nd-deck-wrap">
 
   <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- PAGE 1 · COVER —— 静态 section 范例                          -->
+  <!-- PAGE 1 · COVER (text-led 范例)                              -->
+  <!--   · data-layout-role 表达"这页谁是主角"：text-led|image-led|data-led|hybrid -->
   <!--   · DirectEdit 双击文字可改                                   -->
   <!--   · 颜色用 text-[var(--xxx)]，骨架用 Tailwind utility         -->
   <!-- ══════════════════════════════════════════════════════════ -->
-  <section data-page="1" data-anchor="cover" data-layout="cover" class="bg-[var(--paper)]">
+  <section data-page="1" data-anchor="cover" data-layout="cover"
+           data-layout-role="text-led" class="bg-[var(--paper)]">
     <div class="h-full flex flex-col justify-between p-32">
       <div class="font-mono text-sm tracking-[0.3em] uppercase text-[var(--muted)]">
         {Section · 改我}
@@ -210,12 +222,134 @@
   </section>
 
   <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ⚠️ 6 类页型范例（cp 改用，按需取）                              -->
+  <!-- 设计原则：image-led 文字 ≤ 5 行；图传达的别再用文字重述；overlay -->
+  <!-- 用大字 + drop-shadow / backdrop-blur，别加纯黑半透明压亮度       -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+
+  <!-- ┄┄┄ 范例 A · IMAGE-LED COVER（图占 100%，文字浮层）┄┄┄
+  <section data-page="N" data-layout-role="image-led" data-layout="cover"
+           data-anchor="cover" class="relative overflow-hidden">
+    <img class="absolute inset-0 w-full h-full object-cover"
+         src="assets/generated/cover.jpg"
+         data-asset-role="cover" data-asset-source="generated"
+         data-asset-prompt="<可选：短 prompt 摘要>"  alt="" />
+    <div class="absolute inset-0 flex items-end p-32"
+         style="background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,0.55))">
+      <h1 data-anchor="cover-title"
+          class="text-white font-display leading-[0.95] drop-shadow-lg"
+          style="font-size: var(--hero); letter-spacing: -0.04em;">
+        {大字标题 · 一行}
+      </h1>
+    </div>
+  </section>
+  ┄┄┄ -->
+
+  <!-- ┄┄┄ 范例 B · SECTION-DIVIDER（章节扉页全屏图 + 章节号大字）┄┄┄
+  <section data-page="N" data-layout-role="image-led" data-layout="section-divider"
+           class="relative overflow-hidden">
+    <img class="absolute inset-0 w-full h-full object-cover"
+         src="assets/generated/section-2-bg.jpg"
+         data-asset-role="section-divider" data-asset-source="generated" alt="" />
+    <div class="absolute inset-0 flex flex-col justify-center items-center text-center p-32"
+         style="background:radial-gradient(circle at center,rgba(0,0,0,0.35),rgba(0,0,0,0.55))">
+      <div class="font-mono text-white/80 text-sm tracking-[0.4em] mb-6">CHAPTER 02</div>
+      <h2 class="text-white font-display text-[var(--hero)] leading-none">{章节标题}</h2>
+    </div>
+  </section>
+  ┄┄┄ -->
+
+  <!-- ┄┄┄ 范例 C · PORTRAIT（人物 / 演讲者卡片，4:5 居左）┄┄┄
+  <section data-page="N" data-layout-role="image-led" data-layout="portrait"
+           class="bg-[var(--paper)]">
+    <div class="h-full grid grid-cols-[480px_1fr] gap-24 p-24">
+      <img class="w-full h-full object-cover rounded-2xl"
+           src="assets/generated/portrait-maya.jpg"
+           data-asset-role="portrait" data-asset-source="generated" alt="Maya" />
+      <div class="flex flex-col justify-center gap-6">
+        <div class="font-mono text-sm tracking-widest uppercase text-[var(--muted)]">
+          {Speaker / 角色名}
+        </div>
+        <h2 class="font-display text-[var(--ink)] text-[var(--h1)] leading-none">{Maya Chen}</h2>
+        <p class="text-2xl text-[var(--muted)] italic" style="font-family:Instrument Serif,serif">
+          {一句 quote 或 tagline · 改我}
+        </p>
+      </div>
+    </div>
+  </section>
+  ┄┄┄ -->
+
+  <!-- ┄┄┄ 范例 D · QUOTE-BACKDROP（图弱化作衬底 + 大字引言）┄┄┄
+  <section data-page="N" data-layout-role="image-led" data-layout="quote"
+           class="relative overflow-hidden">
+    <img class="absolute inset-0 w-full h-full object-cover opacity-30"
+         src="assets/generated/quote-bg.jpg"
+         data-asset-role="quote-backdrop" data-asset-source="generated" alt="" />
+    <div class="relative h-full flex flex-col justify-center items-center text-center p-32 bg-[var(--paper)]/40">
+      <blockquote class="max-w-5xl font-display text-[var(--ink)]"
+                  style="font-size: var(--h1); line-height:1.15; font-style:italic">
+        {一句改变设计观的 quote · 改我}
+      </blockquote>
+      <div class="mt-8 font-mono text-sm tracking-widest text-[var(--muted)]">— {Source · 出处}</div>
+    </div>
+  </section>
+  ┄┄┄ -->
+
+  <!-- ┄┄┄ 范例 E · TEXT-LED CONTENT（文为主，图当 frame 配角 ≤ 30%）┄┄┄
+  <section data-page="N" data-layout-role="text-led" data-layout="content"
+           class="bg-[var(--paper)]">
+    <div class="h-full grid grid-cols-[1fr_400px] gap-16 p-24">
+      <div class="flex flex-col gap-6">
+        <h2 class="font-display text-[var(--ink)] text-[var(--h1)] leading-none">{页标题}</h2>
+        <p class="text-xl text-[var(--ink)]/80 leading-relaxed">{首段 · 主论点}</p>
+        <ul class="text-lg text-[var(--ink)]/70 space-y-3 list-disc pl-6">
+          <li>{要点 1}</li>
+          <li>{要点 2}</li>
+          <li>{要点 3}</li>
+        </ul>
+      </div>
+      <img class="w-full h-full object-cover rounded-xl"
+           src="assets/generated/frame-decor.jpg"
+           data-asset-role="frame" data-asset-source="generated" alt="" />
+    </div>
+  </section>
+  ┄┄┄ -->
+
+  <!-- ┄┄┄ 范例 F · HYBRID（图文 grid，3 图 + caption 网格） ┄┄┄
+  <section data-page="N" data-layout-role="hybrid" data-layout="grid"
+           class="bg-[var(--paper)] p-24">
+    <h2 class="font-display text-[var(--ink)] text-[var(--h2)] mb-8">{Grid 标题}</h2>
+    <div class="grid grid-cols-3 gap-6 h-[calc(100%-120px)]">
+      <div class="flex flex-col gap-2">
+        <img class="w-full aspect-[4/3] object-cover rounded-lg"
+             src="assets/generated/grid-1.jpg"
+             data-asset-role="illustration" data-asset-source="generated" alt="" />
+        <div class="text-sm text-[var(--muted)]">{caption 1}</div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <img class="w-full aspect-[4/3] object-cover rounded-lg"
+             src="assets/generated/grid-2.jpg"
+             data-asset-role="illustration" data-asset-source="generated" alt="" />
+        <div class="text-sm text-[var(--muted)]">{caption 2}</div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <img class="w-full aspect-[4/3] object-cover rounded-lg"
+             src="assets/generated/grid-3.jpg"
+             data-asset-role="illustration" data-asset-source="generated" alt="" />
+        <div class="text-sm text-[var(--muted)]">{caption 3}</div>
+      </div>
+    </div>
+  </section>
+  ┄┄┄ -->
+
+  <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE 2 · React mount section 范例                            -->
   <!--   · 复杂图表/动画/组件用 React mount                          -->
   <!--   · 必须 <div data-react-mount="..."> 包裹（DirectEdit guard）-->
   <!--   · mount 实现写在底部 <script type="text/babel"> 里         -->
   <!-- ══════════════════════════════════════════════════════════ -->
-  <section data-page="2" data-anchor="example-mount" data-layout="data" class="bg-[var(--cream)]">
+  <section data-page="2" data-anchor="example-mount" data-layout="data"
+           data-layout-role="data-led" class="bg-[var(--cream)]">
     <div class="h-full flex flex-col p-24">
       <header class="mb-12 pb-8 border-b border-[var(--ink)]/10">
         <div class="font-mono text-xs uppercase tracking-[0.3em] text-[var(--muted)] mb-2">
@@ -235,7 +369,8 @@
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE N · CLOSING —— 静态 + 优雅落幕                          -->
   <!-- ══════════════════════════════════════════════════════════ -->
-  <section data-page="3" data-anchor="closing" data-layout="closing" class="bg-[var(--ink)] text-[var(--paper)]">
+  <section data-page="3" data-anchor="closing" data-layout="closing"
+           data-layout-role="text-led" class="bg-[var(--ink)] text-[var(--paper)]">
     <div class="h-full flex flex-col justify-center items-center text-center p-32">
       <div class="font-mono text-xs uppercase tracking-[0.4em] text-[var(--paper)]/50 mb-8">
         — Fin —
@@ -417,6 +552,93 @@
   fit();
   window.addEventListener('resize', fit);
   if (document.fonts) document.fonts.ready.then(fit);
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- Keyboard nav (Phase D, 2026-05-06)                              -->
+<!-- ←/PgUp = prev, →/Space/PgDn = next, Home/End = first/last       -->
+<!-- iframe 模式下父窗口（CanvasFrame）通过 postMessage 同步 SlideNavigator -->
+<!-- 多页才装；单页（dashboard / landing）自动 noop                    -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  var sections = Array.prototype.slice.call(
+    document.querySelectorAll('section[data-page]')
+  );
+  if (sections.length < 2) return;  // 单页不需要翻页
+
+  // 按 data-page 数值排序（支持非顺序写）
+  sections.sort(function(a, b){
+    return (parseInt(a.dataset.page, 10) || 0) - (parseInt(b.dataset.page, 10) || 0);
+  });
+
+  var current = 0;
+
+  function go(i){
+    if (i < 0) i = 0;
+    if (i >= sections.length) i = sections.length - 1;
+    if (i === current) return;
+    current = i;
+    sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    var page = parseInt(sections[i].dataset.page, 10) || (i + 1);
+    try {
+      window.parent.postMessage({ type: 'canvas-page-change', page: page }, '*');
+    } catch (e) { /* parent 不可达时无声 */ }
+  }
+
+  document.addEventListener('keydown', function(e){
+    // 编辑态（contenteditable / input / textarea）让位
+    var t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    switch (e.key) {
+      case 'ArrowLeft':
+      case 'PageUp':
+        e.preventDefault(); go(current - 1); break;
+      case 'ArrowRight':
+      case 'PageDown':
+      case ' ':
+      case 'Spacebar':
+        e.preventDefault(); go(current + 1); break;
+      case 'Home':
+        e.preventDefault(); go(0); break;
+      case 'End':
+        e.preventDefault(); go(sections.length - 1); break;
+    }
+  });
+
+  // IntersectionObserver 跟踪用户手动滚动（鼠标滚轮 / 触控）时同步 current
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){
+      // 取与 viewport 重叠最多的那段当 current
+      var best = null;
+      entries.forEach(function(en){
+        if (!best || en.intersectionRatio > best.intersectionRatio) best = en;
+      });
+      if (best && best.isIntersecting) {
+        var idx = sections.indexOf(best.target);
+        if (idx >= 0 && idx !== current) {
+          current = idx;
+          var page = parseInt(best.target.dataset.page, 10) || (idx + 1);
+          try {
+            window.parent.postMessage({ type: 'canvas-page-change', page: page }, '*');
+          } catch (e) { /* ignore */ }
+        }
+      }
+    }, { threshold: [0.5] });
+    sections.forEach(function(s){ io.observe(s); });
+  }
+
+  // 父窗口主动跳页（前端 SlideNavigator 点页码 / agent navigate_to_page）
+  window.addEventListener('message', function(ev){
+    if (!ev.data || ev.data.type !== 'canvas-go-page') return;
+    var target = parseInt(ev.data.page, 10);
+    if (!isFinite(target)) return;
+    var idx = sections.findIndex(function(s){
+      return (parseInt(s.dataset.page, 10) || 0) === target;
+    });
+    if (idx >= 0) go(idx);
+  });
 })();
 </script>
 

@@ -123,6 +123,29 @@ export default function CanvasFrame({
     };
   }, [selectedAnchor, iframeDoc, onSelectChange]);
 
+  // Phase D3：iframe 主动 postMessage 同步当前页（canvas.template.html 内的
+  // keyboard nav script 在用户按 ←→ / Space / PgUp/PgDn 切页时 emit）。
+  // SlideNavigator 已经有自己的 IntersectionObserver 跟踪滚动，这里订阅
+  // postMessage 是补充信号 + 给未来 features（pulse 高亮 / agent 通知 /
+  // analytics）一个稳定 hook 点。
+  useEffect(() => {
+    const onMsg = (ev) => {
+      const data = ev?.data;
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'canvas-page-change' && Number.isFinite(data.page)) {
+        // 暂时只 dispatch 个 CustomEvent，让任何关心当前页的组件按需订阅
+        // 不直接 setState 避免 CanvasFrame 因翻页 re-render（影响 iframe 滚动）
+        try {
+          window.dispatchEvent(new CustomEvent('nd-canvas-page-change', {
+            detail: { page: data.page },
+          }));
+        } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
   // 加载源码（用于 Code mode 显示 + dirty 后切 srcDoc）
   useEffect(() => {
     if (!htmlSrc) {

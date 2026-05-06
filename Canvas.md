@@ -356,6 +356,91 @@ workspace/<projectId>/sessions/<sessionId>/
 - 关键元素加 `data-anchor="cover-title"` / `data-tweakable='{"--accent":"any"}'`
 - 可调维度走 `:root { --xxx: ... }` CSS variables（让 expose_tweaks 能用 `target_var` 改）
 
+### 6.6 图片用法 — 3 角色模型 + 7 类页型（2026-05-06 后段升级）
+
+`mcp__nodesign__generate_image`（Nano Banana 2）落档 `<sharedRoot>/assets/generated/<name>.{png|jpg}`。`sessions/<sid>/assets` softlink → shared，HTML 里引 `assets/generated/<name>.jpg`。后端新增 `GET /api/projects/:pid/sessions/:sid/assets/<rest>` endpoint 让 iframe + ImageApprovalBanner 能 load 这些图。
+
+#### 6.6.1 页 = 3 种角色（`data-layout-role`）
+
+每个 `<section data-page>` 必标 `data-layout-role` —— 表达"这页谁是主角"。决定后续所有视觉 / 文字密度 / image gen 决策：
+
+| `data-layout-role` | 主角 | 文字密度 | 何时用 |
+|---|---|---|---|
+| **`image-led`** | 图（占 80-100% 页面）| ≤ 5 行（含标题）| cover / section-divider / portrait / quote / illustration |
+| **`text-led`** | 文（占 70%+）；图 ≤ 30% 当 frame/decoration | 自由 | 普通内容页 / closing / 论点页 |
+| **`data-led`** | 图表 / 流程图（recharts/echarts/mermaid）| caption + insight 1-2 句 | dashboard / 数据页 / 架构图 |
+| **`hybrid`** | 图文 grid 平分 | 中等 | 多图对比 / 组件列阵 / 团队介绍 |
+
+#### 6.6.2 11 类 `assetRole` × 推荐 page 类型
+
+| `assetRole` | 默认 aspectRatio / size | 用在 page-role | HTML 模式 |
+|---|---|---|---|
+| `cover` | 16:9 或 21:9 / 2K | image-led cover | `<img absolute inset-0 object-cover>` + bottom gradient overlay 大字 |
+| `hero` | 16:9 或 21:9 / 2K | image-led 章节首 / data-led 顶部背景 | 同 cover，配 page 标题大字 |
+| `section-divider` | 21:9 / 2K | image-led section-divider | full-bleed + 章节号 + 大字标题 |
+| `portrait` | 4:5 或 2:3 / 2K | image-led portrait | 左图右文 grid，配 quote |
+| `quote-backdrop` | 16:9 / 2K | image-led quote | opacity-30 衬底 + 大字 italic 引言 |
+| `illustration` | 16:9 / 2K | image-led / hybrid | 全幅或 hybrid grid 单格 |
+| `frame` | 4:3 或 3:2 / 1K | text-led 配角 | card 内嵌 / 右栏 |
+| `bg` | 16:9 / 2K | image-led / text-led 衬底 | `background-image: url(...)` + overlay |
+| `decoration` | 1:1 或 4:5 / 1K | text-led / hybrid 角落 | 绝对定位 / 角落浮动 |
+| `icon` | 1:1 / 1K | text-led 配文字 | `<img class="size-12">`，prompt 必带"白底" |
+| `pattern` | 1:1 / 1K | 任意 bg tile | `background-repeat: repeat` |
+
+#### 6.6.3 HTML 写作 3 条铁律（image-led 必看）
+
+1. **图传达的别再用文字重述**——古书堆图旁不写"古典氛围"。两者重复 = 设计不自信
+2. **image-led 页文字 ≤ 5 行**（含标题）—— 多于这数说明该 page-role 选 text-led / hybrid
+3. **overlay 用 gradient + 大字 + drop-shadow，别加纯黑半透明压亮度**——"半透明黑蒙层"是 designer 偷懒。优雅做法是 `linear-gradient(180deg,transparent 50%,rgba(0,0,0,0.55))` 只压底部 + 文字大字 + `drop-shadow-lg`
+
+#### 6.6.4 标记规则
+
+```html
+<img src="assets/generated/cover-1.jpg"
+     data-asset-role="cover"
+     data-asset-source="generated"
+     data-asset-prompt="<short prompt hint>"
+     class="w-full h-full object-cover" alt="" />
+```
+
+- `data-asset-role` 必装（同 generate_image 的 `assetRole` 入参）
+- `data-asset-source="generated"` vs `"user-upload"`（前者重生时改 prompt，后者用户上传）
+- `data-asset-prompt` 选填，给后续 Tweaks UI / 重生时一个短 hint
+- alt 可选，但 a11y 友好
+
+#### 6.6.5 referenceImages 复用 = 全 deck 视觉一致
+
+Nano Banana 2 杀手锏：**第 1 张 cover 用户 OK 后，把它作为后续每张 hero/section-divider 的 `referenceImages` 种子** → 整 deck 像同一张片子。详见 prelude § generate_image E "Reference image 4 大模式"。
+
+#### 6.6.6 用户 approve gate（ImageApprovalBanner）
+
+`generate_image` 完成后**自动**弹 ImageApprovalBanner（右下浮卡）让用户 approve / regenerate (with feedback) / dismiss。Agent 在**关键节点**（cover / 第一个 portrait / logo 嵌入）应主动调 `request_image_approval` 多张候选并排让用户选——避免用户错过 anchor 决策导致全 deck 风格漂移返工。详见 prelude § generate_image J。
+
+#### 6.6.7 CSS variables 占位（Tweaks 友好）
+
+`canvas.template.html` `<style id="design-tokens">` 预置 `--hero-image / --bg-image-1 / --frame-1 / --pattern-tile`。Agent 用 background-image 时**主动 set 这些变量**，未来 Tweaks 暴露能一键换图。
+
+### 6.7 键盘翻页（2026-05-06 起 default）
+
+`canvas.template.html` 末尾内置 30 行 keyboard nav script：
+
+| 键 | 行为 |
+|---|---|
+| ←  / PgUp | 上一页 |
+| →  / Space / PgDn | 下一页 |
+| Home | 跳到首页 |
+| End  | 跳到尾页 |
+
+**触发条件**：document 监听 keydown，contenteditable / input / textarea 编辑态自动让位（不抢用户打字）。
+
+**单页任务自动 noop**（dashboard / landing 不需要翻页）：script 里 `if (sections.length < 2) return;`。
+
+**双向同步**：
+- iframe → parent：滚动 / 键盘切页时 `postMessage({ type: 'canvas-page-change', page: N })`，CanvasFrame 接到后同步 SlideNavigator currentPage 高亮
+- parent → iframe：父窗口（agent 调 `navigate_to_page` / SlideNavigator 点页码）`postMessage({ type: 'canvas-go-page', page: N })`，iframe 内 script 拦截后 `scrollIntoView`
+
+`IntersectionObserver` 跟踪用户手动滚动（鼠标滚轮 / 触控板）时自动同步当前页。
+
 ---
 
 ## 7. 文件结构
