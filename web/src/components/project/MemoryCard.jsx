@@ -5,6 +5,12 @@ import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js'
 import { Memory } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
+// 模块级常量空数组：给 useGlobalStore selector 当 fallback。
+// 字面量 `[]` 每次 selector 调用都是新引用 → React 19 useSyncExternalStore
+// 在 render 后再 getSnapshot 检测到 snapshot 引用变化 → 强制 re-render →
+// 又新 `[]` → 死循环 ("Maximum update depth exceeded")。zustand 5 经典坑。
+const EMPTY_RECALL_HISTORY = [];
+
 /**
  * MemoryCard —— Hub 右栏卡片：项目级 agent memory 概要
  *
@@ -18,7 +24,7 @@ import { useGlobalStore } from '../../stores/globalStore.js';
 export default function MemoryCard({ projectId }) {
   const showToast = useGlobalStore(s => s.showToast);
   const addPendingMemoryRecall = useGlobalStore(s => s.addPendingMemoryRecall);
-  const recallHistory = useGlobalStore(s => s.recallHistoryByProject[projectId] || []);
+  const recallHistory = useGlobalStore(s => s.recallHistoryByProject[projectId] || EMPTY_RECALL_HISTORY);
   const [memory, setMemory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingType, setEditingType] = useState(null);
