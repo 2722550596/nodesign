@@ -33,6 +33,9 @@ export function attachEditMode(iframe, { onTextEdit, onSelect } = {}) {
     if (!el || el.nodeType !== 1) return;
     // 只让"叶子文本元素"可编辑：h1/h2/h3/p/span/li/div（含 textContent 没有子元素 block）
     if (!isTextLeaf(el)) return;
+    // Hybrid 范式 guard（2026-05-06）：祖先是 React mount 容器就跳过 contenteditable
+    // —— React re-render 会覆盖用户改字，挂上去也徒劳；用户改这部分走评论协议
+    if (isInsideReactMount(el)) return;
     e.preventDefault();
     e.stopPropagation();
     el.setAttribute('contenteditable', 'true');
@@ -135,4 +138,21 @@ function isTextLeaf(el) {
   const blockChildren = el.querySelector(':scope > div, :scope > section, :scope > article, :scope > main, :scope > header, :scope > footer, :scope > nav, :scope > ul, :scope > ol');
   if (blockChildren) return false;
   return ['H1','H2','H3','H4','H5','H6','P','SPAN','LI','DIV','A','STRONG','EM','SMALL','LABEL','BUTTON'].includes(el.tagName);
+}
+
+/**
+ * Hybrid 范式 React mount guard：判断 el 是否在 [data-react-mount] 容器内。
+ * 走到 section[data-page] 或 body 为止——超出 section 范围不算（mount 必须在 section 内）。
+ *
+ * 命中时 dblclick 不挂 contenteditable；click 选中仍允许（评论可以挂任何元素）。
+ */
+function isInsideReactMount(el) {
+  let cur = el;
+  while (cur && cur.nodeType === 1) {
+    if (cur.hasAttribute && cur.hasAttribute('data-react-mount')) return true;
+    if (cur.tagName === 'SECTION' && cur.hasAttribute('data-page')) return false;
+    if (cur.tagName === 'BODY' || cur.tagName === 'HTML') return false;
+    cur = cur.parentNode;
+  }
+  return false;
 }
