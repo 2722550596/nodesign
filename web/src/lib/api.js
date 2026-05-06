@@ -94,6 +94,27 @@ export const Plan = {
   reject: ({ pid, runId, reason }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-reject`,
       reason ? { reason } : {}),
+  // Phase C：agent 调 mcp__nodesign__request_plan_mode → 前端 PlanRequestBanner
+  // 用户点 yes → 调通用 /permission-mode 切到 plan；no 时纯前端 dismiss 不触发后端
+  grantViaPermissionMode: ({ pid, runId }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/permission-mode`,
+      { mode: 'plan' }),
+};
+
+// ── Image approval（Phase Image-1，2026-05-06 后段）──
+// generate_image 完成后 ImageApprovalBanner 调，把用户决策（approve/regenerate/dismiss）
+// 喂给 agent 当前 session（后端走 pushUserMessage 注入 system reminder）。
+export const Image = {
+  /** body: { paths: string[], action: 'approve'|'regenerate'|'dismiss', feedback?: string, role?: string } */
+  approve: ({ pid, runId, paths, role }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/image-approval`,
+      { paths, action: 'approve', role }),
+  regenerate: ({ pid, runId, paths, role, feedback }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/image-approval`,
+      { paths, action: 'regenerate', role, feedback }),
+  dismiss: ({ pid, runId, paths, role }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/image-approval`,
+      { paths, action: 'dismiss', role }),
 };
 
 // Phase B 批次 4：MCP Elicitation —— 工具调 server.elicitInput() 时前端弹 modal 收答案

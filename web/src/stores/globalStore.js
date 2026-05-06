@@ -49,6 +49,29 @@ export const useGlobalStore = create((set) => ({
   setPlanForApproval: (planForApproval) => set({ planForApproval }),
   clearPlanForApproval: () => set({ planForApproval: null }),
 
+  // ── Phase C：agent 主动请求进 plan mode ──
+  // run.plan_mode_requested 事件（agent 调 mcp__nodesign__request_plan_mode）→
+  // ProjectWorkspace 设这个 state → 渲染 <PlanRequestBanner />。
+  // 用户 yes → Plan.grantViaPermissionMode → SDK 切 plan → agent 自然进 ExitPlanMode 流程
+  // （之后会触发 run.plan_for_approval，PlanReviewCard 接力）
+  // 用户 no → 单纯清掉 state 不发请求（agent 已被告知"无 mode 通知就继续"）
+  planModeRequest: null,  // { reason, estimatedPages?, taskKind?, ts }
+  setPlanModeRequest: (r) => set({ planModeRequest: r ? { ...r, ts: Date.now() } : null }),
+  clearPlanModeRequest: () => set({ planModeRequest: null }),
+
+  // ── Phase Image-1：generate_image 完成后用户 approve gate ──
+  // run.image_generated 事件 → 设 pendingImageApproval state →
+  // ProjectWorkspace 渲染 <ImageApprovalBanner />。
+  // 用户操作（OK / regenerate w/ feedback / dismiss）走 Image.approve API
+  // → 后端把反馈打成 system message 喂给 agent 当前 session。
+  // P2 升级：request_image_approval MCP 工具调起时 paths 多张并排展示。
+  // shape: { paths: string[], role, prompt, intent?, requestedByAgent?: bool, runId, ts }
+  pendingImageApproval: null,
+  setPendingImageApproval: (r) => set({
+    pendingImageApproval: r ? { ...r, ts: Date.now() } : null,
+  }),
+  clearPendingImageApproval: () => set({ pendingImageApproval: null }),
+
   // ── Phase 3.2：plan-mode toggle ──
   // ChatComposer 旁边的 segmented control "快速做 / 深度对齐"。开 plan-mode
   // 时下次 turn 会走 SDK 原生 plan mode（permissionMode='plan' + ExitPlanMode 流程）。

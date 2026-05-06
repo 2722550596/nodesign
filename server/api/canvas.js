@@ -44,6 +44,51 @@ function guard(req, res) {
   return project;
 }
 
+// 单文件 GET（assets/* 子树）—— 让 iframe 里 <img src="assets/generated/x.jpg">
+// 自然解析 + ImageApprovalBanner 也走这个 endpoint 取 thumbnail。
+// 走 sessions/<sid>/assets softlink 透到 shared/assets，路径限 assets/* 子树
+// 防 traversal。MIME 按扩展名定。
+const ASSET_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+};
+router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    // Express 5 named wildcard：req.params.subPath 是 string[] 或 string
+    const raw = req.params.subPath;
+    const subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
+    if (!subPath) return res.status(400).json({ error: 'asset path required' });
+
+    const absPath = path.resolve(sessionRoot, 'assets', subPath);
+    const assetsRoot = path.resolve(sessionRoot, 'assets');
+    // 防 traversal：resolve 后必须在 sessions/<sid>/assets/ 下
+    if (absPath !== assetsRoot && !absPath.startsWith(assetsRoot + path.sep)) {
+      return res.status(403).json({ error: 'path escapes assets/' });
+    }
+
+    let stat;
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      if (err.code === 'ENOENT') return res.status(404).json({ error: 'asset not found' });
+      throw err;
+    }
+    if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+
+    const ext = path.extname(absPath).toLowerCase();
+    const mime = ASSET_MIME[ext] || 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Cache-Control', 'private, max-age=300');  // 5 分钟 cache，HMR / iframe reload 友好
+    const buf = await fs.readFile(absPath);
+    res.end(buf);
+  } catch (err) { next(err); }
+});
+
 router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
   try {
     if (!guard(req, res)) return;

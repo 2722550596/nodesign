@@ -41,17 +41,21 @@ import { makeHighlightTool } from './tools/highlight.js';
 import { makeExposeTweaksTool } from './tools/expose-tweaks.js';
 import { makeGetPendingChangesTool } from './tools/get-pending-changes.js';
 import { makeClearPendingChangesTool } from './tools/clear-pending-changes.js';
+import { makeGenerateImageTool } from './tools/generate-image.js';
+import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
+import { makeRequestImageApprovalTool } from './tools/request-image-approval.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
  *
  * @param {object} deps
- * @param {string} deps.workspaceRoot       绝对路径，project workspace
+ * @param {string} deps.workspaceRoot       绝对路径，project workspace（sessions/<sid>/）
+ * @param {string} [deps.sharedRoot]        project shared/ 根（跨 session 共享 assets / .claude）
  * @param {string} [deps.projectId]
  * @param {import('../agent/context.js').AgentContext} [deps.ctx]  EventBus 入口
  * @returns SDK MCP server config（喂给 query options.mcpServers）
  */
-export function createNodesignMcpServer({ workspaceRoot, projectId, ctx } = {}) {
+export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, ctx } = {}) {
   return createSdkMcpServer({
     name: 'nodesign',
     version: '0.1.0',
@@ -101,6 +105,21 @@ export function createNodesignMcpServer({ workspaceRoot, projectId, ctx } = {}) 
 
       // Tweaks 协议：agent 暴露 deck 专属可调参数 schema → 前端按 schema 渲染控件
       makeExposeTweaksTool({ workspaceRoot, ctx }),
+
+      // 图片生成（gemini-3.1-flash-image-preview / Nano Banana 2，via NoDesk passthrough）
+      // 落档优先 sharedRoot/assets/generated/，fallback workspaceRoot/assets/generated/。
+      // 跨 session 共享靠 sessions/<sid>/assets softlink → shared/assets。
+      makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }),
+
+      // Agent in-loop 请求进 SDK plan mode —— emit run.plan_mode_requested
+      // 给前端弹横幅，用户点 yes 走 /permission-mode endpoint 切 mode。
+      // SDK 不让 agent 自己 setPermissionMode，所以走"agent → host signal → host" 三段。
+      makeRequestPlanModeTool({ ctx }),
+
+      // Phase Image-2：agent 主动请求用户 gate 关键图片决策（cover anchor /
+      // 第一个 portrait / logo 嵌入 / 多变体并排选）。emit run.image_approval_requested
+      // → 前端 ImageApprovalBanner 升级模式（多张并排 + intent）。
+      makeRequestImageApprovalTool({ ctx }),
     ],
   });
 }

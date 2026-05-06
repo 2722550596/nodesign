@@ -45,7 +45,7 @@ import {
   registerPendingQuestion,
   registerPendingElicitation,
 } from '../runs/active-runs.js';
-import { loadSkill } from './skill.js';
+import { loadSkill, ensureSkillStarterFiles } from './skill.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -60,7 +60,7 @@ import {
   pickThinkingConfig,
   handleSDKMessage,
   detectArtifact,
-} from './loop.js';
+} from './agent-shared.js';
 
 /**
  * 起一个 session-level long-running SDK query。runs 是 per-turn 概念（SDK 每见
@@ -135,6 +135,19 @@ export async function runSession({
 
   const wsRoot = await sharedCtx.workspace.ensure();
   const skill = await loadSkill(skillId);
+
+  // Path 整理（2026-05-06）：把 skill 自带的起手文件（canvas.template.html
+  // 等）拷到 session cwd —— SKILL.md 教 agent `Read canvas.template.html`
+  // 直接生效。streamInput 重构后实际跑的是 session-loop.js，loop.js 那条
+  // 路径已死代码，必须在这里也接上。幂等 + fail-soft。
+  try {
+    const r = await ensureSkillStarterFiles(wsRoot, skill.id);
+    if (r.copied.length > 0) {
+      console.log(`[session-loop] starter files copied: ${r.copied.join(', ')}`);
+    }
+  } catch (err) {
+    console.warn(`[session-loop] ensureSkillStarterFiles failed:`, err.message);
+  }
 
   const model = modelOverride.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
 

@@ -37,6 +37,10 @@
  *   run.compact_boundary       { compactMetadata }                          compact 边界
  *   run.status                 { status }                                  compacting / requesting / null
  *   run.rate_limit             { info }                                    rate limit 变化
+ *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
+ *   run.plan_mode_requested    { reason, estimatedPages?, taskKind? }       agent 主动请求进 plan mode（Phase C）
+ *   run.image_approval_requested { paths, intent, role, isAnchor }           agent 调 request_image_approval（Phase Image-2）
+ *   run.image_approval_resolved  { action, feedback?, paths, role }          用户在 banner 操作后后端回放（前端 toast / 历史）
  *
  * 外层把 EventBus 桥接到：
  *   - WebSocket：subscribe('*') → ws.send(JSON.stringify(evt))
@@ -354,6 +358,60 @@ export const Events = {
   //   memoryFiles / mcpTools / agents / skills    — 各类目消耗（展开看）
   //
   // categories / gridRows 不传 —— 前端不渲网格，只用 percentage + breakdown。
+  // ── 图片生成（Phase A，2026-05-06 后段）──
+  // generate_image MCP 工具调完后 emit。前端可在 chat / timeline 实时插
+  // thumbnail，并把 path 关联回 spec.json 的 record_decision 节点。
+  // 字段：
+  //   path             agent cwd 相对路径（assets/generated/<file>.png）
+  //   absPath          绝对落地路径（前端不一定用，便于审计）
+  //   sizeBytes        png 字节数
+  //   prompt           生成 prompt 全文
+  //   assetRole        语义类（hero/cover/bg/.../pattern），可空
+  //   aspectRatio / imageSize    生成参数
+  //   referenceImageCount         喂进去的参考图数量
+  //   accompanyText    模型可选的文字 commentary（responseModalities 含 TEXT 时才有）
+  imageGenerated: (info) => ({
+    type: 'run.image_generated',
+    path: info.path,
+    absPath: info.absPath,
+    sizeBytes: info.sizeBytes,
+    prompt: info.prompt,
+    assetRole: info.assetRole || null,
+    aspectRatio: info.aspectRatio,
+    imageSize: info.imageSize,
+    referenceImageCount: info.referenceImageCount || 0,
+    ...(info.accompanyText ? { accompanyText: info.accompanyText } : {}),
+  }),
+
+  // ── Plan mode 自决（Phase C，2026-05-06 后段）──
+  // request_plan_mode MCP 工具触发；前端 PlanRequestBanner 监听这条事件
+  // 弹横幅。用户 yes → 已有 POST /permission-mode { mode:'plan' } 切；
+  // 用户 no → 单纯 dismiss banner，agent 自然继续走非 plan 流程。
+  planModeRequested: (info) => ({
+    type: 'run.plan_mode_requested',
+    reason: info.reason,
+    ...(info.estimatedPages != null ? { estimatedPages: info.estimatedPages } : {}),
+    ...(info.taskKind ? { taskKind: info.taskKind } : {}),
+  }),
+
+  // ── Image approval（Phase Image-1/2，2026-05-06 后段）──
+  // P2: agent 调 mcp__nodesign__request_image_approval 主动 gate 多张候选时 emit
+  imageApprovalRequested: (info) => ({
+    type: 'run.image_approval_requested',
+    paths: info.paths || [],
+    intent: info.intent || '',
+    role: info.role || null,
+    isAnchor: info.isAnchor === true,
+  }),
+  // P1: 用户在 ImageApprovalBanner 操作完后端回放（前端 timeline / toast 用）
+  imageApprovalResolved: (info) => ({
+    type: 'run.image_approval_resolved',
+    action: info.action,                         // 'approve' | 'regenerate' | 'dismiss'
+    paths: info.paths || [],
+    role: info.role || null,
+    ...(info.feedback ? { feedback: info.feedback } : {}),
+  }),
+
   contextUsage: (usage) => ({
     type: 'run.context_usage',
     totalTokens: usage.totalTokens,
