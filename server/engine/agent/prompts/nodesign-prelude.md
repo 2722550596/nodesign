@@ -153,7 +153,7 @@ input：`{ questions: [{ question, header, options: [{label, description, previe
 
 **何时用 preview**：
 - 视觉方向 / 配色 / 字体 / 排版 → HTML preview
-- 多张候选图选哪张 → image preview（更推荐 `request_image_approval` 走专门 banner，但 AskUserQuestion + image preview 也行）
+- 多张候选图选哪张 → AskUserQuestion + image preview（每个 option preview 字段贴 `<img src="data:image/...;base64,...">`），让用户视觉对比并排选
 - 离散文字决策（yes/no, 是否需要 PDF）→ 不必 preview
 
 | 场景 | 用什么 |
@@ -195,10 +195,9 @@ input：`{ questions: [{ question, header, options: [{label, description, previe
 | `get_pending_changes` | 拉用户在 canvas 上的双击改字 / 评论 buffer | 无参 |
 | `clear_pending_changes` | 处理完清 buffer（不清下个 turn 又见同样变更） | `ids?`（不传清全部） |
 | `export_handoff` | 打 zip（canvas + spec + assets + chat history + README）到 `./exports/` | 无参 |
-| `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu | `query` / `provider?` |
+| `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu；**`include_images=true`：CJK→baidu / EN→tavily（exa fallback），zhipu 不支持；下载 top-N 到 `assets/references/`** | `query` / `provider?` / `include_images?` |
 | `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图，落 `assets/generated/` | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
 | `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
-| `request_image_approval` | 关键图片决策让用户 gate（cover anchor / portrait / logo 嵌入 / 多变体选优）| `paths` (1-5) / `intent` / `role?` / `isAnchor?` |
 
 **`screenshot_canvas` 调用范例**：
 ```
@@ -214,6 +213,46 @@ Query 加年份词（2025/2026）。**不要 baidu 英文**（实测严重跑题
 
 **`WebFetch`（SDK 内置）配合 web_search**：`{ url, prompt }` —— 取 URL 后用 prompt 总结，
 不灌完整 HTML 到 context。多页 fetch 派给 explorer。
+
+#### `include_images=true` —— 给 generate_image 找 reference
+
+**使用时机**：用户主题确定后、`generate_image` 之前，当生图主体是**真实存在的物体/品牌/场景**（产品照、地标、明星、设备、车型、食物、自然风光等）。Knowledge cutoff 之前的东西模型脑里有不必搜；**最近发布的产品 / 小众品牌 / 用户自有 IP** 必搜。
+
+**Provider 路由（auto）**：
+- CJK query → **baidu**（母语图搜，不翻英；image 条目 + web 条目附图都收）
+- 英文 query → **tavily**（描述质量最高，几乎条条有详细 caption）
+- exa fallback（页面代表图 `results[].image` + 页面内 `extras.imageLinks`）
+- ⚠️ zhipu **不支持**图搜，include_images 模式下被拒
+
+**输入 / 输出契约**：
+```
+mcp__nodesign__web_search { query: "新能源汽车 充电桩 产品", include_images: true, count: 5 }
+↓ 内部：auto-route → baidu (CJK 不翻) / tavily (CJK→en 翻译) / exa
+↓ 下载 top-N 到 <workspace>/assets/references/ref-<hash>.<ext>
+↓ 返回值：
+   • 1 个 text block：markdown，含 hits + "## Reference images (downloaded, N)"
+     每条带 description / local_path / size / source / url
+   • N 个 image content block：每张下载到的 reference 图按 markdown 编号
+     顺序内嵌，**当 turn 你直接 vision-check 即可，不必再调 Read**
+```
+
+**vision-check → 选图 → 喂 generate_image**：拿到结果后扫一眼内嵌的 N 张图，按视觉切题度选 1-2 张最好的（光线/构图/主体清晰度），把对应 markdown 条目里的 `local_path` 字段塞进 `referenceImages[]`。靠 description 文字盲选会踩坑（描述准确度参差，特别是 baidu 用 parent title 兜底的条目）。
+
+**衔接 generate_image**：从 `local_path` 直接喂 `referenceImages[]`：
+```
+mcp__nodesign__generate_image {
+  prompt: "...",
+  referenceImages: ["assets/references/ref-a3f2b1.png"],
+  ...
+}
+```
+- ⚠️ **不要把 http url 喂进去** —— `generate_image.referenceImages` 只接 workspace 相对路径
+- ⚠️ **不要全 5 张全喂** —— 选 1-2 张最切题的；多 reference 反而稀释 anchor
+
+**何时不该用 `include_images`**：
+- 抽象 / 装饰类（icon, decoration, pattern, texture）—— 模型自己脑补就行
+- 概念图（流程、拼贴、隐喻）—— 没有"真实参考"的语义
+- knowledge cutoff 内的著名实体（"Apple Park"、"Wong Kar-wai cinematography"）—— 直接 prompt 就够准
 
 ### `generate_image`（Nano Banana 2 — 完整 cookbook）
 
@@ -291,6 +330,7 @@ Query 加年份词（2025/2026）。**不要 baidu 英文**（实测严重跑题
 | **角色一致（多页叙事）** | portrait 跨页引 + 给角色起名（"Maya, the woman in Reference 1"）→ 同一个角色穿越不同场景 |
 | **logo / brand 嵌入** | 用户上传 logo 进 `assets/`，每张 product mockup 把 logo 当 reference + prompt"Place the logo from Reference 1 etched into the bottle in Reference 2" → 真实嵌融 |
 | **In-painting（精修而非重画）** | 调 `screenshot_canvas` 截当前页 → 把截图当 reference + 用 conversational editing 语言 |
+| **真实主体锚定（web 搜来的 reference）** | 模型不熟的产品/品牌/最新事件 → 先 `web_search { include_images: true }` 拿真实图，再把 `assets/references/ref-xxx.<ext>` 喂 `referenceImages` + prompt"Use the product in Reference 1 as the subject; render it in [your scene]"。详见 § `include_images=true` |
 
 #### F. 多变体单 prompt（省 token 大杀器）
 
@@ -300,7 +340,7 @@ Query 加年份词（2025/2026）。**不要 baidu 英文**（实测严重跑题
  vary the lighting and atmosphere (golden hour / blue hour / overcast)
  but keep the subject and composition consistent"
 
-→ 1 次 generate_image 出 3 张候选，配 request_image_approval 让用户并排选
+→ 1 次 generate_image 出 3 张候选，紧跟 AskUserQuestion（每个 option 用 preview 字段贴对应图）让用户并排选
 → 比连调 3 次省 60% token，且变体间风格更统一
 ```
 
@@ -349,7 +389,7 @@ mcp__nodesign__generate_image({
 #### J. 调完必做
 
 1. **`record_decision`** —— 把 prompt + role + path + 用户评价记 spec.json，重生时能查回
-2. **关键节点 gate**：cover / 第一个 portrait / logo 嵌入 → **必调 `request_image_approval`** 让用户批，别 agent 自批就拿来当 referenceImages 种子（高代价决策）
+2. **关键节点邀请反馈**：cover / 第一个 portrait / logo 嵌入这种"高代价决策"产生的图（错了全 deck 重生），生完图后**必须在自然回话里邀请用户反馈**，例如："这个 cover 当全 deck 视觉锚行不行？想换风格直接说"；用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到）
 
 ### `request_plan_mode`（plan 模式自决）
 
