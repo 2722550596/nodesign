@@ -48,12 +48,28 @@ function stripHtmlComments(html) {
 }
 
 /**
- * Hybrid 文件检测（heuristic）—— 检测真 script tag，不是注释里的字面文字
+ * Hybrid 文件检测（heuristic）——任意一个 CDN 依赖都算"需要打包"。
+ *
+ * 检测信号（OR）：
+ *   - <script type="text/babel">（agent 用了 React mount）
+ *   - <script src="cdn.tailwindcss.com">
+ *   - <script src="...@babel/standalone...">
+ *   - <script type="importmap">（依赖 esm.sh 远程模块）
+ *
+ * 任意一个出现都说明 raw HTML **离线打开会失败**——必须走自包含管道。
+ * 即使 agent 没用 React mount（纯静态 + Tailwind），Tailwind CDN 离线也挂。
+ *
  * @param {string} html
  * @returns {boolean}
  */
 export function isHybridHtml(html) {
-  return /<script[^>]*type=["']text\/babel["']/i.test(stripHtmlComments(html));
+  const scan = stripHtmlComments(html);
+  return (
+    /<script[^>]*type=["']text\/babel["']/i.test(scan) ||
+    /<script[^>]*src=["']https?:\/\/cdn\.tailwindcss\.com/i.test(scan) ||
+    /<script[^>]*src=["'][^"']*@babel\/standalone/i.test(scan) ||
+    /<script[^>]*type=["']importmap["']/i.test(scan)
+  );
 }
 
 /**
@@ -180,6 +196,9 @@ function cacheSet(key, val) {
  * @returns {Promise<string>} bundled ESM JS（已 minify）
  */
 export async function bundleBabelScripts(babelScripts, importmap) {
+  // 0 个 babel script 是常见场景：agent 写了纯静态 + Tailwind 的 deck，
+  // importmap / @babel/standalone 是 boilerplate copy 但实际用不到。
+  // 这种 case 直接返空，assemble 阶段不注入 module script。
   if (babelScripts.length === 0) return '';
 
   // 拼 entry：多 babel script 内容直接 concat（每段独立 IIFE-style 代码，能共存）
@@ -388,9 +407,10 @@ export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss
   }
 
   // 4e. 替换所有 babel scripts 为单个 type=module bundle（必须 literal——bundledJs 含 $）
+  // 0 个 babel script 时跳过——纯静态 deck 不需要 module 入口
   for (let i = 0; i < parsed.babelScripts.length; i++) {
     const tag = parsed.babelScripts[i].fullTag;
-    const replacement = i === 0
+    const replacement = i === 0 && bundledJs
       ? `<script type="module">\n/* bundled by esbuild from ${parsed.babelScripts.length} babel script(s) */\n${bundledJs}\n</script>`
       : '<!-- babel script bundled into the first module -->';
     html = literalReplace(html, tag, replacement);
@@ -404,5 +424,82 @@ export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss
     html = tailwindStyleTag + '\n' + html;
   }
 
+  // 6. 去重 fit script —— agent 偶尔会自己写一个 fit script（譬如 letterbox 风格的
+  //    Math.min(vw/W, vh/H)），跟服务端注入的满铺-fit 叠加导致 scale 双重缩放（0.75 *
+  //    0.75 = 0.5625）。strategy：识别所有"看起来像 fit script"的 inline script 段全
+  //    删，再注入一个权威 standard fit script，保证只有一份在跑。
+  html = stripFitScripts(html);
+  html = injectStandardFitScript(html);
+
   return html;
 }
+
+/**
+ * Heuristic：找所有包含 fit-related 标记的 inline `<script>` 段全部删除。
+ * 标记：`__nd-deck-wrap` / `__nd-fit-active` / `transform: scale` + `innerWidth` / `DESIGN_W` 等。
+ */
+function stripFitScripts(html) {
+  // 只匹配 inline script（无 src 属性）；外联 fit script 在 NoDesign 范式里不存在
+  const scriptRe = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+  return html.replace(scriptRe, (full, body) => {
+    const isFitScript =
+      body.includes('__nd-deck-wrap') ||
+      body.includes('__nd-fit-active') ||
+      (body.includes('DESIGN_W') && body.includes('scale')) ||
+      (/Math\.min\s*\(\s*\w+\s*\/\s*1920/i.test(body) && body.includes('scale')) ||
+      (body.includes('transform') && body.includes('window.innerWidth') && body.includes('1920'));
+    return isFitScript ? '<!-- fit script removed by build-standalone (will inject standard) -->' : full;
+  });
+}
+
+/**
+ * 注入唯一权威 standard fit script（跟 SKILL.md template / injectViewportFit SNIPPET 共契约）。
+ * 放在 </body> 前；如无 </body> 末尾追加。
+ */
+function injectStandardFitScript(html) {
+  const STANDARD = `
+<script id="__nd-standard-fit">
+(function(){
+  if (window !== window.top) return;
+  var W = ${DECK_WIDTH}, body = document.body;
+  var wrap = body.querySelector(':scope > .__nd-deck-wrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.className = '__nd-deck-wrap';
+    while (body.firstChild && body.firstChild !== wrap) wrap.appendChild(body.firstChild);
+    body.appendChild(wrap);
+  }
+  body.classList.add('__nd-fit-active');
+  function fit() {
+    var vw = Math.max(document.documentElement.clientWidth || 0, 320);
+    var s = vw / W;
+    wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
+    body.style.height = (wrap.scrollHeight * s) + 'px';
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  if (document.fonts) document.fonts.ready.then(fit);
+})();
+</script>
+<style id="__nd-standard-fit-style">
+body { margin: 0; }
+body.__nd-fit-active {
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg, #fff);
+}
+body.__nd-fit-active > .__nd-deck-wrap {
+  width: ${DECK_WIDTH}px;
+  transform-origin: top center;
+  flex-shrink: 0;
+}
+</style>`;
+  if (html.includes('</body>')) {
+    return html.split('</body>').join(STANDARD + '\n</body>');
+  }
+  return html + STANDARD;
+}
+
+const DECK_WIDTH = 1920;
