@@ -101,6 +101,11 @@ export const Plan = {
   grantViaPermissionMode: ({ pid, runId, mode = 'plan' }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/permission-mode`,
       { mode }),
+  // Phase C 阻塞态 plan-request：解阻塞 mcp__nodesign__request_plan_mode。
+  // 用户在 PlanRequestBanner 决定后调（approve 完会先调 grantViaPermissionMode 再调这个）。
+  decidePlanRequest: ({ pid, runId, toolUseId, approved }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-request/${toolUseId}/decide`,
+      { approved }),
 };
 
 // 注：Image.approve / regenerate / dismiss 已删除（2026-05-06）。原配 ImageApprovalBanner

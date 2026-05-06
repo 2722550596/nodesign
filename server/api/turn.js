@@ -44,6 +44,7 @@ import {
   cancelRun, provideAnswer, getQuery, provideElicitation,
   hasActiveQuerySession, pushUserMessage, getQuerySession, closeQuerySession,
   getQueueDepth, setSessionPermissionMode, getSessionIdByRunId,
+  providePlanRequestDecision,
 } from '../engine/runs/active-runs.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
@@ -523,6 +524,48 @@ router.post('/:pid/runs/:runId/permission-mode', async (req, res, next) => {
     const sid = getSessionIdByRunId(runId);
     if (sid) setSessionPermissionMode(sid, mode);
     res.json({ ok: true, mode });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /api/projects/:pid/runs/:runId/plan-request/:toolUseId/decide
+ *
+ * Phase C 阻塞态 plan-request：agent 调 mcp__nodesign__request_plan_mode 后
+ * 工具阻塞 await 这个 endpoint。前端 PlanRequestBanner：
+ *   - 用户 yes：先 POST /permission-mode { mode:'plan' }，再 POST 这个 { approved:true }
+ *   - 用户 no：直接 POST 这个 { approved:false }
+ *
+ * 找到 sessionId（runId → session reverse lookup）→ providePlanRequestDecision 解阻塞。
+ *
+ * Body: { approved: boolean }
+ */
+router.post('/:pid/runs/:runId/plan-request/:toolUseId/decide', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    const project = getProject(req.params.pid);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+
+    const { runId, toolUseId } = req.params;
+    const { approved } = req.body || {};
+    if (typeof approved !== 'boolean') {
+      return res.status(400).json({ error: 'approved (boolean) required in body' });
+    }
+
+    const sid = getSessionIdByRunId(runId);
+    if (!sid) {
+      return res.status(404).json({
+        error: 'run not active or session unknown',
+        code: 'SESSION_NOT_FOUND',
+      });
+    }
+    const ok = providePlanRequestDecision(sid, toolUseId, { approved });
+    if (!ok) {
+      return res.status(404).json({
+        error: 'no pending plan request found (already resolved / expired / wrong toolUseId)',
+        code: 'PENDING_NOT_FOUND',
+      });
+    }
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

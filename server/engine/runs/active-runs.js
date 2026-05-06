@@ -69,6 +69,9 @@ const activeRuns = new Map();
  * @property {string|null} currentRunId  - 当前正处理的 turn run record id
  * @property {Map<string, PendingQuestion>} pendingQuestions  - tool_use_id → resolver
  * @property {Map<string, PendingQuestion>} pendingElicitations
+ * @property {Map<string, PendingQuestion>} pendingPlanRequests  - tool_use_id → resolver
+ *   request_plan_mode 工具阻塞等用户决定（approve/dismiss）。前端 POST /plan-request/
+ *   :tid/decide 解阻塞。同 pendingQuestions 模式但 resolve 值是 { approved: bool }
  * @property {string} currentPermissionMode  - 当前 SDK permissionMode（'plan' | 'bypassPermissions' 等）
  *   canUseTool 钩子按此分流（plan mode 硬 deny Write/Edit/Bash 等动主产物的工具）。
  *   初值来自 registerQuerySession 的 initialPermissionMode；运行时切 mode（query.
@@ -304,6 +307,77 @@ export function provideAnswer(runId, toolUseId, answers) {
 }
 
 /**
+ * 注册一个等待用户对 plan-mode 请求决定的 Promise（approve / dismiss）。
+ * request-plan-mode.js 工具调，emit run.plan_mode_requested 后 await 返回的 Promise；
+ * 用户在前端 PlanRequestBanner 点按钮 → POST /plan-request/:tid/decide → providePlanRequestDecision → resolve。
+ *
+ * 使用 sessionId 而不是 runId 作为查找 key — 因为 streamInput 模式 query 是 session 级的，
+ * 当前 turn 的 run record 在 turn 结束时清掉但 session 还活着。直接传 sessionId 简化逻辑。
+ *
+ * @param {string} sessionId
+ * @param {string} toolUseId  - SDK 的 tool_use_id（MCP tool handler options.toolUseID）
+ * @returns {Promise<{ approved: boolean }>}
+ */
+export function registerPendingPlanRequest(sessionId, toolUseId) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return Promise.reject(new Error(`session ${sessionId} not active`));
+  if (!toolUseId) return Promise.reject(new Error('toolUseId required'));
+
+  const existing = rec.pendingPlanRequests.get(toolUseId);
+  if (existing) {
+    try { existing.reject(new Error('superseded by new plan request with same toolUseId')); } catch { /* ignore */ }
+  }
+
+  return new Promise((resolve, reject) => {
+    rec.pendingPlanRequests.set(toolUseId, {
+      resolve: (decision) => {
+        rec.pendingPlanRequests.delete(toolUseId);
+        resolve(decision);
+      },
+      reject: (err) => {
+        rec.pendingPlanRequests.delete(toolUseId);
+        reject(err);
+      },
+      createdAt: Date.now(),
+    });
+
+    const onAbort = () => {
+      const p = rec.pendingPlanRequests.get(toolUseId);
+      if (p) {
+        rec.pendingPlanRequests.delete(toolUseId);
+        reject(new Error(`aborted before user decided: ${rec.abortController.signal.reason || 'unknown'}`));
+      }
+    };
+    if (rec.abortController.signal.aborted) {
+      onAbort();
+    } else {
+      rec.abortController.signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
+/**
+ * 用户在 PlanRequestBanner 决定后调（approve / dismiss）→ resolve pending plan request。
+ *
+ * @param {string} sessionId
+ * @param {string} toolUseId
+ * @param {{ approved: boolean }} decision
+ * @returns {boolean}  true=找到 pending 并已 resolve；false=没找到（已超时 / 重复点击 / runId 错）
+ */
+export function providePlanRequestDecision(sessionId, toolUseId, decision) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return false;
+  const p = rec.pendingPlanRequests.get(toolUseId);
+  if (!p) return false;
+  try {
+    p.resolve(decision);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 取回完整 record（abortController + ctx + query handle + startedAt）。
  * 上层 API endpoint 可用：rewind / setModel / getContextUsage 等都通过 record.query 调。
  *
@@ -429,6 +503,7 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     currentRunId: null,
     pendingQuestions: new Map(),
     pendingElicitations: new Map(),
+    pendingPlanRequests: new Map(),
     currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
   });
@@ -603,6 +678,10 @@ export function unregisterQuerySession(sessionId) {
     try { p.reject(new Error('session ended before MCP elicitation answered')); } catch { /* */ }
   }
   rec.pendingElicitations.clear();
+  for (const [, p] of (rec.pendingPlanRequests || new Map())) {
+    try { p.reject(new Error('session ended before user decided plan-mode request')); } catch { /* */ }
+  }
+  rec.pendingPlanRequests?.clear?.();
   activeQuerySessions.delete(sessionId);
 }
 

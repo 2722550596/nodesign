@@ -51,10 +51,12 @@ import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
  * @param {string} deps.workspaceRoot       绝对路径，project workspace（sessions/<sid>/）
  * @param {string} [deps.sharedRoot]        project shared/ 根（跨 session 共享 assets / .claude）
  * @param {string} [deps.projectId]
+ * @param {string} [deps.sessionId]          NoDesign sessionId — request_plan_mode 等
+ *                                           "等用户决定"工具用作 pending Promise key
  * @param {import('../agent/context.js').AgentContext} [deps.ctx]  EventBus 入口
  * @returns SDK MCP server config（喂给 query options.mcpServers）
  */
-export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, ctx } = {}) {
+export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
   return createSdkMcpServer({
     name: 'nodesign',
     version: '0.1.0',
@@ -111,9 +113,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }),
 
       // Agent in-loop 请求进 SDK plan mode —— emit run.plan_mode_requested
-      // 给前端弹横幅，用户点 yes 走 /permission-mode endpoint 切 mode。
-      // SDK 不让 agent 自己 setPermissionMode，所以走"agent → host signal → host" 三段。
-      makeRequestPlanModeTool({ ctx }),
+      // 给前端弹横幅，用户点 yes 走 /permission-mode endpoint 切 mode 后再 POST
+      // /plan-request/:tid/decide 解阻塞。
+      // 工具是**阻塞态** — handler await 用户决定再返回，避免 agent 在等的时候继续动作
+      // （之前非阻塞导致 agent 边请求边写文件，等用户点 yes 时 run 已 done → 切不了）。
+      makeRequestPlanModeTool({ ctx, sessionId }),
 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；

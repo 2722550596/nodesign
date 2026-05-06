@@ -746,15 +746,17 @@ export default function ProjectWorkspace() {
 
       case 'run.plan_mode_requested': {
         // Phase C：agent 调 mcp__nodesign__request_plan_mode 主动请求进 plan mode。
-        // PlanRequestBanner 浮条显示，用户 yes 走 Plan.grantViaPermissionMode
-        // 切 SDK mode，no 单纯 dismiss（agent 已在工具返回里被告知"无 mode 通知
-        // 就当用户拒绝、按原计划继续"）。
+        // 阻塞态（2026-05-07）：agent 工具 await 用户决定，前端 banner 处理：
+        //   - yes → POST /permission-mode { mode:'plan' } + POST /plan-request/:tid/decide { approved:true }
+        //   - no  → POST /plan-request/:tid/decide { approved:false }
+        // toolUseId 必带（agent decide endpoint 找 pending Promise 的 key）。
         useGlobalStore.getState().setPlanModeRequest({
+          toolUseId: evt.toolUseId,
           reason: evt.reason,
           estimatedPages: evt.estimatedPages,
           taskKind: evt.taskKind,
         });
-        showToast('agent 建议进入 plan 模式', 'info');
+        showToast('agent 请求进入 plan 模式（已暂停等你决定）', 'info');
         break;
       }
 

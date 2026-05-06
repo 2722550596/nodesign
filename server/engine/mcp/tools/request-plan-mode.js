@@ -4,40 +4,42 @@
  * 让 main agent 在跑到一半发现"这事儿挺复杂得先理一理"时，主动 emit 一个
  * "请求进 plan mode" 信号 → 前端 PlanRequestBanner 弹给用户 yes/no。
  *
- * 背景：
- *   Anthropic Claude Agent SDK 里 `permissionMode` 只能由 host（外部代码）
- *   通过 query.setPermissionMode() 切换，agent 看不到这个方法。所以"agent
- *   自决进 plan"必须走"agent → host signal → host setPermissionMode" 三段。
+ * **阻塞态**（2026-05-07 改）：handler await 用户决定后才返回。之前非阻塞导致：
+ *   - agent 边请求边继续做事（写文件 / 调工具），等用户点 yes 时 run 已 done
+ *     → /permission-mode endpoint getQuery 返 null → setPermissionMode 失败
+ *     → 用户体感"同意了也进不去 plan mode"
+ *   - 阻塞后 turn 一直活着等 query.setPermissionMode 切 mode + 用户决定
  *
  * 流程：
  *   1. agent 调 mcp__nodesign__request_plan_mode({reason, estimatedPages?})
- *   2. handler emit 'run.plan_mode_requested' 给前端
- *   3. 前端 PlanRequestBanner 弹横幅显 reason，用户 yes/no
- *   4. yes  → POST /api/projects/:pid/runs/:runId/permission-mode { mode:'plan' }
- *      → SDK 切 plan mode → 下一 turn agent 通过 system reminder 收到提示，
- *      按 plan-instructions.md 写 plan + 调 ExitPlanMode
- *   5. no   → 前端单纯 dismiss banner；agent 继续走非 plan 流程
- *      （MCP 工具 return text 已经告诉 agent "如果没收到 mode change 提示
- *      就当用户没批准，按原计划继续"）
- *
- * 不阻塞 agent：handler emit 完立即 return，agent 当前 turn 继续。SDK 在
- * setPermissionMode('plan') 后会在下一个 assistant message 注入 system
- * reminder（plan-mode preamble + ExitPlanMode protocol），agent 自然感知。
+ *   2. handler emit 'run.plan_mode_requested' { toolUseId, reason, ... }
+ *      然后 await registerPendingPlanRequest(sessionId, toolUseId)
+ *   3. 前端 PlanRequestBanner 弹横幅，含 toolUseId 给 decide 端点
+ *   4. 用户 yes
+ *      → 前端先 POST /permission-mode { mode:'plan' }（实际切 SDK）
+ *      → 再 POST /plan-request/:tid/decide { approved:true }（解阻塞 + agent 拿到结果）
+ *      → handler return text 提示 agent 已切 plan，按 plan-instructions.md 走
+ *   5. 用户 no
+ *      → 前端 POST /plan-request/:tid/decide { approved:false }
+ *      → handler return text 让 agent 按原计划继续
+ *   6. session 关掉 / abort → pending Promise reject → handler 返 error 给 agent
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { registerPendingPlanRequest } from '../../runs/active-runs.js';
 
 /**
  * @param {object} deps
+ * @param {string} [deps.sessionId]   NoDesign sessionId — pending Promise key
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeRequestPlanModeTool({ ctx } = {}) {
+export function makeRequestPlanModeTool({ ctx, sessionId } = {}) {
   return tool(
     'request_plan_mode',
-    `Request that the host switch this run into Plan Mode (read-only design
-planning, ExitPlanMode required to leave). Use this when the user's brief is
-complex enough that you want to align on a structured plan before any
+    `Request the host switch this run into Plan Mode (read-only design planning,
+逐页 brainstorm 协作 + ExitPlanMode required to leave). Use this when user's
+brief is complex enough you want to align on a structured plan before any
 generation work.
 
 WHEN TO USE:
@@ -51,16 +53,18 @@ WHEN NOT TO USE:
   - Clearly scoped UI fixes
   - User already gave a precise outline
 
-EFFECT:
+EFFECT (BLOCKING):
   Emits a 'run.plan_mode_requested' event. The user sees a banner with your
-  reason and can approve or dismiss. If approved, the host calls
-  query.setPermissionMode('plan') and you'll see a Plan-mode system reminder
-  on your next assistant turn — at that point follow plan-instructions.md
-  (write a plan, call ExitPlanMode). If dismissed, no notice arrives and you
-  should just continue your current task without entering plan mode.
+  reason and can approve or dismiss. **This tool blocks until user decides** —
+  agent does not continue mid-decision (avoids racing the user's click).
 
-This tool returns immediately and does NOT block your turn. Keep working
-unless / until you receive the Plan-mode system reminder.`,
+  - User approves → host calls query.setPermissionMode('plan'), tool returns
+    "approved" text. Your next assistant turn will see Plan-mode system
+    reminder; follow plan-instructions.md (逐页 brainstorm + ExitPlanMode).
+  - User dismisses → tool returns "dismissed" text; continue your current task
+    without entering plan mode.
+
+If session aborts while waiting (rare), tool returns an error.`,
     {
       reason: z
         .string()
@@ -79,27 +83,68 @@ unless / until you receive the Plan-mode system reminder.`,
         .optional()
         .describe('Coarse task kind; helps user banner show the right framing.'),
     },
-    async ({ reason, estimatedPages, taskKind }) => {
+    async ({ reason, estimatedPages, taskKind }, _extra) => {
+      const toolUseId = _extra?.toolUseID || _extra?.toolUseId;
+
+      if (!sessionId) {
+        return {
+          content: [{ type: 'text', text: 'request_plan_mode internal error: sessionId not configured.' }],
+          isError: true,
+        };
+      }
+      if (!toolUseId) {
+        return {
+          content: [{ type: 'text', text: 'request_plan_mode internal error: missing toolUseID from SDK.' }],
+          isError: true,
+        };
+      }
+
       try {
         ctx?.emit?.({
           type: 'run.plan_mode_requested',
+          toolUseId,
           reason,
           ...(estimatedPages != null ? { estimatedPages } : {}),
           ...(taskKind ? { taskKind } : {}),
         });
       } catch { /* fail-safe */ }
 
-      return {
-        content: [{
-          type: 'text',
-          text:
-            'Plan-mode request emitted to user. Continue your current work. '
-          + 'If the user approves, you\'ll receive a Plan-mode system reminder '
-          + 'on the next assistant turn — at that point follow plan-instructions.md. '
-          + 'If no reminder arrives within a turn or two, assume the user dismissed '
-          + 'and proceed without entering plan mode.',
-        }],
-      };
+      try {
+        const decision = await registerPendingPlanRequest(sessionId, toolUseId);
+        if (decision?.approved) {
+          return {
+            content: [{
+              type: 'text',
+              text:
+                'User APPROVED plan mode. Host has called query.setPermissionMode("plan"). '
+              + 'Your next assistant turn will receive the Plan-mode system reminder. '
+              + 'Follow nodesign-plan-instructions.md: integrate overall meta first '
+              + '(tone/palette/metaphor via AskUserQuestion), then run the per-page brainstorm '
+              + 'loop (each page: think → AskUserQuestion with preview → user feedback → '
+              + '落 c_decisions → next page). When all pages aligned, call ExitPlanMode '
+              + 'with the full design-plan.md content.',
+            }],
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text:
+              'User DISMISSED the plan-mode request. Stay in current mode and continue '
+            + 'the task as planned (Mode A — Stage 0 alignment + direct generate).',
+          }],
+        };
+      } catch (err) {
+        return {
+          content: [{
+            type: 'text',
+            text:
+              `request_plan_mode failed: ${err?.message || String(err)}. `
+            + 'Continue current task without entering plan mode.',
+          }],
+          isError: true,
+        };
+      }
     },
   );
 }

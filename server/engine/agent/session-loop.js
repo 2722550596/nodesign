@@ -369,7 +369,7 @@ export async function runSession({
     hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot }),
 
     mcpServers: {
-      nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, ctx: sharedCtx }),
+      nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sessionId, ctx: sharedCtx }),
     },
 
     agents: createAgents({ mainModel: model, fastModel }),

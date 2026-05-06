@@ -48,9 +48,11 @@ export default function PlanRequestBanner() {
 
   if (!planModeRequest) return null;
 
-  const { reason, estimatedPages, taskKind } = planModeRequest;
+  const { reason, estimatedPages, taskKind, toolUseId } = planModeRequest;
   const taskLabel = taskKind ? TASK_LABEL[taskKind] || '任务' : '任务';
 
+  // 阻塞态（2026-05-07）：agent 工具 await 用户决定。前端必须 POST decide 端点
+  // 解阻塞，否则工具一直挂着，整个 turn 卡死。
   const handleApprove = async () => {
     const { showToast, clearPlanModeRequest } = useGlobalStore.getState();
     if (!activeRun?.pid || !activeRun?.runId) {
@@ -58,10 +60,24 @@ export default function PlanRequestBanner() {
       clearPlanModeRequest();
       return;
     }
+    if (!toolUseId) {
+      showToast('plan request 缺 toolUseId，无法解阻塞', 'error');
+      clearPlanModeRequest();
+      return;
+    }
     try {
+      // 先切 SDK permissionMode（让 agent 下一 turn 进 plan-mode reminder）
       await Plan.grantViaPermissionMode({
         pid: activeRun.pid,
         runId: activeRun.runId,
+        mode: 'plan',
+      });
+      // 再解阻塞 agent 工具（让它能 return）
+      await Plan.decidePlanRequest({
+        pid: activeRun.pid,
+        runId: activeRun.runId,
+        toolUseId,
+        approved: true,
       });
       showToast('已切到 plan 模式，等待 agent 提交计划…', 'info');
       // 不立即 clear —— 等 plan_for_approval 来再 clear，这样 banner 会跟
@@ -73,9 +89,20 @@ export default function PlanRequestBanner() {
     }
   };
 
-  const handleDismiss = () => {
+  const handleDismiss = async () => {
     const { showToast, clearPlanModeRequest } = useGlobalStore.getState();
+    // 立即清 banner（用户已决定）+ 后台解阻塞 agent 工具（让它 return 并继续）
     clearPlanModeRequest();
+    if (activeRun?.pid && activeRun?.runId && toolUseId) {
+      try {
+        await Plan.decidePlanRequest({
+          pid: activeRun.pid,
+          runId: activeRun.runId,
+          toolUseId,
+          approved: false,
+        });
+      } catch { /* dismiss 路径失败也不阻塞 UX，agent 工具会因 abort/timeout 自然 reject */ }
+    }
     showToast('已忽略 plan 请求，agent 继续按原计划', 'info');
   };
 

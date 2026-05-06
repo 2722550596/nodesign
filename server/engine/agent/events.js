@@ -38,7 +38,7 @@
  *   run.status                 { status }                                  compacting / requesting / null
  *   run.rate_limit             { info }                                    rate limit 变化
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
- *   run.plan_mode_requested    { reason, estimatedPages?, taskKind? }       agent 主动请求进 plan mode（Phase C）
+ *   run.plan_mode_requested    { toolUseId, reason, estimatedPages?, taskKind? }  agent 调 request_plan_mode（阻塞态，前端 banner 决定后 POST /plan-request/:tid/decide 解阻塞）
  *
  * 外层把 EventBus 桥接到：
  *   - WebSocket：subscribe('*') → ws.send(JSON.stringify(evt))
@@ -382,11 +382,14 @@ export const Events = {
   }),
 
   // ── Plan mode 自决（Phase C，2026-05-06 后段）──
-  // request_plan_mode MCP 工具触发；前端 PlanRequestBanner 监听这条事件
-  // 弹横幅。用户 yes → 已有 POST /permission-mode { mode:'plan' } 切；
-  // 用户 no → 单纯 dismiss banner，agent 自然继续走非 plan 流程。
+  // request_plan_mode MCP 工具触发；前端 PlanRequestBanner 监听这条事件弹横幅。
+  // 阻塞态（2026-05-07 起）：工具 await 用户决定后才返回。
+  // - 用户 yes → 前端先 POST /permission-mode { mode:'plan' } 切 SDK
+  //              再 POST /plan-request/:toolUseId/decide { approved:true } 解阻塞
+  // - 用户 no  → 前端 POST /plan-request/:toolUseId/decide { approved:false } 解阻塞
   planModeRequested: (info) => ({
     type: 'run.plan_mode_requested',
+    toolUseId: info.toolUseId,
     reason: info.reason,
     ...(info.estimatedPages != null ? { estimatedPages: info.estimatedPages } : {}),
     ...(info.taskKind ? { taskKind: info.taskKind } : {}),
