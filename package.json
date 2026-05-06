@@ -15,11 +15,13 @@
     "async-mutex-lite": "^1.0.0",
     "better-sqlite3": "^12.8.0",
     "cors": "^2.8.5",
+    "esbuild": "^0.28.0",
     "express": "^5.1.0",
     "jszip": "^3.10.1",
     "multer": "^2.1.1",
     "playwright": "^1.50.0",
     "pptxgenjs": "^4.0.1",
+    "tailwindcss": "^3.4.19",
     "ws": "^8.18.0",
     "zod": "^4.3.6"
   },
@@ -35,6 +37,5 @@
       "playwright vs puppeteer — playwright 更现代但带 chromium ~150MB，部署环境吃得消？",
       "better-sqlite3 vs pg — SaaS 数据规模会涨，可能要切 PostgreSQL；MVP 先 SQLite 起步"
     ]
-  },
-  "devDependencies": {}
+  }
 }
