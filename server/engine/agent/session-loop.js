@@ -168,7 +168,7 @@ export async function runSession({
       ANTHROPIC_BASE_URL: baseUrlForBinary,
       ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
-      CLAUDE_CONFIG_DIR: process.env.NODESIGN_CONFIG_DIR || path.join(cwdRoot, '.claude'),
+      CLAUDE_CONFIG_DIR: process.env.NODESIGN_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude'),
       ...(model && /^kimi-k2\.6/i.test(model) ? {
         ANTHROPIC_SMALL_FAST_MODEL: 'kimi-k2.5',
       } : {}),
@@ -244,11 +244,12 @@ export async function runSession({
       return Number.isFinite(v) && v > 0 ? v : 5;
     })(),
 
-    // Phase 3d 完整 sandbox（之前 streamInput 主路径漏配 filesystem，导致 agent
-    // 写 ./.claude/agent-memory/brand/memory.md 等被默认拒，看似"写完消失"）
+    // Phase 3d sandbox — 暂时禁用：bwrap 不解析 session root 中的 symlink（Glob/Read 完全看不到
+    // assets/ agent-memory/ 等指向 shared 的软链），导致 agent 找不到工作目录。
+    // TODO: 等 SDK 修复 symlink-in-sandbox 后重新启用
     sandbox: {
-      enabled: true,
-      failIfUnavailable: true,
+      enabled: false,
+      failIfUnavailable: false,
       network: {
         allowLocalBinding: false,
         // MVP 阶段开放外网（'*' = 全域允许）—— 让 agent 能 curl 下载图/字体/音频
@@ -449,6 +450,18 @@ export async function runSession({
  * 直接遍历 .claude/projects/* 看哪个子目录里有 <sid>.jsonl。
  */
 async function jsonlExistsForSession(sessionRoot, sessionId) {
+  // SDK 将 JSONL 存在 CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/<sid>.jsonl
+  // 编码规则（grep 自 sdk.mjs）：所有非字母数字字符转 '-'
+  const configDir = process.env.NODESIGN_CONFIG_DIR
+    || path.join(process.env.HOME || os.homedir(), '.claude');
+  const encodedCwd = sessionRoot.replace(/[^a-zA-Z0-9]/g, '-');
+  const globalJsonl = path.join(configDir, 'projects', encodedCwd, `${sessionId}.jsonl`);
+  try {
+    await fs.access(globalJsonl);
+    return true;
+  } catch { /* not at global location */ }
+
+  // fallback：检查本地 .claude/projects/（兼容旧行为 / sandbox 模式）
   const projectsDir = path.join(sessionRoot, '.claude', 'projects');
   let entries;
   try {

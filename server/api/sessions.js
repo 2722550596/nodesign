@@ -14,6 +14,7 @@
 
 import express from 'express';
 import path from 'path';
+import os from 'node:os';
 import { promises as fs } from 'fs';
 import {
   getSessionInfo,
@@ -43,6 +44,10 @@ function encodeCwdForSDK(cwd) {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
+// SDK session API 需要 CLAUDE_CONFIG_DIR 指向 JSONL 实际存储的全局目录
+const GLOBAL_CLAUDE_CONFIG_DIR = process.env.NODESIGN_CONFIG_DIR
+  || path.join(process.env.HOME || os.homedir(), '.claude');
+
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -71,9 +76,8 @@ export async function listSessionsForProject(pid) {
     .map(e => e.name);
   const results = await Promise.all(sids.map(async (sid) => {
     const sessionRoot = path.join(sessionsRoot, sid);
-    const sessionClaudeDir = path.join(sessionRoot, '.claude');
     try {
-      const info = await withConfigDir(sessionClaudeDir, () =>
+      const info = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
         getSessionInfo(sid, { dir: sessionRoot }),
       );
       return info || null;
@@ -113,11 +117,10 @@ router.get('/:pid/sessions/:sid', async (req, res, next) => {
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const sessionClaudeDir = path.join(sessionRoot, '.claude');
 
     const includeSystemMessages = req.query.includeSystem === '1';
 
-    const messages = await withConfigDir(sessionClaudeDir, () =>
+    const messages = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
       getSessionMessages(req.params.sid, {
         dir: sessionRoot,
         includeSystemMessages,
@@ -137,12 +140,10 @@ router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
 
     const srcSid = req.params.sid;
     const srcSessionRoot = getSessionWorkspace(req.params.pid, srcSid);
-    const srcClaudeDir = path.join(srcSessionRoot, '.claude');
     const { upToMessageId, title } = req.body || {};
 
-    // 1. SDK fork —— 在 src 的 CLAUDE_CONFIG_DIR 下生成新 sid 的 jsonl，
-    //    路径 srcClaudeDir/projects/<encoded(srcSessionRoot)>/<newSid>.jsonl
-    const result = await withConfigDir(srcClaudeDir, () =>
+    // 1. SDK fork —— 在 GLOBAL_CLAUDE_CONFIG_DIR 下生成新 sid 的 jsonl
+    const result = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
       forkSession(srcSid, { dir: srcSessionRoot, upToMessageId, title }),
     );
     const newSid = result.sessionId;
@@ -151,24 +152,22 @@ router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
     // 2. cp -r src 产物（canvas/spec/.git）→ sessions/<newSid>/
     await forkSessionWorkspace(req.params.pid, srcSid, newSid);
 
-    // 3. mv 新 jsonl 从 src 的 encoded-cwd 子目录到 new 的 encoded-cwd 子目录
-    //    （保持 listSessions(dir=newSessionRoot) 能找到 jsonl）
+    // 3. mv 新 jsonl：SDK fork 在 srcSessionRoot 的 encoded-cwd 下生成 newSid.jsonl，
+    //    需要移到 newSessionRoot 的 encoded-cwd 下（让 resume/list 按新 cwd 找到）
     const srcEncoded = encodeCwdForSDK(srcSessionRoot);
-    const srcJsonl = path.join(srcClaudeDir, 'projects', srcEncoded, `${newSid}.jsonl`);
+    const srcJsonl = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', srcEncoded, `${newSid}.jsonl`);
 
     const newSessionRoot = getSessionWorkspace(req.params.pid, newSid);
-    const newClaudeDir = path.join(newSessionRoot, '.claude');
     const newEncoded = encodeCwdForSDK(newSessionRoot);
-    const newJsonlDir = path.join(newClaudeDir, 'projects', newEncoded);
+    const newJsonlDir = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', newEncoded);
     const newJsonl = path.join(newJsonlDir, `${newSid}.jsonl`);
 
     await fs.mkdir(newJsonlDir, { recursive: true });
     try {
       await fs.rename(srcJsonl, newJsonl);
     } catch (err) {
-      // 如果 SDK 写到的位置跟我们假设的 encoded path 不一致，找一下
       console.warn(`[fork] rename ${srcJsonl} → ${newJsonl} failed (${err.code}); searching alt encoded dir`);
-      const altParent = path.join(srcClaudeDir, 'projects');
+      const altParent = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects');
       const altSubs = await fs.readdir(altParent).catch(() => []);
       for (const sub of altSubs) {
         const candidate = path.join(altParent, sub, `${newSid}.jsonl`);
@@ -193,12 +192,11 @@ router.patch('/:pid/sessions/:sid', async (req, res, next) => {
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const sessionClaudeDir = path.join(sessionRoot, '.claude');
     const { title, tag } = req.body || {};
 
     if (typeof title === 'string') {
       if (title.length > 200) return res.status(400).json({ error: 'title too long (max 200)' });
-      await withConfigDir(sessionClaudeDir, () =>
+      await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
         renameSession(req.params.sid, title, { dir: sessionRoot }),
       );
     }
@@ -209,7 +207,7 @@ router.patch('/:pid/sessions/:sid', async (req, res, next) => {
       if (typeof tag === 'string' && tag.length > 50) {
         return res.status(400).json({ error: 'tag too long (max 50)' });
       }
-      await withConfigDir(sessionClaudeDir, () =>
+      await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
         tagSession(req.params.sid, tag, { dir: sessionRoot }),
       );
     }
@@ -243,11 +241,10 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const sessionClaudeDir = path.join(sessionRoot, '.claude');
 
-    // 1. SDK delete jsonl
+    // 1. SDK delete jsonl（从全局 CLAUDE_CONFIG_DIR 删除）
     try {
-      await withConfigDir(sessionClaudeDir, () =>
+      await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
         deleteSession(req.params.sid, { dir: sessionRoot }),
       );
     } catch (err) {

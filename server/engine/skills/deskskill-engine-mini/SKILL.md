@@ -32,21 +32,21 @@ agent 写 memory 时**必须用完整路径**，写错位置 = 前端读不到�
 
 | 路径 | 谁读 | 写什么 |
 |---|---|---|
-| `./.claude/agent-memory/memory.md` | 前端 MemoryCard / main agent 自动注入 | 跨 session 的通用观察、用户偏好、常见决策模式 |
-| `./.claude/agent-memory/brand/memory.md` | 前端 BrandCard | 品牌档案：palette / 字体偏好 / 隐喻规则 / 视觉调性指南 |
+| `./agent-memory/memory.md` | 前端 MemoryCard / main agent 自动注入 | 跨 session 的通用观察、用户偏好、常见决策模式 |
+| `./agent-memory/brand/memory.md` | 前端 BrandCard | 品牌档案：palette / 字体偏好 / 隐喻规则 / 视觉调性指南 |
 
 **关键约束**：
-- 这两个路径是软链到 `shared/.claude/agent-memory/`，所有 session 共写一份
-- **绝对不要写错位置**：`./brand.md` / `./memory.md` / `./.claude/memory/...`（少了 `agent-memory` 中间段）/ 绝对路径 `/...` —— 都不会被前端 BrandCard / MemoryCard 读到
+- 这两个路径是 session root 下的软链，指向 `shared/.claude/agent-memory/`，所有 session 共写一份
+- **绝对不要写错位置**：`./brand.md` / `./memory.md` / `./.claude/agent-memory/...`（不要加 `.claude/` 前缀）/ 绝对路径 `/...` —— 都不会被前端 BrandCard / MemoryCard 读到
 - 用 Write 工具一次性替换全文（不必 Edit 增量改）；template 看 BrandCard 的"模板填充"按钮（hub 上）
 
 **何时写**：
 
 | 场景 | 写哪 |
 |---|---|
-| 用户明确说"扫 assets 抽风格 token / 把品牌信息记下来" | `./.claude/agent-memory/brand/memory.md` |
+| 用户明确说"扫 assets 抽风格 token / 把品牌信息记下来" | `./agent-memory/brand/memory.md` |
 | 你做出非平凡视觉风格决策（调性 / palette / 字体大方向）想跨 session 持久化 | `record_decision` 写 `spec.json`（不是 memory）|
-| 用户告诉你长期偏好（"我不喜欢 emoji 装饰" / "默认用古典调性"） | `./.claude/agent-memory/memory.md` 加一条 |
+| 用户告诉你长期偏好（"我不喜欢 emoji 装饰" / "默认用古典调性"） | `./agent-memory/memory.md` 加一条 |
 
 **spec.json vs agent-memory 区别**：
 - `spec.json` 是**当前 deck**的决策日志（per-session 的设计意图）

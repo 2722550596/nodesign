@@ -185,21 +185,38 @@ curl -s http://localhost:4001/api/health
 把下面 server block 加到 `/etc/nginx/sites-available/nodesign`，然后软链到 `sites-enabled`：
 
 ```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 server {
     listen 80;
     server_name nodesign.your-domain.com;
-    # 可选：HTTP → HTTPS 强制跳转
+    # HTTP 强制跳转 HTTPS
     return 301 https://$host$request_uri;
 }
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
     server_name nodesign.your-domain.com;
 
     # SSL 证书（用 Let's Encrypt certbot 申请最简单）
     ssl_certificate /etc/letsencrypt/live/nodesign.your-domain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/nodesign.your-domain.com/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_prefer_server_ciphers off;
+    server_tokens off;
+
+    # 基础安全响应头（按需）
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
 
     # 前端静态文件
     root /opt/nodesign/web/dist;
@@ -208,9 +225,17 @@ server {
     # 上传 / inline image 大小限制（用户传图给 agent vision 看）
     client_max_body_size 50M;
 
+    # 缓存静态资源（可选）
+    location ~* \.(?:css|js|mjs|gif|png|jpg|jpeg|webp|svg|ico|woff2?|ttf|eot)$ {
+        expires 30d;
+        access_log off;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+    }
+
     # API 反代 → nodesign server
     location /api/ {
-        proxy_pass http://localhost:4001;
+        proxy_pass http://127.0.0.1:4001;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -219,19 +244,24 @@ server {
         proxy_read_timeout 300s;
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
+        proxy_buffering off;
+        proxy_request_buffering off;
     }
 
     # WebSocket 反代（关键，没这个前端 WS 永远连不上）
     location /ws/ {
-        proxy_pass http://localhost:4001;
+        proxy_pass http://127.0.0.1:4001;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         # WS 长连接，大幅延长 timeout
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
+        proxy_connect_timeout 60s;
     }
 
     # SPA fallback：所有 / 路径都返 index.html 让 React Router 接管
@@ -241,8 +271,14 @@ server {
 
     # gzip（前端 JS/CSS 压缩传输）
     gzip on;
-    gzip_types text/plain text/css application/javascript application/json;
     gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types
+        text/plain
+        text/css
+        application/javascript
+        application/json;
+    gzip_vary on;
 }
 ```
 

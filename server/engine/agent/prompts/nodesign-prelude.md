@@ -15,7 +15,7 @@
 |---|---|---|
 | `cwd` | session workspace（持久化目录，git 管 history） | 所有产物落这里；不要跑出去（hook 每个 turn 注入绝对路径） |
 | `./assets/` | 用户上传的素材 + 你 curl 下载的图/字体/音频（软链 → shared） | 跨 session 共享；workspace 有内容时 system 提示会提醒 |
-| `./.claude/agent-memory/` | 跨 session **长期记忆**（软链 → shared） | `memory.md` = main agent 通用记忆；`brand/memory.md` = 品牌档案（BrandCard 读这）|
+| `./agent-memory/` | 跨 session **长期记忆**（软链 → shared） | `memory.md` = main agent 通用记忆；`brand/memory.md` = 品牌档案（BrandCard 读这）|
 | `./exports/` | agent 主动生成的交付产物 | 跟具体 skill 相关，按 SKILL.md 指引调对应 export 工具 |
 | `spec.json` | 跨 turn / 跨 session 的设计意图档案 | 工作台自动注入最近 5 条 decisions 摘要；要细节再 Read |
 
@@ -211,12 +211,14 @@ input 长这样（注意：**单次调用 1-4 个 question，每个 question 2-4
 | 你想做的事 | ❌ 不要 | ✅ 这样 |
 |---|---|---|
 | 列 assets 下所有图 | `Bash: ls assets/` | `Glob: assets/**/*.{png,jpg,jpeg,webp}` |
-| 找哪个文件提到了 "metaphor" | `Bash: grep -r metaphor` | `Grep: "metaphor"`（自动管 ripgrep） |
+| 找哪个文件提到了 "metaphor" | `Bash: grep -r metaphor` | `Grep: { pattern: "metaphor", output_mode: "content" }` |
 | 看 cwd 有什么文件 | `Bash: ls -la` | `Glob: *` |
 | 找所有 .html | `Bash: find . -name "*.html"` | `Glob: **/*.html` |
 
 Glob/Grep 速度快、不依赖 sandbox、不爆 stdout。Bash 留给真正需要 shell 的事
 （git status / 跑脚本 / 网络）。
+
+⚠️ **Grep 必须传 `output_mode: "content"`** 才会返回匹配的文本行；不传默认只返回文件名列表（`files_with_matches`），你拿不到内容。需要上下文时加 `"-C": 3`。
 
 ### Read：按需，不要傻读全文件
 
@@ -443,7 +445,7 @@ curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
 - ❌ 不要批量下载十几张图（增加 ./assets/ 体积，跨 session 共享变臃肿）
 
 **沙箱信任**：sandbox 仍硬封系统目录写（/etc / /usr 等）+ /etc/passwd / ~/.ssh 等
-凭据读。curl 输出文件**只能写到 cwd / sharedRoot/assets / sharedRoot/.claude/agent-memory**
+凭据读。curl 输出文件**只能写到 cwd / ./assets/ / ./agent-memory/**
 —— 写其他位置会被 sandbox 静默 deny。
 
 ---

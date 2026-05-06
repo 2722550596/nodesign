@@ -116,6 +116,7 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
       if (err.code === 'ENOENT') return res.status(404).json({ error: 'canvas.html not yet generated' });
       throw err;
     }
+    html = injectViewportFit(html);
     const filename = `${safeFilename(project.name)}.html`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
@@ -147,14 +148,29 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
     }
 
     try {
-      const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-      const page = await ctx.newPage();
-      const fileUrl = 'file://' + file;
-      await page.goto(fileUrl, { waitUntil: 'networkidle', timeout: 30_000 });
+      const { page, ctx, pageSize } = await prepareExportPage(browser, file);
+
+      await page.addStyleTag({ content: `
+        @media print {
+          body { margin: 0 !important; padding: 0 !important; background: transparent !important; }
+          section[data-page] {
+            page-break-after: always !important;
+            page-break-inside: avoid !important;
+            break-after: page !important;
+            break-inside: avoid !important;
+          }
+          section[data-page]:last-child {
+            page-break-after: auto !important;
+            break-after: auto !important;
+          }
+        }
+      ` });
+
       const pdfBuffer = await page.pdf({
-        width: '1280px',
-        height: '720px',
+        width: `${pageSize.w}px`,
+        height: `${pageSize.h}px`,
         printBackground: true,
+        preferCSSPageSize: false,
         margin: { top: 0, right: 0, bottom: 0, left: 0 },
       });
       await ctx.close();
@@ -199,12 +215,8 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
     }
 
     try {
-      const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
-      const page = await ctx.newPage();
-      const fileUrl = 'file://' + file;
-      await page.goto(fileUrl, { waitUntil: 'networkidle', timeout: 30_000 });
+      const { page, ctx, pageSize } = await prepareExportPage(browser, file);
 
-      // 找所有 <section data-page="N">，按 data-page 升序截图
       const sectionHandles = await page.$$('section[data-page]');
       if (sectionHandles.length === 0) {
         await ctx.close();
@@ -213,27 +225,31 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
         });
       }
 
-      // 按 data-page 排序（防 DOM 顺序跟 page index 不一致）
       const pageInfos = [];
       for (const handle of sectionHandles) {
         const pageNum = await handle.getAttribute('data-page');
-        pageInfos.push({ handle, pageNum: parseInt(pageNum, 10) || 0 });
+        const bbox = await handle.boundingBox();
+        pageInfos.push({ handle, pageNum: parseInt(pageNum, 10) || 0, bbox });
       }
       pageInfos.sort((a, b) => a.pageNum - b.pageNum);
 
-      // pptxgenjs 默认 LAYOUT_16x9 = 10" × 5.625"（hugely 适合 1280×720 deck）
+      const slideW = 10;
+      const slideH = pageSize.h / pageSize.w * slideW;
       const pres = new PptxGenJS();
-      pres.layout = 'LAYOUT_16x9';
+      pres.defineLayout({ name: 'DECK', width: slideW, height: slideH });
+      pres.layout = 'DECK';
       pres.title = safeFilename(project.name);
 
-      for (const { handle, pageNum } of pageInfos) {
-        const buf = await handle.screenshot({ type: 'png' });
+      for (const { handle, pageNum, bbox } of pageInfos) {
+        const clipOpts = bbox
+          ? { clip: { x: bbox.x, y: bbox.y, width: pageSize.w, height: pageSize.h } }
+          : {};
+        const buf = await handle.screenshot({ type: 'png', ...clipOpts });
         const slide = pres.addSlide();
         slide.addImage({
           data: `data:image/png;base64,${buf.toString('base64')}`,
-          x: 0, y: 0, w: 10, h: 5.625,
+          x: 0, y: 0, w: slideW, h: slideH,
         });
-        // 顺手填 slide notes 标 page number 给 PPT 用户参考
         slide.addNotes(`Page ${pageNum} — exported from NoDesign canvas.html`);
       }
       await ctx.close();
@@ -345,6 +361,82 @@ NoDesign 工程交付包。
 Session ID：${project.sessionId}
 Skill：${project.skillId}
 `;
+}
+
+/**
+ * 共用导出准备：启 Playwright page、等字体/图片就绪、注入基线 reset、探测实际 section 尺寸。
+ * 返回 { page, ctx, pageSize: { w, h } }。
+ */
+async function prepareExportPage(browser, filePath, opts = {}) {
+  const dpr = opts.dpr ?? 2;
+
+  const ctx = await browser.newContext({
+    viewport: { width: 1280, height: 720 },
+    deviceScaleFactor: dpr,
+  });
+  const page = await ctx.newPage();
+  await page.goto('file://' + filePath, { waitUntil: 'networkidle', timeout: 30_000 });
+
+  await page.evaluate(() => document.fonts.ready);
+  await page.waitForTimeout(200);
+
+  await page.addStyleTag({ content: `
+    body { margin: 0 !important; padding: 0 !important; }
+  ` });
+
+  const pageSize = await page.evaluate(() => {
+    const first = document.querySelector('section[data-page]');
+    if (!first) return { w: 1280, h: 720 };
+    const rect = first.getBoundingClientRect();
+    return { w: Math.round(rect.width), h: Math.round(rect.height) };
+  });
+
+  return { page, ctx, pageSize };
+}
+
+/**
+ * 导出 HTML 时注入 viewport 自适应脚本。
+ * 仅在独立打开时生效（iframe 内跳过），不影响 App 预览和 Playwright 截图。
+ * 逻辑与前端 CanvasFrame.jsx 的 fit 模式一致：scale(viewportWidth / 1280)。
+ */
+const VIEWPORT_FIT_SNIPPET = `
+<style id="__nd-viewport-fit">
+body.__nd-fit{margin:0;overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column;align-items:center;min-height:100vh}
+body.__nd-fit>.__nd-wrap{transform-origin:top center;flex-shrink:0}
+</style>
+<script>(function(){
+if(window!==window.top)return;
+var W=1280,body=document.body,wrap=document.createElement('div');
+wrap.className='__nd-wrap';
+while(body.firstChild)wrap.appendChild(body.firstChild);
+body.appendChild(wrap);body.classList.add('__nd-fit');
+function fit(){
+var vw=Math.max(document.documentElement.clientWidth||0,320);
+var s=vw/W;
+wrap.style.transform=s!==1?'scale('+s+')':'';
+wrap.style.width=W+'px';
+var h=wrap.scrollHeight;
+wrap.style.marginBottom=s!==1?-(h*(1-s))+'px':'';
+}
+fit();window.addEventListener('resize',fit);
+if(document.fonts)document.fonts.ready.then(fit);
+})()</script>`;
+
+function injectViewportFit(html) {
+  // 1. 替换 agent 写的固定 viewport meta → 响应式 viewport
+  html = html.replace(
+    /<meta\s+name=["']viewport["'][^>]*>/i,
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+  );
+
+  // 2. 插入自适应脚本到 </body> 或 </html> 之前；都没有就追加到末尾
+  if (html.includes('</body>')) {
+    return html.replace('</body>', VIEWPORT_FIT_SNIPPET + '\n</body>');
+  }
+  if (html.includes('</html>')) {
+    return html.replace('</html>', VIEWPORT_FIT_SNIPPET + '\n</html>');
+  }
+  return html + VIEWPORT_FIT_SNIPPET;
 }
 
 export default router;
