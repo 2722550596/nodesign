@@ -100,9 +100,13 @@ async function main() {
         ANTHROPIC_BASE_URL: baseUrlForBinary,
         ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
         CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign-probe-si/0.0.1',
-        ...(model && /^kimi-k2\.6/i.test(model) ? {
-          ANTHROPIC_SMALL_FAST_MODEL: 'kimi-k2.5',
-        } : {}),
+        // 跟生产保持同步：env NODESIGN_FAST_MODEL 优先，否则按 main model 推断
+        // （kimi-k2.6 → claude-haiku-4-5-20251001-cc）
+        ...(process.env.NODESIGN_FAST_MODEL ? {
+          ANTHROPIC_SMALL_FAST_MODEL: process.env.NODESIGN_FAST_MODEL,
+        } : (model && /^kimi-k2\.6/i.test(model) ? {
+          ANTHROPIC_SMALL_FAST_MODEL: 'claude-haiku-4-5-20251001-cc',
+        } : {})),
       },
       tools: ['Read', 'Write', 'Edit', 'Bash'],
       systemPrompt: { type: 'preset', preset: 'claude_code' },

@@ -214,6 +214,37 @@ function makePreToolUseTaskBackgroundDenyHandler() {
 
 
 /**
+ * PreToolUse(Grep) handler：把缺省 output_mode 改成 'content'。
+ *
+ * SDK Grep 工具默认 output_mode='files_with_matches' —— 只返回匹配到的文件名
+ * 列表，不返回行内容。Agent 拿到文件名后还得再 Read 一遍，多一个 turn，浪费
+ * tokens 和时延。NoDesign 设计场景下 agent grep 几乎都是想看实际文本（CSS
+ * 类名定义在哪、某个 token 怎么用），'content' 是更合理的默认。
+ *
+ * 拦截规则：
+ *   - 没传 output_mode 或传了空字符串 → updatedInput 改成 'content'
+ *   - 显式传 'files_with_matches' / 'count' → 不动（agent 知道自己在做什么）
+ *
+ * 不发 additionalContext —— agent 不需要知道这个变换，行为对它透明，结果
+ * 直接更有用。
+ */
+function makePreToolUseGrepContentDefaultHandler() {
+  return async (input) => {
+    const t = input?.tool_input;
+    if (!t || typeof t !== 'object') return {};
+    if (t.output_mode && t.output_mode !== '') return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: { ...t, output_mode: 'content' },
+      },
+    };
+  };
+}
+
+
+/**
  * FileChanged handler（P0+ s1 C4）：agent 写文件后 SDK 触发，转发给 EventBus。
  *
  * input: FileChangedHookInput (sdk.d.ts:557)

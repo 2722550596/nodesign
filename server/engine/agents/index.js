@@ -65,11 +65,32 @@ const STUB_PROMPT = (name) =>
   + `report "agents/${name}.md missing" and stop.)`;
 
 /**
+ * 给定主 model，挑一个搭配的快速 model（subagent + SDK helper 共用）。
+ *
+ * 当前默认：主 kimi-k2.6 → 快速 claude-haiku-4-5-20251001-cc（DMXAPI -cc 变体，
+ * Anthropic 协议、3.4 折）。其他主 model 默认沿用主 model 自己（不强制降级
+ * 避免拼错模型名导致 404）。env NODESIGN_FAST_MODEL 显式覆盖优先级最高。
+ */
+export function resolveDefaultFastModel(mainModel) {
+  if (!mainModel) return null;
+  if (/^kimi-k2\.6/i.test(mainModel)) return 'claude-haiku-4-5-20251001-cc';
+  return mainModel;
+}
+
+/**
  * 创建 agents 配置 —— 喂给 query options.agents 字段。
  *
+ * @param {object} [opts]
+ * @param {string} [opts.mainModel]   主 agent model（用于推断 fast model 默认值）
+ * @param {string} [opts.fastModel]   显式覆盖；优先级：fastModel > NODESIGN_FAST_MODEL > resolveDefaultFastModel(mainModel)
  * @returns {Record<string, AgentDefinition>}
  */
-export function createAgents() {
+export function createAgents({ mainModel, fastModel } = {}) {
+  const subModel = fastModel
+    || process.env.NODESIGN_FAST_MODEL
+    || resolveDefaultFastModel(mainModel)
+    || mainModel
+    || 'claude-haiku-4-5-20251001-cc';
   return {
     // explorer —— 研究员子代理。主 agent 在做 deck/产物时遇到"需要外部素材
     // / 参考 / 事实验证" 就 Task 派给它。它去搜 + 读 + 总结，给主 agent 一份
@@ -94,13 +115,9 @@ export function createAgents() {
         + 'and findings — no code, no design judgment, just facts. '
         + 'Saves the main agent\'s context window by offloading research turns.',
       prompt: loadPrompt('explorer'),
-      // 2026-05-02 实验：直接写死 'kimi-k2.6' 验证 SDK binary 的 'inherit'
-      // 字面解析是不是 root cause。如果写死后续 turn 不报 reasoning_content
-      // 错，证实是 'inherit' 字符串问题；如果还报错，root cause 在别处。
-      //
-      // TODO：跑通后 createAgents 改成接 { mainModel } 参数，subagent 跟着主
-      // agent model 动态切（避免 hardcode 让 user 切 sonnet 时 subagent 还跑 Kimi）。
-      model: 'kimi-k2.5',
+      // 子代理走快速 model（参数化，2026-05-06 NoDesk 网关切换后默认
+      // claude-haiku-4-5-20251001-cc）。env NODESIGN_FAST_MODEL 可覆盖。
+      model: subModel,
       tools: [
         'mcp__nodesign__web_search',
         'WebFetch',
@@ -124,7 +141,7 @@ export function createAgents() {
       // 显式列 mcp__nodesign__web_search 是同样的稳妥做法）。Phase 1.1 audit 后
       // 改成显式声明，保证 vision-checker.md 里写的 mcp__nodesign__screenshot_canvas
       // 真实可调。
-      model: 'kimi-k2.5',
+      model: subModel,
       tools: [
         'mcp__nodesign__screenshot_canvas',
         'Read', 'Glob',
@@ -142,7 +159,7 @@ export function createAgents() {
       // SDK AgentDefinition 没有 outputFormat 字段（query options 级别才有）。
       // 子代理走 prompt 内嵌 JSON Schema 引导输出，main agent 收到后 JSON.parse。
       // schema 文件在 agents/schemas/design-system.json，prompt 里有完整摘录。
-      model: 'kimi-k2.5',
+      model: subModel,
       tools: [
         'Read', 'Glob', 'Grep',
         'mcp__nodesign__list_pages',
@@ -160,7 +177,7 @@ export function createAgents() {
         + 'user wants to fine-tune without rewriting.',
       prompt: loadPrompt('tweak-proposer'),
       // 同 ds-extractor：SDK 不支持 per-agent outputFormat，schema 内嵌 prompt
-      model: 'kimi-k2.5',
+      model: subModel,
       tools: [
         'Read', 'Glob',
         'mcp__nodesign__list_pages',

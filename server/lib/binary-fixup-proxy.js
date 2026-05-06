@@ -1,47 +1,37 @@
 /**
- * server/lib/binary-fixup-proxy.js — Claude Agent SDK binary 出口 fixup proxy
+ * server/lib/binary-fixup-proxy.js — Claude Agent SDK binary 出口 fixup +
+ * NoDesk AI Gateway passthrough 包装。
  *
- * # 它解决什么问题
+ * # 它解决的两类问题
  *
- * SDK binary（Anthropic 官方编译的 Claude Code）对**不在白名单的 model id**
- * 走 fallback 到 `thinking: { type: 'adaptive' }`，即使我们传 enabled 也被
- * 强转。Kimi K2.6 不在 binary 白名单里，每次请求都被转 adaptive；但 Kimi
- * gateway 不支持 adaptive type → 0 thinking blocks。
+ * 1. **Kimi binary fixup**（保留）：SDK binary 对非白名单 model（如 kimi-k2.6）
+ *    强转 thinking 'adaptive' → Kimi 不支持 → 0 thinking blocks。Proxy 在出口拦
+ *    POST /v1/messages，把 thinking 改回 enabled+budget_tokens。Kimi vision 也
+ *    需要把 image 从 tool_result 提到 user message 顶层（参见 liftImagesFromToolResult）。
  *
- * 详细诊断证据见 memory `feedback_kimi_thinking_blocks.md`：6 个 SDK option
- * variants + 5 个 model id 对照 + 5 类 env 路径全部试过，确认 LLM gateway
- * 模式下 binary 没暴露任何 capability override 给我们。
+ * 2. **NoDesk passthrough 包装**（2026-05-06 新增）：NoDesk Gateway
+ *    （`https://llm-gateway-api.nodesk.tech`）只接受 POST /default/passthrough，
+ *    body 里要带 channel + channel_url 指明下游真实 API。SDK binary 不知道这事，
+ *    它仍按 Anthropic 协议发 POST /v1/messages。proxy 在转发前把请求重新包装：
+ *      - URL 重写 → /default/passthrough
+ *      - body 注入 channel + channel_url
+ *      - 保留 Authorization Bearer（NoDesk 网关 Key）
+ *      - 透传 ND-Thread-Id（sessionId）+ ND-Trace-Id（turnId）让网关后台串链路
  *
- * # 这个 proxy 怎么修
+ * # 路径编码（sessionId 流到 proxy）
  *
- * NoDesign server 进程内启一个 mini HTTP proxy on 127.0.0.1:动态端口。
- * SDK options.env.ANTHROPIC_BASE_URL 指向 proxy 而不是真实 gateway。
+ * 调用方（loop.js / session-loop.js）把 ANTHROPIC_BASE_URL 设成
+ * `http://127.0.0.1:PORT/__nd/<sessionId>`，SDK binary 会把请求发到
+ * `http://127.0.0.1:PORT/__nd/<sessionId>/v1/messages`。proxy 解析路径前缀
+ * 拿到 sessionTag，剥掉前缀后得到原始路径。
  *
- *   binary → POST proxy → proxy 拦截 body → 改写 thinking → 转发到真 gateway
- *
- * 改写规则（保守，最小副作用）：
- *   仅当 model 匹配 /^kimi/i AND thinking.type === 'adaptive' 时
- *   把 thinking 改成 { type: 'enabled', budget_tokens: 8192 }
- *   其他请求一律原样透传（包括 binary 内部 helper agent 的 claude-haiku
- *   请求 — 这些请求不走 thinking 字段，gateway 反正会拒，跟改前一致）
- *
- * # 为什么不写在 SDK options 层
- *
- * 试过 6 个 SDK option variants 都不行，binary 内部强转 adaptive 是写死的
- * 行为，跟 SDK options 无关。HTTP 层是 binary 唯一对外可见的接口。
- *
- * # 副作用 + 回滚
- *
- * - 增加 1 跳本地 loopback 转发延迟（毫秒级，对 LLM 请求几乎不可见）
- * - 仅匹配 kimi-* model + adaptive thinking 才改，其他请求 0 影响
- * - 未来 Anthropic 修了 fallback / 提供 capability override：删掉这个文件
- *   + 改 loop.js 的 ANTHROPIC_BASE_URL 用回真 gateway 即可
+ * turnId 走 `process.env.NODESIGN_CURRENT_TURN_ID`（同一 Node 进程，session-loop
+ * 在 startTurn 时 mutate；SDK 串行处理 turn 不会 race）。
  *
  * # 流式响应
  *
- * Kimi gateway 的 SSE 流式响应通过 res.pipe 直接透传，proxy 不解析也不
- * 改写流式 chunk —— 我们改的是 outgoing request body，incoming response
- * 完全透传。
+ * NoDesk "原样转发"，下游响应 SSE chunks 通过 res.pipe 直接透传，proxy 不解析
+ * 响应内容。
  */
 
 import http from 'node:http';
@@ -50,10 +40,13 @@ import fs from 'node:fs';
 
 let _instance = null;
 
+const NODESK_PATH = '/default/passthrough';
+const PREFIX_RE = /^\/__nd\/([^/]+)(\/.*)$/;
+
 /**
  * 启动 fixup proxy（幂等：第一次调启动，后续复用同一个 instance）。
  *
- * @param {string} realUrl  真实 gateway URL（如 https://tokendance.space/gateway）
+ * @param {string} realUrl  NoDesk 网关 URL（如 https://llm-gateway-api.nodesk.tech）
  * @returns {Promise<{ baseUrl: string, close: () => Promise<void> }>}
  */
 export async function getOrStartProxy(realUrl) {
@@ -65,49 +58,77 @@ export async function getOrStartProxy(realUrl) {
   const targetPort = target.port || (useHttps ? 443 : 80);
   const reqLib = useHttps ? https : http;
 
+  // NoDesk 渠道映射 —— 当前所有模型走同一 channel（DMX → DMXAPI）
+  const nodeskChannel = process.env.NODESIGN_GATEWAY_CHANNEL || 'DMX';
+  const nodeskChannelUrlBase = (process.env.NODESIGN_GATEWAY_CHANNEL_URL_BASE
+    || 'https://www.dmxapi.cn').replace(/\/$/, '');
+
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       let body = Buffer.concat(chunks);
 
-      // 仅对 POST /v1/messages 做 fixup（其他 endpoint 直接透传）
-      let modelHint = null;
-      if (req.method === 'POST' && /\/v1\/messages\b/.test(req.url)) {
-        body = maybeFixupMessagesBody(body);
-        try { modelHint = JSON.parse(body.toString('utf8'))?.model || null; } catch { /* ignore */ }
+      // 剥 /__nd/<sessionTag> 前缀
+      let sessionTag = null;
+      let origPath = req.url;
+      const m = PREFIX_RE.exec(req.url);
+      if (m) {
+        sessionTag = decodeURIComponent(m[1]);
+        origPath = m[2];
       }
 
-      // 转发请求体到真实 gateway
-      const headers = { ...req.headers, host: target.hostname };
-      // S9：kimi-k2.5（helper / subagent / WebFetch 路）剥 anthropic-beta 头里的
-      // interleaved-thinking-* —— 不让 Moonshot 走交错思考路径，配合 body.thinking=disabled
-      if (modelHint === 'kimi-k2.5' && headers['anthropic-beta']) {
-        const stripped = String(headers['anthropic-beta'])
-          .split(',').map((s) => s.trim())
-          .filter((b) => b && !/^interleaved-thinking-/i.test(b))
-          .join(',');
-        if (stripped) headers['anthropic-beta'] = stripped;
-        else delete headers['anthropic-beta'];
+      // 仅对 POST /v1/messages（含 sub-path 如 /count_tokens）做包装 + fixup。
+      // 其他请求保守起见 502 拒绝（SDK binary 实际只发 /v1/messages 系列）
+      const isMessagesPost = req.method === 'POST' && /^\/v1\/messages\b/.test(origPath);
+      if (!isMessagesPost) {
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
+        res.end(`binary-fixup-proxy: unsupported ${req.method} ${origPath}`);
+        return;
       }
+
+      // 1. 现有 kimi 修复（thinking adaptive→enabled、vision lift）
+      body = maybeFixupMessagesBody(body);
+      let modelHint = null;
+      try { modelHint = JSON.parse(body.toString('utf8'))?.model || null; } catch { /* ignore */ }
+
+      // 2. NoDesk passthrough 包装：注入 channel + channel_url
+      body = wrapAsNodeskPassthrough(body, {
+        channel: nodeskChannel,
+        channelUrl: nodeskChannelUrlBase + origPath,
+      });
+
+      // 3. headers 处理：
+      //    - SDK binary 按 Anthropic 标准发 `x-api-key: <key>` 头；NoDesk 网关
+      //      **只认 `Authorization: Bearer <key>`** —— 直接转发会全 401。
+      //      把 x-api-key 转成 Authorization Bearer，并删掉 x-api-key 避免
+      //      下游把它也透给 DMXAPI（DMXAPI 自己懂 x-api-key 但 NoDesk 不接）。
+      //    - 注入 ND-Thread-Id / ND-Trace-Id（NoDesk 后台链路追踪）
+      const headers = { ...req.headers, host: target.hostname };
+      const incomingKey = headers['x-api-key'] || headers['X-Api-Key'];
+      if (incomingKey && !headers['authorization']) {
+        headers['authorization'] = `Bearer ${incomingKey}`;
+      }
+      delete headers['x-api-key'];
+      delete headers['X-Api-Key'];
+      if (sessionTag) headers['nd-thread-id'] = sessionTag;
+      const turnId = process.env.NODESIGN_CURRENT_TURN_ID;
+      if (turnId) headers['nd-trace-id'] = turnId;
       headers['content-length'] = String(body.length);
-      // host 必须重设 — incoming host 是 localhost:port，target 不接
 
       const proxyReq = reqLib.request({
         hostname: target.hostname,
         port: targetPort,
-        path: joinPath(target.pathname, req.url),
-        method: req.method,
+        path: joinPath(target.pathname, NODESK_PATH),
+        method: 'POST',
         headers,
       }, (proxyRes) => {
-        // S9 调查：4xx response 下 dump request body 到 /tmp 看哪个具体请求触发
         if (process.env.NODESIGN_DEBUG_KIMI_400 === '1' && proxyRes.statusCode >= 400) {
           const tag = `400-${Date.now()}-${Math.random().toString(36).slice(2,6)}.json`;
           try {
             fs.writeFileSync('/tmp/nodesign-fail-req-' + tag, body);
             console.warn(`[binary-fixup-proxy] ${proxyRes.statusCode} response — request body saved: /tmp/nodesign-fail-req-${tag}`);
           } catch (e) { /* ignore */ }
-          // 也 capture response body
           const respChunks = [];
           proxyRes.on('data', c => respChunks.push(c));
           proxyRes.on('end', () => {
@@ -117,7 +138,6 @@ export async function getOrStartProxy(realUrl) {
             } catch (e) { /* ignore */ }
           });
         }
-        // 透传 status + headers + body（流式）
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
         proxyRes.pipe(res);
       });
@@ -137,7 +157,6 @@ export async function getOrStartProxy(realUrl) {
     });
   });
 
-  // 端口 0 = 系统分配空闲端口，避免冲突；只 bind localhost 不暴露外部
   await new Promise((resolve, reject) => {
     const onError = (err) => { server.removeListener('listening', onListening); reject(err); };
     const onListening = () => { server.removeListener('error', onError); resolve(); };
@@ -148,7 +167,7 @@ export async function getOrStartProxy(realUrl) {
 
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
-  console.log(`[binary-fixup-proxy] listening on ${baseUrl} → ${realUrl}`);
+  console.log(`[binary-fixup-proxy] listening on ${baseUrl} → ${realUrl}${NODESK_PATH} (channel=${nodeskChannel})`);
 
   _instance = {
     baseUrl,
@@ -160,7 +179,7 @@ export async function getOrStartProxy(realUrl) {
 }
 
 /**
- * Body fixup：只在 model=kimi-* 且 thinking.type='adaptive' 时改 thinking。
+ * Body fixup（Kimi）：只在 model=kimi-* 时改 thinking + vision。
  * 其他情况原样返回（不解析 / 不改）。fail-soft：parse 异常一律透传。
  */
 function maybeFixupMessagesBody(body) {
@@ -168,40 +187,26 @@ function maybeFixupMessagesBody(body) {
   try {
     parsed = JSON.parse(body.toString('utf8'));
   } catch {
-    return body;  // 非 JSON：透传
+    return body;
   }
 
   if (!parsed || typeof parsed !== 'object') return body;
 
-  // Vision 诊断（NODESIGN_DEBUG_VISION=1 时打开）：dump 走出去的 messages 里
-  // image content block 的统计，验证 SDK Read / MCP 工具到底有没有把 image
-  // base64 真的塞进 outgoing /v1/messages body。
+  // Vision 诊断（NODESIGN_DEBUG_VISION=1）
   if (process.env.NODESIGN_DEBUG_VISION === '1' && Array.isArray(parsed.messages)) {
     const stats = scanImageBlocks(parsed.messages);
     if (stats.total > 0 || stats.unknownImageRefs > 0) {
       console.info(
         `[binary-fixup vision] model=${parsed.model || '?'} `
         + `images=${stats.total} (toolResult=${stats.inToolResult} userMsg=${stats.inUserMsg}) `
-        + `unknownRefs=${stats.unknownImageRefs} (file_id 等非 base64 引用)`
+        + `unknownRefs=${stats.unknownImageRefs}`
       );
-      if (stats.unknownImageRefs > 0) {
-        console.warn(
-          `[binary-fixup vision] ⚠ 检测到 ${stats.unknownImageRefs} 个非标准 image 引用`
-          + `（可能 SDK Read 用 file_id 而非 base64 inline，binary 没 resolve 给 Kimi gateway）`
-        );
-      }
     }
   }
 
-  // Kimi/Moonshot 诊断（NODESIGN_DEBUG_KIMI=1 时打开）：dump outgoing
-  // /v1/messages body 的 messages 数组结构 —— 验证 SDK binary 续 turn 时
-  // 是否把同 message.id 的多条 JSONL entries merge 回单条 message，还是直接
-  // 拆开发出去（拆开 → Moonshot 严格模式拒"reasoning_content missing"）。
+  // Kimi 诊断
   if (process.env.NODESIGN_DEBUG_KIMI === '1' && Array.isArray(parsed.messages)) {
-    console.info(`[binary-fixup kimi] model=${parsed.model || '?'} messages.length=${parsed.messages.length} system.len=${typeof parsed.system === 'string' ? parsed.system.length : (Array.isArray(parsed.system) ? parsed.system.reduce((s, b) => s + (b?.text?.length || 0), 0) : 0)} thinking=${JSON.stringify(parsed.thinking)}`);
-    // S9 调查：抓到含 tool_use 的 assistant message 时 dump 它的完整 JSON
-    // 看 thinking block 的 signature / 字段顺序 — Moonshot index 2 拒
-    // "reasoning_content missing" 但 outgoing 看似正确
+    console.info(`[binary-fixup kimi] model=${parsed.model || '?'} messages.length=${parsed.messages.length} thinking=${JSON.stringify(parsed.thinking)}`);
     if (process.env.NODESIGN_DEBUG_KIMI_FULL === '1') {
       const tag = `nodesign-kimi-dump-${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`;
       try {
@@ -209,50 +214,19 @@ function maybeFixupMessagesBody(body) {
         console.info(`[binary-fixup kimi] full body written: /tmp/${tag}`);
       } catch (e) { /* ignore */ }
     }
-    parsed.messages.forEach((msg, i) => {
-      const role = msg?.role || '?';
-      let blockTypes = '?';
-      if (typeof msg?.content === 'string') {
-        blockTypes = `string(${msg.content.length}ch)`;
-      } else if (Array.isArray(msg?.content)) {
-        blockTypes = msg.content.map(b => {
-          if (b?.type === 'tool_use') return `tool_use[${b.name || '?'}]`;
-          if (b?.type === 'tool_result') return `tool_result(${typeof b.content === 'string' ? b.content.length + 'ch' : Array.isArray(b.content) ? b.content.length + 'blocks' : '?'})`;
-          if (b?.type === 'thinking') return `thinking(${(b.thinking || '').length}ch)`;
-          if (b?.type === 'text') return `text(${(b.text || '').length}ch)`;
-          if (b?.type === 'image') return `image`;
-          return b?.type || '?';
-        }).join(',');
-      }
-      console.info(`[binary-fixup kimi]   [${i}] role=${role} blocks=[${blockTypes}]`);
-    });
   }
 
   if (!parsed.model || typeof parsed.model !== 'string') return body;
-  if (!/^kimi/i.test(parsed.model)) return body;  // 只动 kimi-*
+  if (!/^kimi/i.test(parsed.model)) return body;
 
-  // S8 workaround：Kimi 网关不识别 tool_result.content 里嵌套的 image content
-  // block（实测同样 base64 image 在 user message 顶层 Kimi 完美 vision，但放到
-  // tool_result 嵌套里 model 报"看不到图"凭文件名 hallucinate）。我们 lift
-  // image 到 user message 顶层 + tool_result 里替换为占位文本，保持工具关联
-  // 同时让 Kimi 真看到图。
   let mutated = false;
+
+  // Kimi vision lift（保留 — 主代理仍 kimi-k2.6）
   if (Array.isArray(parsed.messages) && liftImagesFromToolResult(parsed.messages)) {
     mutated = true;
   }
 
-  // S9 workaround（保守版，仅针对 kimi-k2.5）：SDK helper / subagent / WebFetch
-  // 全显式分流到 kimi-k2.5（loop.js / agents/index.js 选这个 model 名），
-  // proxy 检测 model === 'kimi-k2.5' → body.thinking → 'disabled'，避免 Moonshot
-  // 严格拒 "reasoning_content missing"。主 agent 走 kimi-k2.6 不受影响。
-  // 不动 messages 内容（不插 thinking / tool_result，不删 thinking blocks）。
-  // 主 agent 偶发因 Kimi 不返 thinking 而 400 的情况不兜底（保守 = 只动 helper 路）。
-  if (parsed.model === 'kimi-k2.5' && parsed.thinking && parsed.thinking.type !== 'disabled') {
-    parsed.thinking = { type: 'disabled' };
-    mutated = true;
-  }
-
-  // thinking adaptive→enabled
+  // thinking adaptive → enabled（保留 — kimi-k2.6 主代理）
   if (parsed.thinking && parsed.thinking.type === 'adaptive') {
     parsed.thinking = { type: 'enabled', budget_tokens: 8192 };
     mutated = true;
@@ -261,12 +235,30 @@ function maybeFixupMessagesBody(body) {
   return mutated ? Buffer.from(JSON.stringify(parsed), 'utf8') : body;
 }
 
+/**
+ * 把请求 body 包装成 NoDesk passthrough 格式。
+ *
+ * 输入：原始 Anthropic Messages API body（含 model / messages / thinking / ...）
+ * 输出：在 body 顶层注入 channel + channel_url，其他字段原样保留
+ *
+ * 失败 fail-soft：parse 异常返回原 body（NoDesk 会拒，但不在 proxy 这层崩）
+ */
+function wrapAsNodeskPassthrough(body, { channel, channelUrl }) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body.toString('utf8'));
+  } catch {
+    return body;
+  }
+  if (!parsed || typeof parsed !== 'object') return body;
+  parsed.channel = channel;
+  parsed.channel_url = channelUrl;
+  return Buffer.from(JSON.stringify(parsed), 'utf8');
+}
 
 /**
  * Kimi tool_result-image fix（S8）：把 tool_result.content 里的 image block
  * 提到外层 user message content 顶层；原位置替换为占位文本说明图片在末尾。
- *
- * @returns true if mutated
  */
 function liftImagesFromToolResult(messages) {
   let mutated = false;
@@ -294,13 +286,8 @@ function liftImagesFromToolResult(messages) {
   return mutated;
 }
 
-/**
- * 扫 messages 数组里所有 image content block 出现位置 + 是否是标准
- * base64 形态。返回 stats 用于 vision 诊断日志。
- */
 function scanImageBlocks(messages) {
   const stats = { total: 0, inToolResult: 0, inUserMsg: 0, unknownImageRefs: 0 };
-  let firstSample = null;
   for (const msg of messages) {
     if (!Array.isArray(msg.content)) continue;
     for (const block of msg.content) {
@@ -308,7 +295,6 @@ function scanImageBlocks(messages) {
         stats.total++;
         stats.inUserMsg++;
         if (!block.source?.data) stats.unknownImageRefs++;
-        if (!firstSample) firstSample = imageBlockSummary(block, 'userMsg');
       }
       if (block?.type === 'tool_result' && Array.isArray(block.content)) {
         for (const inner of block.content) {
@@ -316,32 +302,19 @@ function scanImageBlocks(messages) {
             stats.total++;
             stats.inToolResult++;
             if (!inner.source?.data) stats.unknownImageRefs++;
-            if (!firstSample) firstSample = imageBlockSummary(inner, 'toolResult');
           }
         }
       }
     }
   }
-  // 第一次出现 image 时打 sample 看具体 schema 形态
-  if (firstSample) {
-    console.info(`[binary-fixup vision sample] ${firstSample}`);
-  }
   return stats;
 }
 
-function imageBlockSummary(block, where) {
-  const src = block?.source;
-  if (!src) return `${where}: type=${block?.type} (no source field)`;
-  const dataLen = typeof src.data === 'string' ? src.data.length : 'N/A';
-  const dataHead = typeof src.data === 'string' ? src.data.slice(0, 24) + '...' : 'N/A';
-  return `${where}: keys=[${Object.keys(block).join(',')}] source.keys=[${Object.keys(src).join(',')}] source.type=${src.type} source.media_type=${src.media_type} dataLen=${dataLen} dataHead=${dataHead}`;
-}
-
 /**
- * URL path 拼接：target base path + incoming req path（避免重复 / 或丢段）。
+ * URL path 拼接：target base path + downstream path（避免重复 / 或丢段）。
  *
- * 例如：target.pathname='/gateway'，req.url='/v1/messages?beta=true'
- *    → '/gateway/v1/messages?beta=true'
+ * 例如：target.pathname=''，downstream='/default/passthrough'
+ *    → '/default/passthrough'
  */
 function joinPath(base, reqPath) {
   const cleanBase = (base || '').replace(/\/$/, '');

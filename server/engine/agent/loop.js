@@ -35,7 +35,7 @@ import { registerRun, attachQuery, unregisterRun, registerPendingQuestion, regis
 import { loadSkill } from './skill.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
-import { createAgents } from '../agents/index.js';
+import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
 import { platform } from '../../runtime/platform.js';
 
@@ -254,19 +254,26 @@ export async function runAgent({
   // SDK binary 对非白名单 model（如 kimi-k2.6）会强制把 thinking type 转成
   // 'adaptive'，但 Kimi gateway 不支持 adaptive → 0 thinking blocks。
   // binary-fixup-proxy 在 binary 出口拦 /v1/messages POST 把 adaptive 改回
-  // enabled+budget_tokens，让 Kimi 正确输出 thinking。详见
-  // memory `feedback_kimi_thinking_blocks.md` + lib/binary-fixup-proxy.js 注释。
+  // enabled+budget_tokens，并把请求包装成 NoDesk passthrough 格式（注入
+  // channel + channel_url）。详见 lib/binary-fixup-proxy.js 顶部注释。
   const realGatewayUrl = process.env.NODESIGN_GATEWAY_URL || process.env.ANTHROPIC_BASE_URL;
   let baseUrlForBinary = realGatewayUrl;
   if (realGatewayUrl) {
     try {
       const proxy = await getOrStartProxy(realGatewayUrl);
-      baseUrlForBinary = proxy.baseUrl;
+      // 把 sessionId（或退一步用 runId）编码进 BASE_URL 路径，让 proxy 能从
+      // incoming req.url 解析出来 → 透传给 NoDesk 做 ND-Thread-Id。
+      const sessionTag = encodeURIComponent(sessionId || runId);
+      baseUrlForBinary = `${proxy.baseUrl}/__nd/${sessionTag}`;
     } catch (err) {
       console.warn(`[loop] binary-fixup-proxy start failed, using direct gateway:`, err.message);
       // fail-soft：proxy 起不来回退到直连，thinking 可能仍丢失但 agent 能跑
     }
   }
+
+  // 快速 model（subagent + SDK helper）解析 —— resolveDefaultFastModel 默认根据
+  // 主 model 推断（kimi-k2.6 → claude-haiku-4-5-20251001-cc），env 显式覆盖。
+  const fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
 
   const sdkOptions = {
     cwd: cwdRoot,
@@ -294,18 +301,11 @@ export async function runAgent({
       // 不能用 per-session 本地路径，否则 resume 探测、sessions API 的 list/fork/delete
       // 会与实际存储位置分裂。
       CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
-      // ANTHROPIC_SMALL_FAST_MODEL（S9 保守版）：
-      // SDK helper（promptSuggestions / agentProgressSummaries / askUserQuestion
-      // classifier / title gen / WebFetch summarize 等）默认走 claude-haiku
-      // → Kimi gateway 返 400 "模型不存在"，WebFetch 整个错传回 agent。
-      //
-      // 主 agent 用 kimi-k2.6 时，helper 改用 kimi-k2.5（同一 Moonshot 后端，
-      // 但 model 名不同 → proxy 可针对 k2.5 单独关 thinking，不影响 k2.6 主 agent）。
-      // proxy fix 在 binary-fixup-proxy.js：parsed.model === 'kimi-k2.5' 时
-      // 强制 thinking: disabled，避免 Moonshot "reasoning_content missing" 严格拒。
-      ...(model && /^kimi-k2\.6/i.test(model) ? {
-        ANTHROPIC_SMALL_FAST_MODEL: 'kimi-k2.5',
-      } : {}),
+      // ANTHROPIC_SMALL_FAST_MODEL：SDK 内部 helper（promptSuggestions /
+      // agentProgressSummaries / askUserQuestion classifier / title gen /
+      // WebFetch summarize 等）的快速模型。当前默认 claude-haiku-4-5-20251001-cc
+      // （DMXAPI -cc 变体，Anthropic 协议、3.4 折）。env NODESIGN_FAST_MODEL 覆盖。
+      ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
     },
 
     model,
@@ -406,20 +406,20 @@ export async function runAgent({
     //   4. 用户填完 POST /elicit/:reqId/answer → provideElicitation → resolve
     //   5. SDK 拿到 ElicitationResult 继续
     //
-    // 当前没前端 UI，临时策略：emit 事件后默认 decline（不 hang），后续接通 UI
-    // 时把 decline 改成真 await。
+    // Phase B 批次 4：前端 ElicitationModal 接通。流程：
+    //   MCP 工具调 server.elicitInput() → SDK 这个回调 → emit run.elicitation_request
+    //   → 前端弹 modal → 用户答 → POST /elicit/:reqId/answer → provideElicitation
+    //   resolve → SDK 拿到结果继续。
+    // 60s 超时给用户填表时间（之前 5s 太短）；仍兜底防 MCP 工具卡死整个 agent loop。
     onElicitation: async (request, _options) => {
       const reqId = randomUUID();
       try {
-        ctx.emit({ type: 'run.elicitation_request', reqId, request });
+        ctx.emit({ type: 'run.elicitation_request', reqId, request, runId });
       } catch { /* ignore */ }
-      // TODO: 接通前端 UI 后改成 await registerPendingElicitation(runId, reqId)
-      // 当前直接 decline，避免 hang
       try {
         const p = registerPendingElicitation(runId, reqId);
-        // 5s 内等不到答案 → 自动 decline（防 MCP 工具卡死整个 agent loop）
         const timeoutPromise = new Promise(resolve =>
-          setTimeout(() => resolve({ action: 'decline' }), 5000),
+          setTimeout(() => resolve({ action: 'decline' }), 60_000),
         );
         return await Promise.race([p, timeoutPromise]);
       } catch {
@@ -554,9 +554,9 @@ export async function runAgent({
       nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, ctx }),
     },
 
-    // C13 子代理定义（vision-checker / ds-extractor / tweak-proposer）
-    // 这次只挂骨架；main agent 通过 SKILL.md 引导不主动调，stage 2 接通流程
-    agents: createAgents(),
+    // C13 子代理定义（vision-checker / ds-extractor / tweak-proposer / explorer）
+    // 主 agent 通过 SKILL.md 引导调用；4 个子代理共用 fastModel
+    agents: createAgents({ mainModel: model, fastModel }),
 
     stderr: (data) => {
       // 子进程 stderr → 调试日志（不入 EventBus 避免噪声）
@@ -577,6 +577,12 @@ export async function runAgent({
   const promptInput = userContentBlocks && Array.isArray(userContentBlocks) && userContentBlocks.length > 0
     ? buildUserMessageStream(userContentBlocks)
     : buildUserMessageStream(brief);
+
+  // ND-Trace-Id 透传：proxy 读 process.env.NODESIGN_CURRENT_TURN_ID 写到
+  // 转发请求 header（NoDesk 后台按 trace 串单轮 LLM 调用链路）。
+  // runAgent 是 per-run 单轮，整轮 = 一个 trace。finally 块清理避免污染下次。
+  const prevTurnId = process.env.NODESIGN_CURRENT_TURN_ID;
+  process.env.NODESIGN_CURRENT_TURN_ID = runId;
 
   try {
     // 注：resume 失败 fallback 已删（Phase 4.1 cleanup）。原本是为 streamInput
@@ -719,6 +725,9 @@ export async function runAgent({
     // 不论 succeeded / failed / cancelled，从 registry 注销 controller
     // 防止 in-memory map 泄漏（也防 cancel endpoint 拿到已死 controller）
     unregisterRun(runId);
+    // 还原 turn id 环境变量（避免污染 server 进程后续无关请求）
+    if (prevTurnId === undefined) delete process.env.NODESIGN_CURRENT_TURN_ID;
+    else process.env.NODESIGN_CURRENT_TURN_ID = prevTurnId;
   }
 }
 

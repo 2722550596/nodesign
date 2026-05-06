@@ -35,6 +35,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { AgentContext } from './context.js';
 import { Events } from './events.js';
 import { markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata } from '../runs/store.js';
+import { randomUUID } from 'node:crypto';
 import {
   registerQuerySession,
   attachSessionQuery,
@@ -42,11 +43,12 @@ import {
   getCurrentTurnRunId,
   setCurrentTurnRunId,
   registerPendingQuestion,
+  registerPendingElicitation,
 } from '../runs/active-runs.js';
 import { loadSkill } from './skill.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
-import { createAgents } from '../agents/index.js';
+import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
@@ -141,11 +143,15 @@ export async function runSession({
   if (realGatewayUrl) {
     try {
       const proxy = await getOrStartProxy(realGatewayUrl);
-      baseUrlForBinary = proxy.baseUrl;
+      // 编码 sessionId 进 BASE_URL 路径 → proxy 解析后透传给 NoDesk 的 ND-Thread-Id
+      baseUrlForBinary = `${proxy.baseUrl}/__nd/${encodeURIComponent(sessionId)}`;
     } catch (err) {
       console.warn(`[session-loop] proxy start failed, fallback direct: ${err.message}`);
     }
   }
+
+  // 快速 model（subagent + SDK helper 共用）
+  const fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
 
   // 检测 jsonl 是否已存在 —— 决定走 resume（已存在）还是 sessionId（新建）
   // 之前的 bug：session-loop 永远传 sessionId，但如果用户 close session 后又
@@ -169,9 +175,8 @@ export async function runSession({
       ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
       CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
-      ...(model && /^kimi-k2\.6/i.test(model) ? {
-        ANTHROPIC_SMALL_FAST_MODEL: 'kimi-k2.5',
-      } : {}),
+      // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。详见 loop.js 同段注释
+      ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
     },
 
     model,
@@ -203,6 +208,33 @@ export async function runSession({
         return { behavior: 'allow', updatedInput: { ...input, answers } };
       } catch (err) {
         return { behavior: 'deny', message: err.message, interrupt: true };
+      }
+    },
+
+    // Phase B 批次 4：MCP elicitation 接通前端 Modal。
+    // 流程：MCP 工具调 server.elicitInput() → SDK 调这个回调 → 我们 emit
+    // run.elicitation_request 给前端 → ElicitationModal 弹出 → 用户填完 POST
+    // /elicit/:reqId/answer → provideElicitation 返回 { action, content } → SDK
+    // 拿到结果继续工具调用。
+    // 60s 超时是为了给用户填表时间（之前 5s 太短，未来真用 elicit 时永远没机会答）；
+    // 仍兜底防 MCP 工具卡死整个 agent loop。
+    onElicitation: async (request, _options) => {
+      const reqId = randomUUID();
+      const currentRunId = getCurrentTurnRunId(sessionId);
+      try {
+        sharedCtx.emit({ type: 'run.elicitation_request', reqId, request, runId: currentRunId });
+      } catch { /* ignore */ }
+      if (!currentRunId) {
+        return { action: 'decline' };
+      }
+      try {
+        const p = registerPendingElicitation(currentRunId, reqId);
+        const timeoutPromise = new Promise(resolve =>
+          setTimeout(() => resolve({ action: 'decline' }), 60_000),
+        );
+        return await Promise.race([p, timeoutPromise]);
+      } catch {
+        return { action: 'decline' };
       }
     },
 
@@ -274,7 +306,7 @@ export async function runSession({
       nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, ctx: sharedCtx }),
     },
 
-    agents: createAgents(),
+    agents: createAgents({ mainModel: model, fastModel }),
 
     stderr: (data) => {
       console.error(`[session ${sessionId.slice(0, 8)}/claude.stderr]`, data.trim());
@@ -298,6 +330,10 @@ export async function runSession({
     };
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
+    // 当前 turn id 写到 process.env，让 binary-fixup-proxy 拦截 LLM 请求时拿到
+    // 透传成 ND-Trace-Id（NoDesk 后台按 trace 串单轮 LLM 调用链路）。SDK 串行
+    // 处理 turn，全局变量在同一时刻只对应一个活动 turn，无 race。
+    process.env.NODESIGN_CURRENT_TURN_ID = runId;
     markRunStarted(runId);
     sharedCtx.emit(Events.start());
   };
@@ -327,6 +363,8 @@ export async function runSession({
     // system message"（status / post_turn_summary 等）进 stream 时，cid 仍 = 已结束
     // 的老 runId 会触发 startTurn() 再调 markRunStarted() 抛"不在 pending 状态"
     setCurrentTurnRunId(sessionId, null);
+    // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
+    delete process.env.NODESIGN_CURRENT_TURN_ID;
   };
 
   // ── main stream loop ──
