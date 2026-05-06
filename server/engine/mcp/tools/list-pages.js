@@ -12,6 +12,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { DECK } from '../../../shared/deck.js';
 
 /**
  * @param {object} deps
@@ -54,7 +55,7 @@ Lighter than read_page (which returns full outerHTML of one page).`,
       try {
         const { chromium } = await import('playwright');
         browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+        const page = await browser.newPage({ viewport: { width: DECK.width, height: DECK.height } });
         await page.goto(`file://${canvasPath}`, { waitUntil: 'networkidle', timeout: 15000 });
 
         const pages = await page.$$eval('section[data-page]', (sections) => {

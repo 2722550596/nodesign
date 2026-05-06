@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { DECK } from '../../../shared/deck.js';
 
 const MAX_RESULTS = 50;
 
@@ -79,7 +80,7 @@ Returns up to 50 matches; further results truncated with a hint.`,
       try {
         const { chromium } = await import('playwright');
         browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+        const page = await browser.newPage({ viewport: { width: DECK.width, height: DECK.height } });
         await page.goto(`file://${canvasPath}`, { waitUntil: 'networkidle', timeout: 15000 });
 
         const result = await page.evaluate(({ sel, max }) => {

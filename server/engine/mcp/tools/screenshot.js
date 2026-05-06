@@ -6,7 +6,7 @@
  *
  * 调用约定（agent 端）：
  *   mcp__nodesign__screenshot_canvas
- *     viewport?: { width, height }   默认 1280x720
+ *     viewport?: { width, height }   默认 DECK（1920x1080）
  *     fullPage?: boolean              默认 true（完整可滚动页面）
  *     selector?: string               若给则截匹配的第一个元素 bbox（覆盖 fullPage）
  *     pageIndex?: number              若给则截 section[data-page="N"] 整页（覆盖 fullPage）
@@ -31,8 +31,9 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { DECK } from '../../../shared/deck.js';
 
-const DEFAULT_VIEWPORT = { width: 1280, height: 720 };
+const DEFAULT_VIEWPORT = { width: DECK.width, height: DECK.height };
 
 /**
  * @param {object} deps
@@ -47,8 +48,9 @@ as an image content block. Use this to visually inspect the design you wrote
 — check spacing, contrast, hierarchy, layout, alignment.
 
 The screenshot uses headless chromium at the given viewport (default
-1280x720). Set fullPage=true (default) to capture the full scrollable page,
-or false to only capture the visible viewport.
+1920x1080, the deck design coordinate system). Set fullPage=true (default)
+to capture the full scrollable page, or false to only capture the visible
+viewport. Output is rendered at deviceScaleFactor=2 → 4K-ready bitmap.
 
 Targeted captures (overrides fullPage):
 - selector: capture only the first element matching this CSS selector
@@ -73,7 +75,7 @@ Do NOT use this tool when:
           height: z.number().int().min(240).max(2160),
         })
         .optional()
-        .describe('Browser viewport size; defaults to 1280x720'),
+        .describe('Browser viewport size; defaults to 1920x1080 (deck native)'),
       fullPage: z
         .boolean()
         .optional()

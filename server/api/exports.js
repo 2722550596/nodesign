@@ -23,6 +23,7 @@ import { validateProjectId, getProject, listRunsForProject } from '../projects/s
 import {
   getSessionWorkspace, getSharedDir, validateSessionId,
 } from '../projects/workspace.js';
+import { DECK } from '../shared/deck.js';
 
 const router = express.Router();
 
@@ -188,7 +189,7 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
 
 // PPTX：playwright 截每个 section[data-page] PNG → pptxgenjs 嵌图
 // MVP 位图方案：用户拿到的 PPTX 文字不可编辑（每页是图），但视觉 1:1 还原
-// 16:9 默认 layout（10" × 5.625"）匹配 deck 1280×720 比例
+// 16:9 默认 layout（10" × 5.625"）匹配 deck 1920×1080 比例（pageSize.h/pageSize.w * 10 公式自动算）
 router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
   try {
     const project = guard(req, res);
@@ -353,7 +354,7 @@ NoDesign 工程交付包。
 ## 怎么用
 
 直接在浏览器打开 \`design/canvas.html\` 看 deck。
-导出 PDF：用浏览器打印（1280×720 视口最佳）。
+导出 PDF：用浏览器打印（${DECK.width}×${DECK.height} 视口最佳）。
 
 ---
 导出时间：${new Date().toISOString()}
@@ -371,7 +372,7 @@ async function prepareExportPage(browser, filePath, opts = {}) {
   const dpr = opts.dpr ?? 2;
 
   const ctx = await browser.newContext({
-    viewport: { width: 1280, height: 720 },
+    viewport: { width: DECK.width, height: DECK.height },
     deviceScaleFactor: dpr,
   });
   const page = await ctx.newPage();
@@ -380,54 +381,76 @@ async function prepareExportPage(browser, filePath, opts = {}) {
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(200);
 
+  // 抹掉 body margin + 把可能存在的 fit wrapper transform 还原为 1:1
+  // —— viewport 已经 = DECK.width，scale 没必要再做（PDF 渲染要原生坐标）
   await page.addStyleTag({ content: `
     body { margin: 0 !important; padding: 0 !important; }
+    body.__nd-fit-active > .__nd-deck-wrap { transform: none !important; }
   ` });
 
-  const pageSize = await page.evaluate(() => {
+  const fallback = { w: DECK.width, h: DECK.height };
+  const pageSize = await page.evaluate((fb) => {
     const first = document.querySelector('section[data-page]');
-    if (!first) return { w: 1280, h: 720 };
+    if (!first) return fb;
     const rect = first.getBoundingClientRect();
     return { w: Math.round(rect.width), h: Math.round(rect.height) };
-  });
+  }, fallback);
 
   return { page, ctx, pageSize };
 }
 
 /**
- * 导出 HTML 时注入 viewport 自适应脚本。
- * 仅在独立打开时生效（iframe 内跳过），不影响 App 预览和 Playwright 截图。
- * 逻辑与前端 CanvasFrame.jsx 的 fit 模式一致：scale(viewportWidth / 1280)。
+ * 导出 HTML 时注入 viewport 自适应脚本（服务端兜底）。
+ *
+ * 逻辑：scale(viewportWidth / DECK.width) 让任意视口宽都满铺 + 完整。
+ * 仅在独立打开时生效（iframe 内 window!==top 早退，前端 CanvasFrame 自算 scale）。
+ *
+ * 兼容 agent 模板：agent 写的 wrapper 用同一个 className `.__nd-deck-wrap`，
+ * 这里 querySelector 检测到已存在就复用，避免双层 wrap。
+ *
+ * className 选 `.__nd-deck-wrap` + classList `.__nd-fit-active` 跟 SKILL.md
+ * 模板共享 —— 这是契约，改名要两端一起改。
  */
 const VIEWPORT_FIT_SNIPPET = `
-<style id="__nd-viewport-fit">
-body.__nd-fit{margin:0;overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column;align-items:center;min-height:100vh}
-body.__nd-fit>.__nd-wrap{transform-origin:top center;flex-shrink:0}
+<style id="__nd-fit-style">
+body{margin:0}
+body.__nd-fit-active{overflow-x:hidden;display:flex;flex-direction:column;align-items:center;background:var(--bg,#fff)}
+body.__nd-fit-active>.__nd-deck-wrap{width:${DECK.width}px;transform-origin:top center;flex-shrink:0}
 </style>
 <script>(function(){
 if(window!==window.top)return;
-var W=1280,body=document.body,wrap=document.createElement('div');
-wrap.className='__nd-wrap';
-while(body.firstChild)wrap.appendChild(body.firstChild);
-body.appendChild(wrap);body.classList.add('__nd-fit');
+var W=${DECK.width},body=document.body;
+var wrap=body.querySelector(':scope > .__nd-deck-wrap');
+if(!wrap){
+wrap=document.createElement('div');
+wrap.className='__nd-deck-wrap';
+while(body.firstChild&&body.firstChild!==wrap)wrap.appendChild(body.firstChild);
+body.appendChild(wrap);
+}
+body.classList.add('__nd-fit-active');
 function fit(){
 var vw=Math.max(document.documentElement.clientWidth||0,320);
 var s=vw/W;
 wrap.style.transform=s!==1?'scale('+s+')':'';
-wrap.style.width=W+'px';
-var h=wrap.scrollHeight;
-wrap.style.marginBottom=s!==1?-(h*(1-s))+'px':'';
+body.style.height=(wrap.scrollHeight*s)+'px';
 }
 fit();window.addEventListener('resize',fit);
 if(document.fonts)document.fonts.ready.then(fit);
 })()</script>`;
 
 function injectViewportFit(html) {
-  // 1. 替换 agent 写的固定 viewport meta → 响应式 viewport
-  html = html.replace(
-    /<meta\s+name=["']viewport["'][^>]*>/i,
-    '<meta name="viewport" content="width=device-width,initial-scale=1">',
-  );
+  // 1. 替换 agent 写的固定 viewport meta → 响应式 viewport（让 fit script 控）
+  if (/<meta\s+name=["']viewport["'][^>]*>/i.test(html)) {
+    html = html.replace(
+      /<meta\s+name=["']viewport["'][^>]*>/i,
+      '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    );
+  } else if (html.includes('</head>')) {
+    html = html.replace(
+      '</head>',
+      '<meta name="viewport" content="width=device-width,initial-scale=1">\n</head>',
+    );
+  }
 
   // 2. 插入自适应脚本到 </body> 或 </html> 之前；都没有就追加到末尾
   if (html.includes('</body>')) {
