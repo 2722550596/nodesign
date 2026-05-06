@@ -57,15 +57,51 @@ const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'imag
 
 const router = express.Router();
 
+/**
+ * Phase A.6（2026-05-07）：requestId LRU dedup —— 弱网下用户重发 / fetch retry
+ * 同 requestId 直接返已存在的 { runId, sessionId }，不重复 createRun / startNewRunSession。
+ *
+ * 数据：Map<requestId, { pid, runId, sessionId, ts }>，简单 5 分钟 TTL + 1024 容量上限
+ * （超过先驱逐最旧）。同进程内存，重启清空（此时活 run 也都死了，一致）。
+ */
+const REQUEST_LRU_TTL_MS = 5 * 60 * 1000;
+const REQUEST_LRU_MAX = 1024;
+const requestLru = new Map();
+function lruGet(requestId) {
+  const rec = requestLru.get(requestId);
+  if (!rec) return null;
+  if (Date.now() - rec.ts > REQUEST_LRU_TTL_MS) {
+    requestLru.delete(requestId);
+    return null;
+  }
+  return rec;
+}
+function lruPut(requestId, rec) {
+  if (requestLru.size >= REQUEST_LRU_MAX) {
+    // 驱逐最早（Map 保留插入顺序）
+    const firstKey = requestLru.keys().next().value;
+    if (firstKey) requestLru.delete(firstKey);
+  }
+  requestLru.set(requestId, { ...rec, ts: Date.now() });
+}
+
 router.post('/:pid/turn', async (req, res, next) => {
   try {
     validateProjectId(req.params.pid);
     const project = getProject(req.params.pid);
     if (!project) return res.status(404).json({ error: 'project not found' });
 
-    const { chat, attachments, skillId, sessionId, permissionMode } = req.body || {};
+    const { chat, attachments, skillId, sessionId, permissionMode, requestId } = req.body || {};
     if (!chat || typeof chat !== 'string' || !chat.trim()) {
       return res.status(400).json({ error: 'chat string required' });
+    }
+
+    // Phase A.6：requestId 命中 LRU → 直接返已存在的 run/session（弱网重发幂等）
+    if (typeof requestId === 'string' && requestId) {
+      const cached = lruGet(requestId);
+      if (cached && cached.pid === project.id) {
+        return res.status(202).json({ runId: cached.runId, sessionId: cached.sessionId, deduped: true });
+      }
     }
     // Phase 3.2：前端 plan-mode toggle 传 permissionMode='plan' 启用 SDK 原生 plan mode；
     // 其他值（含不传）显式走 bypassPermissions（自动化 design agent 默认 — 见 SDK
@@ -110,6 +146,11 @@ router.post('/:pid/turn', async (req, res, next) => {
 
     // 创建 run（pending）— per-turn record，displayText 落 brief 字段做审计
     const run = createRun({ skillId: finalSkillId, brief: displayText, projectId: project.id });
+
+    // Phase A.6：写 LRU 让后续重试同 requestId 拿到一致 (runId, sid)
+    if (typeof requestId === 'string' && requestId) {
+      lruPut(requestId, { pid: project.id, runId: run.id, sessionId: sid });
+    }
 
     // 立即返回，agent 后台跑
     res.status(202).json({ runId: run.id, sessionId: sid });

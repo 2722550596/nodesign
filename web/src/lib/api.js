@@ -200,11 +200,27 @@ export const Turn = {
    *   - 'plan' → 启用 SDK 原生 plan mode（read-only + ExitPlanMode 审批流）
    *   - 其他/不传 → 默认 bypassPermissions
    */
-  send: ({ pid, chat, attachments = [], skillId, sessionId, permissionMode }) => {
+  send: async ({ pid, chat, attachments = [], skillId, sessionId, permissionMode, requestId }) => {
+    // Phase A.6（2026-05-07）：requestId 幂等防重发。
+    // 弱网下用户可能点两次发送或 fetch 超时自动重试。后端 LRU 同 requestId 直接返
+    // 已存在的 { runId, sessionId } 不重复创建 session/run。
+    // 调用方不传 requestId 时本地生成；显式重试时 caller 必须复用 requestId。
     const body = { chat, attachments, skillId };
     if (sessionId !== undefined) body.sessionId = sessionId;
     if (permissionMode) body.permissionMode = permissionMode;
-    return jsonRequest('POST', `/api/projects/${pid}/turn`, body);
+    body.requestId = requestId || (crypto?.randomUUID
+      ? crypto.randomUUID()
+      : `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+    // 自带 1 次重试：网络抖 / 5xx 时同 requestId 重发，命中 LRU 拿到一致 runId
+    try {
+      return await jsonRequest('POST', `/api/projects/${pid}/turn`, body);
+    } catch (err) {
+      const code = err?.status;
+      const retryable = !code || code >= 500 || code === 0;
+      if (!retryable) throw err;
+      await new Promise(r => setTimeout(r, 500));
+      return jsonRequest('POST', `/api/projects/${pid}/turn`, body);
+    }
   },
 
   /**

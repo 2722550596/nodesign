@@ -50,6 +50,17 @@ export default function ProjectWorkspace() {
   const location = useLocation();
   const currentSessionId = urlSid || null;
 
+  // Phase A.1（2026-05-07）：sessionId Ref 避开 React 闭包陈旧。
+  // handleSend 是 async 闭包，await Turn.send 后再读 currentSessionId 拿的是闭包
+  // 创建那一刻的值；navigate 异步触发 useParams 重渲染，但 handleSend 闭包持的还是旧
+  // currentSessionId。结果：用户连发两条 chat（极快），第二条 handleSend 读到 null
+  // 把 sessionId=null 传给 turn.js → hasActiveQuerySession 返 false → 起新 session。
+  // 修法：实时维护 sessionIdRef.current = 当前真值，handleSend 优先读 ref。
+  const sessionIdRef = useRef(currentSessionId);
+  useEffect(() => {
+    sessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
   // ── store ──
   const project = useProjectStore(s => s.projects.find(p => p.id === id));
   const hydrateOne = useProjectStore(s => s.hydrateOne);
@@ -99,6 +110,11 @@ export default function ProjectWorkspace() {
   const [tweaksReloadKey, setTweaksReloadKey] = useState(0);
   // 终止生成：当前活跃 run 的 id（Turn.send 返回时记，run.done/error/cancelled 清）
   const [currentRunId, setCurrentRunId] = useState(null);
+  // Phase A.5：currentRunIdRef 跟 state 同步，给 handleEvent 闭包用（防 stale closure）。
+  // run.done/cancelled/error 必须 guard `evt.runId === currentRunIdRef.current` 才清 state，
+  // 否则 stale 事件（WS 重放 / 后端慢）会清掉新一 turn 的状态。
+  const currentRunIdRef = useRef(null);
+  useEffect(() => { currentRunIdRef.current = currentRunId; }, [currentRunId]);
   // SDK TodoWrite 工具的实时计划清单（run.todo.updated 推）
   // 新一轮 run.start 清空；done/cancelled/error 保留作"上一轮完成情况"
   const [todos, setTodos] = useState([]);
@@ -251,20 +267,53 @@ export default function ProjectWorkspace() {
 
   // ── open WS once project exists ──
   // 依赖 project?.id 而非整个 project 对象，避免 status patch 触发重连
+  // Phase A.4：wsRef 让 currentSessionId 变化时能调 reconnectForSession 让 server 用新 sid 推 hydrate
+  const wsRef = useRef(null);
+  // Phase A.4：hydrate 缓冲 — chunks 累积到 end 一次性 setMessages
+  const hydrateBufferRef = useRef([]);
   useEffect(() => {
     if (!hydrated || hydrateError || !project) return;
     const ws = openProjectWS({
       projectId: id,
+      // Phase A.4：getSid callback 让 ws-client 重连时能拿到最新 sid（避免闭包陈旧）
+      getSid: () => sessionIdRef.current,
       onEvent: (evt) => {
         setLastEventAt(Date.now());     // 记录最近一次事件时间，给"无事件超时"用
         applyRunEvent(id, evt);
         handleEvent(evt);
       },
-      onStatusChange: setWsStatus,
+      onStatusChange: (status) => {
+        setWsStatus(status);
+        // Phase A.2（2026-05-07）：WS 断 / 重连中时强制 reset isStreaming —— 否则
+        // UI 卡 isStreaming=true 但收不到 delta，用户看到"在跑"实际没事件来。
+        // 不清 currentRunId（cancel 仍可用）；重连后若 run 还活着 SDK 会接续推。
+        // open / connecting 不动 state。
+        if (status === 'reconnecting' || status === 'closed') {
+          setIsStreaming(false);
+        }
+      },
     });
-    return () => ws.close();
+    wsRef.current = ws;
+    return () => {
+      wsRef.current = null;
+      ws.close();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, hydrated, hydrateError, project?.id]);
+
+  // Phase A.4：currentSessionId 变化时重连 WS 让 server 用新 sid 推 hydrate
+  // （首挂载除外 — 那时 wsRef 刚 open，它已经用最新 sid）
+  const lastReconnectedSidRef = useRef(null);
+  useEffect(() => {
+    if (!wsRef.current) return;
+    if (lastReconnectedSidRef.current === currentSessionId) return;
+    // 首次挂载（lastReconnectedSidRef.current === null && currentSessionId === null）
+    // 或 WS 刚 open 时 currentSessionId 已经是初值，不需要重连
+    if (lastReconnectedSidRef.current !== null) {
+      wsRef.current.reconnectForSession?.();
+    }
+    lastReconnectedSidRef.current = currentSessionId;
+  }, [currentSessionId]);
 
   // ── H4a: auto-send initialMessage from location.state（HubInput 入口）──
   // Hub 用户在 input box 输入 → navigate('/work', { state: { initialMessage } })
@@ -309,6 +358,37 @@ export default function ProjectWorkspace() {
   /** WS 事件 → chat messages / iframe reload 翻译层 */
   function handleEvent(evt) {
     switch (evt.type) {
+      // ── Phase A.4：WS hydrate 协议（server 推完整 messages 让前端不依赖 HTTP Sessions.read）──
+      case 'ws.hydrate.start':
+        // start { total, asOfSeq } 或 { kind:'error' }
+        if (evt.kind === 'error') {
+          // hydrate 失败兜底：原 useEffect[currentSessionId] Sessions.read 仍跑，作为 HTTP fallback
+          if (import.meta.env.DEV) console.warn('[ws.hydrate] server-side error:', evt.error);
+          break;
+        }
+        hydrateBufferRef.current = [];
+        break;
+      case 'ws.hydrate.chunk':
+        if (Array.isArray(evt.messages)) {
+          hydrateBufferRef.current = [...hydrateBufferRef.current, ...evt.messages];
+        }
+        break;
+      case 'ws.hydrate.end': {
+        const buffer = hydrateBufferRef.current;
+        hydrateBufferRef.current = [];
+        const display = sessionMessagesToDisplay(buffer);
+        // 防 wipe optimistic：hydrate 拿到空 messages（jsonl 还没 flush）但 current 有
+        // 内容（用户刚 setMessages 的 user msg + 流式 delta）→ 信任 current 不替换
+        setMessages(prev => (display.length === 0 && prev.length > 0 ? prev : display));
+        break;
+      }
+      case 'ws.connected':
+        // ws.connected 由 ws-client 处理 lastSeq；此处不需做事。但若 gap=true 且
+        // 没收到对应的 ws.hydrate.start（无 sid 路径 / hydrate 失败），可考虑退到
+        // HTTP Sessions.read fallback 重新 hydrate（暂不主动触发，由 useEffect[sid]
+        // 兜底）
+        break;
+
       case 'run.start':
         setIsStreaming(true);
         setTodos([]);
@@ -381,7 +461,17 @@ export default function ProjectWorkspace() {
             : m,
         ));
         break;
-      case 'run.done':
+      case 'run.done': {
+        // Phase A.5：用 ref 拿最新 currentRunId（handleEvent 闭包持的 currentRunId
+        // 可能 stale）。stale run.done（WS 重放 / 后端慢推上一 turn 的 result）来时
+        // 如果当前已是新 turn，不能清 state（会让用户的新 turn 假死）。
+        const liveRunId = currentRunIdRef.current;
+        if (liveRunId && evt.runId && evt.runId !== liveRunId) {
+          // stale event，仅 clearThinking 兜底但不动 isStreaming / currentRunId
+          if (import.meta.env.DEV) console.warn(`[event] stale run.done ${evt.runId} (current ${liveRunId}), ignoring state cleanup`);
+          setMessages(prev => clearThinkingStreaming(prev));
+          break;
+        }
         setIsStreaming(false);
         setCurrentRunId(null);
         setActiveRun(null);
@@ -408,6 +498,7 @@ export default function ProjectWorkspace() {
           }).catch(() => { /* ignore */ });
         }
         break;
+      }
       case 'run.file_changed':
         // C4: FileChanged hook → 仅对 canvas.html / *.html 后缀触发 iframe reload
         // 其他文件（spec.json / assets/* / .git/*）忽略
@@ -416,7 +507,13 @@ export default function ProjectWorkspace() {
           setReloadToken(t => t + 1);
         }
         break;
-      case 'run.error':
+      case 'run.error': {
+        // Phase A.5：stale event guard，同 run.done
+        const liveRunId = currentRunIdRef.current;
+        if (liveRunId && evt.runId && evt.runId !== liveRunId) {
+          if (import.meta.env.DEV) console.warn(`[event] stale run.error ${evt.runId} (current ${liveRunId}), ignoring`);
+          break;
+        }
         setIsStreaming(false);
         setCurrentRunId(null);
         setActiveRun(null);
@@ -428,7 +525,14 @@ export default function ProjectWorkspace() {
         }]);
         showToast(`运行失败：${evt.message || '未知错误'}`, 'error');
         break;
-      case 'run.cancelled':
+      }
+      case 'run.cancelled': {
+        // Phase A.5：stale event guard，同 run.done
+        const liveRunId = currentRunIdRef.current;
+        if (liveRunId && evt.runId && evt.runId !== liveRunId) {
+          if (import.meta.env.DEV) console.warn(`[event] stale run.cancelled ${evt.runId} (current ${liveRunId}), ignoring`);
+          break;
+        }
         setIsStreaming(false);
         setCurrentRunId(null);
         setActiveRun(null);
@@ -448,6 +552,7 @@ export default function ProjectWorkspace() {
           }).catch(() => { /* ignore */ });
         }
         break;
+      }
 
       // ── SDK helper events（P0：Phase B 批次 1）──
 
@@ -867,12 +972,15 @@ export default function ProjectWorkspace() {
 
     setMessages(ms => [...ms, { id: newId('msg'), role: 'user', content: text }]);
     try {
+      // Phase A.1：优先用 ref 拿 sessionId，避开 React async 闭包陈旧。
+      // 极快连发场景下 currentSessionId（useParams）还没刷过来，ref 已是最新。
+      const sidForRequest = sessionIdRef.current ?? currentSessionId;
       const { runId, sessionId: returnedSid } = await Turn.send({
         pid: id,
         chat: chatWithRecalls,
         attachments,
         // S4：显式传选中的 sessionId；null 时后端识别为"新建 session"
-        sessionId: currentSessionId,
+        sessionId: sidForRequest,
         permissionMode: planModeEnabled ? 'plan' : undefined,
       });
       setCurrentRunId(runId);  // 终止生成用
@@ -881,7 +989,9 @@ export default function ProjectWorkspace() {
       // streamInput 重构修：从 /work 路径起新 session 时立刻 navigate 到 /sessions/<sid>
       // —— 否则用户在第一 turn 跑完前发追加，currentSessionId 还是 null 会被当新 session
       // 起，跟原 session 脱钩（之前只在 run.done/cancelled 后 navigate，慢了一拍）
-      if (!currentSessionId && returnedSid) {
+      if (!sidForRequest && returnedSid) {
+        // Phase A.1：立即同步 ref，让下一条极快追加的 handleSend 拿到正确 sid（不依赖 navigate 的 useParams 异步刷新）
+        sessionIdRef.current = returnedSid;
         navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
       }
     } catch (err) {
@@ -1407,10 +1517,19 @@ function appendTextDelta(messages, role, text, runId) {
   if (!text) return messages;
   const cleared = role === 'thinking' ? messages : clearThinkingStreaming(messages);
   const last = cleared[cleared.length - 1];
-  if (last && last.role === role) {
+  // Phase A.5（2026-05-07）：merge 时加 runId 匹配检查 — 防 cross-turn 粘连
+  // 老逻辑：last.role === role 就 merge → 上一 turn 的 assistant text 会跟当前 turn
+  // 第一段 delta 粘到一起。新逻辑：role 同 + runId 同（或都没 runId）才 merge，
+  // 否则 push 新消息让两个 turn 自然分隔。
+  if (
+    last
+    && last.role === role
+    && (!runId || !last.runId || last.runId === runId)
+  ) {
     const merged = { ...last, content: (last.content || '') + text };
     if (role === 'thinking') merged.isStreaming = true;
-    // runId 用第一次创建时的（同一段连续 delta 共享一个 turn 的 runId）
+    // runId 用第一次创建时的（同一段连续 delta 共享一个 turn 的 runId）；若 last 还没 runId 而新 delta 带了，补上
+    if (runId && !last.runId) merged.runId = runId;
     return [...cleared.slice(0, -1), merged];
   }
   const created = { id: newId('msg'), role, content: text };

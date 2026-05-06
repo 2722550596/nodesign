@@ -30,7 +30,7 @@ const FATAL_CLOSE_CODES = new Set([
   4404, // 自定义：project not found（如果将来 server 用 4xxx 段）
 ]);
 
-export function openProjectWS({ projectId, onEvent, onClose, onStatusChange }) {
+export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, getSid }) {
   let ws = null;
   let reconnectTimer = null;
   let backoff = MIN_BACKOFF_MS;
@@ -46,7 +46,16 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange }) {
   function buildUrl() {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const base = `${proto}://${window.location.host}/ws/projects/${encodeURIComponent(projectId)}`;
-    return lastSeq > 0 ? `${base}?since=${lastSeq}` : base;
+    // Phase A.4：拼 sid 让 server 知道当前 session，连上后会推 ws.hydrate.* 补 messages。
+    // getSid 是 callback 让重连时能拿到最新 sid（避开闭包陈旧）。
+    const params = [];
+    if (lastSeq > 0) params.push(`since=${lastSeq}`);
+    let sid = null;
+    if (typeof getSid === 'function') {
+      try { sid = getSid(); } catch { sid = null; }
+    }
+    if (sid) params.push(`sid=${encodeURIComponent(sid)}`);
+    return params.length > 0 ? `${base}?${params.join('&')}` : base;
   }
 
   function connect() {
@@ -129,6 +138,24 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange }) {
         try { ws.close(); } catch { /* ignore */ }
         ws = null;
       }
+    },
+    /**
+     * Phase A.4：session 切换时重连 WS（让 server 用新 sid 推 hydrate）。
+     * 清 lastSeq=0 是因为新 session 跟旧 session 是不同 EventBus 内容，
+     * 旧 seq 在新 session 里没意义；让 server 走 since=0 路径触发首次 hydrate。
+     */
+    reconnectForSession() {
+      lastSeq = 0;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (ws) {
+        try { ws.close(); } catch { /* ignore */ }
+        ws = null;
+      }
+      backoff = MIN_BACKOFF_MS;
+      connect();
     },
   };
 }
