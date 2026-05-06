@@ -26,6 +26,9 @@ export default function ChatPanel({
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
   hasActiveSession = false,  // 有 currentSessionId 才显示"结束会话"入口
+  projectId,                   // Phase B 批次 2：rewindFiles 走 /api/projects/:pid/sessions/:sid/rewind
+  sessionId,
+  onCanvasReload,              // 回调：rewindFiles 成功后让 iframe bump reloadToken
 }) {
   // V2：streaming 状态从 header 移到 Send 按钮，header 不再显示文字。
   // agentProgress 还保留——后续如果想加进度气泡（hover Send 看 last tool）可用。
@@ -104,7 +107,13 @@ export default function ChatPanel({
       </div>
 
       <TodoPanel todos={todos} />
-      <MessageList messages={messages} isStreaming={isStreaming} />
+      <MessageList
+        messages={messages}
+        isStreaming={isStreaming}
+        projectId={projectId}
+        sessionId={sessionId}
+        onCanvasReload={onCanvasReload}
+      />
 
       {/* WS 连接异常 / agent 长时间无事件 — 让用户知道情况，避免误以为前端卡死 */}
       {(wsStatus === 'reconnecting' || wsStatus === 'closed' || stuckSeconds >= 30) && (

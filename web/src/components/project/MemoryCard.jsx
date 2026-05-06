@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, Pencil, Trash2 } from 'lucide-react';
+import { Lock, Pencil, Trash2, Paperclip, ChevronDown, ChevronRight } from 'lucide-react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Memory } from '../../lib/api.js';
@@ -17,9 +17,32 @@ import { useGlobalStore } from '../../stores/globalStore.js';
  */
 export default function MemoryCard({ projectId }) {
   const showToast = useGlobalStore(s => s.showToast);
+  const addPendingMemoryRecall = useGlobalStore(s => s.addPendingMemoryRecall);
+  const recallHistory = useGlobalStore(s => s.recallHistoryByProject[projectId] || []);
   const [memory, setMemory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingType, setEditingType] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  /**
+   * 主动 recall：把 agentType 的 memory 全文加进 pendingMemoryRecalls store。
+   * ProjectHub composer 提交时会自动 prepend 到 chat 文本。
+   */
+  const handleAttach = useCallback(async (agentType) => {
+    const at = agentType || '_root';
+    try {
+      const result = await Memory.read(projectId, at);
+      const content = (result?.content || '').trim();
+      if (!content) {
+        showToast(`「${agentType || 'main'}」memory 是空的`, 'warn');
+        return;
+      }
+      addPendingMemoryRecall({ agentType: agentType || null, content });
+      showToast(`已加到下条消息：${agentType || 'main'} memory`, 'success');
+    } catch (err) {
+      showToast(`读取失败：${err.message}`, 'error');
+    }
+  }, [projectId, addPendingMemoryRecall, showToast]);
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
@@ -95,8 +118,57 @@ export default function MemoryCard({ projectId }) {
                 entry={m}
                 onEdit={() => setEditingType(m.agentType || '_root')}
                 onDelete={() => handleDelete(m.agentType)}
+                onAttach={() => handleAttach(m.agentType)}
               />
             ))}
+          </div>
+        )}
+
+        {/* SDK 自动 recall 历史（折叠区）。recallHistory 来自 globalStore，
+            每次 run.memory_recall 事件追加一条。in-memory，重启清空。 */}
+        {recallHistory.length > 0 && (
+          <div style={{
+            marginTop: GAP.sm,
+            paddingTop: GAP.sm,
+            borderTop: `1px dashed ${COLOR.borderLt}`,
+          }}>
+            <button
+              onClick={() => setHistoryOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: 0,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                fontFamily: FONT_SANS, fontSize: 11, color: COLOR.sub,
+              }}
+            >
+              {historyOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              最近自动召回 · {recallHistory.length}
+            </button>
+            {historyOpen && (
+              <div style={{ marginTop: GAP.xs, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {recallHistory.slice(0, 10).map((h, i) => (
+                  <div key={i} style={{
+                    fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
+                    lineHeight: 1.5,
+                    padding: '2px 6px',
+                    background: 'rgba(0,0,0,0.02)',
+                    borderRadius: 4,
+                  }}>
+                    <span style={{ fontFamily: FONT_MONO, fontWeight: 500 }}>
+                      {h.mode || 'recall'}
+                    </span>
+                    {' · '}
+                    {(h.memories || []).map(m => m.path || m.scope || '?').join(', ').slice(0, 80)}
+                    {(h.memories || []).length === 0 && '(无 memories 字段)'}
+                  </div>
+                ))}
+                {recallHistory.length > 10 && (
+                  <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub }}>
+                    …还有 {recallHistory.length - 10} 条
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -112,7 +184,7 @@ export default function MemoryCard({ projectId }) {
   );
 }
 
-function MemoryRow({ entry, onEdit, onDelete }) {
+function MemoryRow({ entry, onEdit, onDelete, onAttach }) {
   const [hover, setHover] = useState(false);
   const label = entry.agentType || 'main';
   return (
@@ -145,6 +217,11 @@ function MemoryRow({ entry, onEdit, onDelete }) {
         </span>
         {hover && (
           <>
+            {onAttach && (
+              <button onClick={onAttach} title="加到下条消息（让 agent 看到这段记忆）" style={miniBtn}>
+                <Paperclip size={11} />
+              </button>
+            )}
             <button onClick={onEdit} title="编辑" style={miniBtn}>
               <Pencil size={11} />
             </button>

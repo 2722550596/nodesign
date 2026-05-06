@@ -43,7 +43,7 @@ function extractSummary(messages) {
     : firstPara;
 }
 
-export default function TimelineGroup({ messages, closed, summary }) {
+export default function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload }) {
   const [open, setOpen] = useState(true);
 
   if (!messages || messages.length === 0) return null;
@@ -120,7 +120,7 @@ export default function TimelineGroup({ messages, closed, summary }) {
                   : 'middle';
             return (
               <TimelinePositionProvider key={m.id || `tl-${i}`} value={position}>
-                <Message message={m} />
+                <Message message={m} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />
               </TimelinePositionProvider>
             );
           })}

@@ -80,7 +80,13 @@ function groupMessages(messages, isStreaming) {
  */
 const STICK_THRESHOLD = 80;
 
-export default function MessageList({ messages = [], isStreaming = false }) {
+export default function MessageList({
+  messages = [],
+  isStreaming = false,
+  projectId,
+  sessionId,
+  onCanvasReload,
+}) {
   const ref = useRef(null);
   const stickRef = useRef(true);
 
@@ -122,8 +128,8 @@ export default function MessageList({ messages = [], isStreaming = false }) {
         </div>
       ) : (
         groups.map((g, i) => g.type === 'timeline'
-          ? <TimelineGroup key={`tl-${i}`} messages={g.items} closed={g.closed} />
-          : <Message key={g.message.id || `m-${i}`} message={g.message} />,
+          ? <TimelineGroup key={`tl-${i}`} messages={g.items} closed={g.closed} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />
+          : <Message key={g.message.id || `m-${i}`} message={g.message} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />,
         )
       )}
     </div>

@@ -10,9 +10,10 @@ import {
 } from 'lucide-react';
 import { diffLines } from 'diff';
 import ReactMarkdown from 'react-markdown';
+import { Undo2 } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import { Turn } from '../../lib/api.js';
+import { Turn, Sessions } from '../../lib/api.js';
 import TimelineNode from './TimelineNode.jsx';
 import { useTimelinePosition } from './TimelineGroupContext.js';
 
@@ -23,7 +24,7 @@ import { useTimelinePosition } from './TimelineGroupContext.js';
  *   - thinking  折叠面板（"思考过程 ▼"）
  *   - tool      工具调用 + 状态（含 input/output 折叠 + elapsed time）
  */
-export default function Message({ message }) {
+export default function Message({ message, projectId, sessionId, onCanvasReload }) {
   // V7：assistant 进 timeline group（V6 grouping 决定）但**不包 TimelineNode**——
   // 用户反馈：默认给个对话气泡 icon 不 OK，"实在不行也别给 icon，就放那"。
   // 所以 assistant 在 group 内 / group 外都走 bare 渲染，timeline 竖线在那段断开
@@ -34,18 +35,12 @@ export default function Message({ message }) {
 
   if (role === 'user') {
     return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: `${GAP.sm}px ${GAP.lg}px` }}>
-        <div style={{
-          maxWidth: '85%',
-          background: COLOR.btn, color: COLOR.btnText,
-          padding: `${GAP.md}px ${GAP.lg}px`,
-          borderRadius: 14,
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.base,
-          lineHeight: 1.5,
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-        }}>{content}</div>
-      </div>
+      <UserMessage
+        message={message}
+        projectId={projectId}
+        sessionId={sessionId}
+        onCanvasReload={onCanvasReload}
+      />
     );
   }
 
@@ -152,6 +147,95 @@ export default function Message({ message }) {
  * 历史卡片（已 cancelled / 已答 / 老 session）：isAnswered=true 一开始就 disable
  * 整张卡，progress 直接显 "已完成"，所有按钮灰；POST 路径不会触发。
  */
+
+/**
+ * UserMessage —— 用户消息气泡 + 悬停 Undo 按钮（rewindFiles）。
+ *
+ * Undo 按钮逻辑：
+ *   - 仅在 hover + projectId/sessionId 都已知时显示
+ *   - 点击 → confirm → POST /api/projects/:pid/sessions/:sid/rewind { userMessageId: message.id }
+ *   - 后端调 SDK Query.rewindFiles() 把所有文件回滚到该 user message 之前
+ *   - 成功 → toast + onCanvasReload()（让 iframe bump reloadToken）
+ *   - 410 (session 已 close) → toast 'session 已关闭，无法撤销'
+ */
+function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
+  const showToast = useGlobalStore(s => s.showToast);
+  const [hover, setHover] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const canUndo = !!(projectId && sessionId && message.id);
+
+  async function handleUndo() {
+    if (!canUndo || busy) return;
+    if (!window.confirm('回到此处？这会丢弃后续所有文件改动。')) return;
+    setBusy(true);
+    try {
+      const result = await Sessions.rewind(projectId, sessionId, message.id);
+      if (result?.canRewind === false) {
+        showToast(result.error || '此处不支持回滚', 'warn');
+      } else {
+        const n = result?.filesChanged?.length || 0;
+        showToast(n > 0 ? `已回滚 ${n} 个文件` : '已回滚（无文件改动）', 'success');
+        if (onCanvasReload) onCanvasReload();
+      }
+    } catch (err) {
+      const msg = err?.message || String(err);
+      if (msg.includes('410') || msg.includes('SESSION_CLOSED')) {
+        showToast('会话已关闭，无法撤销', 'warn');
+      } else {
+        showToast(`撤销失败：${msg}`, 'error');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      style={{ display: 'flex', justifyContent: 'flex-end', padding: `${GAP.sm}px ${GAP.lg}px`, position: 'relative' }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      {canUndo && hover && (
+        <button
+          onClick={handleUndo}
+          disabled={busy}
+          title="回滚到此处之前的状态（撤销后续所有文件改动）"
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: GAP.lg,
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '4px 8px',
+            background: COLOR.bgCard,
+            color: COLOR.text2,
+            border: `1px solid ${COLOR.border}`,
+            borderRadius: 6,
+            fontSize: FONT_SIZE.xs || 11,
+            fontFamily: FONT_SANS,
+            cursor: busy ? 'wait' : 'pointer',
+            opacity: busy ? 0.6 : 0.95,
+            zIndex: 1,
+          }}
+        >
+          <Undo2 size={11} />
+          {busy ? '回滚中...' : '回到此处'}
+        </button>
+      )}
+      <div style={{
+        maxWidth: '85%',
+        background: COLOR.btn, color: COLOR.btnText,
+        padding: `${GAP.md}px ${GAP.lg}px`,
+        borderRadius: 14,
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.base,
+        lineHeight: 1.5,
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      }}>{message.content}</div>
+    </div>
+  );
+}
+
 function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
   const showToast = useGlobalStore(s => s.showToast);
   const activeRun = useGlobalStore(s => s.activeRun);

@@ -61,6 +61,37 @@ export const useGlobalStore = create((set) => ({
     set({ planModeEnabled: enabled });
   },
 
+  // ── Phase B 批次 3：用户主动 recall project memory 到下一轮 chat ──
+  // MemoryCard 点"📎 加到下条消息"会 push 一项到这里；ChatComposer 提交时
+  // pendingMemoryRecalls 拼到 chat 字段头部（<memory-recall> 包裹），
+  // 跟随 user message 一起发给 SDK。提交成功后 store 清空。
+  // shape: [{ agentType, content, ts }]
+  pendingMemoryRecalls: [],
+  addPendingMemoryRecall: (recall) => set((s) => ({
+    pendingMemoryRecalls: [...s.pendingMemoryRecalls, { ...recall, ts: Date.now() }],
+  })),
+  removePendingMemoryRecall: (idx) => set((s) => ({
+    pendingMemoryRecalls: s.pendingMemoryRecalls.filter((_, i) => i !== idx),
+  })),
+  consumePendingMemoryRecalls: () => {
+    const recalls = useGlobalStore.getState().pendingMemoryRecalls;
+    set({ pendingMemoryRecalls: [] });
+    return recalls;
+  },
+
+  // ── Phase B 批次 3：SDK 自动 recall 历史（per-project）──
+  // run.memory_recall 事件 → append 到对应 project 的历史。MemoryCard 顶部
+  // "最近自动召回"折叠区渲染。重启 server 后清空（in-memory）。
+  // shape: { [projectId]: [{ mode, memories, ts }] }
+  recallHistoryByProject: {},
+  appendRecallHistory: (projectId, entry) => set((s) => {
+    if (!projectId) return s;
+    const cur = s.recallHistoryByProject[projectId] || [];
+    // 上限 50 条避免无限堆积
+    const next = [{ ...entry, ts: entry.ts || Date.now() }, ...cur].slice(0, 50);
+    return { recallHistoryByProject: { ...s.recallHistoryByProject, [projectId]: next } };
+  }),
+
   // ── 模拟登录态（MVP 单用户）──
   user: { id: 'u_self', name: '我', avatar: null },
 }));

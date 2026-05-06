@@ -26,6 +26,7 @@ import UndoButton from '../components/canvas/UndoButton.jsx';
 import ContextUsageBar from '../components/project/ContextUsageBar.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
+import ElicitationModal from '../components/run/ElicitationModal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO, STAGE } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
@@ -104,6 +105,11 @@ export default function ProjectWorkspace() {
   // title 用 list session 后 match URL sid 拿到
   const [currentSessionTitle, setCurrentSessionTitle] = useState('');
   const [sessionListOpen, setSessionListOpen] = useState(false);
+
+  // Phase B 批次 4：MCP elicitation request 状态。SDK onElicitation 通过
+  // run.elicitation_request 事件推 { reqId, request, runId } 进来；
+  // ElicitationModal 处理 accept/decline → POST 给 /elicit/:reqId/answer
+  const [elicitRequest, setElicitRequest] = useState(null);
 
   const [shareOpen, setShareOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -432,7 +438,31 @@ export default function ProjectWorkspace() {
         }
         break;
 
-      // ── P0+ s1 C17：新事件类型 ──
+      // ── SDK helper events（P0：Phase B 批次 1）──
+
+      case 'run.rate_limit': {
+        // 速率限制状态变化（rate_limit_event）。SDK 只在状态变化时推，不会刷屏。
+        // - rejected：真触发限制 → error toast
+        // - allowed_warning：接近限制 → warn toast 带使用率
+        // - allowed：恢复正常 → 不 toast（避免噪声）
+        const info = evt.info || {};
+        if (info.status === 'rejected') {
+          showToast(`已触发速率限制（${info.rateLimitType || 'unknown'}）`, 'error');
+        } else if (info.status === 'allowed_warning') {
+          const pct = Math.round((info.utilization || 0) * 100);
+          showToast(`接近速率限制：已用 ${pct}%`, 'warn');
+        }
+        break;
+      }
+
+      case 'run.status':
+        // SDK 内部状态：'compacting' | 'requesting' | null。
+        // requesting 每个 LLM call 都触发，太频繁 → 跳过；只 toast compacting
+        // （少见但耗时长，需要让用户知道"在压缩、不是卡住"）。
+        if (evt.status === 'compacting') {
+          showToast('正在压缩上下文...', 'info');
+        }
+        break;
 
       case 'run.system_init':
         // SDK 启动元信息：model / tools / mcp_servers / agents
@@ -703,13 +733,27 @@ export default function ProjectWorkspace() {
         break;
       }
 
+      // Phase B 批次 3：SDK 自动 recall 写入 globalStore，MemoryCard 折叠区显示
+      case 'run.memory_recall':
+        useGlobalStore.getState().appendRecallHistory(id, {
+          mode: evt.mode,
+          memories: evt.memories,
+          ts: evt.ts,
+        });
+        break;
+
+      // Phase B 批次 4：MCP 工具 elicitInput 请求 → 弹 ElicitationModal
+      // request 形如 { reqId, request: {...}, runId }
+      case 'run.elicitation_request':
+        setElicitRequest({ reqId: evt.reqId, request: evt.request, runId: evt.runId });
+        break;
+
       // 运维 / 调试信号——不展示 UI，只 console 留痕（dev 模式）。
       // 这些事件用于排查问题，不该 spam 用户视图。
       case 'run.subagent.start':
       case 'run.session_state':
       case 'run.session_start':
       case 'run.files_persisted':
-      case 'run.memory_recall':
       case 'run.hook.started':
       case 'run.hook.response':
       case 'run.task.updated':
@@ -766,11 +810,23 @@ export default function ProjectWorkspace() {
     // Phase 3.2：plan-mode toggle 状态决定本次 turn 走 SDK 原生 plan mode
     const planModeEnabled = useGlobalStore.getState().planModeEnabled;
 
+    // Phase B 批次 3：用户主动 recall 的 project memory 拼到 chat 头部
+    // <memory-recall> 包裹让 agent 知道这是用户主动注入的记忆而不是普通文本
+    const pendingRecalls = useGlobalStore.getState().consumePendingMemoryRecalls();
+    let chatWithRecalls = text;
+    if (pendingRecalls.length > 0) {
+      const recallBlocks = pendingRecalls.map(r => {
+        const tag = r.agentType || 'main';
+        return `<memory-recall agent="${tag}">\n${r.content}\n</memory-recall>`;
+      }).join('\n\n');
+      chatWithRecalls = `${recallBlocks}\n\n${text}`;
+    }
+
     setMessages(ms => [...ms, { id: newId('msg'), role: 'user', content: text }]);
     try {
       const { runId, sessionId: returnedSid } = await Turn.send({
         pid: id,
-        chat: text,
+        chat: chatWithRecalls,
         attachments,
         // S4：显式传选中的 sessionId；null 时后端识别为"新建 session"
         sessionId: currentSessionId,
@@ -1185,6 +1241,9 @@ export default function ProjectWorkspace() {
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
             hasActiveSession={!!currentSessionId}
+            projectId={id}
+            sessionId={currentSessionId}
+            onCanvasReload={() => setReloadToken(t => t + 1)}
           />
         </aside>
 
@@ -1271,6 +1330,13 @@ export default function ProjectWorkspace() {
           navigate(sid ? `/projects/${id}/sessions/${sid}` : `/projects/${id}/work`);
         }}
       />
+      {elicitRequest && (
+        <ElicitationModal
+          projectId={id}
+          request={elicitRequest}
+          onClose={() => setElicitRequest(null)}
+        />
+      )}
       <UpgradeQuickModal
         show={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}

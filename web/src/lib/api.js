@@ -96,6 +96,14 @@ export const Plan = {
       reason ? { reason } : {}),
 };
 
+// Phase B 批次 4：MCP Elicitation —— 工具调 server.elicitInput() 时前端弹 modal 收答案
+export const Elicit = {
+  /** body: { action: 'accept'|'decline'|'cancel', content?: object } */
+  answer: ({ pid, runId, reqId, action, content }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/elicit/${reqId}/answer`,
+      { action, content }),
+};
+
 // ── PendingChanges（C4：用户直接编辑 + 评论 buffer，session-scoped）──
 // 前端 push edit / comment item，下次发 chat 时 turn.js 在 user message 前
 // prepend system 提示 → agent 主动调 mcp__nodesign__get_pending_changes 拉详情。
@@ -275,6 +283,13 @@ export const Sessions = {
    *  query 进程退出，下次 turn 该 sid 起新 runSession。session JSONL 不删，jsonl 仍可 resume */
   close: (pid, sid) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/close`),
+  /**
+   * 调 SDK Query.rewindFiles(userMessageId) 把所有文件回滚到 userMessageId 之前。
+   * 仅 streamInput query 活着时可用 —— session 已 close 时返 410。
+   * 200 → { canRewind, filesChanged?, insertions?, deletions? }
+   */
+  rewind: (pid, sid, userMessageId) =>
+    jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/rewind`, { userMessageId }),
   /**
    * 跨项目最近 session 聚合（GET /api/sessions/recent）
    * @param {object} opts

@@ -41,7 +41,7 @@ import {
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
-  cancelRun, provideAnswer, getQuery,
+  cancelRun, provideAnswer, getQuery, provideElicitation,
   hasActiveQuerySession, pushUserMessage, getQuerySession, closeQuerySession,
   getQueueDepth,
 } from '../engine/runs/active-runs.js';
@@ -380,6 +380,47 @@ router.post('/:pid/runs/:runId/answer', async (req, res, next) => {
       return res.status(404).json({
         error: 'no pending question for this run/toolUseId',
         code: 'NO_PENDING_QUESTION',
+      });
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/**
+ * Phase B 批次 4：POST /api/projects/:pid/runs/:runId/elicit/:reqId/answer
+ *
+ * MCP 工具调 server.elicitInput() 时 SDK 触发 onElicitation 回调，回调 emit
+ * run.elicitation_request 事件让前端弹 Modal。用户填完后 POST 这个 endpoint
+ * → provideElicitation resolve loop.js / session-loop.js 里 await 的 Promise
+ * → SDK 拿到 { action, content } 继续工具调用。
+ *
+ * Body:
+ *   {
+ *     action: 'accept' | 'decline' | 'cancel',
+ *     content?: { [field]: any }  // accept 时用户填的表单字段
+ *   }
+ *
+ * 200 { ok: true }
+ * 404 { error, code: 'NO_PENDING_ELICITATION' }
+ * 400 { error }
+ */
+router.post('/:pid/runs/:runId/elicit/:reqId/answer', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    const project = getProject(req.params.pid);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+
+    const { runId, reqId } = req.params;
+    const { action, content } = req.body || {};
+    if (!action || !['accept', 'decline', 'cancel'].includes(action)) {
+      return res.status(400).json({ error: 'action required (accept|decline|cancel)' });
+    }
+
+    const ok = provideElicitation(runId, reqId, { action, content });
+    if (!ok) {
+      return res.status(404).json({
+        error: 'no pending elicitation for this run/reqId',
+        code: 'NO_PENDING_ELICITATION',
       });
     }
     res.json({ ok: true });

@@ -24,7 +24,7 @@ import {
   deleteSession,
 } from '@anthropic-ai/claude-agent-sdk';
 import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
-import { closeQuerySession, hasActiveQuerySession } from '../engine/runs/active-runs.js';
+import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
 import {
   getProjectWorkspace,
   getSessionWorkspace,
@@ -261,6 +261,38 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
     }
 
     res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+// ── POST /:pid/sessions/:sid/rewind ──
+// SDK enableFileCheckpointing=true 给我们 Query.rewindFiles(userMessageId) 控制方法。
+// 调它会把 session 内文件状态回滚到 userMessageId 那条 user message 之前的样子
+// （所有后续 Edit/Write 撤销）。仅在 streamInput query 还活着时可用——session 已 close
+// 没法 control，返 410 让前端置灰按钮。
+//
+// body: { userMessageId }
+// 200 { canRewind, filesChanged?, insertions?, deletions? }
+// 410 { error: 'session not active' } - query 已关，无法回滚
+router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    validateSessionId(req.params.sid);
+    const project = getProject(req.params.pid);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+
+    const { userMessageId } = req.body || {};
+    if (!userMessageId || typeof userMessageId !== 'string') {
+      return res.status(400).json({ error: 'userMessageId required' });
+    }
+
+    const rec = getQuerySession(req.params.sid);
+    if (!rec || !rec.query || rec.abortController.signal.aborted) {
+      // query 不在了——session 已 close 或从没起过 streamInput query
+      return res.status(410).json({ error: 'session not active', code: 'SESSION_CLOSED' });
+    }
+
+    const result = await rec.query.rewindFiles(userMessageId);
+    res.json(result);
   } catch (err) { next(err); }
 });
 
