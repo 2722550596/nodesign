@@ -39,8 +39,6 @@
  *   run.rate_limit             { info }                                    rate limit 变化
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
  *   run.plan_mode_requested    { reason, estimatedPages?, taskKind? }       agent 主动请求进 plan mode（Phase C）
- *   run.image_approval_requested { paths, intent, role, isAnchor }           agent 调 request_image_approval（Phase Image-2）
- *   run.image_approval_resolved  { action, feedback?, paths, role }          用户在 banner 操作后后端回放（前端 toast / 历史）
  *
  * 外层把 EventBus 桥接到：
  *   - WebSocket：subscribe('*') → ws.send(JSON.stringify(evt))
@@ -332,7 +330,7 @@ export const Events = {
   // ...input, answers: {...} }`，binary 拿到带 answers 的 input → 调 tool.call →
   // 工具直接返回 answers 作 result（cli.js:GR6.call 实现）。
   //
-  // 我们的 canUseTool（loop.js）拦到此事件 → emit run.ask_user_question →
+  // 我们的 canUseTool（session-loop.js）拦到此事件 → emit run.ask_user_question →
   // 前端 AskUserQuestionView 卡片 → 用户点选项 → POST /answer → resolve
   // canUseTool 的 await，返回 updatedInput。
   //
@@ -346,7 +344,7 @@ export const Events = {
 
   // ── A1.2（2026-05-02）：实时上下文用量 ──
   // SDKControlGetContextUsageResponse（sdk.d.ts:2451-2541）由 query.getContextUsage()
-  // 返回。loop.js 在每个 assistant message 后 await 一次 emit，前端 ContextUsageBar
+  // 返回。session-loop.js 在每个 assistant message 后 await 一次 emit，前端 ContextUsageBar
   // 接事件渲进度条 + breakdown + autoCompact 阈值预警。
   //
   // 关键字段（为前端做轻量化封装，不全量透传以节省 ws 带宽）：
@@ -392,24 +390,6 @@ export const Events = {
     reason: info.reason,
     ...(info.estimatedPages != null ? { estimatedPages: info.estimatedPages } : {}),
     ...(info.taskKind ? { taskKind: info.taskKind } : {}),
-  }),
-
-  // ── Image approval（Phase Image-1/2，2026-05-06 后段）──
-  // P2: agent 调 mcp__nodesign__request_image_approval 主动 gate 多张候选时 emit
-  imageApprovalRequested: (info) => ({
-    type: 'run.image_approval_requested',
-    paths: info.paths || [],
-    intent: info.intent || '',
-    role: info.role || null,
-    isAnchor: info.isAnchor === true,
-  }),
-  // P1: 用户在 ImageApprovalBanner 操作完后端回放（前端 timeline / toast 用）
-  imageApprovalResolved: (info) => ({
-    type: 'run.image_approval_resolved',
-    action: info.action,                         // 'approve' | 'regenerate' | 'dismiss'
-    paths: info.paths || [],
-    role: info.role || null,
-    ...(info.feedback ? { feedback: info.feedback } : {}),
   }),
 
   contextUsage: (usage) => ({

@@ -5,7 +5,7 @@
  *   FileChanged    — 文件改动 → EventBus emit file.changed → 前端 reload iframe
  *   Stop           — agent 收尾自检（占位，stage 2 接真业务）
  *   PostCompact    — compact 摘要写 spec.json 长期记忆
- *   ~~PreToolUse(Bash)~~ — Phase 3d 删，改用 SDK 内置 sandbox（loop.js sandbox 字段）。
+ *   ~~PreToolUse(Bash)~~ — Phase 3d 删，改用 SDK 内置 sandbox（session-loop.js sandbox 字段）。
  *                          OS 级隔离（macOS sandbox-exec / Linux bubblewrap）替代正则白名单。
  *
  * Phase 2（agent 层升级）：新增 5 类 hook
@@ -17,7 +17,7 @@
  *   PostToolUseFailure       — 工具失败时给 agent 恢复建议（避免重试同样的错）
  *   SubagentStart/Stop       — 主动捕子代理生命周期（vs 间接走 SDK task_* message）
  *
- * 调用方式：loop.js 在拼 sdkOptions 时调
+ * 调用方式：session-loop.js 在拼 sdkOptions 时调
  *   hooks: createHooks({ ctx, workspaceRoot, projectId })
  *
  * SDK Hook 接口：
@@ -71,7 +71,7 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
       hooks: [makeFileChangedHandler({ ctx })],
     }],
 
-    // ~~PreToolUse(Bash) 白名单~~ Phase 3d 删 —— 改用 loop.js sandbox option
+    // ~~PreToolUse(Bash) 白名单~~ Phase 3d 删 —— 改用 session-loop.js sandbox option
     // OS 级隔离（macOS sandbox-exec / Linux bubblewrap），filesystem.allowWrite/denyRead
     // 替代命令级正则。
 
@@ -149,7 +149,7 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
       },
       // Phase Image-4：generate_image 调用计数 hook ——
       // agent 同 outputName regenerate 第 3 次时注 systemMessage 建议
-      // 用 request_image_approval 让用户拍板，避免闷头改浪费 token。
+      // 直接 chat 邀请用户在已有候选中拍板，避免闷头改浪费 token。
       {
         matcher: 'mcp__nodesign__generate_image',
         hooks: [makePostToolUseGenerateImageRegenWatchdog()],
@@ -277,7 +277,7 @@ function makeFileChangedHandler({ ctx }) {
 }
 
 // makeBashWhitelistHandler / ALLOWED_FIRST_TOKEN / DANGEROUS_PATTERNS / checkBashCommand
-// Phase 3d 删除 —— 命令级正则白名单换成 SDK sandbox（loop.js）的 OS 级隔离。
+// Phase 3d 删除 —— 命令级正则白名单换成 SDK sandbox（session-loop.js）的 OS 级隔离。
 // 如需回滚：git revert 3d commit，本段恢复。
 
 /**
@@ -795,7 +795,7 @@ function makePostToolUseFailureHandler({ ctx }) {
  *
  * 与 SDK system 'task_started' message 路径并行：task_* message 走的是 SDK
  * agentProgressSummaries 通道（30s 摘要），而 hook 是子代理 spawn 时立即触发，
- * 时序更前 + 更可靠。loop.js 已对 task_started 翻译成 run.task.started，
+ * 时序更前 + 更可靠。session-loop.js 已对 task_started 翻译成 run.task.started，
  * 这条 hook emit 的 run.subagent.start 是更主动的入口。
  *
  * Phase 2 仅 emit；不注入 additionalContext（子代理刚启动还没产出，注啥都早）。
@@ -843,14 +843,15 @@ function makeSubagentStopHandler({ ctx }) {
 }
 
 // Phase 3d 删除：Bash 白名单 / 危险正则 / checkBashCommand
-// 替换为 SDK 内置 sandbox（loop.js sandbox 字段）。OS 级隔离比正则白名单更稳。
+// 替换为 SDK 内置 sandbox（session-loop.js sandbox 字段）。OS 级隔离比正则白名单更稳。
 // 如需回滚：git revert 3d commit，恢复 ALLOWED_FIRST_TOKEN / DANGEROUS_PATTERNS / checkBashCommand。
 
 // ── Phase Image-4：generate_image 重生看门狗 ──
 //
 // agent 同 outputName 调 generate_image 第 3 次起，注 systemMessage 建议：
-//   - 用 request_image_approval 让用户拍板（多张候选并排选）
-//   - 或 accept 当前最好的一版
+//   - 直接 chat 邀请用户在最近 2-3 张候选里选最好的（generate_image 已返 image
+//     content block，前端 chat 自动渲染，用户能直接看到）
+//   - 或 accept 当前最好的一版继续后续工作
 // 防"agent 闷头改 5-10 次同 prompt 浪费 token + 用户也得不到更好版本"。
 //
 // 计数策略：
@@ -892,7 +893,7 @@ function makePostToolUseGenerateImageRegenWatchdog() {
             `<system-reminder>\n[regen-watchdog] 你已经对 outputName base "${base}" 调 generate_image ${next} 次。\n\n`
           + `如果是 conversational editing 微调（"再暖一点 / 换日落色"），可以继续；\n`
           + `如果在反复尝试不同方向（每次 prompt 大改），**强烈建议**：\n`
-          + `  1. 把最近 2-3 张候选用 request_image_approval 让用户在里面选最好的\n`
+          + `  1. 直接在 chat 里邀请用户从最近 2-3 张候选选最好的（image content block 已自动在 chat 渲染）\n`
           + `  2. 或 accept 当前最满意的那张，专心后续工作\n`
           + `理由：reroll 同 prompt 越多次 token 浪费越大，且用户也未必能在第 N 张里看出明显差别。\n`
           + `</system-reminder>`,

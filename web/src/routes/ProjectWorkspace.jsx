@@ -23,7 +23,6 @@ import UpgradeQuickModal from '../components/project/UpgradeQuickModal.jsx';
 import DirectEditModal from '../components/canvas/DirectEditModal.jsx';
 import PlanReviewCard from '../components/project/PlanReviewCard.jsx';
 import PlanRequestBanner from '../components/project/PlanRequestBanner.jsx';
-import ImageApprovalBanner from '../components/project/ImageApprovalBanner.jsx';
 import UndoButton from '../components/canvas/UndoButton.jsx';
 import ContextUsageBar from '../components/project/ContextUsageBar.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
@@ -760,44 +759,12 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.image_generated': {
-        // Phase A：generate_image MCP 工具完成 → toast 提示
-        // Phase Image-1：同时弹 ImageApprovalBanner 让用户 gate
+        // generate_image MCP 工具完成 → toast 提示。
+        // 注：原 Phase Image-1 的自动 ImageApprovalBanner gate 已废弃（2026-05-06）—
+        // generate_image CallToolResult 已返 image content block，前端 chat 自动渲染；
+        // agent 在 caption 邀请反馈，用户下一轮 chat 即天然 gate。
         const role = evt.assetRole ? `[${evt.assetRole}] ` : '';
         showToast(`${role}已生成图片：${evt.path}`, 'success');
-        useGlobalStore.getState().setPendingImageApproval({
-          paths: [evt.path],
-          role: evt.assetRole,
-          prompt: evt.prompt,
-          requestedByAgent: false,  // 自动 banner（非 request_image_approval 主动）
-          runId: evt.runId,
-          pid: id,
-          sid: currentSessionId,
-        });
-        break;
-      }
-
-      case 'run.image_approval_requested': {
-        // Phase Image-2：agent 调 mcp__nodesign__request_image_approval 主动 gate
-        // 通常多张候选并排选；intent 描述 gate 什么决策
-        useGlobalStore.getState().setPendingImageApproval({
-          paths: evt.paths || [],
-          role: evt.role,
-          intent: evt.intent,
-          requestedByAgent: true,
-          isAnchor: evt.isAnchor === true,
-          runId: evt.runId,
-          pid: id,
-          sid: currentSessionId,
-        });
-        showToast(`agent 请求确认${evt.role ? ` ${evt.role}` : ''}图片`, 'info');
-        break;
-      }
-
-      case 'run.image_approval_resolved': {
-        // 后端把用户决策回放（timeline / 调试用），banner 自己已经 clear，这里仅 toast
-        const labelMap = { approve: '已 approve', regenerate: '已发反馈让重生', dismiss: '已忽略' };
-        const label = labelMap[evt.action] || evt.action;
-        showToast(`${label}${evt.role ? ` (${evt.role})` : ''}`, 'info');
         break;
       }
 
@@ -1421,7 +1388,6 @@ export default function ProjectWorkspace() {
       />
       <PlanReviewCard />
       <PlanRequestBanner />
-      <ImageApprovalBanner />
 
     </AppShell>
     </PanelManagerProvider>

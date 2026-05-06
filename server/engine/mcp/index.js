@@ -43,7 +43,6 @@ import { makeGetPendingChangesTool } from './tools/get-pending-changes.js';
 import { makeClearPendingChangesTool } from './tools/clear-pending-changes.js';
 import { makeGenerateImageTool } from './tools/generate-image.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
-import { makeRequestImageApprovalTool } from './tools/request-image-approval.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -78,9 +77,9 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // web_search — 4 provider 联网搜索（baidu/tavily/exa/zhipu，CJK auto route to baidu）
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。
-      // WebFetch 不在这里 — 用 SDK 内置（loop.js DEFAULT_TOOL_ALLOWLIST 启用），
+      // WebFetch 不在这里 — 用 SDK 内置（session-loop.js DEFAULT_TOOL_ALLOWLIST 启用），
       // 它自带 LLM summarize 能控制上下文，不需要自实现。
-      makeWebSearchTool({ ctx }),
+      makeWebSearchTool({ workspaceRoot, sharedRoot, ctx }),
 
       // S1c canvas 焕新升级 — read_page 让 agent 精确读 canvas.html 任意页
       // （`<section data-page="N">` 一段），不必 Read 整文件 + Grep + offset/limit。
@@ -116,10 +115,9 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // SDK 不让 agent 自己 setPermissionMode，所以走"agent → host signal → host" 三段。
       makeRequestPlanModeTool({ ctx }),
 
-      // Phase Image-2：agent 主动请求用户 gate 关键图片决策（cover anchor /
-      // 第一个 portrait / logo 嵌入 / 多变体并排选）。emit run.image_approval_requested
-      // → 前端 ImageApprovalBanner 升级模式（多张并排 + intent）。
-      makeRequestImageApprovalTool({ ctx }),
+      // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
+      // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；
+      // agent 在 caption / 自然回话邀请反馈，下一轮用户 chat 即天然 gate。
     ],
   });
 }

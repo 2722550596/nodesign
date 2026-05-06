@@ -59,18 +59,7 @@ export const useGlobalStore = create((set) => ({
   setPlanModeRequest: (r) => set({ planModeRequest: r ? { ...r, ts: Date.now() } : null }),
   clearPlanModeRequest: () => set({ planModeRequest: null }),
 
-  // ── Phase Image-1：generate_image 完成后用户 approve gate ──
-  // run.image_generated 事件 → 设 pendingImageApproval state →
-  // ProjectWorkspace 渲染 <ImageApprovalBanner />。
-  // 用户操作（OK / regenerate w/ feedback / dismiss）走 Image.approve API
-  // → 后端把反馈打成 system message 喂给 agent 当前 session。
-  // P2 升级：request_image_approval MCP 工具调起时 paths 多张并排展示。
-  // shape: { paths: string[], role, prompt, intent?, requestedByAgent?: bool, runId, ts }
-  pendingImageApproval: null,
-  setPendingImageApproval: (r) => set({
-    pendingImageApproval: r ? { ...r, ts: Date.now() } : null,
-  }),
-  clearPendingImageApproval: () => set({ pendingImageApproval: null }),
+  // 注：pendingImageApproval state 已删除（2026-05-06）—— 见 ImageApprovalBanner 移除说明。
 
   // ── Phase 3.2：plan-mode toggle ──
   // ChatComposer 旁边的 segmented control "快速做 / 深度对齐"。开 plan-mode
