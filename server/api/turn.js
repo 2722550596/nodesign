@@ -160,7 +160,10 @@ function startNewRunSession({ runId, sid, sessionRoot, blocks, eventBus, project
     eventBus,
     inputQueue,
     skillId: finalSkillId,
-    sessionTitle: chat.trim().slice(0, 40),
+    // 不再传 sessionTitle —— SDK doc:"Custom session title... skips automatic
+    // title generation"。让 SDK 用 ANTHROPIC_SMALL_FAST_MODEL（haiku）自动
+    // 总结对话生成标题，前端 run.done 后 refetch sessions 拉新 summary。
+    // 用户主动 rename（未来 ✏️ 按钮）走 SDK renameSession() 单独路径。
     initialRunId: runId,
     initialPermissionMode,
   })

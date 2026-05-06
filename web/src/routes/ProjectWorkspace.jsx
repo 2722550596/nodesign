@@ -161,25 +161,27 @@ export default function ProjectWorkspace() {
     return () => { cancelled = true; };
   }, [id, hydrateOne]);
 
-  // H1：拉 session 元信息更新 title（依赖 url sid + project ready）
+  // H1：拉 session 元信息更新 title（依赖 url sid + project ready + titleRefreshKey）
+  // titleRefreshKey 每次 run.done 时 bump，让 SDK 自动总结的最新 summary 能反映到 UI
+  // （SDK 用 haiku helper 在每个 turn 后 incrementally 更新 summary，落 JSONL）
+  const refreshSessionTitle = useCallback(async () => {
+    if (!currentSessionId) return;
+    try {
+      const { sessions = [] } = await Sessions.list(id, { limit: 100 });
+      const match = sessions.find(s => s.sessionId === currentSessionId);
+      if (match) setCurrentSessionTitle(match.customTitle || match.summary || '');
+    } catch (err) {
+      console.warn('[Project] list sessions failed:', err.message);
+    }
+  }, [id, currentSessionId]);
+
   useEffect(() => {
     if (!hydrated || hydrateError || !project) return;
     if (!currentSessionId) {
       setCurrentSessionTitle('');
       return;
     }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { sessions = [] } = await Sessions.list(id, { limit: 100 });
-        if (cancelled) return;
-        const match = sessions.find(s => s.sessionId === currentSessionId);
-        if (match) setCurrentSessionTitle(match.customTitle || match.summary || '');
-      } catch (err) {
-        console.warn('[Project] list sessions failed:', err.message);
-      }
-    })();
-    return () => { cancelled = true; };
+    refreshSessionTitle();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, hydrated, hydrateError, project?.id, currentSessionId]);
 
@@ -386,6 +388,12 @@ export default function ProjectWorkspace() {
         // 双保险：FileChanged hook（run.file_changed）应该已 bump 过 reloadToken
         // 但万一 hook 不触发（如 SDK 边角问题），这里兜底再 bump 一次
         setReloadToken(t => t + 1);
+        // Phase B 批次 5：SDK 用 haiku helper incrementally 更新 session summary
+        // 落 JSONL，run.done 后 refetch 让 chat 头部 / 面包屑 title 反映最新总结。
+        // 已有 sid 的场景立即刷；新建场景下面 navigate 完会触发 useEffect 重 fetch。
+        if (currentSessionId) {
+          refreshSessionTitle();
+        }
         // H1：从"新会话"（/work 路径）刚跑完 → SDK 已建新 sid → navigate
         // replace 到 /sessions/<sid>，让 URL 反映真实 sid（刷新可恢复，
         // SessionListModal 现在能高亮当前 session）
