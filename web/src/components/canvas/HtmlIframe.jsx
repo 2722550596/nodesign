@@ -6,7 +6,7 @@ import { attachEditMode, detachAll } from './DirectEditBridge.js';
  *
  * iframe 视觉铺满 wrap 容器 — width + height 都按 100/zoom% 补偿，
  * scale(zoom) 后视觉刚好 = wrap 尺寸（无外部 letterbox / 黑边）。
- * iframe 内部视口 = wrap.size / zoom，deck CSS（一页 1280×720）
+ * iframe 内部视口 = wrap.size / zoom，deck CSS（一页 1920×1080）
  * 在 iframe 内部按自己的方式渲染 + 内部 scroll 翻页。
  *
  * 模式行为：

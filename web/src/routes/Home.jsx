@@ -574,16 +574,19 @@ function ProjectCard({ project }) {
 /**
  * 缩略图：iframe 加载最新 session canvas.html
  *
- * 自适应：容器 aspect-ratio 1280:800（与设计稿一致），ResizeObserver 监听
- * 卡片宽度，scale = width / 1280 实时刷新——网格列数变（2/3/4 列响应式）时
- * 缩略图依然等比缩进容器，不会变扁或被裁。
+ * 自适应：容器 aspect-ratio 1920:1080（16:9，与 deck 设计坐标系一致），
+ * ResizeObserver 监听卡片宽度，scale = width / 1920 实时刷新——网格列数变
+ * （2/3/4 列响应式）时缩略图依然等比缩进容器，不会变扁或被裁。
+ *
+ * 注：iframe 内 canvas.html 的 fit script 因 window!==top 早退，
+ * 这里手动 transform: scale 等比铺满 iframe 容器。
  *
  * - sandbox="allow-same-origin"：禁脚本只渲染静态 DOM（性能 + 安全）
  * - pointerEvents:none：iframe 不截走点击，整张卡片仍是 Link
  * - loading="lazy"：视口外不加载
  */
-const DESIGN_W = 1280;
-const DESIGN_H = 800;
+const DESIGN_W = 1920;
+const DESIGN_H = 1080;
 
 function ThumbnailBox({ project, latestSid }) {
   const ref = useRef(null);

@@ -9,7 +9,7 @@
 
 NoDesign 把"做 deck"从**人手工拼图层**变成**跟 agent 协作 + 可参数化的产品**：
 
-- **agent 写 HTML deck**（单文件 `canvas.html`，`<section data-page="N">` 分页，1280×720 视口）
+- **agent 写 HTML deck**（单文件 `canvas.html`，`<section data-page="N">` 分页，1920×1080 设计坐标系 + fit script 自适应任意视口）
 - **可调维度暴露成 Tweaks 面板**（5-8 个 slider / color picker），用户拖动实时预览
 - **跨 session 长期记忆**（项目品牌档案 / 通用偏好），agent 跨 session 续做不忘
 - **多种交付**：HTML / PDF（矢量）/ PPTX（位图）/ 工程包（zip 含源 + assets + readme）

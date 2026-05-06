@@ -25,10 +25,11 @@ import { COLOR, STAGE } from '../../lib/theme.js';
  *
  * A11y：toolbar ✓ A11y 按钮 → popover 显示 mock review 结果
  */
-// SKILL.md 约束 agent 写出来的 deck 单页 1280px 宽（固定）。
-// fit = wrap.w / 1280 → iframe 整个铺满 canvas wrap（无外部 letterbox）。
-// 高度方向 iframe 补偿 wrap.h/zoom，内部 deck 自己滚（页 720 高 + 余地由 deck CSS 处理）。
-const DECK_WIDTH = 1280;
+// SKILL.md 约束 agent 写出来的 deck 单页 1920px 宽（固定，PPT 标准 16:9 1080p）。
+// fit = wrap.w / 1920 → iframe 整个铺满 canvas wrap（无外部 letterbox）。
+// 高度方向 iframe 补偿 wrap.h/zoom，内部 deck 自己滚（页 1080 高 + 余地由 deck CSS 处理）。
+// canvas.html 的 fit script 因 window!==top 在 iframe 内早退，scale 由 CanvasFrame 这边算。
+const DECK_WIDTH = 1920;
 
 export default function CanvasFrame({
   htmlSrc, htmlContent,
@@ -86,7 +87,7 @@ export default function CanvasFrame({
   }, [mode]);
 
   // fit = wrap.w / DECK_WIDTH：宽度铺满 canvas（无外部 letterbox）；
-  // 高度方向 iframe 内部由 deck CSS 自处理（720 一页 + 多页堆叠 + scroll）
+  // 高度方向 iframe 内部由 deck CSS 自处理（1080 一页 + 多页堆叠 + scroll）
   const effectiveZoom = zoom === 'fit'
     ? (wrapSize.width > 0 ? wrapSize.width / DECK_WIDTH : 1)
     : zoom;

@@ -352,7 +352,7 @@ workspace/<projectId>/sessions/<sessionId>/
 
 ### 6.5 HTML 规范（SKILL.md 约束 agent）
 
-- `<section data-page="N" data-layout="cover|content|...">` 分页，视口 1280×720
+- `<section data-page="N" data-layout="cover|content|...">` 分页，设计坐标系 1920×1080（fit script wrap 自适应任意视口）
 - 关键元素加 `data-anchor="cover-title"` / `data-tweakable='{"--accent":"any"}'`
 - 可调维度走 `:root { --xxx: ... }` CSS variables（让 expose_tweaks 能用 `target_var` 改）
 
