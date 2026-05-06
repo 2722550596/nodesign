@@ -19,7 +19,7 @@
 | `design-plan.md` | 当 plan-mode 开启时落档的 stage 1 设计 brief（plan-approve endpoint 提交后自动写） |
 | `exports/handoff-<ts>.zip` | 工程交付包（用户说"差不多 / 交付"时主动调 export_handoff 生成） |
 
-**起手式（强约束）**：写 canvas.html 之前先 Read `server/engine/skills/deskskill-engine-mini/canvas.template.html`——预置好的全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件。**cp 改写比从 0 拼快 10×，且不会漏关键 boilerplate**。
+**起手式（强约束）**：写 canvas.html 之前先 `Read canvas.template.html`——session 创建时已自动拷到你的 cwd 里，预置好的全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件 / 键盘翻页脚本。**cp 改写比从 0 拼快 10×，且不会漏关键 boilerplate**。
 
 ---
 
@@ -39,11 +39,33 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 
 ---
 
-## Stage 0 — Ask（深度对齐）
+## Stage 0 — Ask（深度对齐 + Search-first 软规则）
 
 **信息不足时先问，不要瞎做**——这是任何 agent 干活的元规则；视觉设计场景尤其严重，没有 reference 就是猜，颜色、质感、字体、节奏全靠想象，猜对的概率极低。
 
+### Search-first（软强制 — 2026-05-06 起）
+
+拿到首条 brief 时**第一反应**：判断要不要 `mcp__nodesign__web_search`。**默认偏向搜**，原因是：
+- 主题 / 品牌 / 产品 / 最新事件类 brief，搜一次 baidu/tavily 拿到的 snippet 比你脑里的训练数据准（K2.6 知识截止了，公司动态尤其滞后）
+- 视觉风格类 brief（"赛博朋克 deck" / "和风茶道"），搜参考图素材库 + 名作能让你后续 generate_image 的 prompt 写得准 10×
+- 对齐前有上下文，AskUserQuestion 的选项更精准（"Anthropic 最近哪个发布最值得放封面" > "想突出什么")
+
+| brief 类型 | 第一步该不该搜 |
+|---|:---:|
+| 涉及具体公司 / 产品 / 品牌（"做个介绍 OpenAI Atlas 的 deck"） | ✅ 必搜 1-2 次 |
+| 最新数据 / 事件（"汇总 2026 Q1 AI 大模型动态"） | ✅ 必搜 |
+| 设计风格陌生主题（"做个 brutalist landing"） | ✅ 搜参考图 |
+| 用户给了精确 outline + 素材（"照这 5 页做"） | ❌ 跳搜直接进 ask 对齐细节 |
+| 纯创作 / 风格化文字（"写首爱情诗 deck"） | ❌ 跳搜直接进 ask |
+| 改单字 / 调字号 / 单元素 tweak | ❌ 跳搜直接做 |
+
+**软强制的意思**：没有 hook 兜底，但你**默认偏搜**；明显属于"跳搜行"的场景才省。
+
+搜完拿到信息后**接着** AskUserQuestion 对齐风格 / 页数 / 重点（默认 1-3 轮）。
+
 ### 三个信号源（按权重排）
+
+### 三个信号源（按权重排，互补 search-first）
 
 **信号 1：workspace 自动提示（最优先）**
 
@@ -74,9 +96,29 @@ Chat 文本本身的信息密度。用户给了一句"做个 deck"密度低需�
 
 | 轮次 | 必须问 | 选问 |
 |---|---|---|
-| 第 1 轮 | 视觉调性方向（暖灰商务 / 暗色赛博 / 淡彩水墨...）+ 节奏密度 | 章节切分大方向 |
+| 第 1 轮 | **Tone / voice 4 选 1**（见下）+ 视觉调性方向（暖灰商务 / 暗色赛博 / 淡彩水墨...）| 节奏密度 / 章节切分 |
 | 第 2 轮（默认仍要问） | palette 三选 + 字体方向（用 preview HTML 让用户视觉对比，**比文字描述准 10×**） | 元素隐喻 |
 | 第 3 轮（深度对齐 toggle 才跑） | 核心元喻 + 收尾形态 | 反例 / 用户讨厌什么 |
+
+#### Tone 1Q 必问（除非用户明说"按你来"）
+
+Stage 0 第 1 轮**必带**这条 question：
+
+```
+Q: 这份 deck 想要什么 tone / voice？
+options:
+  - 严肃商务   → 客观克制，长字短句，深色 palette，sans-serif，少装饰
+                preview: 一个 16:9 卡片，深灰底+白字标题"2026 Q1 Review"+ 数字排
+  - 温暖人文   → 故事感，长句多，暖色 palette，serif italic，留白多
+                preview: 米白底+衬线大字"那一天，他做出了选择"+ 手写感装饰
+  - 学术克制   → 数据导向，少形容词，浅色 palette，sans-serif，无装饰
+                preview: 白底+黑字"Hypothesis 3.2"+ 公式 + 引用编号
+  - 戏剧化叙事 → 大对比，戏剧字号，深色 + accent 高饱和，serif/display 混排
+                preview: 黑底+大金字"REVOLUTION"+ 红色细线条
+  - Other      → 用户写自己的关键词
+```
+
+为什么必问：tone 跟 palette / 字体 / 文案密度 / image gen prompt 风格全都强相关。**不问 = agent 默认走商务范**，跟用户脑里"古风茶道"差十万八千里，发现不对要回炉。
 
 **preview 字段是设计场景关键**：视觉方向 / 配色 / 字体问题**必带 240×140 self-contained HTML preview**（详见 prelude § AskUserQuestion）。
 
@@ -105,6 +147,23 @@ Chat 文本本身的信息密度。用户给了一句"做个 deck"密度低需�
 ### plan-mode（用户开了"深度对齐"toggle）
 
 **强制流程**：3-5 轮 AskUserQuestion 对齐 → 写 design plan → 调 plan-approve endpoint 落档 `design-plan.md` → 进 Stage 3 写 canvas.html。每写一页前 grep `## Per-page plan` 表对应行，按 c 段决策做。
+
+### Agent in-loop 主动请 plan mode（Phase C，2026-05-06 起）
+
+如果用户**没开** "深度对齐" toggle 但你跑到一半发现任务复杂（5+ 页 / 强叙事 / 多约束冲突），**别自顾自硬干**——调 `mcp__nodesign__request_plan_mode({reason, estimatedPages?, taskKind?})`：
+
+```
+mcp__nodesign__request_plan_mode({
+  reason: "5 页深度叙事 + 用户希望兼顾'技术准确'和'感性煽情'两个矛盾约束，
+          先理一理叙事弧再动手能少返工",
+  estimatedPages: 5,
+  taskKind: "deck",
+})
+```
+
+工具立即返回不阻塞你 —— 前端弹横幅给用户 yes/no。**用户 yes** → SDK 在你下一 turn 切到 plan mode → 你按 plan-instructions.md 写 plan + 调 ExitPlanMode。**用户 no 或不响应** → 没 mode change 提示，按原计划继续。
+
+**别滥用**：单页改动 / 简单 brief / 已经收齐 outline 的不要请。判断阈值同上"何时写 design plan"表第一行。
 
 ### plan-doc 模板
 
@@ -174,11 +233,11 @@ Chat 文本本身的信息密度。用户给了一句"做个 deck"密度低需�
 
 ### 起手式：cp canvas.template.html
 
-**强约束**：写 canvas.html 之前先 Read `server/engine/skills/deskskill-engine-mini/canvas.template.html`——预置 importmap / Tailwind config / Babel / 4 shadcn 组件 / fit script / 1920×1080 base CSS 全部。
+**强约束**：写 canvas.html 之前先 `Read canvas.template.html`——session 创建时系统自动拷到你的 cwd（跟 SKILL.md 保持同步），预置 importmap / Tailwind config / Babel / 4 shadcn 组件 / fit script / 键盘翻页 / image CSS vars / 1920×1080 base CSS 全部。
 
 ```
-1. Read server/engine/skills/deskskill-engine-mini/canvas.template.html
-2. Write canvas.html（cp template + 改 title / 改 design-tokens / 改 sections）
+1. Read canvas.template.html       (cwd 下，直接 Read)
+2. Write canvas.html               (cp template + 改 title / 改 design-tokens / 改 sections)
 3. 改：design-tokens 的 --bg / --accent / --hero（按你 stage 1 plan 的 palette）
 4. 改：<section data-page="N"> 按你 plan 的 per-page 设计填
 5. 改：<script type="text/babel"> 加你的 React mount components
@@ -225,6 +284,79 @@ Chat 文本本身的信息密度。用户给了一句"做个 deck"密度低需�
 - ✅ deck 第一版完整写完后**主动暴露**一次（5-8 个 control）
 - ✅ 用户点 Apply 时（Edit 改 :root + replace=true 重 expose 更新 default）
 - ❌ 改文字 / 加页 / 调 layout 时**不重新 expose**（schema 没变）
+
+### 页型决策表（image-led / text-led / data-led / hybrid）
+
+每个 `<section data-page>` **必标 `data-layout-role`**（见 [Canvas.md § 6.6.1](../../../../Canvas.md)）。按 brief 类型决定哪些页用哪种 role：
+
+| brief 类型 | image-led | text-led | data-led | hybrid |
+|---|---|---|---|---|
+| 故事 / 叙事 deck（讲一段经历）| cover / section-divider / portrait（1-2 主角）/ quote | 论点 / 心路 / 反思 | — | mood board / 团队 |
+| 产品 / brand pitch | cover / section-divider / hero | 痛点 / 卖点 / 时间线 | 数据点 / 对比图 | feature 阵列 |
+| 技术 / 架构 deck | cover / section-divider | overview / 决策原理 | 流程图 / 架构图 / 数据 | 模块对比 |
+| 学术 / 论文 ppt | cover（克制）| 论点 / 假设 / 结论 | 图表 / 公式 | 实验对比 |
+| 营销 / landing 类 | cover / section-divider / portrait | CTA 文案 | KPI 数字 | feature grid |
+| 运营 / 数据复盘 | hero（cover）| 上下文 1 页 | 大量数据页 | 多 KPI 对比 |
+| 教育 / 教学 deck | cover / section-divider / illustration | 论点 + 例子 | 流程图 | 步骤对比 |
+
+**决策启发法**：
+- "这页能不能用图代替 80% 内容？" 能 → image-led
+- "这页核心是数字 / 图表 / 流程？" 是 → data-led
+- "图和文等量重要，且各占 40-50%？" 是 → hybrid
+- 都不是 → text-led（默认）
+
+**3 条铁律**（写 image-led 必看，详见 Canvas.md § 6.6.3）：
+1. 图传达的别再用文字重述
+2. image-led 文字 ≤ 5 行（含标题）
+3. overlay 用 gradient + 大字 + drop-shadow，别加纯黑半透明压亮度
+
+### 图片工作流 — 决策层（HOW 全在 prelude § generate_image cookbook）
+
+`generate_image`（Nano Banana 2）是 deck 视觉的**第二支柱**。完整 prompt 写法 / 词汇库 / 渲文字 / 多变体 / in-painting 范例**全在 prelude § generate_image**——本节只讲"什么时候怎么决策"。
+
+**何时调 generate_image vs 跳过**：
+
+| 场景 | 决策 |
+|---|---|
+| 用户 brief 涉及具体品牌 / 名人 / 地标 / 风格名（"Wong Kar-wai 风" / "Apple 风格"）| ✅ 调 — Nano Banana 知识库直接命中 |
+| 视觉表达比文字更直观（封面 / 章节扉页 / 引言衬底 / 人物 / 装饰）| ✅ 调 |
+| 数据图表 / 流程图 / 架构图 | ❌ 不调 — 用 recharts / mermaid，结构胜于图 |
+| 简单 UI 控件 / 表单 | ❌ 不调 — Tailwind + shadcn |
+| 单页 ≤ 5 个 lucide icon 配文字 | ❌ 不调 — inline SVG 即可 |
+
+**何时调 `request_image_approval` 让用户 gate**（高代价决策）：
+
+| 场景 | 必 gate？ | 原因 |
+|---|---|---|
+| 第 1 张 cover / hero（要当 referenceImages 种子用于全 deck）| ✅ **必 gate** | 这张图错了 → 全 deck 风格全错 → 重生整套 |
+| 第 1 张 portrait（要当跨页角色一致性 anchor）| ✅ **必 gate** | 同上 |
+| 用户上传 logo 嵌 product mockup | ✅ **必 gate** | logo 真实嵌融效果不可猜 |
+| section-divider / decoration / icon 单张 | ❌ 不 gate | 单张图错了 → 改一张就行 |
+| 改光线 / 调色 / inpainting | ❌ 不 gate | 增量修改 conversational editing 即可 |
+
+**样张时机推荐 flow**：
+```
+1. 用户 brief 对齐（plan 通过）
+   ↓
+2. agent 生第 1 张 cover（imageSize='2K'，5 元素公式 + 流派引名）
+   ↓
+3. agent 调 request_image_approval([cover_path], intent='这是全 deck 视觉锚') ← gate
+   ↓
+4. 用户 OK / regenerate w/ feedback
+   ↓
+5. OK 后所有后续 hero/section-divider 把 cover 当 referenceImages 种子
+   → record_decision 记锚定关系
+```
+
+**调完必做（无论是否 gate）**：
+- `record_decision({ topic:'image:<role>-<n>', decision:'<short prompt summary>', rationale:'<why this prompt>', artifacts:[path] })` —— spec.json 留历史
+- 关键节点 emit `assetRole` 到工具 input —— 前端 UI 才能分类显示
+
+**反模式**：
+- ❌ cover 不 gate 直接当 anchor → 用户后期觉得"风格不对" = 全 deck 重生
+- ❌ 同 outputName regenerate 第 3 次仍不 ask user → 浪费 token，多半也得不到更好的
+- ❌ 调 generate_image 不写 assetRole → 前端无法分类 / Tweaks 找不到回去
+- ❌ 不复用 referenceImages → 全 deck 像 5 个不同 designer 各做一页
 
 ### Page-by-page 节奏建议
 

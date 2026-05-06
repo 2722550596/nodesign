@@ -14,18 +14,45 @@
 
 ---
 
-## 你跑在哪（NoDesign 工作台共性）
+## 你跑在哪（agent workspace 路径地图）
 
-| 路径 | 含义 | 通用约束 |
+cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**——
+不要去仓库相对路径（如 `server/engine/skills/...`）找文件，那些 agent 看不见。
+
+### cwd 直接可见的文件 / 目录
+
+| 路径 | 类型 | 含义 / 用法 |
 |---|---|---|
-| `cwd` | session workspace（持久化目录，git 管 history） | 所有产物落这里；不要跑出去（hook 每个 turn 注入绝对路径） |
-| `./assets/` | 用户上传的素材 + 你 curl 下载的图/字体/音频（软链 → shared） | 跨 session 共享；workspace 有内容时 system 提示会提醒 |
-| `./agent-memory/` | 跨 session **长期记忆**（软链 → shared） | `memory.md` = main agent 通用记忆；`brand/memory.md` = 品牌档案（BrandCard 读这）|
-| `./exports/` | agent 主动生成的交付产物 | 跟具体 skill 相关，按 SKILL.md 指引调对应 export 工具 |
-| `spec.json` | 跨 turn / 跨 session 的设计意图档案 | 工作台自动注入最近 5 条 decisions 摘要；要细节再 Read |
+| `canvas.html` | 文件 | **主产物**（你 Write 这里） |
+| `canvas.template.html` | 文件 | session 创建时系统从 skill 拷过来的起手模板，**Read 后 cp 改写** 写 canvas.html |
+| `spec.json` | 文件 | 跨 turn / 跨 session 设计意图档案；工作台自动注入最近 5 条 decisions 摘要 |
+| `design-plan.md` | 文件 | plan-mode 通过后的 plan 落档（仅 plan-mode 才有） |
+| `assets/` | softlink → shared/assets/ | 用户上传素材 + generate_image 落档（`assets/generated/<name>.png`）；跨 session 共享 |
+| `agent-memory/` | softlink → shared/.claude/agent-memory/ | 跨 session **长期记忆**：`memory.md` = main agent 通用；`brand/memory.md` = 品牌档案 |
+| `skills/` | softlink → shared/.claude/skills/ | 项目级**自定义** skills（用户可往 shared 写） |
+| `agents/` | softlink → shared/.claude/agents/ | 项目级**自定义** subagents |
+| `exports/` | 目录（按需创建） | export_handoff zip 等交付产物 |
+| `.claude/CLAUDE.md` | softlink | 项目 instructions |
+| `.claude/settings.json` | softlink | 项目 SDK config |
+| `.git/` | per-session git | server 管的 history，**你不要 git commit / git checkout** |
 
-git history 由 server 管，**你不要自己 git commit / git checkout**。FileChanged
-hook 会触发前端 reload，用户能在画布外回退。
+### additionalDirectories（cwd 外但能 Read）
+
+`<projects-data>/<projectId>/shared/` 整个 shared 根。**正常用 cwd 下的软链
+就够**（`assets/...` `agent-memory/...`），不要主动用绝对 shared 路径——多余且
+让 prompt 噪。
+
+### 看不见的（NoDesign 内部，不要尝试访问）
+
+- `server/engine/skills/` — engine 自带 skills 源码（你的 SKILL.md 就在这；
+  `canvas.template.html` 已被拷到 cwd，**不要去这条路径找**）
+- `server/projects-data/` 其它 project / session — 物理隔离
+- 仓库其它源码（`web/`, `server/lib/`, `node_modules/`）— 都跟你无关
+
+### git 行为
+
+git history 由 server 管，FileChanged hook 触发前端 reload，用户在画布外
+点 Undo 走 `git checkout HEAD~1`。**你不主动 commit / checkout / reset**。
 
 ---
 
@@ -114,9 +141,19 @@ input：`{ questions: [{ question, header, options: [{label, description, previe
 - 最多 4 选项，多了用户晕
 - **不要加 "Other / 其他"** —— 系统自动提供
 
-**`preview` 字段** —— 选项要"看到"差异时给个 sandbox iframe 渲染的 self-contained HTML：
-- ≤ 5KB / 240×140 比例 / inline style / 不引外部图 / 不用 emoji
-- 视觉方向 / 配色 / 字体 / 排版 → 必给 preview
+**`preview` 字段** —— 选项要"看到"差异时给。前端**自动检测内容形态**分派渲染（Phase Image-5）：
+
+| preview 内容 | 渲染方式 | 适用场景 |
+|---|---|---|
+| `data:image/...;base64,XXX` | `<img>` 直接显 | 多变体并排选 cover/portrait（先 generate_image 出图再当 preview） |
+| `https://...` / `/api/.../assets/...` 以 .png/.jpg 结尾 | `<img>` 直接显 | 已有 asset path 直接当 preview |
+| `assets/generated/x.jpg` 相对路径 | `<img>` 直接显（fallback） | 同上简写 |
+| 含 `<...>` 像 HTML | sandbox iframe srcDoc | 视觉方向 / 配色 / 字体 / 排版（≤5KB / 240×140 / inline style / 不引外部图） |
+| 纯文本 | mono 字 fallback | 兜底 |
+
+**何时用 preview**：
+- 视觉方向 / 配色 / 字体 / 排版 → HTML preview
+- 多张候选图选哪张 → image preview（更推荐 `request_image_approval` 走专门 banner，但 AskUserQuestion + image preview 也行）
 - 离散文字决策（yes/no, 是否需要 PDF）→ 不必 preview
 
 | 场景 | 用什么 |
@@ -138,7 +175,7 @@ input：`{ questions: [{ question, header, options: [{label, description, previe
 
 ---
 
-## NoDesign 业务 MCP 工具速查（13 个）
+## NoDesign 业务 MCP 工具速查（16 个）
 
 > 调用名一律 `mcp__nodesign__<tool>`。SDK 已经把完整 schema 注入到 system
 > prompt 顶层（alwaysLoad: true），**第一 turn 就能直接调**，不要走 ToolSearch。
@@ -159,6 +196,9 @@ input：`{ questions: [{ question, header, options: [{label, description, previe
 | `clear_pending_changes` | 处理完清 buffer（不清下个 turn 又见同样变更） | `ids?`（不传清全部） |
 | `export_handoff` | 打 zip（canvas + spec + assets + chat history + README）到 `./exports/` | 无参 |
 | `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu | `query` / `provider?` |
+| `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图，落 `assets/generated/` | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
+| `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
+| `request_image_approval` | 关键图片决策让用户 gate（cover anchor / portrait / logo 嵌入 / 多变体选优）| `paths` (1-5) / `intent` / `role?` / `isAnchor?` |
 
 **`screenshot_canvas` 调用范例**：
 ```
@@ -170,8 +210,150 @@ mcp__nodesign__screenshot_canvas { fullPage: true }   // deck 整体
 **`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2 次、tavily ≤3 次、exa ≤2 次。
 Query 加年份词（2025/2026）。**不要 baidu 英文**（实测严重跑题）。
 
+**Search-first 软规则**（2026-05-06 起）：拿到首条 brief 时先判断要不要搜——主题/品牌/产品/最新事件类**默认搜 1-2 次**，纯创作 / 已有 outline 才跳。详见 SKILL.md § Stage 0 Search-first 表。
+
 **`WebFetch`（SDK 内置）配合 web_search**：`{ url, prompt }` —— 取 URL 后用 prompt 总结，
 不灌完整 HTML 到 context。多页 fetch 派给 explorer。
+
+### `generate_image`（Nano Banana 2 — 完整 cookbook）
+
+调用网关：NoDesk passthrough → DMXAPI → Gemini 3.1 Flash Image Preview。落档 `assets/generated/<name>.{png|jpg}`，HTML 里引 `<img src="assets/generated/<name>.jpg">`（softlink 透明）。
+
+#### A. 模型本质 —— 用之前必须知道
+
+| 事实 | 你能利用什么 |
+|---|---|
+| **knowledge cutoff 2025-01** | brand / 名人 / 地标 / 艺术家 / 流派 / 影视 / 摄影器材 / film stock 全在脑里 |
+| **131K input token + 最多 14 reference images** | 跨页讲故事 + 多 reference 拼合不会爆 |
+| **听得懂 conversational editing** | "Keep composition, change lighting to golden hour" 比重生整张准 |
+| **多变体单 prompt** | "Create THREE distinct variations" 一次出 3 张，省 60% token |
+| **角色命名锚定** | 给角色起名（"Maya"），下个 turn 它脑里就锚定了 |
+| **不擅长 negation** | "no cars" 改写成 "empty pedestrianized street" |
+| **多语言文字渲染** | 用一种语言写 prompt + 指定输出语言 |
+
+**直接点名**——别犹豫：
+- ✅ "Wong Kar-wai cinematography"  ✅ "Apple Park building"  ✅ "Van Gogh-style oil painting"
+- ✅ "Beatles' Abbey Road photo composition"  ✅ "Fujifilm color science"  ✅ "Bauhaus poster aesthetic"
+- ✅ "Saul Bass minimalist title sequence"  ✅ "ukiyo-e woodblock print style"  ✅ "1980s VHS aesthetic"
+
+#### B. 5 元素叙述公式（强约束 prompt 结构）
+
+```
+[Subject] + [Action] + [Location/context] + [Composition] + [Style]
+```
+
+3-5 句自然段比关键词列表准 10×。每段给 1-2 个具体属性。
+
+**反例 vs 正例**：
+- ❌ `"a woman on a street, blue dress, day"`
+- ✅ `"[Subject] A young woman in a light blue linen shirt and tailored beige slacks, [Action] standing at a zebra crosswalk waiting for the light to change, [Location] in central Lisbon's Chiado district, midday overcast light filtered by tall pastel buildings, [Composition] medium shot at street level, slightly low angle, [Style] documentary photography style, 85mm shallow depth of field f/2.0, natural skin tones, Fujifilm color science"`
+
+#### C. 词汇库（按场景分类）
+
+| 类型 | 推荐词 |
+|---|---|
+| 镜头 | f/1.8 / f/2.8 / f/8 portrait, 35mm wide, 85mm portrait, 200mm telephoto, macro lens, fisheye, low-angle drone, top-down isometric, dutch angle |
+| 相机 / film stock | GoPro (immersive distortion), Fujifilm (color science), Kodak Portra 400 (warm skin), Cinestill 800T (tungsten green halation), Ilford HP5 (B&W documentary), Hasselblad medium format, disposable camera (raw flash nostalgic), 1980s VHS |
+| 灯光 | three-point softbox, Chiaroscuro high contrast, golden hour backlighting, blue hour, neon city night, candlelit interior, overcast diffuse, harsh midday sun, studio rim light |
+| 色调 / 氛围 | cinematic muted teal and orange, bleach bypass, sepia toned, pastel washed, high saturation editorial, monochrome noir |
+| 材质 | navy blue tweed, etched silver leaf, matte ceramic, brushed steel, raw linen, hand-blown glass, weathered concrete, lacquered wood, brushed velvet |
+| 艺术流派 / 海报 | Bauhaus, Wabi-sabi, Memphis design, brutalist concrete, art nouveau lithograph, ukiyo-e, Mucha poster, Mondrian primary, Saul Bass minimalist, Swiss International typographic |
+
+#### D. 渲文字 4 条铁律（Nano Banana 2 杀手级能力）
+
+1. **目标文字必带引号**：`render the words 'Annual Report 2026' on the cover`
+2. **指定字体风格 OR 字体名**：`in flowing Brush Script font` / `in Century Gothic 12pt` / `in heavy blocky Impact font`
+3. **多语言**：用一种语言写 prompt + 指定输出语言（`output the text in Japanese using a brush calligraphy style`）
+4. **复杂排版先对话再生图**：> 3 行字 / 多种字体混排时，先用 chat 跟模型对齐文字内容，再要求生图
+
+**典型 prompt（cover 多字段并存）**：
+> "A high-end glossy magazine cover, deep cherry red background. Render three lines of text with the following exact styling: top line 'GLOW' in flowing elegant Brush Script font; middle line '10% OFF' in heavy blocky Impact font; bottom line 'Your First Order' in thin minimalist Century Gothic font. Translate the text into Korean and Arabic for the bottom-right corner."
+
+**进阶玩法 — typographic poster**（cover / section-divider 必看）：
+> "A typographic poster with a solid black background, bold letters spell 'NEW YORK', filling the center of the frame. The text acts as a cut-out window. A photograph of New York skyline is visible ONLY inside the letterforms."
+
+#### E. Reference image 4 大模式（max 14 张：≤4 人物 + ≤10 物体）
+
+**multi-modal formula**：
+
+```
+[Reference images] + [Relationship instruction] + [New scenario]
+
+例: "Using the napkin sketch (Reference 1) as the structure
+    and the fabric sample (Reference 2) as the texture,
+    transform this into a high-fidelity 3D armchair render.
+    Place it in a sun-drenched, minimalist living room."
+```
+
+| 模式 | 怎么用 |
+|---|---|
+| **风格一致（cross-page anchor）** | 第 1 张 cover 当 referenceImages 种子，所有后续 hero/section-divider 都引它 → 整 deck 像同一张片子 |
+| **角色一致（多页叙事）** | portrait 跨页引 + 给角色起名（"Maya, the woman in Reference 1"）→ 同一个角色穿越不同场景 |
+| **logo / brand 嵌入** | 用户上传 logo 进 `assets/`，每张 product mockup 把 logo 当 reference + prompt"Place the logo from Reference 1 etched into the bottle in Reference 2" → 真实嵌融 |
+| **In-painting（精修而非重画）** | 调 `screenshot_canvas` 截当前页 → 把截图当 reference + 用 conversational editing 语言 |
+
+#### F. 多变体单 prompt（省 token 大杀器）
+
+```
+单 prompt 出 3 候选 →
+"Create THREE distinct variations of this cover hero,
+ vary the lighting and atmosphere (golden hour / blue hour / overcast)
+ but keep the subject and composition consistent"
+
+→ 1 次 generate_image 出 3 张候选，配 request_image_approval 让用户并排选
+→ 比连调 3 次省 60% token，且变体间风格更统一
+```
+
+适用场景：cover 候选 / portrait 朝向候选 / palette 候选 / 标题排版候选。
+
+#### G. Conversational in-painting 语言（精修 ≫ 重画）
+
+| 想做的 | ❌ 不要 | ✅ 应该 |
+|---|---|---|
+| 改光线 | 重生整张 | "Keep composition, change lighting to golden hour" |
+| 换背景 | 重生整张 | "Replace the background with a neon-lit city street" |
+| 删元素 | 重生整张 | "Remove the person on the left and extend the sidewalk" |
+| 换字体 | 重生整张 | "Keep the layout but change the headline font to a bold serif" |
+| 局部精修 | 重生整张 | screenshot_canvas + "Soften the headline color in the top-left corner; everything else identical" |
+
+配合 `screenshot_canvas` 截当前页当 reference → 上面这种 prompt = 精修而非重画。
+
+#### H. 工具签名 + 默认值
+
+```js
+mcp__nodesign__generate_image({
+  prompt: "<3-5 句自然段，5 元素公式>",
+  aspectRatio: "16:9",   // cover/hero=16:9 or 21:9; portrait=4:5 or 2:3; icon/pattern=1:1; vertical=9:16
+  imageSize: "2K",       // hero/cover='2K'; icon/decoration='1K'; '4K' 慎用（token 翻倍）
+  assetRole: "cover",    // 必传 — emit + record_decision 都靠它定位
+  outputName: "deck-cover-v1",
+  referenceImages: [     // 可选, max 14
+    "assets/user-uploaded-logo.png",
+    "assets/generated/cover-anchor.jpg",  // 用作 cross-page 风格种子
+  ],
+  thinkingLevel: "minimal",  // default; 复杂 composition + 文字嵌图升 'high'
+})
+```
+
+#### I. 反例（NOT to do — 一条踩 = 整张废）
+
+- ❌ 关键词堆砌（`"woman blue dress sunny"`）
+- ❌ 否定描述（`"no cars"` / `"without people"`）
+- ❌ 抽象形容词（`"nice"` / `"pretty"` / `"cool"` / `"高级感"`）
+- ❌ 不指定艺术流派 / 摄影风格
+- ❌ 文字不带引号 + 不指定字体
+- ❌ 同 outputName regenerate ≥ 3 次（应改 prompt 或 ask user）
+- ❌ icon / sticker 不说"白底"（Nano Banana 不支持 transparent，会出灰底）
+- ❌ 跨页讲故事但不用 referenceImages（每张图独立瞎画 → 角色 / 风格漂移）
+
+#### J. 调完必做
+
+1. **`record_decision`** —— 把 prompt + role + path + 用户评价记 spec.json，重生时能查回
+2. **关键节点 gate**：cover / 第一个 portrait / logo 嵌入 → **必调 `request_image_approval`** 让用户批，别 agent 自批就拿来当 referenceImages 种子（高代价决策）
+
+### `request_plan_mode`（plan 模式自决）
+
+调用语义见 SKILL.md § "Agent in-loop 主动请 plan mode"。**不阻塞**——emit 完立即返回，agent 当前 turn 继续工作，SDK 切 mode 后下一 turn 自然通过 system reminder 感知。
 
 ---
 
@@ -382,15 +564,15 @@ prompt='截图 canvas.html 的 page 3（用 pageIndex=3）评审。
 
 ## Hybrid 范式（2026-05-06 起所有 deck 默认）
 
-> 所有 deck 用 `server/engine/skills/deskskill-engine-mini/canvas.template.html` 当起点 cp 改写——这份模板已经把全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件全部预置好。
+> 所有 deck 用 cwd 下的 `canvas.template.html` 当起点 cp 改写——session 创建时系统已自动拷过来，预置全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件 / 键盘翻页 / image CSS vars。
 > 何时用 React mount / 何时纯静态 见 SKILL.md § Stage 3。本段只讲语法。
 
 ### 起手式：cp template 而不是从 0 拼
 
 ```
-Read server/engine/skills/deskskill-engine-mini/canvas.template.html
-→ 看完结构（importmap / 4 shadcn 组件 / fit script 都在 head 里）
-→ Write canvas.html （cp template 改你需要的部分）
+Read canvas.template.html       (cwd 下，session init 时系统拷过来的)
+→ 看完结构（importmap / 4 shadcn 组件 / fit script / 键盘翻页都在 head/body 里）
+→ Write canvas.html             (cp template 改你需要的部分)
 ```
 
 ### 1 文件，4 类内容
@@ -431,21 +613,32 @@ Read server/engine/skills/deskskill-engine-mini/canvas.template.html
 
 ### 全家桶库速查表（importmap 已声明，agent `import` 即用）
 
-| 库 | import | 用途 / 何时用 |
+| 库 | import | 用途 / 何时用 | **不要** 用在 |
+|---|---|---|---|
+| `recharts` | `import { LineChart, Bar, ... } from 'recharts'` | 西式数据图表（quick & clean） | landing 装饰动画（用 framer-motion）、流程图（用 mermaid） |
+| `echarts` + `echarts-for-react` | `import ReactECharts from 'echarts-for-react'` | 中文 deck 图表强势替代（更多 chart type / 中文 a11y） | 简单单系列折线（recharts 更轻） |
+| `framer-motion` / `motion` | `import { motion } from 'framer-motion'` | React 声明式动画（hover/scroll/layout） | 复杂 timeline / scrollTrigger（用 gsap） |
+| `gsap` | `import gsap from 'gsap'` | timeline / stagger / scrollTrigger 命令式动画 | 单一 hover 状态（CSS transition 即可） |
+| `lucide-react` | `import { Sparkles, Layers } from 'lucide-react'` | icon 库（清爽线性，1500+ 个） | 装饰性大插画（用 generate_image，role='decoration'）|
+| `mermaid` | `import mermaid from 'mermaid'` + `mermaid.run()` | 流程图 / 架构图 / 时序图（技术 deck 必备） | 数据图表（用 recharts）、节点图自由布局（用 reactflow） |
+| `shiki` | `import { codeToHtml } from 'shiki'` | 代码块高亮（VSCode 同款引擎） | 普通文本展示（`<pre>` 即可，不要拖 200KB shiki） |
+| `embla-carousel-react` | `import useEmblaCarousel from 'embla-carousel-react'` | 卡片轮播 | 单页静态卡片网格（用 grid 即可） |
+| `react-katex` | `import { BlockMath, InlineMath } from 'react-katex'` | 数学公式（学术/科研 deck）—— 注意需要 inline KaTeX CSS link | 普通上下标 `<sup>/<sub>`（HTML 即可） |
+| `reactflow` | `import ReactFlow from 'reactflow'` + 自带 CSS | 节点图 / 思维导图（用户可拖） | 静态架构图（用 mermaid 文本声明更省事）|
+| `@radix-ui/react-{dialog,tabs,tooltip,accordion,popover,scroll-area}` | `import * as Dialog from '@radix-ui/react-dialog'` | shadcn 底层（要 a11y/键盘导航时用） | 4 个 inline shadcn 已盖的常用 case（Card/Button/Badge/Tabs） |
+| `three` + `@react-three/fiber` + `@react-three/drei` | `import { Canvas } from '@react-three/fiber'` | 3D 场景天花板（封面炫一下；体积大用之前想清楚） | 普通 hero（一张 generate_image 出来更轻 + 可控） |
+| `lenis` | `import Lenis from 'lenis'` | 平滑滚动（landing-style deck 才需要） | deck 模式（fit script 已锁页，不用 scroll smoothly） |
+
+### 选型决策表（按任务类型）
+
+| 任务类型 | 首选组合 | 反例 |
 |---|---|---|
-| `recharts` | `import { LineChart, Bar, ... } from 'recharts'` | 西式数据图表（quick & clean） |
-| `echarts` + `echarts-for-react` | `import ReactECharts from 'echarts-for-react'` | 中文 deck 图表强势替代（更多 chart type / 中文 a11y） |
-| `framer-motion` / `motion` | `import { motion } from 'framer-motion'` | React 声明式动画（hover/scroll/layout）—— 跟 GSAP 互补 |
-| `gsap` | `import gsap from 'gsap'` | timeline / stagger / scrollTrigger 命令式动画 |
-| `lucide-react` | `import { Sparkles, Layers } from 'lucide-react'` | icon 库（清爽线性，1500+ 个） |
-| `mermaid` | `import mermaid from 'mermaid'` + `mermaid.run()` | 流程图 / 架构图 / 时序图（技术 deck 必备） |
-| `shiki` | `import { codeToHtml } from 'shiki'` | 代码块高亮（VSCode 同款引擎） |
-| `embla-carousel-react` | `import useEmblaCarousel from 'embla-carousel-react'` | 卡片轮播 |
-| `react-katex` | `import { BlockMath, InlineMath } from 'react-katex'` | 数学公式（学术/科研 deck）—— 注意需要 inline KaTeX CSS link |
-| `reactflow` | `import ReactFlow from 'reactflow'` + 自带 CSS | 节点图 / 思维导图 |
-| `@radix-ui/react-{dialog,tabs,tooltip,accordion,popover,scroll-area}` | `import * as Dialog from '@radix-ui/react-dialog'` | shadcn 底层（要 a11y/键盘导航时用） |
-| `three` + `@react-three/fiber` + `@react-three/drei` | `import { Canvas } from '@react-three/fiber'` | 3D 场景天花板（封面炫一下；体积大用之前想清楚） |
-| `lenis` | `import Lenis from 'lenis'` | 平滑滚动（landing-style deck 才需要） |
+| 数据 dashboard | recharts/echarts + Card + Tabs + lucide icon | gsap 动画做不到、不要堆 framer-motion |
+| Landing page / 营销 | framer-motion + gsap + generate_image (hero/bg/decoration) | mermaid 不需要、recharts 不一定 |
+| 技术 deck（架构 / 协议） | mermaid 或 reactflow + shiki + recharts | 不要全用 generate_image 替代结构图 |
+| 学术 / 科研 deck | react-katex + recharts + 字体衬线 | gsap 复杂动画在学术场景显得轻浮 |
+| 故事 deck（多角色） | generate_image (portrait + section-divider，referenceImages 跨页固定角色) + framer-motion | recharts 用不上 |
+| 数据可视化报告 | echarts + Card + 静态 hero（generate_image role='hero'）| 别拖 r3f / lenis |
 
 ### template 已 inline 的 4 个 shadcn 组件
 

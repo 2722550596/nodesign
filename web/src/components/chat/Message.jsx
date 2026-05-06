@@ -7,6 +7,7 @@ import {
   ShieldAlert, Info, AlertCircle, CheckCircle2,
   HelpCircle, SkipForward, Send, Check,
   Clock4, Compass, ScanEye, Palette, Sliders,
+  ImagePlus,
 } from 'lucide-react';
 import { diffLines } from 'diff';
 import ReactMarkdown from 'react-markdown';
@@ -232,6 +233,110 @@ function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
       }}>{message.content}</div>
+    </div>
+  );
+}
+
+/**
+ * Phase Image-5：preview 字段的智能渲染分派。
+ *
+ * Agent 用 AskUserQuestion 时 preview 字段历史上只接 HTML（sandbox iframe）。
+ * 加图片生成后我们希望同样卡片能 preview 图（多变体并排选 cover/portrait）。
+ * 走轻量路线 A：前端 wrapper 检测 preview 内容形态自动分派。
+ *
+ * 检测规则（按优先级）：
+ *   1. data:image/* base64 URL → 直接 <img>（agent 把 generate_image 出的 image
+ *      base64 拼成 data URL 当 preview）
+ *   2. http(s)://...  /api/.../assets/...  以 .png/.jpg/.jpeg/.webp/.gif 结尾的 URL
+ *      → <img>（agent 把 assets/generated/ 路径或网络图当 preview）
+ *   3. assets/... 相对路径（agent 简写）→ <img>（用 srcset 容错）
+ *   4. 含 < / > 看起来像 HTML → iframe srcDoc（旧逻辑）
+ *   5. 都不像 → text 兜底
+ */
+function renderQuestionPreview(preview, label) {
+  if (!preview || typeof preview !== 'string') return null;
+  const s = preview.trim();
+
+  // 规则 1: data: URL
+  const isDataImg = /^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(s);
+  // 规则 2: http(s) URL ending in image ext
+  const isHttpImg = /^https?:\/\/\S+\.(png|jpe?g|webp|gif|svg)(\?\S*)?$/i.test(s);
+  // 规则 2b: 同源 /api/... assets endpoint
+  const isApiAssetUrl = /^\/api\/[^\s]+\.(png|jpe?g|webp|gif|svg)(\?\S*)?$/i.test(s);
+  // 规则 3: assets/ 相对路径
+  const isAssetRelPath = /^assets\/[^\s]+\.(png|jpe?g|webp|gif|svg)$/i.test(s) && !s.includes('<');
+
+  if (isDataImg || isHttpImg || isApiAssetUrl || isAssetRelPath) {
+    // 相对路径 → 不能直接当 src（前端 base 不一定对），加注释提示
+    // 实际情况：agent 通常会用 data: URL 或 /api/... 完整 URL；assets/ 相对路径作 fallback
+    return (
+      <div style={{
+        marginTop: GAP.xs + 2,
+        width: '100%',
+        aspectRatio: '4 / 3',
+        borderRadius: 4,
+        overflow: 'hidden',
+        border: `1px solid ${COLOR.borderLt}`,
+        background: '#fafafa',
+      }}>
+        <img
+          src={s}
+          alt={`preview-${label}`}
+          loading="lazy"
+          style={{
+            display: 'block',
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            pointerEvents: 'none',  // 点击穿透到 button onClick
+          }}
+        />
+      </div>
+    );
+  }
+
+  // 规则 4: HTML（默认旧逻辑）
+  const looksLikeHtml = /<[a-z][\s\S]*?>/i.test(s);
+  if (looksLikeHtml) {
+    return (
+      <div style={{
+        marginTop: GAP.xs + 2,
+        width: '100%',
+        borderRadius: 4,
+        overflow: 'hidden',
+        border: `1px solid ${COLOR.borderLt}`,
+        background: '#fafafa',
+      }}>
+        <iframe
+          title={`preview-${label}`}
+          srcDoc={s}
+          sandbox=""
+          style={{
+            display: 'block',
+            width: '100%',
+            height: 140,
+            border: 'none',
+            background: '#fff',
+            pointerEvents: 'none',
+          }}
+        />
+      </div>
+    );
+  }
+
+  // 规则 5: text 兜底
+  return (
+    <div style={{
+      marginTop: GAP.xs + 2,
+      padding: GAP.xs,
+      fontSize: 11,
+      color: COLOR.text3,
+      fontFamily: FONT_MONO,
+      background: COLOR.bgCard,
+      border: `1px solid ${COLOR.borderLt}`,
+      borderRadius: 4,
+    }}>
+      {s.length > 200 ? s.slice(0, 200) + '…' : s}
     </div>
   );
 }
@@ -525,35 +630,14 @@ function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
                       {opt.description}
                     </div>
                   )}
-                  {/* preview HTML（sandbox iframe）—— agent 在 preview 字段塞
-                      self-contained HTML 给视觉/字体/排版方向 question 用。
-                      sandbox 不带 allow-same-origin / allow-scripts → 完全
-                      隔离的 iframe，srcdoc 渲染但无法 escape。配合 SDK
-                      toolConfig.askUserQuestion.previewFormat='html'。 */}
-                  {opt.preview && (
-                    <div style={{
-                      marginTop: GAP.xs + 2,
-                      width: '100%',
-                      borderRadius: 4,
-                      overflow: 'hidden',
-                      border: `1px solid ${COLOR.borderLt}`,
-                      background: '#fafafa',
-                    }}>
-                      <iframe
-                        title={`preview-${opt.label}`}
-                        srcDoc={opt.preview}
-                        sandbox=""
-                        style={{
-                          display: 'block',
-                          width: '100%',
-                          height: 140,
-                          border: 'none',
-                          background: '#fff',
-                          pointerEvents: 'none',  // 点击穿透到 button onClick
-                        }}
-                      />
-                    </div>
-                  )}
+                  {/* preview —— agent 在 preview 字段塞内容给视觉方向 question 用。
+                      自动检测格式（Phase Image-5）：
+                        - "data:image/..."  / "/api/.../assets/..."  / 任意 image url
+                          → 按图渲染（aspect cover，配合 generate_image 多变体并排选）
+                        - "<...html..." / 含 HTML 标签
+                          → 旧逻辑：sandbox iframe srcDoc（视觉/字体/排版方向 question）
+                      sandbox="" 不带 allow-same-origin / allow-scripts → 完全隔离 */}
+                  {opt.preview && renderQuestionPreview(opt.preview, opt.label)}
                 </span>
               </button>
             );
@@ -874,6 +958,7 @@ const TOOL_ICONS = {
   'mcp__nodesign__screenshot_canvas': Eye,
   'mcp__nodesign__export_handoff': Download,
   'mcp__nodesign__record_decision': Bookmark,
+  'mcp__nodesign__generate_image': ImagePlus,
 };
 
 // Subagent 类型 → 专属 icon（Task 工具特化，让用户一眼分清派的是哪个子代理）
@@ -942,6 +1027,11 @@ function summarizeToolInput(toolName, input) {
   }
   if (toolName === 'Task') {
     return `${input.subagent_type || ''}: ${(input.prompt || input.description || '').slice(0, 60)}`;
+  }
+  if (toolName === 'mcp__nodesign__generate_image') {
+    const role = input.assetRole ? `[${input.assetRole}] ` : '';
+    const dims = input.aspectRatio ? ` (${input.aspectRatio}${input.imageSize ? '/' + input.imageSize : ''})` : '';
+    return `${role}${(input.prompt || '').slice(0, 70)}${dims}`;
   }
   // MCP / 其他：取第一个非空字符串字段
   const firstStr = Object.values(input).find(v => typeof v === 'string' && v.length > 0);
