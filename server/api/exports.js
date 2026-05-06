@@ -124,7 +124,8 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
     // 任一步骤失败也降级——保证用户至少拿到能用的 HTML
     if (isHybridHtml(html)) {
       try {
-        html = await buildStandaloneHtml(html);
+        // 传 sessionRoot 让 build-standalone 能 inline 本地图片（assets/generated/...）
+        html = await buildStandaloneHtml(html, { sessionRoot });
       } catch (err) {
         console.warn('[exports/html] standalone build failed, falling back to viewport-fit:', err.message);
         html = injectViewportFit(html);
@@ -331,18 +332,11 @@ export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, proj
     if (err.code !== 'ENOENT') throw err;
   }
 
-  // assets 来自 shared/（跨 session 共享）
+  // assets 来自 shared/（跨 session 共享）—— 递归走子目录，
+  // 主要是 assets/generated/（generate_image MCP 落档处）必须进 zip，
+  // 否则 canvas.html 里的 <img src="assets/generated/..."> 在打开导出时全 404。
   const assetsDir = path.join(sharedRoot, 'assets');
-  try {
-    const entries = await fs.readdir(assetsDir, { withFileTypes: true });
-    for (const e of entries) {
-      if (!e.isFile()) continue;
-      const buf = await fs.readFile(path.join(assetsDir, e.name));
-      zip.file(`design/assets/${e.name}`, buf);
-    }
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-  }
+  await zipDirRecursive(zip, assetsDir, 'design/assets');
 
   const chatHistory = (runs || []).map((row) => ({ runId: row.id }));
   zip.file('chat-history.json', JSON.stringify({ projectId, sessionId, runs: chatHistory }, null, 2));
@@ -351,6 +345,31 @@ export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, proj
   zip.file('README.md', renderReadme({ id: projectId, name: projectName, skillId, sessionId }));
 
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+/**
+ * 递归把 srcDir 下所有文件加进 zip（保留相对路径），dst 是 zip 内根前缀。
+ * srcDir 不存在时静默 noop（fail-soft）。子目录中的 dotfile / 软链按需可扩展。
+ */
+async function zipDirRecursive(zip, srcDir, dstPrefix) {
+  let entries;
+  try {
+    entries = await fs.readdir(srcDir, { withFileTypes: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+  for (const e of entries) {
+    const srcAbs = path.join(srcDir, e.name);
+    const dstRel = `${dstPrefix}/${e.name}`;
+    if (e.isDirectory()) {
+      await zipDirRecursive(zip, srcAbs, dstRel);
+      continue;
+    }
+    if (!e.isFile()) continue;  // 跳软链 / fifo 等
+    const buf = await fs.readFile(srcAbs);
+    zip.file(dstRel, buf);
+  }
 }
 
 function renderReadme(project) {

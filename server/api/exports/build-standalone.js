@@ -76,10 +76,14 @@ export function isHybridHtml(html) {
  * 主入口：打包成自包含 HTML
  *
  * @param {string} rawHtml canvas.html 原文
- * @returns {Promise<string>} 自包含 HTML（CDN 全 inline，可离线打开）
+ * @param {object} [opts]
+ * @param {string} [opts.sessionRoot]   sessions/<sid>/ 绝对路径；用来 resolve 图片
+ *                                       相对路径（assets/generated/...）。不给则
+ *                                       跳过图片 inline（导出仍能用，但 <img> 会断）
+ * @returns {Promise<string>} 自包含 HTML（CDN + 图片全 inline，可离线打开）
  * @throws 任一步骤失败抛——调用方应降级到 injectViewportFit 文本替换
  */
-export async function buildStandaloneHtml(rawHtml) {
+export async function buildStandaloneHtml(rawHtml, opts = {}) {
   if (!isHybridHtml(rawHtml)) {
     throw new Error('Not a hybrid HTML — caller should fall back to injectViewportFit');
   }
@@ -94,12 +98,21 @@ export async function buildStandaloneHtml(rawHtml) {
   const tailwindCss = await extractTailwindCss(rawHtml);
 
   // 4-7. 重写 HTML —— inline 所有外部 CDN
-  return assembleStandaloneHtml({
+  let html = assembleStandaloneHtml({
     rawHtml,
     parsed,
     bundledJs,
     tailwindCss,
   });
+
+  // 8. inline 本地图片（<img src="assets/..."> + background-image: url(...))。
+  // 单文件 self-contained 必须做这一步——脱离 sessions/<sid>/ 后相对路径都失效。
+  // sessionRoot 不给时跳过（fail-soft，调用方可能不知道 sessionRoot）
+  if (opts.sessionRoot) {
+    html = await inlineLocalImages(html, opts.sessionRoot);
+  }
+
+  return html;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -503,3 +516,137 @@ body.__nd-fit-active > .__nd-deck-wrap {
 }
 
 const DECK_WIDTH = 1920;
+
+// ────────────────────────────────────────────────────────────────────
+// inlineLocalImages —— 自包含必需：把 <img src> + background:url() 里指
+// 向本地 assets/ 的相对路径转 base64 data URL。
+//
+// 触发场景：generate_image MCP 工具落档 assets/generated/foo.png，agent
+// 在 canvas.html 写 `<img src="assets/generated/foo.png">`。导出单文件
+// HTML 后用户双击打开，浏览器 file:// 找不到 assets/，图全断。inline 后
+// 100% self-contained。
+//
+// 范围：
+//   - 只处理本地相对路径（不带 scheme，不是 // 开头，不是 data:）
+//   - resolve 到 sessionRoot（sessions/<sid>/assets softlink → shared/assets，
+//     fs.readFile 自动跟链）
+//   - 防 traversal：必须 startsWith sessionRoot（realpath 校验）
+//   - mime 按扩展名定（png/jpg/jpeg/webp/gif/svg），其它扩展跳过
+//   - 缺失文件：替换为 broken-image SVG 占位 + 注释，不阻塞导出
+// ────────────────────────────────────────────────────────────────────
+
+const IMAGE_EXT_MIME = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+};
+
+const BROKEN_PLACEHOLDER_DATA_URL =
+  'data:image/svg+xml;utf8,'
+  + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" viewBox="0 0 120 80">'
+    + '<rect width="120" height="80" fill="%23eee" stroke="%23bbb"/>'
+    + '<text x="60" y="44" text-anchor="middle" font-family="sans-serif" font-size="11" fill="%23999">image not found</text>'
+    + '</svg>',
+  );
+
+async function inlineOneAsset(srcPath, sessionRoot, cache) {
+  if (cache.has(srcPath)) return cache.get(srcPath);
+
+  // 路径白名单：scheme/protocol-relative/data url 一律放过
+  if (/^(?:[a-z][a-z0-9+\-.]*:|\/\/)/i.test(srcPath)) {
+    cache.set(srcPath, srcPath);
+    return srcPath;
+  }
+  // 绝对路径（agent 不该写，防御性处理）—— 也放过原值
+  if (path.isAbsolute(srcPath)) {
+    cache.set(srcPath, srcPath);
+    return srcPath;
+  }
+
+  const ext = path.extname(srcPath).toLowerCase();
+  const mime = IMAGE_EXT_MIME[ext];
+  if (!mime) {
+    cache.set(srcPath, srcPath);  // 非图片资源不动
+    return srcPath;
+  }
+
+  const abs = path.resolve(sessionRoot, srcPath);
+  // traversal 防御：resolve 后必须仍在 sessionRoot 之下
+  // （sessions/<sid>/assets 是 softlink，path.resolve 不解链，所以 startsWith 校验仍 OK）
+  if (abs !== sessionRoot && !abs.startsWith(sessionRoot + path.sep)) {
+    console.warn(`[build-standalone] image path escapes session: ${srcPath}`);
+    cache.set(srcPath, BROKEN_PLACEHOLDER_DATA_URL);
+    return BROKEN_PLACEHOLDER_DATA_URL;
+  }
+
+  let buf;
+  try {
+    buf = await fs.readFile(abs);  // 跟 softlink
+  } catch (err) {
+    console.warn(`[build-standalone] image not found, using placeholder: ${srcPath} (${err.code || err.message})`);
+    cache.set(srcPath, BROKEN_PLACEHOLDER_DATA_URL);
+    return BROKEN_PLACEHOLDER_DATA_URL;
+  }
+
+  const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+  cache.set(srcPath, dataUrl);
+  return dataUrl;
+}
+
+/**
+ * 扫 HTML 把所有本地 <img src> 和 url(...) 引用替换成 data URL。
+ *
+ * @param {string} html
+ * @param {string} sessionRoot  绝对路径，相对路径从这里 resolve
+ * @returns {Promise<string>}
+ */
+async function inlineLocalImages(html, sessionRoot) {
+  const cache = new Map();  // 同一图被多次引用只读一次盘 + base64 一次
+
+  // ── 收集所有候选 src（先收集再异步批量替换）──
+  const tasks = [];
+
+  // <img src="..."> / <img ... src='...' ...>
+  const imgRe = /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi;
+  let m;
+  while ((m = imgRe.exec(html)) !== null) {
+    const src = m[1] || m[2];
+    if (src) tasks.push(src);
+  }
+
+  // background-image: url(...) / background: ... url(...) （style 属性 + <style> 块）
+  const urlRe = /url\(\s*(?:"([^"]+)"|'([^']+)'|([^)]+?))\s*\)/gi;
+  while ((m = urlRe.exec(html)) !== null) {
+    const src = m[1] || m[2] || m[3];
+    if (src) tasks.push(src.trim());
+  }
+
+  // 去重 + 并行 inline
+  const uniq = [...new Set(tasks)];
+  await Promise.all(uniq.map((s) => inlineOneAsset(s, sessionRoot, cache)));
+
+  // ── 替换：用 cache 拿到的 data URL 替换原 src ──
+  // 注：split+join literal 替换避免 base64 里的 $ 被当 backreference
+  let out = html;
+  for (const [orig, replacement] of cache) {
+    if (orig === replacement) continue;  // 没改的跳
+    // <img src="ORIG"> 和 url(ORIG) 都要替换；用包含 quote/paren 的字面字符串
+    // 减少误伤（避免一个 path 段也匹配 alt 文字之类）
+    const variants = [
+      `"${orig}"`, `'${orig}'`,
+      `(${orig})`, `( ${orig} )`,
+      `("${orig}")`, `('${orig}')`,
+    ];
+    for (const v of variants) {
+      const replaceVariant = v
+        .replace(orig, replacement);
+      out = out.split(v).join(replaceVariant);
+    }
+  }
+
+  return out;
+}
