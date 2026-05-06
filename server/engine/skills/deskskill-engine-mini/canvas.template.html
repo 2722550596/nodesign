@@ -1,0 +1,424 @@
+<!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  NoDesign · canvas.html starter template (Hybrid 范式 · 2026-05-06)  ║
+  ╠══════════════════════════════════════════════════════════════════════╣
+  ║                                                                      ║
+  ║  cp 这份文件做你的起点。下面 4 块预置好的，**别动结构**：              ║
+  ║    1. <head> 里的 importmap / Tailwind / Babel / fit script CSS      ║
+  ║    2. body 的 .__nd-deck-wrap 包裹（fit script 缩这层）              ║
+  ║    3. <script type="text/babel"> 里的 4 个 shadcn 组件源（Card/Button║
+  ║       /Badge/Tabs，直接用，不需要 import）                            ║
+  ║    4. body 末尾的 fit script                                          ║
+  ║                                                                      ║
+  ║  你要做的：                                                           ║
+  ║    · 改 design-tokens（颜色 / 字号 / 字体）                           ║
+  ║    · 在 .__nd-deck-wrap 里写 N 个 <section data-page="N">             ║
+  ║    · 简单页：纯 HTML + Tailwind utility class                         ║
+  ║    · 复杂页（图表/动画/复杂组件）：放个 <div data-react-mount="...">  ║
+  ║      然后在底部 babel script 里 createRoot mount React 组件           ║
+  ║                                                                      ║
+  ║  Tweaks 桥接：可调维度（颜色/字号）用 text-[var(--accent)] 写         ║
+  ║              骨架（间距/flex/radius）用 Tailwind utility 写           ║
+  ║              expose_tweaks 工具改 CSS var → arbitrary value 实时响应  ║
+  ║                                                                      ║
+  ║  库速查见 prelude § 库速查表（全家桶 10 库 import 范例）。            ║
+  ║                                                                      ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{Deck 标题 · 改我}</title>
+
+  <!-- ══ 1. Google Fonts（按需改） ══ -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+  <!-- ══ 2. Tailwind Play CDN（运行时编译，所有 utility class 立即可用） ══ -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Tailwind config —— 别在这里写颜色（颜色走 CSS var + arbitrary value）
+    // 这里只配 fontFamily 让 font-display / font-mono 等 utility 能用
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans:    ['Inter', 'system-ui', 'sans-serif'],
+            mono:    ['JetBrains Mono', 'monospace'],
+            display: ['Instrument Serif', 'serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- ══ 3. importmap：全家桶 10 库 + React 全家。agent import 哪个浏览器才下哪个 ══ -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react":              "https://esm.sh/react@19.0.0",
+      "react/":             "https://esm.sh/react@19.0.0/",
+      "react-dom":          "https://esm.sh/react-dom@19.0.0",
+      "react-dom/":         "https://esm.sh/react-dom@19.0.0/",
+
+      "recharts":           "https://esm.sh/recharts@2.13.3?deps=react@19.0.0,react-dom@19.0.0",
+      "echarts":            "https://esm.sh/echarts@5.5.1",
+      "echarts-for-react":  "https://esm.sh/echarts-for-react@3.0.2?deps=react@19.0.0,react-dom@19.0.0,echarts@5.5.1",
+
+      "framer-motion":      "https://esm.sh/framer-motion@11.15.0?deps=react@19.0.0,react-dom@19.0.0",
+      "motion":             "https://esm.sh/motion@11.15.0?deps=react@19.0.0,react-dom@19.0.0",
+      "gsap":               "https://esm.sh/gsap@3.12.5",
+
+      "lucide-react":       "https://esm.sh/lucide-react@0.460.0?deps=react@19.0.0",
+
+      "mermaid":            "https://esm.sh/mermaid@11.4.1",
+      "shiki":              "https://esm.sh/shiki@1.24.4",
+
+      "embla-carousel-react": "https://esm.sh/embla-carousel-react@8.5.1?deps=react@19.0.0",
+      "katex":              "https://esm.sh/katex@0.16.11",
+      "react-katex":        "https://esm.sh/react-katex@3.0.1?deps=react@19.0.0,katex@0.16.11",
+      "reactflow":          "https://esm.sh/reactflow@11.11.4?deps=react@19.0.0,react-dom@19.0.0",
+
+      "@radix-ui/react-dialog":     "https://esm.sh/@radix-ui/react-dialog@1.1.4?deps=react@19.0.0,react-dom@19.0.0",
+      "@radix-ui/react-tabs":       "https://esm.sh/@radix-ui/react-tabs@1.1.2?deps=react@19.0.0,react-dom@19.0.0",
+      "@radix-ui/react-tooltip":    "https://esm.sh/@radix-ui/react-tooltip@1.1.5?deps=react@19.0.0,react-dom@19.0.0",
+      "@radix-ui/react-accordion":  "https://esm.sh/@radix-ui/react-accordion@1.2.2?deps=react@19.0.0,react-dom@19.0.0",
+      "@radix-ui/react-popover":    "https://esm.sh/@radix-ui/react-popover@1.1.4?deps=react@19.0.0,react-dom@19.0.0",
+      "@radix-ui/react-scroll-area":"https://esm.sh/@radix-ui/react-scroll-area@1.2.2?deps=react@19.0.0,react-dom@19.0.0",
+
+      "three":                  "https://esm.sh/three@0.171.0",
+      "@react-three/fiber":     "https://esm.sh/@react-three/fiber@8.17.10?deps=react@19.0.0,react-dom@19.0.0,three@0.171.0",
+      "@react-three/drei":      "https://esm.sh/@react-three/drei@9.121.4?deps=react@19.0.0,react-dom@19.0.0,three@0.171.0,@react-three/fiber@8.17.10",
+
+      "lenis":              "https://esm.sh/lenis@1.1.20"
+    }
+  }
+  </script>
+
+  <!-- ══ 4. Babel Standalone：浏览器内编译 TSX ══ -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- ══ 5. Design tokens —— **可调维度全在这里**，agent 改这里、Tweaks 暴露这里 ══ -->
+  <style id="design-tokens">
+    :root {
+      /* === Color === */
+      --bg:       #F9F8F6;   /* page bg */
+      --paper:    #F9F8F6;   /* page bg alias */
+      --surface:  #ffffff;   /* card bg */
+      --ink:      #1a120a;   /* body text */
+      --accent:   #2d2418;   /* primary accent */
+      --muted:    #6b5d4f;   /* secondary text */
+      --cream:    #efe8df;   /* alt bg */
+
+      /* === Type scale === */
+      --hero:     112px;
+      --h1:       72px;
+      --h2:       48px;
+      --h3:       32px;
+      --body:     18px;
+      --caption:  13px;
+
+      /* === Spacing (8pt grid) —— 骨架用 Tailwind utility 即可，这里仅 fallback === */
+      --gap-xs:   8px;
+      --gap-sm:   16px;
+      --gap-md:   24px;
+      --gap-lg:   48px;
+      --gap-xl:   96px;
+    }
+
+    /* per-page / per-layout scoped overrides 跟 expose_tweaks(target_scope) 配对 */
+    /* section[data-page="1"] { --hero: 140px; }   ← 封面字更大 */
+    /* [data-layout="quote"] { --body: 24px; }     ← 引言页正文更大 */
+  </style>
+
+  <!-- ══ 6. Base + fit wrapper —— **不要动**，跟服务端 SNIPPET / fit script 共契约 ══ -->
+  <style id="base">
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Inter, system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body.__nd-fit-active {
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    body.__nd-fit-active > .__nd-deck-wrap {
+      width: 1920px;
+      transform-origin: top center;
+      flex-shrink: 0;
+    }
+
+    section[data-page] {
+      width: 1920px; height: 1080px;
+      position: relative;
+      overflow: hidden;
+      page-break-after: always;
+    }
+  </style>
+
+  <!-- ══ 7. Page-specific styles（按需加，能用 Tailwind utility 解决就别加） ══ -->
+  <style id="page-styles">
+    /* 例：page 3 数字超大字 */
+    /* section[data-page="3"] .stat-num { font-family: var(--font-display); font-size: 200px; } */
+  </style>
+</head>
+
+<body>
+
+<!-- ════════════════════════════════════════════════════════════ -->
+<!-- 所有 section 必须放在 .__nd-deck-wrap 里，让 fit script 接管缩放 -->
+<!-- ════════════════════════════════════════════════════════════ -->
+<div class="__nd-deck-wrap">
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- PAGE 1 · COVER —— 静态 section 范例                          -->
+  <!--   · DirectEdit 双击文字可改                                   -->
+  <!--   · 颜色用 text-[var(--xxx)]，骨架用 Tailwind utility         -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <section data-page="1" data-anchor="cover" data-layout="cover" class="bg-[var(--paper)]">
+    <div class="h-full flex flex-col justify-between p-32">
+      <div class="font-mono text-sm tracking-[0.3em] uppercase text-[var(--muted)]">
+        {Section · 改我}
+      </div>
+
+      <div class="flex flex-col gap-8">
+        <h1 data-anchor="cover-title" data-node-id="cover-title-1"
+            class="font-display text-[var(--ink)] leading-[0.95]"
+            style="font-size: var(--hero); letter-spacing: -0.04em;">
+          {封面标题 · 改我}
+        </h1>
+        <p data-anchor="cover-sub" data-node-id="cover-sub-1"
+           class="text-2xl text-[var(--muted)] max-w-3xl leading-relaxed"
+           style="font-family: Instrument Serif, serif; font-style: italic;">
+          {副标题 · 一句话讲清这个 deck 是什么 · 改我}
+        </p>
+      </div>
+
+      <div class="flex justify-between items-end font-mono text-xs uppercase tracking-widest text-[var(--muted)]">
+        <span>{author · date}</span>
+        <span>01 / N</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- PAGE 2 · React mount section 范例                            -->
+  <!--   · 复杂图表/动画/组件用 React mount                          -->
+  <!--   · 必须 <div data-react-mount="..."> 包裹（DirectEdit guard）-->
+  <!--   · mount 实现写在底部 <script type="text/babel"> 里         -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <section data-page="2" data-anchor="example-mount" data-layout="data" class="bg-[var(--cream)]">
+    <div class="h-full flex flex-col p-24">
+      <header class="mb-12 pb-8 border-b border-[var(--ink)]/10">
+        <div class="font-mono text-xs uppercase tracking-[0.3em] text-[var(--muted)] mb-2">
+          Section · React mount example
+        </div>
+        <h2 class="font-display text-[var(--ink)]"
+            style="font-size: var(--h1); letter-spacing: -0.02em; line-height: 1;">
+          {改成你的 page 标题}
+        </h2>
+      </header>
+
+      <!-- React mount point ↓ —— DirectEdit 不会挂这里面（guard by data-react-mount） -->
+      <div data-react-mount="example-chart" id="example-chart-mount" class="flex-1"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- PAGE N · CLOSING —— 静态 + 优雅落幕                          -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <section data-page="3" data-anchor="closing" data-layout="closing" class="bg-[var(--ink)] text-[var(--paper)]">
+    <div class="h-full flex flex-col justify-center items-center text-center p-32">
+      <div class="font-mono text-xs uppercase tracking-[0.4em] text-[var(--paper)]/50 mb-8">
+        — Fin —
+      </div>
+      <h2 class="font-display"
+          style="font-size: var(--h1); line-height: 0.95; letter-spacing: -0.04em; font-style: italic;">
+        {收尾一句话 · 改我}
+      </h2>
+      <p class="mt-8 text-xl text-[var(--paper)]/70 max-w-3xl"
+         style="font-family: Instrument Serif, serif;">
+        {补充信息 · 改我}
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- React 入口 + 4 个 shadcn 组件（直接用，不需要 import）            -->
+<!-- 复杂页 React mount 的 createRoot 都写这里                       -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<script type="text/babel" data-type="module" data-presets="react,typescript">
+  // Babel classic JSX runtime 需要 React 在 scope，必须 import default
+  import React, { useState, useEffect } from 'react';
+  import { createRoot } from 'react-dom/client';
+
+  // === 范例 mount 用到的库（按需 import；template 默认仅示范 Recharts） ===
+  import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+
+  // ╔════════════════════════════════════════════════════════════╗
+  // ║  shadcn-inspired components (inline，简化版，0 依赖)          ║
+  // ║  agent 直接用 <Card> / <Button> / <Badge> / <Tabs>           ║
+  // ║  需要更全功能（a11y、键盘）→ import @radix-ui/react-* 自己组   ║
+  // ╚════════════════════════════════════════════════════════════╝
+
+  function Card({ children, className = '', ...rest }) {
+    return (
+      <div className={`rounded-xl border border-[var(--ink)]/10 bg-[var(--surface)] shadow-sm ${className}`} {...rest}>
+        {children}
+      </div>
+    );
+  }
+  function CardHeader({ children, className = '' }) {
+    return <div className={`flex flex-col gap-1.5 p-6 ${className}`}>{children}</div>;
+  }
+  function CardTitle({ children, className = '' }) {
+    return <h3 className={`font-semibold text-2xl leading-none text-[var(--ink)] ${className}`}>{children}</h3>;
+  }
+  function CardContent({ children, className = '' }) {
+    return <div className={`p-6 pt-0 ${className}`}>{children}</div>;
+  }
+
+  function Button({ variant = 'default', children, className = '', ...rest }) {
+    const base = 'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium px-4 py-2 transition-colors';
+    const variants = {
+      default: 'bg-[var(--accent)] text-[var(--paper)] hover:opacity-90',
+      outline: 'border border-[var(--ink)]/20 bg-transparent text-[var(--ink)] hover:bg-[var(--ink)]/5',
+      ghost:   'bg-transparent text-[var(--ink)] hover:bg-[var(--ink)]/5',
+    };
+    return (
+      <button className={`${base} ${variants[variant] || variants.default} ${className}`} {...rest}>
+        {children}
+      </button>
+    );
+  }
+
+  function Badge({ variant = 'default', children, className = '' }) {
+    const variants = {
+      default:   'bg-[var(--accent)] text-[var(--paper)]',
+      secondary: 'bg-[var(--ink)]/10 text-[var(--ink)]',
+      outline:   'border border-[var(--ink)]/20 text-[var(--ink)]',
+    };
+    return (
+      <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${variants[variant] || variants.default} ${className}`}>
+        {children}
+      </span>
+    );
+  }
+
+  // 受控/非受控两用 Tabs（不依赖 Radix；要 a11y 就 import @radix-ui/react-tabs）
+  function Tabs({ defaultValue, value, onValueChange, children, className = '' }) {
+    const [internal, setInternal] = useState(defaultValue);
+    const active = value !== undefined ? value : internal;
+    const setActive = (v) => { onValueChange ? onValueChange(v) : setInternal(v); };
+    return (
+      <div className={className}>
+        {React.Children.map(children, (child) =>
+          React.isValidElement(child) ? React.cloneElement(child, { active, setActive }) : child
+        )}
+      </div>
+    );
+  }
+  function TabsList({ children, active, setActive, className = '' }) {
+    return (
+      <div className={`inline-flex items-center justify-center rounded-md bg-[var(--ink)]/5 p-1 ${className}`}>
+        {React.Children.map(children, (child) =>
+          React.isValidElement(child) ? React.cloneElement(child, { active, setActive }) : child
+        )}
+      </div>
+    );
+  }
+  function TabsTrigger({ value, active, setActive, children, className = '' }) {
+    const isActive = active === value;
+    return (
+      <button onClick={() => setActive(value)}
+        className={`px-4 py-2 text-sm font-medium rounded transition-colors ${
+          isActive
+            ? 'bg-[var(--surface)] shadow-sm text-[var(--ink)]'
+            : 'text-[var(--muted)] hover:text-[var(--ink)]'
+        } ${className}`}>
+        {children}
+      </button>
+    );
+  }
+  function TabsContent({ value, active, children, className = '' }) {
+    if (active !== value) return null;
+    return <div className={className}>{children}</div>;
+  }
+
+  // ╔════════════════════════════════════════════════════════════╗
+  // ║  Page 2 · 范例：Recharts 折线图                              ║
+  // ║  改这里展示你自己的数据；或换 ECharts / Mermaid / 等         ║
+  // ╚════════════════════════════════════════════════════════════╝
+
+  function ExampleChart() {
+    const data = [
+      { x: 'Mon', y: 30 }, { x: 'Tue', y: 45 }, { x: 'Wed', y: 38 },
+      { x: 'Thu', y: 62 }, { x: 'Fri', y: 78 }, { x: 'Sat', y: 95 }, { x: 'Sun', y: 110 },
+    ];
+    return (
+      // 用 flex 撑高度，避免 calc(100%-Npx) 这种 hardcode（不同视口下易溢出）
+      <Card className="h-full p-8 flex flex-col">
+        {/* JSX 里 placeholder 用纯文本，别 {花括号}（{...} 在 JSX 里是表达式 slot） */}
+        <CardTitle className="mb-6">改成你的图表标题</CardTitle>
+        <div className="flex-1 min-h-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--ink)" opacity={0.06} vertical={false} />
+              <XAxis dataKey="x" stroke="var(--muted)" fontSize={12} tickLine={false} axisLine={false} />
+              <YAxis stroke="var(--muted)" fontSize={12} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid rgba(0,0,0,0.08)', fontFamily: 'JetBrains Mono', fontSize: 12 }} />
+              <Line dataKey="y" stroke="var(--accent)" strokeWidth={2.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+    );
+  }
+
+  // ╔════════════════════════════════════════════════════════════╗
+  // ║  Mount —— 每个 React 页面一个 createRoot                     ║
+  // ╚════════════════════════════════════════════════════════════╝
+
+  const exampleEl = document.getElementById('example-chart-mount');
+  if (exampleEl) createRoot(exampleEl).render(<ExampleChart />);
+
+  // 加你自己的 mount：
+  // const myEl = document.getElementById('my-mount');
+  // if (myEl) createRoot(myEl).render(<MyComponent />);
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- Fit script —— 跟服务端 injectViewportFit 共契约 className，**不要动** -->
+<!-- iframe 内（CanvasFrame 预览）由 parent 自算 scale，window!==top 早退 -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<script>
+(function(){
+  if (window !== window.top) return;
+  var W = 1920, body = document.body;
+  var wrap = body.querySelector(':scope > .__nd-deck-wrap');
+  if (!wrap) return;
+  body.classList.add('__nd-fit-active');
+  function fit() {
+    var vw = Math.max(document.documentElement.clientWidth || 0, 320);
+    var s = vw / W;
+    wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
+    body.style.height = (wrap.scrollHeight * s) + 'px';
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  if (document.fonts) document.fonts.ready.then(fit);
+})();
+</script>
+
+</body>
+</html>
