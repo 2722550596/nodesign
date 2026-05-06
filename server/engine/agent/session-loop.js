@@ -205,8 +205,13 @@ export async function runSession({
     planModeInstructions: NODESIGN_PLAN_INSTRUCTIONS,
 
     // AskUserQuestion 拦截（同 loop.js）
+    //
+    // ⚠️ SDK 0.2.x permission decision schema 要求 'allow' branch 必带 updatedInput
+    // （Zod union 严格验证）；之前返 `{ behavior: 'allow' }` 缺 updatedInput 会
+    // 触发 ZodError 让所有非 AskUserQuestion 工具拿不到允许 → 搜索/Read/etc 全被
+    // 视为 denied。fix：'allow' 都带上 updatedInput（不改的话原样透传 input）。
     canUseTool: async (toolName, input, options) => {
-      if (toolName !== 'AskUserQuestion') return { behavior: 'allow' };
+      if (toolName !== 'AskUserQuestion') return { behavior: 'allow', updatedInput: input };
       const toolUseId = options?.toolUseID;
       if (!toolUseId) {
         return { behavior: 'deny', message: 'AskUserQuestion missing toolUseID', interrupt: false };
