@@ -29,6 +29,11 @@ import instructionRouter from './api/instruction.js';
 import memoryRouter from './api/memory.js';
 import pendingChangesRouter from './api/pending-changes.js';
 import recentRouter from './api/recent.js';
+import { platform } from './runtime/platform.js';
+
+// 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
+// 跨平台坑排查的第一信号
+platform.dump();
 
 const PORT = Number(process.env.PORT || 4001);
 

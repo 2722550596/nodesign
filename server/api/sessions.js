@@ -14,7 +14,6 @@
 
 import express from 'express';
 import path from 'path';
-import os from 'node:os';
 import { promises as fs } from 'fs';
 import {
   getSessionInfo,
@@ -35,6 +34,7 @@ import {
   validateSessionId,
 } from '../projects/workspace.js';
 import { withConfigDir } from '../lib/sdk-session.js';
+import { platform } from '../runtime/platform.js';
 
 const router = express.Router();
 
@@ -45,8 +45,8 @@ function encodeCwdForSDK(cwd) {
 }
 
 // SDK session API 需要 CLAUDE_CONFIG_DIR 指向 JSONL 实际存储的全局目录
-const GLOBAL_CLAUDE_CONFIG_DIR = process.env.NODESIGN_CONFIG_DIR
-  || path.join(process.env.HOME || os.homedir(), '.claude');
+// 来自 runtime/platform.js（跨平台决策单一来源）
+const GLOBAL_CLAUDE_CONFIG_DIR = platform.claudeConfigDir;
 
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

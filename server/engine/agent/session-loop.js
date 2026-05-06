@@ -29,7 +29,6 @@
  */
 
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs/promises';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
@@ -50,6 +49,7 @@ import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents } from '../agents/index.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
+import { platform } from '../../runtime/platform.js';
 import {
   NODESIGN_PRELUDE,
   NODESIGN_PLAN_INSTRUCTIONS,
@@ -168,7 +168,7 @@ export async function runSession({
       ANTHROPIC_BASE_URL: baseUrlForBinary,
       ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
-      CLAUDE_CONFIG_DIR: process.env.NODESIGN_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude'),
+      CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
       ...(model && /^kimi-k2\.6/i.test(model) ? {
         ANTHROPIC_SMALL_FAST_MODEL: 'kimi-k2.5',
       } : {}),
@@ -209,13 +209,10 @@ export async function runSession({
     persistSession: true,
     settingSources: ['project'],
 
-    // WebFetch 安全 preflight：SDK binary 调 Anthropic 服务器侧域名分类 API
-    // （需 OAuth claude.ai 登录态）；NoDesign 走 API key gateway 不存在 OAuth →
-    // preflight 永远 check_failed → 抛 DomainCheckFailedError"blocking claude.ai"。
-    // 本地 Mac 偶尔能跑因为 ~/.claude 残留 OAuth token；服务器 non-root + per-session
-    // CLAUDE_CONFIG_DIR 没 token 必现。skipWebFetchPreflight 官方 enterprise 开关。
+    // skipWebFetchPreflight 来自 runtime/platform.js（gateway key 模式永远关）
+    // 详细因果链见 platform.js 的 skipWebFetchPreflight 注释
     settings: {
-      skipWebFetchPreflight: true,
+      skipWebFetchPreflight: platform.skipWebFetchPreflight,
     },
 
     includePartialMessages: STREAMING_ENABLED,
@@ -244,34 +241,26 @@ export async function runSession({
       return Number.isFinite(v) && v > 0 ? v : 5;
     })(),
 
-    // Phase 3d sandbox — 暂时禁用：bwrap 不解析 session root 中的 symlink（Glob/Read 完全看不到
-    // assets/ agent-memory/ 等指向 shared 的软链），导致 agent 找不到工作目录。
-    // TODO: 等 SDK 修复 symlink-in-sandbox 后重新启用
+    // Sandbox 开/关来自 runtime/platform.js（NODESIGN_SANDBOX=on 显式打开）
+    // 现状：默认关 —— bwrap 不解析 session root 的 symlink。详见 platform.js
     sandbox: {
-      enabled: false,
+      enabled: platform.sandboxEnabled,
       failIfUnavailable: false,
       network: {
         allowLocalBinding: false,
-        // MVP 阶段开放外网（'*' = 全域允许）—— 让 agent 能 curl 下载图/字体/音频
-        // 到 ./assets/。生产可改成具体白名单（unsplash.com / fonts.googleapis.com
-        // / cdn.jsdelivr.net / pixabay.com 等业务实际需要的）
+        // MVP 全域允许；生产可改具体白名单（unsplash / google-fonts / jsdelivr 等）
         allowedDomains: ['*'],
       },
       filesystem: {
         allowWrite: [
           cwdRoot,
           ...(sharedRoot ? [
-            path.join(sharedRoot, '.claude', 'agent-memory'),  // 跨 session memory
-            path.join(sharedRoot, 'assets'),                    // 用户/agent 共写 ./assets/（软链 → shared）
+            path.join(sharedRoot, '.claude', 'agent-memory'),
+            path.join(sharedRoot, 'assets'),
           ] : []),
         ],
         denyWrite: ['/etc', '/usr', '/bin', '/sbin', '/private/etc'],
-        denyRead: [
-          '/etc/passwd', '/etc/shadow', '/etc/sudoers',
-          path.join(os.homedir(), '.ssh'),
-          path.join(os.homedir(), '.aws'),
-          path.join(os.homedir(), '.gnupg'),
-        ],
+        denyRead: platform.credentialBlacklist(),
       },
     },
 
@@ -452,10 +441,8 @@ export async function runSession({
 async function jsonlExistsForSession(sessionRoot, sessionId) {
   // SDK 将 JSONL 存在 CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/<sid>.jsonl
   // 编码规则（grep 自 sdk.mjs）：所有非字母数字字符转 '-'
-  const configDir = process.env.NODESIGN_CONFIG_DIR
-    || path.join(process.env.HOME || os.homedir(), '.claude');
   const encodedCwd = sessionRoot.replace(/[^a-zA-Z0-9]/g, '-');
-  const globalJsonl = path.join(configDir, 'projects', encodedCwd, `${sessionId}.jsonl`);
+  const globalJsonl = path.join(platform.claudeConfigDir, 'projects', encodedCwd, `${sessionId}.jsonl`);
   try {
     await fs.access(globalJsonl);
     return true;

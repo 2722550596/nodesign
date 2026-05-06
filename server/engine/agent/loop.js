@@ -23,7 +23,6 @@
  *   WebFetch / WebSearch 等到 P5 真做参考系统时再开
  */
 
-import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +37,7 @@ import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents } from '../agents/index.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
+import { platform } from '../../runtime/platform.js';
 
 // NoDesign agent 通用 prelude —— append 在 SDK preset 'claude_code' 之后、
 // SKILL.md 之前。教 Claude Code 工具用法 + NoDesign 工作台共性约束（assets
@@ -289,11 +289,11 @@ export async function runAgent({
       ANTHROPIC_BASE_URL: baseUrlForBinary,
       ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
-      // CLAUDE_CONFIG_DIR 必须与 session-loop.js 一致（统一指向全局 ~/.claude）。
-      // SDK binary 将 JSONL 落到 CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/<sid>.jsonl。
-      // 不能用 per-session 本地路径（cwdRoot/.claude），否则 resume 探测、
-      // sessions API 的 list/fork/delete 与实际存储位置分裂。
-      CLAUDE_CONFIG_DIR: process.env.NODESIGN_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude'),
+      // CLAUDE_CONFIG_DIR 来自 runtime/platform.js（跨平台决策单一来源）
+      // SDK binary 将 JSONL 落到 CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/<sid>.jsonl
+      // 不能用 per-session 本地路径，否则 resume 探测、sessions API 的 list/fork/delete
+      // 会与实际存储位置分裂。
+      CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
       // ANTHROPIC_SMALL_FAST_MODEL（S9 保守版）：
       // SDK helper（promptSuggestions / agentProgressSummaries / askUserQuestion
       // classifier / title gen / WebFetch summarize 等）默认走 claude-haiku
@@ -446,15 +446,10 @@ export async function runAgent({
     persistSession: true,
     settingSources: ['project'],
 
-    // WebFetch 安全 preflight：SDK binary 内置一个 nV7() 调用 Anthropic 服务器侧
-    // 域名分类 API（需要 OAuth claude.ai 登录态）；NoDesign 走 API key gateway
-    // 模式不存在 OAuth → preflight 永远返 check_failed → 抛 DomainCheckFailedError
-    // "Unable to verify if domain X is safe to fetch ... blocking claude.ai"。
-    // 本地 Mac 开发机偶尔能跑是因为 ~/.claude 残留 OAuth token；服务器
-    // non-root nodesign 用户 + per-session CLAUDE_CONFIG_DIR 没 token → 100% 复现。
-    // skipWebFetchPreflight 是 SDK 官方为 enterprise / 自托管场景留的开关。
+    // skipWebFetchPreflight 来自 runtime/platform.js（gateway key 模式永远关）
+    // 详细因果链见 platform.js 的 skipWebFetchPreflight 注释
     settings: {
-      skipWebFetchPreflight: true,
+      skipWebFetchPreflight: platform.skipWebFetchPreflight,
     },
 
     // 流增量（用于细粒度推 WS）
@@ -515,36 +510,23 @@ export async function runAgent({
     // additionalDirectories: 跳过（无硬场景，每个 project workspace 是独立的）
     // outputFormat: 跳过（强制 main agent JSON 输出违反自然对话设计）
 
-    // ── Phase 3d：SDK 内置 sandbox 替换 PreToolUse Bash 白名单 ──
-    // SDK SandboxSettings 是 OS 级隔离（macOS sandbox-exec / Linux bubblewrap）。
-    // 替换原 hooks.js 的正则 ALLOWED_FIRST_TOKEN + DANGEROUS_PATTERNS（命令级 deny）。
-    //
-    // d.ts 未明确：sandbox 是否拦 Bash 子进程 spawn 出去的命令（curl/wget/sudo
-    // 这种命令级危险）。autoAllowBashIfSandboxed 字段名暗示 sandbox 知道 Bash
-    // 但行为不明。真跑 smoke 验证后如发现 sandbox 不拦命令级危险，回滚 hooks.js
-    // 的删除（git revert 3d.2 commit），sandbox 部分保留（filesystem 限制仍有价值）。
-    //
-    // 暂时禁用 sandbox：bwrap 不解析 session root 中的 symlink（Glob/Read 看不到
-    // assets/ agent-memory/ 等指向 shared 的软链）。TODO: SDK 修复后重新启用。
+    // ── Sandbox（OS 级隔离）──
+    // 开/关决策来自 runtime/platform.js（NODESIGN_SANDBOX=on 显式打开）
+    // 现状：默认关 —— bwrap 不解析 session root 的 symlink 致 Glob/Read 看不到
+    // assets/ agent-memory/。TODO: 等 SDK 修 / 自己 readlink work around。
+    // 详见 platform.js 的 sandboxEnabled 注释。
     sandbox: {
-      enabled: false,
+      enabled: platform.sandboxEnabled,
       failIfUnavailable: false,
 
       // 网络：MVP 阶段全域允许（'*'）让 agent 能 curl 下载外部资源到 ./assets/。
       // 生产可改具体白名单（unsplash / google-fonts / jsdelivr / pixabay 等）。
-      // 默认无 allowedDomains 时 SDK sandbox 是 deny-all，连 NODESIGN_GATEWAY_URL
-      // 都连不上 —— 必须显式设。
       network: {
         allowLocalBinding: false,
         allowedDomains: ['*'],
       },
 
       // 文件系统：核心隔离层
-      // - allowWrite: session 沙盒（cwdRoot）+ shared/agent-memory（跨 session memory）
-      //   + shared/assets（agent 用 curl/Write 下载 / 保存外部资源到 ./assets/，
-      //   软链解析后是 sharedRoot/assets）
-      // - denyWrite: 系统目录硬封（即便 allowWrite 误配也兜底）
-      // - denyRead: /etc/* 系统凭据 + ~/.ssh / ~/.aws 用户凭据
       filesystem: {
         allowWrite: [
           cwdRoot,
@@ -554,12 +536,7 @@ export async function runAgent({
           ] : []),
         ],
         denyWrite: ['/etc', '/usr', '/bin', '/sbin', '/private/etc'],
-        denyRead: [
-          '/etc/passwd', '/etc/shadow', '/etc/sudoers',
-          path.join(os.homedir(), '.ssh'),
-          path.join(os.homedir(), '.aws'),
-          path.join(os.homedir(), '.gnupg'),
-        ],
+        denyRead: platform.credentialBlacklist(),
       },
     },
 
