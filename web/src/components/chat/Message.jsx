@@ -53,6 +53,15 @@ export default function Message({ message, projectId, sessionId, onCanvasReload 
     // C27：AskUserQuestion 走专门卡片渲染（不当普通 tool message）
     // A4.3：toolUseId 直传 = message.id（ProjectWorkspace 创建 tool 消息时
     // id 用 evt.blockId，blockId 就是 SDK tool_use_id）。
+    //
+    // SDK streaming 设计：run.tool_use.started 事件不含 input（仅 blockId+name），
+    // 之后才推 run.delta.tool_use 带完整 input；中间 toolInput===undefined 期间
+    // 直接走 AskUserQuestionView 会触发 questions 长度 0 的 fallback "调用了但没填"。
+    // 这里在路由层先拦一次：streaming 中（status=running 且 toolInput 还没到）
+    // 渲染 timeline pending 节点（参考 ToolMessage 的 nd-shimmer 模式）。
+    if (toolName === 'AskUserQuestion' && status === 'running' && !toolInput) {
+      return <ToolPendingNode toolName="AskUserQuestion" />;
+    }
     if (toolName === 'AskUserQuestion') {
       return (
         <AskUserQuestionView
@@ -341,6 +350,38 @@ function renderQuestionPreview(preview, label) {
   );
 }
 
+/**
+ * ToolPendingNode —— 工具流式输入阶段的 timeline pending 占位。
+ *
+ * 用途：SDK run.tool_use.started 事件只带 name/blockId，不含 input；
+ * run.delta.tool_use 才推完整 input（中间间隔 100ms ~ 数秒）。期间 toolInput
+ * 是 undefined。普通工具走 ToolMessage 时由 isRunning + nd-shimmer 自然处理；
+ * AskUserQuestion 走专门 wizard 卡片，没有这层兜底，需要本组件占位。
+ *
+ * 只对 input 必需才能渲染的特殊工具用（目前只 AskUserQuestion）。
+ */
+function ToolPendingNode({ toolName }) {
+  const NodeIcon = getToolIcon(toolName);
+  const displayName = toolName?.startsWith('mcp__nodesign__')
+    ? toolName.replace('mcp__nodesign__', '')
+    : toolName;
+  return (
+    <TimelineNode icon={NodeIcon} iconColor={COLOR.warn} isSpinning={true}>
+      <span
+        className="nd-shimmer"
+        style={{
+          fontFamily: FONT_MONO,
+          fontSize: FONT_SIZE.sm,
+          color: COLOR.text2,
+          fontWeight: 500,
+        }}
+      >
+        {displayName}
+      </span>
+    </TimelineNode>
+  );
+}
+
 function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
   const showToast = useGlobalStore(s => s.showToast);
   const activeRun = useGlobalStore(s => s.activeRun);
@@ -361,10 +402,13 @@ function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
   const disabled = isAnswered || submitting;
 
   if (total === 0) {
+    // streaming 中间态已被 Message() 路由层拦截到 ToolPendingNode；
+    // 走到这里 = SDK 已经推过完整 input 但 questions 数组真的是空（极少见 edge：
+    // SDK schema 有 @minItems 1 验证，agent 发空数组本身违规）→ 报 error。
     return (
       <SystemMessage
-        variant="info"
-        content="Agent 调用了 AskUserQuestion 但 input 没有 questions"
+        variant="error"
+        content="Agent 调用了 AskUserQuestion 但 input.questions 为空（SDK schema 违规）"
       />
     );
   }
