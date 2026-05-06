@@ -44,6 +44,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Events } from './events.js';
+import { summarizeForTimeline } from '../../lib/llm-summary.js';
 
 /** 内部：UserPromptSubmit hook 读取 spec.json 时的最大字节数 */
 const SPEC_JSON_MAX_BYTES = 200 * 1024;
@@ -274,14 +275,19 @@ function makeFileChangedHandler({ ctx }) {
 
 /**
  * Stop handler（P0+ s1 C6）—— agent 准备结束 query 时触发。
- * 仅 emit 事件给前端可见 hook 系统在跑。stage 2 加真业务（截图/交付提示）时再扩。
+ *
+ * 两件事：
+ * 1. emit run.stop_reflection（hasCanvas 信号给前端）
+ * 2. Phase B 批次 6：用 last_assistant_message 调 haiku 出 ≤12 字标题摘要，
+ *    emit run.timeline_summary { runId, summary }，前端 TimelineGroup 显示
+ *    在折叠标题位置。fire-and-forget 不阻塞 hook 返回。
  *
  * input: StopHookInput (sdk.d.ts:5247)
  *   - stop_hook_active: boolean
  *   - last_assistant_message?: string
  */
 function makeStopReflectionHandler({ ctx, workspaceRoot }) {
-  return async (_input, _toolUseId, _options) => {
+  return async (input, _toolUseId, _options) => {
     try {
       const hasCanvas = workspaceRoot
         ? await fs.access(path.join(workspaceRoot, 'canvas.html'))
@@ -292,6 +298,23 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
         type: 'run.stop_reflection',
         hasCanvas,
       });
+
+      // 异步生成 timeline summary，不 await（让 hook 立即返回）；haiku 一般 1-2s
+      const lastMsg = input?.last_assistant_message;
+      const runIdSnapshot = ctx.runId;  // 闭包当前 runId（finishTurn 可能后续覆盖）
+      if (lastMsg && typeof lastMsg === 'string' && lastMsg.trim()) {
+        summarizeForTimeline(lastMsg, { style: 'action' })
+          .then(summary => {
+            if (summary) {
+              ctx.emit({
+                type: 'run.timeline_summary',
+                runId: runIdSnapshot,
+                summary,
+              });
+            }
+          })
+          .catch(err => console.warn(`[hooks/Stop] summary fail:`, err.message));
+      }
     } catch (err) {
       console.warn(`[hooks/Stop] handler threw:`, err.message);
     }

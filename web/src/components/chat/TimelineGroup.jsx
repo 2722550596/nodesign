@@ -4,6 +4,7 @@ import Message from './Message.jsx';
 import TimelineNode from './TimelineNode.jsx';
 import { TimelinePositionProvider } from './TimelineGroupContext.js';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * TimelineGroup —— 把连续的 thinking + tool 节点包成一个可折叠的"思考片段"
@@ -45,6 +46,9 @@ function extractSummary(messages) {
 
 export default function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload }) {
   const [open, setOpen] = useState(true);
+  // Phase B 批次 6：从 store 取该 group 对应 turn 的 haiku 总结标题。
+  // 用 group 内第一条带 runId 的消息确定本 group 属于哪个 turn。
+  const timelineSummaries = useGlobalStore(s => s.timelineSummaries);
 
   if (!messages || messages.length === 0) return null;
 
@@ -53,8 +57,13 @@ export default function TimelineGroup({ messages, closed, summary, projectId, se
   );
   const stepCount = messages.length;
 
-  // 优先级：显式 prop > 自动提取 > 占位文案
+  // 找 group 内第一个带 runId 的消息（thinking / tool / assistant 都被打了 runId）
+  const groupRunId = messages.find(m => m.runId)?.runId;
+  const llmTitle = groupRunId ? timelineSummaries[groupRunId] : null;
+
+  // 优先级：显式 prop > Stop hook haiku 总结 > 自动提取首段截 60 字 > 占位
   const title = summary
+    || llmTitle
     || extractSummary(messages)
     || (isActive ? 'Agent 思考中…' : `Agent 思考过程（${stepCount} 步）`);
 

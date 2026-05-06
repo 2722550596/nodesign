@@ -324,10 +324,10 @@ export default function ProjectWorkspace() {
         setTodos(Array.isArray(evt.todos) ? evt.todos : []);
         break;
       case 'run.delta.text':
-        setMessages(prev => appendTextDelta(prev, 'assistant', evt.text));
+        setMessages(prev => appendTextDelta(prev, 'assistant', evt.text, evt.runId));
         break;
       case 'run.delta.thinking':
-        setMessages(prev => appendTextDelta(prev, 'thinking', evt.text));
+        setMessages(prev => appendTextDelta(prev, 'thinking', evt.text, evt.runId));
         break;
       case 'run.tool_use.started':
         // 工具 streaming 起点（SDK content_block_start 触发）。立即推 icon + name
@@ -341,6 +341,7 @@ export default function ProjectWorkspace() {
             toolName: evt.name,
             toolInput: undefined,  // 还没流完
             status: 'running',
+            runId: evt.runId,  // Phase B 批次 6：TimelineGroup 标题查表用
           }];
         });
         break;
@@ -361,6 +362,7 @@ export default function ProjectWorkspace() {
             toolName: evt.name,
             toolInput: evt.input,
             status: 'running',
+            runId: evt.runId,
           }];
         });
         break;
@@ -754,6 +756,12 @@ export default function ProjectWorkspace() {
       // request 形如 { reqId, request: {...}, runId }
       case 'run.elicitation_request':
         setElicitRequest({ reqId: evt.reqId, request: evt.request, runId: evt.runId });
+        break;
+
+      // Phase B 批次 6：Stop hook 用 haiku 总结的 turn 标题 → globalStore
+      // TimelineGroup 用 group 首条 thinking/tool 消息的 runId 查表显示
+      case 'run.timeline_summary':
+        useGlobalStore.getState().setTimelineSummary(evt.runId, evt.summary);
         break;
 
       // 运维 / 调试信号——不展示 UI，只 console 留痕（dev 模式）。
@@ -1367,17 +1375,19 @@ export default function ProjectWorkspace() {
  * thinking 自带 isStreaming=true（用于尾部光标）；非 thinking 内容产生时
  * 自动关掉之前所有 thinking 的 isStreaming 标记（那段思考已经结束了）。
  */
-function appendTextDelta(messages, role, text) {
+function appendTextDelta(messages, role, text, runId) {
   if (!text) return messages;
   const cleared = role === 'thinking' ? messages : clearThinkingStreaming(messages);
   const last = cleared[cleared.length - 1];
   if (last && last.role === role) {
     const merged = { ...last, content: (last.content || '') + text };
     if (role === 'thinking') merged.isStreaming = true;
+    // runId 用第一次创建时的（同一段连续 delta 共享一个 turn 的 runId）
     return [...cleared.slice(0, -1), merged];
   }
   const created = { id: newId('msg'), role, content: text };
   if (role === 'thinking') created.isStreaming = true;
+  if (runId) created.runId = runId;  // Phase B 批次 6：TimelineGroup 标题查表用
   return [...cleared, created];
 }
 
