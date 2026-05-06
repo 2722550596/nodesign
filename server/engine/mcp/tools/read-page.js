@@ -4,15 +4,14 @@
  * 让 agent 精确读 canvas.html 的某一页（`<section data-page="N">` 一段），
  * 不必每次 Read 整个 canvas.html 然后自己切片。
  *
- * 解的痛点（2026-05-02 用户观察）：
- *   - 当前 agent 看 canvas.html 经常只看第一页（Read 默认 limit 影响）
- *   - 让 agent 用 Grep + Read offset/limit 切片是可以但笨拙
- *   - canvas 焕新升级 S1：给 agent 一个原子工具直接拿"第 N 页"内容
- *
  * 行为：
  *   - input: { page: number }（1-based，跟 data-page="N" 一致）
  *   - 找 canvas.html 里 `<section[^>]*data-page="N"[^>]*>...</section>` 一段
  *   - 返该段 outerHTML（含 attributes + 完整子树）
+ *   - **Hybrid 范式扩展（2026-05-06）**：检测 `<script type="text/babel">` 存在
+ *     时，section 里若有 `data-react-mount="xxx"` 或 React mount 用的 `id="xxx"`，
+ *     额外 grep babel script 里 `getElementById('xxx')` 上下文 (±20 行) 一并返
+ *     回——agent 想改 React 部分时不必再 Read 整个 babel script
  *   - 找不到该页 → isError + 列出当前 canvas.html 实际有哪些 page
  *   - canvas.html 不存在 → isError + 提示 agent 需要先 Write 创建
  *
@@ -24,6 +23,70 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+
+/**
+ * Hybrid 范式：从 section html 抽 mount id（data-react-mount + id 双源），
+ * 然后到 raw canvas.html 的 babel script 段里 grep `getElementById('<id>')` 上下文。
+ *
+ * 为什么取 ±20 行：覆盖 createRoot 调用 + 上方 component 函数定义大概率在这窗口内。
+ * agent 拿到这段后能直接看到 "<MyComponent .../>" 的调用 + 定义，不需要再 Read。
+ *
+ * @param {string} raw 整个 canvas.html
+ * @param {string} sectionHtml 当前 section outerHTML
+ * @returns {Array<{ mountId: string, snippet: string, startLine: number }>}
+ */
+function extractReactMountSources(raw, sectionHtml) {
+  // 1. 检测 hybrid（必有 babel script）
+  if (!/<script[^>]*type=["']text\/babel["']/i.test(raw)) return [];
+
+  // 2. 抽 section 里的 mount id —— data-react-mount 优先，id 兜底
+  const mountIds = new Set();
+  for (const m of sectionHtml.matchAll(/\bdata-react-mount\s*=\s*["']([^"']+)["']/gi)) mountIds.add(m[1]);
+  for (const m of sectionHtml.matchAll(/\bid\s*=\s*["']([^"']+)["']/gi)) mountIds.add(m[1]);
+  if (mountIds.size === 0) return [];
+
+  // 3. 抽出所有 <script type="text/babel">...</script> 段
+  const babelBlocks = [...raw.matchAll(/<script[^>]*type=["']text\/babel["'][^>]*>([\s\S]*?)<\/script>/gi)];
+  if (babelBlocks.length === 0) return [];
+
+  // 用整个 raw 行号做参考，方便 agent 知道 babel 段大概在文件哪里
+  const rawLines = raw.split('\n');
+  const segments = [];
+
+  for (const id of mountIds) {
+    // 在每个 babel 段里找 getElementById('<id>') 调用
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`getElementById\\s*\\(\\s*['"]${escaped}['"]\\s*\\)`, 'g');
+
+    for (const block of babelBlocks) {
+      const blockText = block[1];
+      if (!re.test(blockText)) { re.lastIndex = 0; continue; }
+      re.lastIndex = 0;
+
+      // 找 block 在 raw 中的起始行
+      const blockStartIdx = raw.indexOf(block[0]);
+      const blockStartLine = blockStartIdx >= 0 ? raw.slice(0, blockStartIdx).split('\n').length : 1;
+
+      // grep 行号（相对 block）
+      const blockLines = blockText.split('\n');
+      blockLines.forEach((line, i) => {
+        if (line.includes(`getElementById('${id}')`) || line.includes(`getElementById("${id}")`)) {
+          const start = Math.max(0, i - 20);
+          const end = Math.min(blockLines.length, i + 21);
+          const snippet = blockLines.slice(start, end).join('\n');
+          segments.push({
+            mountId: id,
+            snippet,
+            startLine: blockStartLine + start + 1,  // raw 文件行号
+          });
+        }
+      });
+      break;  // 一个 mount id 在第一个匹配的 block 找到就停（避免重复）
+    }
+  }
+
+  return segments;
+}
 
 /**
  * @param {object} deps
@@ -38,6 +101,13 @@ export function makeReadPageTool({ workspaceRoot, ctx: _ctx }) {
 Use this instead of Read+Grep+offset/limit when you want to inspect or
 reason about one specific page in detail. Returns the outerHTML of that
 section (including attributes and full subtree).
+
+**Hybrid mode**: when canvas.html has \`<script type="text/babel">\` blocks
+(the default Hybrid format from canvas.template.html), this tool also
+returns the corresponding React mount source code for any
+\`data-react-mount\` / \`id\` attribute it finds in the section — so you
+don't need to Read the whole babel script just to find the component
+that renders to a mount point on this page.
 
 When to use:
 - "Show me what page 3 looks like in code" — read_page(3)
@@ -119,10 +189,25 @@ When NOT to use:
         }
 
         const sectionHtml = match[0];
+
+        // Hybrid 范式扩展：检测 babel script + section 里的 mount id
+        // 找到 mount id 后从 babel script 抓 ±20 行上下文返给 agent
+        const hybridSegments = extractReactMountSources(raw, sectionHtml);
+
+        const parts = [`Page ${page} (${sectionHtml.length} chars):\n\n${sectionHtml}`];
+        if (hybridSegments.length > 0) {
+          parts.push(
+            `\n\n--- React mount sources for this page (${hybridSegments.length} mount${hybridSegments.length > 1 ? 's' : ''}) ---\n`
+            + hybridSegments.map(({ mountId, snippet, startLine }) =>
+                `\n## mount: ${mountId} (babel script line ~${startLine})\n\n\`\`\`tsx\n${snippet}\n\`\`\``
+              ).join('\n')
+          );
+        }
+
         return {
           content: [{
             type: 'text',
-            text: `Page ${page} (${sectionHtml.length} chars):\n\n${sectionHtml}`,
+            text: parts.join(''),
           }],
         };
       } catch (err) {
