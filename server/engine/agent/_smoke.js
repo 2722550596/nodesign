@@ -1,22 +1,21 @@
 /**
  * engine/agent/_smoke.js — agent 模块烟雾测试
  *
- * 不依赖 KIMI gateway key 的部分（始终跑）：
+ * 4 项基础检查（不依赖 LLM gateway，始终跑）：
  *   1. EventBus 订阅 / 发布 / 模式匹配
  *   2. AgentContext 构造 + ensureNotAborted + cancel
  *   3. loadSkill() 解析 SKILL.md frontmatter + body
  *   4. listSkills() 列举
  *
- * 依赖 NODESIGN_GATEWAY_KEY 的部分（跳过 unless env 完整）：
- *   5. runAgent + hello-world skill 跑一次真 LLM 调用
- *
  * 跑：node server/engine/agent/_smoke.js
+ *
+ * （注：原 5. runAgent live 测试已撤——streamInput 重构后产线走 runSession，
+ * 测试设置过重；live 端到端测放在 turn 真跑场景）
  */
 
 import { EventBus, Events } from './events.js';
 import { AgentContext } from './context.js';
 import { loadSkill, listSkills, parseFrontmatter } from './skill.js';
-import { createRun, _truncateRunsTable, getRun } from '../runs/store.js';
 
 const log = (s) => console.log(`  ${s}`);
 const ok = (s) => console.log(`  ✅ ${s}`);
@@ -139,40 +138,6 @@ async function main() {
     if (all.length === 0) fail('listSkills 应至少返回 hello-world');
     if (!all.find(s => s.id === 'hello-world')) fail('listSkills 缺 hello-world', all);
     ok(`listSkills → [${all.map(s => s.id).join(', ')}]`);
-  }
-
-  // ── 5. runAgent（仅在 gateway key 配置完整时跑）──
-  console.log('5) runAgent (live)');
-  const hasKey = !!(process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY);
-  if (!hasKey) {
-    log('⏭  跳过：未设置 NODESIGN_GATEWAY_KEY，先 export 后再跑这条');
-  } else {
-    _truncateRunsTable();
-    const { runAgent } = await import('./loop.js');
-    const run = createRun({ skillId: 'hello-world', brief: '做一份介绍 Nodesign 自己的 5 页 deck，受众是团队同事' });
-    log(`runId=${run.id}`);
-
-    const { EventBus: EB } = await import('./events.js');
-    const bus = new EB();
-    const eventCounts = {};
-    bus.subscribe('*', e => { eventCounts[e.type] = (eventCounts[e.type] || 0) + 1; });
-
-    try {
-      const res = await runAgent({
-        runId: run.id,
-        skillId: 'hello-world',
-        brief: run.brief,
-        eventBus: bus,
-      });
-      ok(`run 完成，artifact=${res.artifactPath}, turns=${res.snapshot.counters.turns}, cost=$${res.snapshot.counters.totalCostUsd}`);
-      const final = getRun(run.id);
-      if (final.status !== 'succeeded') fail(`run 终态错: ${final.status}`);
-      if (!final.artifactPath) fail('run 没标记 artifact');
-      ok(`store: ${final.status}, artifact=${final.artifactPath}`);
-      ok(`事件计数: ${JSON.stringify(eventCounts)}`);
-    } catch (err) {
-      fail('runAgent 抛错', err);
-    }
   }
 
   console.log('\n✅ 全部通过\n');

@@ -107,6 +107,67 @@ export async function listSkills() {
   return skills;
 }
 
+/**
+ * 把 skill 自带的工作区起手文件（目前主要是 canvas.template.html）拷贝
+ * 进 session cwd，让 agent 能直接 `Read canvas.template.html` 而不必去
+ * 仓库相对路径找（agent 看不到 server/engine/skills/）。
+ *
+ * **拷贝不软链**：
+ *   - 跨平台稳（Windows symlink 要 admin / Linux bwrap 不解析 symlink）
+ *   - 防 agent 误 Edit 改源模板（影响其他 session）
+ *   - session 是一次性沙盒，拷贝快照语义合理
+ *
+ * **幂等**：文件已存在就不覆盖（agent 改过的、或上次 session init 拷过的不动）。
+ *
+ * 当前只拷一个 `canvas.template.html` 起手文件；未来若 skill 多个起手文件
+ * 可加配置（frontmatter 加 `starter_files: [a, b]` 之类）。
+ *
+ * @param {string} sessionRoot - sessions/<sid>/ 绝对路径
+ * @param {string} skillId    - 同 loadSkill 的 skillId
+ * @returns {Promise<{ copied: string[], skipped: string[] }>}
+ */
+export async function ensureSkillStarterFiles(sessionRoot, skillId) {
+  const result = { copied: [], skipped: [] };
+  if (!sessionRoot || !skillId) return result;
+
+  const skillDir = path.join(SKILLS_ROOT, skillId);
+  const STARTER_FILES = ['canvas.template.html'];
+
+  for (const name of STARTER_FILES) {
+    const src = path.join(skillDir, name);
+    const dst = path.join(sessionRoot, name);
+
+    let srcExists = false;
+    try {
+      await fs.access(src);
+      srcExists = true;
+    } catch { /* skill 没这个起手文件 */ }
+    if (!srcExists) continue;
+
+    let dstExists = false;
+    try {
+      await fs.access(dst);
+      dstExists = true;
+    } catch { /* dst 不存在，需要拷 */ }
+    if (dstExists) {
+      result.skipped.push(name);
+      continue;
+    }
+
+    try {
+      await fs.copyFile(src, dst);
+      result.copied.push(name);
+    } catch (err) {
+      console.warn(
+        `[skill] copy ${name} failed (${err.code || err.message}); `
+        + `agent will not have it in cwd`,
+      );
+    }
+  }
+
+  return result;
+}
+
 // ── frontmatter 解析（极简 YAML：只支持 key: value）──
 
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/;

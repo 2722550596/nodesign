@@ -62,6 +62,8 @@ const DEFAULT_GITIGNORE = `node_modules/
 .DS_Store
 *.log
 .tmp/
+# generate_image 产物 — 通常很大且能从 spec.json 的 prompt 重生
+assets/generated/
 `;
 
 const DEFAULT_SPEC_JSON = JSON.stringify(

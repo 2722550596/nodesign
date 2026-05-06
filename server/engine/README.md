@@ -18,8 +18,11 @@ engine/
 ├── agent/                       ★ Agent 模块（包 SDK）
 │   ├── context.js               AgentContext（runId / EventBus / abort / counters）
 │   ├── events.js                EventBus + 标准事件 schema
-│   ├── loop.js                  ★ 包 SDK query() 的 orchestrator
-│   ├── skill.js                 SKILL.md loader（frontmatter + body）
+│   ├── session-loop.js          ★ runSession：streamInput long-running query（生产入口）
+│   ├── agent-shared.js          常量 + handleSDKMessage 翻译层（被 session-loop 复用）
+│   ├── hooks.js                 SDK hooks（FileChanged / PreToolUse / PostToolUse 等）
+│   ├── skill.js                 SKILL.md loader（frontmatter + body）+ ensureSkillStarterFiles
+│   ├── prompts/                 nodesign-prelude.md / nodesign-plan-instructions.md
 │   └── _smoke.js                烟雾测试（无 key 也能跑非 LLM 部分）
 │
 ├── skills/                      内置 skill 库
@@ -38,7 +41,7 @@ engine/
 
 - HTTP：`POST /api/runs { skillId, brief }` → 异步返回 runId
 - WebSocket：每 project 一条连接，订阅 EventBus 把事件推前端
-- 内部：`runAgent({ runId, skillId, brief, eventBus })` from `agent/loop.js`
+- 内部：`runSession({ sessionId, projectId, sessionWorkspaceRoot, eventBus, inputQueue, skillId, ... })` from `agent/session-loop.js` —— streamInput 长 query，一个 session 复用 query handle 跑多 turn（cancel / setModel / rewindFiles / setPermissionMode 全靠它）
 
 ## 跑测试
 
