@@ -147,6 +147,13 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
         matcher: 'mcp__nodesign__export_handoff',
         hooks: [makePostToolUseExportHandler({ ctx })],
       },
+      // Phase Image-4：generate_image 调用计数 hook ——
+      // agent 同 outputName regenerate 第 3 次时注 systemMessage 建议
+      // 用 request_image_approval 让用户拍板，避免闷头改浪费 token。
+      {
+        matcher: 'mcp__nodesign__generate_image',
+        hooks: [makePostToolUseGenerateImageRegenWatchdog()],
+      },
       // record_decision 后**不再**注 additionalContext —— 之前注的"继续主任务"
       // 跟 SDK preset 'claude_code' 教的"工具调用不是任务结束"重复，agent 模型
       // 自己已经懂。删除让 agent 行为更接近 SDK 默认（不"被牵着走"）。
@@ -838,3 +845,62 @@ function makeSubagentStopHandler({ ctx }) {
 // Phase 3d 删除：Bash 白名单 / 危险正则 / checkBashCommand
 // 替换为 SDK 内置 sandbox（loop.js sandbox 字段）。OS 级隔离比正则白名单更稳。
 // 如需回滚：git revert 3d commit，恢复 ALLOWED_FIRST_TOKEN / DANGEROUS_PATTERNS / checkBashCommand。
+
+// ── Phase Image-4：generate_image 重生看门狗 ──
+//
+// agent 同 outputName 调 generate_image 第 3 次起，注 systemMessage 建议：
+//   - 用 request_image_approval 让用户拍板（多张候选并排选）
+//   - 或 accept 当前最好的一版
+// 防"agent 闷头改 5-10 次同 prompt 浪费 token + 用户也得不到更好版本"。
+//
+// 计数策略：
+//   - in-memory Map（key: outputName 去 timestamp 的 base，value: count）
+//   - 进程重启清；session 内累积；不区分 session（agent 进程同步 hook）
+//   - 阈值固定 3，可后续 env 化
+//
+// outputName base 提取：
+//   - "deck-cover-v1" → "deck-cover"（去掉 -v\d / -\d / -draft 等 suffix）
+//   - 同 base 不同 suffix 仍计入同一组（避免 agent 改名绕过 watchdog）
+function makePostToolUseGenerateImageRegenWatchdog() {
+  const REGEN_THRESHOLD = 3;
+  const counts = new Map();
+
+  function extractBase(outputName) {
+    if (!outputName || typeof outputName !== 'string') return null;
+    return outputName
+      .replace(/-(?:v\d+|draft\d*|final|new|old|alt|\d+)$/i, '')
+      .replace(/[-_]+/g, '-')
+      .toLowerCase();
+  }
+
+  return async (input, _toolUseId, _options) => {
+    try {
+      const outputName = input?.tool_input?.outputName;
+      const base = extractBase(outputName);
+      if (!base) return {};
+
+      const next = (counts.get(base) || 0) + 1;
+      counts.set(base, next);
+
+      if (next < REGEN_THRESHOLD) return {};
+
+      // ≥ 3 次同 base outputName → 注 systemMessage
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          additionalContext:
+            `<system-reminder>\n[regen-watchdog] 你已经对 outputName base "${base}" 调 generate_image ${next} 次。\n\n`
+          + `如果是 conversational editing 微调（"再暖一点 / 换日落色"），可以继续；\n`
+          + `如果在反复尝试不同方向（每次 prompt 大改），**强烈建议**：\n`
+          + `  1. 把最近 2-3 张候选用 request_image_approval 让用户在里面选最好的\n`
+          + `  2. 或 accept 当前最满意的那张，专心后续工作\n`
+          + `理由：reroll 同 prompt 越多次 token 浪费越大，且用户也未必能在第 N 张里看出明显差别。\n`
+          + `</system-reminder>`,
+        },
+      };
+    } catch (err) {
+      console.warn(`[hooks/regen-watchdog] threw:`, err.message);
+      return {};
+    }
+  };
+}
