@@ -20,7 +20,7 @@
  *
  * # 路径编码（sessionId 流到 proxy）
  *
- * 调用方（loop.js / session-loop.js）把 ANTHROPIC_BASE_URL 设成
+ * 调用方（session-loop.js / session-loop.js）把 ANTHROPIC_BASE_URL 设成
  * `http://127.0.0.1:PORT/__nd/<sessionId>`，SDK binary 会把请求发到
  * `http://127.0.0.1:PORT/__nd/<sessionId>/v1/messages`。proxy 解析路径前缀
  * 拿到 sessionTag，剥掉前缀后得到原始路径。

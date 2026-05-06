@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Square, Paperclip, AtSign, Wand2, ClipboardList, Upload } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { Plan } from '../../lib/api.js';
 import { useDropzone } from '../../lib/useDropzone.js';
 import ComposerTray from './ComposerTray.jsx';
 import SuggestionChip from './SuggestionChip.jsx';
@@ -40,6 +41,33 @@ export default function ChatComposer({
   const setChatDraft = useGlobalStore(s => s.setChatDraft);
   const planModeEnabled = useGlobalStore(s => s.planModeEnabled);
   const setPlanModeEnabled = useGlobalStore(s => s.setPlanModeEnabled);
+  const activeRun = useGlobalStore(s => s.activeRun);
+  // UX 守卫：plan banner / approval card 弹时禁用 toggle 防双向操作打架
+  const planModeRequest = useGlobalStore(s => s.planModeRequest);
+  const planForApproval = useGlobalStore(s => s.planForApproval);
+  const planToggleLocked = !!planModeRequest || !!planForApproval;
+
+  // toggle handler：on/off 都要把当前活跃 query 的 permissionMode 同步切。
+  // - on:  bypassPermissions → plan
+  // - off: plan → bypassPermissions
+  // 无 active run（query 已 done）→ 跳过 API；下一 turn 自然走新的 initialPermissionMode
+  // API 失败（404 / 网络）silent 接受，只更新 localStorage
+  const handleTogglePlanMode = async () => {
+    if (planToggleLocked || disabled) return;
+    const next = !planModeEnabled;
+    setPlanModeEnabled(next);
+    if (activeRun?.pid && activeRun?.runId) {
+      try {
+        await Plan.grantViaPermissionMode({
+          pid: activeRun.pid,
+          runId: activeRun.runId,
+          mode: next ? 'plan' : 'bypassPermissions',
+        });
+      } catch {
+        // query 不 active（404）/ 网络抖动：silent；下一 turn 自然用新 mode
+      }
+    }
+  };
 
   // textarea 自动增高
   useEffect(() => {
@@ -205,13 +233,22 @@ export default function ChatComposer({
           />
 
           {/* Phase 3.2：plan-mode toggle —— 开 SDK 原生 plan mode（agent 先写 plan
-              让用户审批再执行）。LocalStorage 持久化，开/关在 chip 文字 + 高亮区分。 */}
+              让用户审批再执行）。LocalStorage 持久化，开/关在 chip 文字 + 高亮区分。
+              2026-05-06 修复 4 个 bug：
+                A) turn.js:71 默认值改为 'bypassPermissions'（不传 null）
+                B) toggle on/off 都调 /permission-mode 同步活跃 query（之前只有 on 路径）
+                C) plan banner/approval 弹时锁 toggle 防状态打架
+                D) plan-instructions 加载 fail 报 console.error
+          */}
           <button
-            onClick={() => setPlanModeEnabled(!planModeEnabled)}
-            disabled={disabled}
-            title={planModeEnabled
-              ? 'plan-mode 已开：agent 会先写 design plan 让你审批 / 编辑后再执行（点击关闭）'
-              : 'plan-mode 关：agent 跑默认流程，复杂 brief 想先 review plan 再开（点击开启）'
+            onClick={handleTogglePlanMode}
+            disabled={disabled || planToggleLocked}
+            title={
+              planToggleLocked
+                ? '审批进行中，请先在弹窗里做选择'
+                : planModeEnabled
+                  ? 'plan-mode 已开：agent 会先写 design plan 让你审批 / 编辑后再执行（点击关闭）'
+                  : 'plan-mode 关：agent 跑默认流程，复杂 brief 想先 review plan 再开（点击开启）'
             }
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -221,8 +258,8 @@ export default function ChatComposer({
               background: planModeEnabled ? COLOR.warn : 'transparent',
               border: `1px solid ${planModeEnabled ? COLOR.warn : COLOR.borderMd}`,
               borderRadius: 6,
-              cursor: disabled ? 'not-allowed' : 'pointer',
-              opacity: disabled ? 0.5 : 1,
+              cursor: (disabled || planToggleLocked) ? 'not-allowed' : 'pointer',
+              opacity: (disabled || planToggleLocked) ? 0.5 : 1,
               transition: 'all 0.15s',
               marginLeft: GAP.xs,
             }}

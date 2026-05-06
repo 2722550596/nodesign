@@ -2,18 +2,14 @@
  * server/engine/agent/session-loop.js — Long-running query session loop
  *
  * SDK streamInput 模式：一个 SDK Query 持续吃 user message 跨多 turn，conversation
- * state 留在 SDK binary 内存里，**不依赖 jsonl resume**。
+ * state 留在 SDK binary 内存里，**不依赖 jsonl resume**。这是 NoDesign 主代理唯一
+ * 入口（曾有 per-turn 的 loop.js runAgent，2026-05-03 后已彻底移除）。
  *
  * 解决 per-turn query 架构的两个痛点：
  *   1. cancel 时 jsonl 残缺 → 下个 turn resume 失败丢上下文（streamInput 不 resume）
  *   2. 用户在 agent 跑时无法追加消息（streamInput 排队天然支持）
  *
- * 跟 loop.js runAgent 的关系：
- *   - 旧路径 runAgent 保留作 BC（probes / smoke / 部分 endpoint 走它）
- *   - 新路径 runSession 是主路（POST /turn 优先走它）
- *   - sdkOptions 构建大量 duplicate（Phase 4 cleanup 抽 shared helper）
- *
- * 主要不同点：
+ * 设计要点：
  *   - 不接 brief / userContentBlocks —— 用 inputQueue（AsyncQueue）作 prompt source
  *   - 不接 resumeSessionId —— streamInput 模式下 SDK 自己保 conversation state
  *   - per-turn lifecycle 管理：result message = turn 边界，emit run.done 但 query 不退
@@ -25,7 +21,6 @@
  *   一个 sharedCtx 横跨多 turn，每个 turn 边界处覆盖 runId + 重置 counters。
  *   这样 hooks / mcp 闭包持有的 ctx 引用稳定，emit 时 enrich 当前 turn runId。
  *   非 thread-safe（SDK stream 串行处理 message，OK）。
- *   Phase 4 cleanup 改成 ProxyContext 设计。
  */
 
 import path from 'node:path';
@@ -44,6 +39,7 @@ import {
   setCurrentTurnRunId,
   registerPendingQuestion,
   registerPendingElicitation,
+  getSessionPermissionMode,
 } from '../runs/active-runs.js';
 import { loadSkill, ensureSkillStarterFiles } from './skill.js';
 import { createHooks } from './hooks.js';
@@ -61,6 +57,32 @@ import {
   handleSDKMessage,
   detectArtifact,
 } from './agent-shared.js';
+
+/**
+ * Plan-mode 硬 deny 列表（canUseTool 钩子拦）。Allowlist 反过来推：
+ *   ✅ allow: Read / Grep / Glob / WebFetch / Task / AskUserQuestion / TodoWrite
+ *            / mcp__nodesign__web_search / mcp__nodesign__generate_image
+ *            （+ ExitPlanMode 是 SDK 内置 plan-mode 提交工具，必允许）
+ *   ❌ deny: 动主产物 + 决策档案 + 打包 + 改 canvas 状态的工具
+ *
+ * 设计意图：plan mode 是 brainstorm + 探索阶段，**generate_image 故意放开**让
+ * agent 在 brainstorm 时能给用户出小样视觉对齐（详见 SKILL.md § Plan mode），
+ * 但 SKILL.md prompt 软约束规定"方向对齐了再生图"，避免一上来就画的浪费。
+ */
+const PLAN_MODE_DENY = new Set([
+  // 写入主产物（canvas.html 等）
+  'Write', 'Edit', 'MultiEdit',
+  // shell 任意命令（plan 期间不允许 git/playwright/zip/...）
+  'Bash',
+  // NoDesign MCP 工具：动 canvas 渲染状态 / 决策档案 / 成品打包
+  'mcp__nodesign__screenshot_canvas',
+  'mcp__nodesign__expose_tweaks',
+  'mcp__nodesign__record_decision',
+  'mcp__nodesign__export_handoff',
+  'mcp__nodesign__navigate_to_page',
+  'mcp__nodesign__highlight',
+  'mcp__nodesign__clear_pending_changes',
+]);
 
 /**
  * 起一个 session-level long-running SDK query。runs 是 per-turn 概念（SDK 每见
@@ -111,9 +133,15 @@ export async function runSession({
     : null;
 
   const sessionAbortController = new AbortController();
+  // initialPermissionMode 落进 active-runs，canUseTool 通过 getSessionPermissionMode 读
+  // 当前 mode 决定要不要 deny 写工具（plan mode 硬约束）。/permission-mode endpoint
+  // 切 mode 时也会同步更新本字段。
+  const initialModeNormalized =
+    initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions';
   registerQuerySession(sessionId, {
     abortController: sessionAbortController,
     inputQueue,
+    initialPermissionMode: initialModeNormalized,
   });
   // initialRunId：register 后立刻设 currentRunId，让 for-await-of 第一次见到
   // SDK 转发首条 user message 时直接知道当前 turn 的 runId（否则 turn.js 那边
@@ -138,8 +166,7 @@ export async function runSession({
 
   // Path 整理（2026-05-06）：把 skill 自带的起手文件（canvas.template.html
   // 等）拷到 session cwd —— SKILL.md 教 agent `Read canvas.template.html`
-  // 直接生效。streamInput 重构后实际跑的是 session-loop.js，loop.js 那条
-  // 路径已死代码，必须在这里也接上。幂等 + fail-soft。
+  // 直接生效。幂等 + fail-soft。
   try {
     const r = await ensureSkillStarterFiles(wsRoot, skill.id);
     if (r.copied.length > 0) {
@@ -188,7 +215,8 @@ export async function runSession({
       ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
       CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
-      // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。详见 loop.js 同段注释
+      // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
+      // 用于 SDK 内部 helper（如 task title 总结、auto-compaction 等小调）。
       ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
     },
 
@@ -204,13 +232,33 @@ export async function runSession({
     allowDangerouslySkipPermissions: initialPermissionMode !== 'plan',
     planModeInstructions: NODESIGN_PLAN_INSTRUCTIONS,
 
-    // AskUserQuestion 拦截（同 loop.js）
+    // 通用 permission gate
     //
     // ⚠️ SDK 0.2.x permission decision schema 要求 'allow' branch 必带 updatedInput
-    // （Zod union 严格验证）；之前返 `{ behavior: 'allow' }` 缺 updatedInput 会
-    // 触发 ZodError 让所有非 AskUserQuestion 工具拿不到允许 → 搜索/Read/etc 全被
-    // 视为 denied。fix：'allow' 都带上 updatedInput（不改的话原样透传 input）。
+    // （Zod union 严格验证）；返 `{ behavior: 'allow' }` 缺 updatedInput 会触发
+    // ZodError 让工具被拒。'allow' 都要带 updatedInput（不改的话原样透传 input）。
+    //
+    // Plan-mode 工具白名单（2026-05-06 增）：用户进 plan mode 后 agent 可以做
+    // brainstorm + 探索 + 候选样张，但**不能动主产物 / 跑 shell / 落决策档案**。
+    // - 允许：Read/Grep/Glob/WebFetch/Task/AskUserQuestion，以及
+    //   mcp__nodesign__web_search / mcp__nodesign__generate_image（探索性候选样张）
+    // - 拒绝：Write/Edit/MultiEdit/Bash + screenshot_canvas / expose_tweaks /
+    //   record_decision / export_handoff / navigate_to_page / highlight 等动状态工具
+    // 拒绝时 message 解释让 agent 改流程（先 ExitPlanMode 提交 plan 让用户批）。
     canUseTool: async (toolName, input, options) => {
+      // Plan-mode 硬 enforce（model 看的 prompt 是软约束，这里是硬约束兜底）
+      const currentMode = getSessionPermissionMode(sessionId);
+      if (currentMode === 'plan' && PLAN_MODE_DENY.has(toolName)) {
+        return {
+          behavior: 'deny',
+          message:
+            `plan mode 不能调 ${toolName}（动主产物 / 决策档案 / 打包都是 generate 阶段的活）。\n`
+            + `当前阶段：用 AskUserQuestion 跟用户逐页对齐 + 必要时用 generate_image 出小样确认方向。\n`
+            + `所有页对齐了 → 调 ExitPlanMode 提交 design-plan.md → 用户批准后 SDK 自动切 default → 那时再做这个。`,
+          interrupt: false,
+        };
+      }
+
       if (toolName !== 'AskUserQuestion') return { behavior: 'allow', updatedInput: input };
       const toolUseId = options?.toolUseID;
       if (!toolUseId) {

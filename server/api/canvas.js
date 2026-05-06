@@ -45,7 +45,7 @@ function guard(req, res) {
 }
 
 // 单文件 GET（assets/* 子树）—— 让 iframe 里 <img src="assets/generated/x.jpg">
-// 自然解析 + ImageApprovalBanner 也走这个 endpoint 取 thumbnail。
+// 自然解析 + chat 渲染 image content block 缩略图也走这个 endpoint。
 // 走 sessions/<sid>/assets softlink 透到 shared/assets，路径限 assets/* 子树
 // 防 traversal。MIME 按扩展名定。
 const ASSET_MIME = {

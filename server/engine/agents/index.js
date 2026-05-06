@@ -9,7 +9,7 @@
  *   tweak-proposer    — 推可调 slider schema（C16 真实 prompt + tweak-schema.json schema）
  *
  * 调用：main agent 用 Task 工具调（SDK 自动暴露）。
- * **注意**：'Task' 必须在主 agent 的 toolAllowlist 里（loop.js DEFAULT_TOOL_ALLOWLIST）
+ * **注意**：'Task' 必须在主 agent 的 toolAllowlist 里（session-loop.js DEFAULT_TOOL_ALLOWLIST）
  * 否则 SDK 拒绝调用，所有子代理形同摆设。
  *
  * P0+ stage 1 范围：

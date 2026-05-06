@@ -2,7 +2,7 @@
  * server/runtime/platform.js — 跨平台决策的单一来源
  *
  * 设计原则：所有跟 OS / 工具 / 外部状态相关的决策**只在这里做**。
- * 业务文件（loop.js / session-loop.js / sessions.js / workspace.js）
+ * 业务文件（session-loop.js / session-loop.js / sessions.js / workspace.js）
  * 通过 `import { platform } from '../runtime/platform.js'` 读决策结果，
  * 不再自己 `process.env.HOME || os.homedir()` 拼凑。
  *

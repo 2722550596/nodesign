@@ -51,7 +51,7 @@ if (!projectsColNames.has('active_session_id')) {
 
 // S1：projects 表加 description 列（幂等）+ 一次性清洗老 active_session_id。
 //
-// 旧 active_session_id 全是无效值——之前 loop.js persistSession=false 时 SDK
+// 旧 active_session_id 全是无效值——之前 session-loop.js persistSession=false 时 SDK
 // 不写 JSONL 但 setActiveSession 依然把 sessionId 写回（写不成功也被 turn.js
 // 的 try/catch 吞掉，列存在时则成功写入幽灵 sid）。S1 切换 persistSession=true
 // 之前必须把这些幽灵 sid 清掉，否则首次 resume 全 fail（兜底有 try/catch retry

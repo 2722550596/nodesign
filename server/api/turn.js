@@ -43,7 +43,7 @@ import { runSession } from '../engine/agent/session-loop.js';
 import {
   cancelRun, provideAnswer, getQuery, provideElicitation,
   hasActiveQuerySession, pushUserMessage, getQuerySession, closeQuerySession,
-  getQueueDepth,
+  getQueueDepth, setSessionPermissionMode, getSessionIdByRunId,
 } from '../engine/runs/active-runs.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
@@ -67,8 +67,9 @@ router.post('/:pid/turn', async (req, res, next) => {
       return res.status(400).json({ error: 'chat string required' });
     }
     // Phase 3.2：前端 plan-mode toggle 传 permissionMode='plan' 启用 SDK 原生 plan mode；
-    // 其他值（含不传）走默认 bypassPermissions
-    const initialPermissionMode = permissionMode === 'plan' ? 'plan' : null;
+    // 其他值（含不传）显式走 bypassPermissions（自动化 design agent 默认 — 见 SDK
+    // PermissionMode 定义；不要传 null，行为未定义）。
+    const initialPermissionMode = permissionMode === 'plan' ? 'plan' : 'bypassPermissions';
 
     const finalSkillId = (typeof skillId === 'string' && skillId) || project.skillId;
 
@@ -85,8 +86,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     // agent 一启动就在 session 沙盒里跑。
     //
     // 变量名仍叫 resumeSessionId 是历史遗留——streamInput 模式不真"resume jsonl"，
-    // 它只是"当前要用的 sid"。Phase 4 cleanup 时未 rename 是因为有大量 callsite
-    // 兼容成本（loop.js 老路径仍用此名）。
+    // 它只是"当前要用的 sid"。未 rename 是因为有大量 callsite 兼容成本。
     let resumeSessionId;
     if ('sessionId' in (req.body || {})) {
       resumeSessionId = sessionId || null;
@@ -320,7 +320,7 @@ async function tryInlineImageAttachment(attachment, sessionRoot) {
  * POST /api/projects/:pid/runs/:runId/cancel
  *
  * 用户点"停止生成"按钮 → 触发活跃 run 的 AbortController.abort()。
- * SDK 看到 abort signal → query 中断 → loop.js try/catch 走 aborted 路径
+ * SDK 看到 abort signal → query 中断 → session-loop try/catch 走 aborted 路径
  * → emit run.cancelled 事件给前端。
  *
  * 200 { ok: true }                  成功 trigger abort
@@ -348,7 +348,7 @@ router.post('/:pid/runs/:runId/cancel', async (req, res, next) => {
  * A4.2：POST /api/projects/:pid/runs/:runId/answer
  *
  * 用户在 AskUserQuestionView 卡片点选项 → 前端 POST 来这个 endpoint →
- * provideAnswer resolve 对应 toolUseId 的 Promise → loop.js canUseTool
+ * provideAnswer resolve 对应 toolUseId 的 Promise → session-loop.js canUseTool
  * 返回 { behavior: 'allow', updatedInput: { ...input, answers } } → SDK
  * binary 调 tool.call → 模型看到 "User has answered: q1=A"。
  *
@@ -394,7 +394,7 @@ router.post('/:pid/runs/:runId/answer', async (req, res, next) => {
  *
  * MCP 工具调 server.elicitInput() 时 SDK 触发 onElicitation 回调，回调 emit
  * run.elicitation_request 事件让前端弹 Modal。用户填完后 POST 这个 endpoint
- * → provideElicitation resolve loop.js / session-loop.js 里 await 的 Promise
+ * → provideElicitation resolve session-loop.js 里 await 的 Promise
  * → SDK 拿到 { action, content } 继续工具调用。
  *
  * Body:
@@ -432,8 +432,8 @@ router.post('/:pid/runs/:runId/elicit/:reqId/answer', async (req, res, next) => 
 
 // ─────────────────────────────────────────────────────────────────────
 // SDK Query control method endpoints（sdk.d.ts:2017 Query interface）
-// 这些方法只在 streaming input/output 模式下可用，loop.js 已统一所有
-// run 走 AsyncIterable<SDKUserMessage>（buildUserMessageStream）满足前提。
+// 这些方法只在 streaming input/output 模式下可用 — session-loop.js 唯一入口
+// 已让所有 run 走 AsyncIterable<SDKUserMessage>（buildUserMessageStream）满足前提。
 // ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -518,6 +518,10 @@ router.post('/:pid/runs/:runId/permission-mode', async (req, res, next) => {
     }
 
     await query.setPermissionMode(mode);
+    // 同步更新 session 级 currentPermissionMode：canUseTool 钩子按它分流（plan
+    // mode deny 列表）。不同步会让 mode 切回 default 后 canUseTool 仍按 plan 拦。
+    const sid = getSessionIdByRunId(runId);
+    if (sid) setSessionPermissionMode(sid, mode);
     res.json({ ok: true, mode });
   } catch (err) { next(err); }
 });
@@ -615,6 +619,9 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
     }
 
     await query.setPermissionMode('default');
+    // 同步更新 session 级 mode（同 /permission-mode endpoint 的逻辑）
+    const sid = getSessionIdByRunId(req.params.runId);
+    if (sid) setSessionPermissionMode(sid, 'default');
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -645,97 +652,9 @@ router.post('/:pid/runs/:runId/plan-reject', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * Phase Image-1：POST /api/projects/:pid/runs/:runId/image-approval
- *
- * 用户在 ImageApprovalBanner 点 OK / 重生 / dismiss 后调。
- * 后端把用户决策打成 system message 通过 pushUserMessage 喂给当前 session
- * 的 agent，agent 下一 turn 在 system reminder 里看到反馈：
- *
- *   - approve: agent 知道这张图可作为 referenceImages 种子继续
- *   - regenerate { feedback }: agent 收到反馈词，下一调用 generate_image
- *     时把当前图当 referenceImages + 加 conversational editing 修饰
- *   - dismiss: 不喂 agent，agent 当作"用户接受"继续
- *
- * Body: { paths: string[], action: 'approve'|'regenerate'|'dismiss',
- *         feedback?: string, role?: string }
- */
-router.post('/:pid/runs/:runId/image-approval', async (req, res, next) => {
-  try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
-
-    const { runId } = req.params;
-    const { paths, action, feedback, role } = req.body || {};
-    const VALID = ['approve', 'regenerate', 'dismiss'];
-    if (!VALID.includes(action)) {
-      return res.status(400).json({ error: `action must be one of: ${VALID.join(', ')}` });
-    }
-    if (!Array.isArray(paths) || paths.length === 0) {
-      return res.status(400).json({ error: 'paths[] required' });
-    }
-
-    // emit resolved 事件给前端（timeline / toast）
-    try {
-      const bus = getProjectBus(project.id);
-      bus.publish({
-        type: 'run.image_approval_resolved',
-        runId, action, paths, role: role || null,
-        ...(feedback ? { feedback } : {}),
-      });
-    } catch { /* ignore */ }
-
-    // dismiss → 不喂 agent，前端清 banner 完事
-    if (action === 'dismiss') return res.json({ ok: true });
-
-    // 找 active session 的 sid（pushUserMessage 需要）
-    const sid = project.activeSessionId;
-    if (!sid || !hasActiveQuerySession(sid)) {
-      return res.status(404).json({
-        error: 'no active session for this project',
-        code: 'SESSION_NOT_ACTIVE',
-      });
-    }
-
-    // 把决策打成 system 提示喂 agent —— 不是 user message body，是用
-    // user role 包一段 system 提示（SDK 把 user message 注入到 history，
-    // agent 下一次思考时在 system reminder 里看到）
-    const pathList = paths.map((p) => `  - ${p}`).join('\n');
-    let text;
-    if (action === 'approve') {
-      text =
-        `<system-reminder>\n用户已 approve 以下图片${role ? `（role=${role}）` : ''}：\n${pathList}\n\n`
-        + `→ 这些图可作为后续 referenceImages 种子继续；不需要再 regenerate。\n`
-        + `继续按原计划推进。如果是 cover/portrait/anchor 类，复用到后续 image generation 的 referenceImages 字段保证全 deck 视觉一致。\n`
-        + `</system-reminder>`;
-    } else { // regenerate
-      const fb = (feedback || '').trim();
-      text =
-        `<system-reminder>\n用户希望重生以下图片${role ? `（role=${role}）` : ''}：\n${pathList}\n\n`
-        + (fb ? `用户反馈：\n${fb}\n\n` : '用户未提供具体反馈，自己判断怎么改。\n\n')
-        + `**强烈建议用 conversational editing 模式**：\n`
-        + `- 把当前图当 referenceImages（path 列在上面）\n`
-        + `- prompt 用 "Keep composition, [用户反馈的修改]" 这种增量语言\n`
-        + `- 而不是 from scratch 重写整段 prompt\n`
-        + `- 完成后再调 request_image_approval 让用户看新版（直到 approve）\n`
-        + `</system-reminder>`;
-    }
-
-    const sdkUserMessage = {
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text }] },
-      parent_tool_use_id: null,
-    };
-    const ok = pushUserMessage(sid, runId, sdkUserMessage);
-    if (!ok) {
-      return res.status(409).json({
-        error: 'session input queue rejected message (session may be closing)',
-        code: 'PUSH_FAILED',
-      });
-    }
-    res.json({ ok: true });
-  } catch (err) { next(err); }
-});
+// 注：POST /image-approval 路由已删除（2026-05-06）。原本配 ImageApprovalBanner
+// 走 approve/regenerate/dismiss 三按钮 gate，但实际上 emit 完即返不阻塞 agent，
+// 形同弹窗装饰。改为：generate_image 已在 CallToolResult 返 image content block，
+// 前端自动渲染；agent 在 caption / 自然回话邀请反馈，下一轮用户 chat 即天然 gate。
 
 export default router;

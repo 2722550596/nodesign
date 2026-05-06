@@ -2,7 +2,7 @@
  * server/engine/runs/active-runs.js — 活跃 run registry
  *
  * 为什么需要：
- *   loop.js 的 ctx.abortController / ctx 是 in-memory 实例，外部（HTTP cancel
+ *   session-loop.js 的 ctx.abortController / ctx 是 in-memory 实例，外部（HTTP cancel
  *   endpoint）需要根据 runId 找到对应的引用才能控制。
  *
  * 工作流：
@@ -17,7 +17,7 @@
  *         c. race window（query 还没 attach）→ 直接 ctx.cancel()
  *   4. ctx.cancel() 幂等：set abort signal + emit run.cancelled（前端据此 setIsStreaming(false)）
  *   5. SDK 看到 abort signal 或 interrupt → query 中断
- *      → loop.js 走 cancelled 路径或 catch
+ *      → session-loop.js 走 cancelled 路径或 catch
  *   6. runAgent finally 调 unregisterRun(runId)（无论成功失败）
  *
  * 暴露给上层（API/前端）的能力（通过 getQuery）：
@@ -33,7 +33,7 @@
  *   - 等等（见 sdk.d.ts:2017 Query interface）
  *
  *   ⚠️ 这些 control 方法**只在 streaming input/output 模式下可用**
- *      （sdk.d.ts:2018-2022）。loop.js 已统一把所有 prompt 包成
+ *      （sdk.d.ts:2018-2022）。session-loop.js 已统一把所有 prompt 包成
  *      AsyncIterable<SDKUserMessage>，符合此前提。
  *
  * Map 是 in-memory：服务重启 controller / ctx 都没了（活跃 run 也都死了，一致）。
@@ -69,6 +69,11 @@ const activeRuns = new Map();
  * @property {string|null} currentRunId  - 当前正处理的 turn run record id
  * @property {Map<string, PendingQuestion>} pendingQuestions  - tool_use_id → resolver
  * @property {Map<string, PendingQuestion>} pendingElicitations
+ * @property {string} currentPermissionMode  - 当前 SDK permissionMode（'plan' | 'bypassPermissions' 等）
+ *   canUseTool 钩子按此分流（plan mode 硬 deny Write/Edit/Bash 等动主产物的工具）。
+ *   初值来自 registerQuerySession 的 initialPermissionMode；运行时切 mode（query.
+ *   setPermissionMode）必须同步调 setSessionPermissionMode 更新本字段，否则 canUseTool
+ *   仍按旧 mode 拦截。
  * @property {number} startedAt
  */
 
@@ -77,7 +82,7 @@ const activeQuerySessions = new Map();
 
 /**
  * 注册 run。runAgent 启动后立即调（query 还没拿到 handle）。
- * 后续在 loop.js 拿到 query handle 后调 attachQuery 把 query 填上。
+ * 后续在 session-loop.js 拿到 query handle 后调 attachQuery 把 query 填上。
  *
  * @param {string} runId
  * @param {object} deps
@@ -98,7 +103,7 @@ export function registerRun(runId, { abortController, ctx } = {}) {
 
 /**
  * 把 query handle attach 到已注册的 run。
- * loop.js 在 `const stream = query({ ... })` 之后立即调。
+ * session-loop.js 在 `const stream = query({ ... })` 之后立即调。
  *
  * 之所以分两步注册：query() 调用之前 cancel race（用户极快点停止）能拿到
  * abortController/ctx 兜底；query() 之后 cancel 走 query.interrupt() 优雅路径。
@@ -114,7 +119,7 @@ export function attachQuery(runId, query) {
 
 /**
  * 注销 run（无论 succeeded / failed / cancelled）。
- * loop.js runAgent finally 调，避免引用泄漏。
+ * session-loop.js runAgent finally 调，避免引用泄漏。
  *
  * A4.1：reject 任何剩余 pendingQuestions（防止 Promise 永久 hang
  * 让 canUseTool callback 卡死整个 SDK loop 释放）。
@@ -139,7 +144,7 @@ export function unregisterRun(runId) {
 
 /**
  * A4.1：注册一个等待用户答案的 Promise。
- * loop.js canUseTool 拦到 AskUserQuestion 时调，emit 事件后 await 返回的
+ * session-loop.js canUseTool 拦到 AskUserQuestion 时调，emit 事件后 await 返回的
  * Promise；用户在前端点选项 → POST /answer → provideAnswer → resolve。
  *
  * 同 toolUseId 重复 register 视作上一个被覆盖（reject 旧的 + 新建）—— 实际
@@ -205,7 +210,7 @@ function findQuerySessionByRunId(runId) {
 
 /**
  * Phase 2.3：注册一个等待 MCP elicitation 答案的 Promise。
- * loop.js onElicitation 回调拦到 MCP server elicit 请求时调，emit 事件后 await
+ * session-loop.js onElicitation 回调拦到 MCP server elicit 请求时调，emit 事件后 await
  * 返回的 Promise；用户在前端答完 → POST /elicit/:reqId/answer → provideElicitation。
  *
  * @param {string} runId
@@ -323,18 +328,18 @@ export function getQuery(runId) {
  *   优先 query.interrupt() 优雅中断 —— agent 能写完当前 token 块再停。
  *   SDK 收到 interrupt 后 query 自然结束，推 SDKResultMessage 含
  *   terminal_reason: 'aborted_streaming' | 'aborted_tools'（sdk.d.ts:5339），
- *   loop.js result 处理识别后调 ctx.cancel() emit run.cancelled。
+ *   session-loop.js result 处理识别后调 ctx.cancel() emit run.cancelled。
  *
  *   5s 兜底 ctx.cancel()：interrupt 后 SDK 偶尔会卡住（reasoning 进行中），
  *   timeout 兜底强制 abort + emit run.cancelled，前端不会卡 streaming。
  *
  * 三条路径全部走 ctx.cancel()（幂等）保证 run.cancelled 恰好 emit 一次：
- *   a. interrupt 成功 → loop.js result 路径调 ctx.cancel()
+ *   a. interrupt 成功 → session-loop.js result 路径调 ctx.cancel()
  *   b. interrupt 失败兜底 → cancelRun 直接调 ctx.cancel()
  *   c. race window（query 还没 attach）→ cancelRun 直接调 ctx.cancel()
  *
  * @param {string} runId
- * @param {string} reason - 写入 abort signal.reason，loop.js cancelled 路径会读
+ * @param {string} reason - 写入 abort signal.reason，session-loop.js cancelled 路径会读
  * @returns {boolean} true=成功 trigger；false=run 不在 registry（已结束 / 不存在）
  */
 export function cancelRun(runId, reason = 'user_cancel') {
@@ -412,8 +417,9 @@ export function listActiveRuns() {
  * @param {object} deps
  * @param {AbortController} deps.abortController
  * @param {import('../../lib/async-queue.js').AsyncQueue} deps.inputQueue
+ * @param {string} [deps.initialPermissionMode='bypassPermissions']  - 初始 permission mode
  */
-export function registerQuerySession(sessionId, { abortController, inputQueue } = {}) {
+export function registerQuerySession(sessionId, { abortController, inputQueue, initialPermissionMode = 'bypassPermissions' } = {}) {
   if (!sessionId || !abortController || !inputQueue) return;
   activeQuerySessions.set(sessionId, {
     abortController,
@@ -423,8 +429,31 @@ export function registerQuerySession(sessionId, { abortController, inputQueue } 
     currentRunId: null,
     pendingQuestions: new Map(),
     pendingElicitations: new Map(),
+    currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
   });
+}
+
+/**
+ * 同步更新 session 当前 permissionMode（canUseTool 钩子按此分流）。
+ * 必在 query.setPermissionMode(mode) 成功后调，否则 canUseTool 仍按旧 mode 拦截。
+ *
+ * @param {string} sessionId
+ * @param {string} mode  - 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'
+ */
+export function setSessionPermissionMode(sessionId, mode) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return;
+  rec.currentPermissionMode = mode;
+}
+
+/**
+ * @param {string} sessionId
+ * @returns {string|null}
+ */
+export function getSessionPermissionMode(sessionId) {
+  const rec = activeQuerySessions.get(sessionId);
+  return rec?.currentPermissionMode || null;
 }
 
 /**
@@ -489,6 +518,22 @@ export function pushUserMessage(sessionId, runId, sdkUserMessage) {
  */
 export function getCurrentTurnRunId(sessionId) {
   return activeQuerySessions.get(sessionId)?.currentRunId || null;
+}
+
+/**
+ * 反向查找：给定 runId 找到所属 sessionId（streamInput 模式 run/session 多对一）。
+ * 用于 turn.js /permission-mode endpoint：endpoint 拿到 runId 但要更新 session 级
+ * 的 permission mode（canUseTool 按 session 查）。
+ *
+ * @param {string} runId
+ * @returns {string|null}
+ */
+export function getSessionIdByRunId(runId) {
+  if (!runId) return null;
+  for (const [sid, rec] of activeQuerySessions) {
+    if (rec.currentRunId === runId) return sid;
+  }
+  return null;
 }
 
 /**

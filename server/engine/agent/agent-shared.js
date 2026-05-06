@@ -1,7 +1,7 @@
 /**
  * engine/agent/agent-shared.js — agent 跑 run 时复用的常量 + 翻译层
  *
- * 历史：原 `loop.js` 含 runAgent (per-turn 一次性 query 模式)。streamInput 重构后
+ * 历史：原 `session-loop.js` 含 runAgent (per-turn 一次性 query 模式)。streamInput 重构后
  * 生产代码切到 session-loop.js (runSession，long-running query 跨多 turn)，
  * runAgent 死掉。本文件保留 session-loop.js 仍依赖的部分：
  *
@@ -47,7 +47,13 @@ export const NODESIGN_PLAN_INSTRUCTIONS = (() => {
       'utf8',
     ).trim();
   } catch (err) {
-    console.warn(`[agent-shared] failed to load nodesign-plan-instructions.md:`, err.message);
+    // FATAL：plan mode 进去后 agent 看不到 workflow 指导，行为完全乱。fail-soft
+    // 仍返回 ''（避免起服务直接挂），但用 console.error 让部署日志能立刻发现。
+    console.error(
+      `[agent-shared] FATAL: nodesign-plan-instructions.md load failed — `
+      + `plan mode will lack workflow guidance:`,
+      err.message,
+    );
     return '';
   }
 })();

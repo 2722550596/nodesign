@@ -2,7 +2,7 @@
  * server/api/memory.js — 项目级 agent memory 读写（H4b）
  *
  * 数据落在 shared/.claude/agent-memory/<agentType>/<file>，agent 用 SDK
- * memory 机制（loop.js 启用 settingSources: ['project'] 后软链让 agent
+ * memory 机制（session-loop.js 启用 settingSources: ['project'] 后软链让 agent
  * 看到 shared 路径）按需写。本文件给前端 MemoryCard 展示 + 用户偶尔覆盖。
  *
  * 路径：
