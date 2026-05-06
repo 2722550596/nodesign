@@ -208,6 +208,16 @@ export async function runSession({
 
     persistSession: true,
     settingSources: ['project'],
+
+    // WebFetch 安全 preflight：SDK binary 调 Anthropic 服务器侧域名分类 API
+    // （需 OAuth claude.ai 登录态）；NoDesign 走 API key gateway 不存在 OAuth →
+    // preflight 永远 check_failed → 抛 DomainCheckFailedError"blocking claude.ai"。
+    // 本地 Mac 偶尔能跑因为 ~/.claude 残留 OAuth token；服务器 non-root + per-session
+    // CLAUDE_CONFIG_DIR 没 token 必现。skipWebFetchPreflight 官方 enterprise 开关。
+    settings: {
+      skipWebFetchPreflight: true,
+    },
+
     includePartialMessages: STREAMING_ENABLED,
 
     thinking: modelOverride.thinking || pickThinkingConfig(model),

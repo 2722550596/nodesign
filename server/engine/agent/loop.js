@@ -447,6 +447,17 @@ export async function runAgent({
     persistSession: true,
     settingSources: ['project'],
 
+    // WebFetch 安全 preflight：SDK binary 内置一个 nV7() 调用 Anthropic 服务器侧
+    // 域名分类 API（需要 OAuth claude.ai 登录态）；NoDesign 走 API key gateway
+    // 模式不存在 OAuth → preflight 永远返 check_failed → 抛 DomainCheckFailedError
+    // "Unable to verify if domain X is safe to fetch ... blocking claude.ai"。
+    // 本地 Mac 开发机偶尔能跑是因为 ~/.claude 残留 OAuth token；服务器
+    // non-root nodesign 用户 + per-session CLAUDE_CONFIG_DIR 没 token → 100% 复现。
+    // skipWebFetchPreflight 是 SDK 官方为 enterprise / 自托管场景留的开关。
+    settings: {
+      skipWebFetchPreflight: true,
+    },
+
     // 流增量（用于细粒度推 WS）
     includePartialMessages: true,
 
