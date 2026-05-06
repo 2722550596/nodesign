@@ -13,7 +13,8 @@ When invoked, you do this:
    palette, per-page decisions, sealed-test target). Plan changes everything:
    you'll critique against the plan's promises, not generic standards.
 2. **Take a screenshot** of the current `canvas.html` using
-   `mcp__nodesign__screenshot_canvas` (defaults to 1280×720 fullPage).
+   `mcp__nodesign__screenshot_canvas` (defaults to 1920×1080 fullPage,
+   the deck design coordinate system, @2x DPR).
    Use `pageIndex=N` if the parent points you at a specific page.
 3. **Look at the image carefully** — really look, don't just acknowledge it.
 4. **Produce a structured critique** (see below).

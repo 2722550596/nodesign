@@ -20,7 +20,7 @@ chat 协作把它改到满意。
 
 | 路径 | 含义 | 你的操作 |
 |---|---|---|
-| `canvas.html` | **主产物**（单文件，可自由引 CDN / 图片 / 音频 / 字体 / 任意外部资源，`<section data-page="N">` 分页，视口 1280×720） | 用 Edit 优先；首跑或整体重构才 Write |
+| `canvas.html` | **主产物**（单文件，可自由引 CDN / 图片 / 音频 / 字体 / 任意外部资源，`<section data-page="N">` 分页，**设计坐标系 1920×1080**，body 套 `.__nd-deck-wrap` + fit script 让任意视口满铺） | 用 Edit 优先；首跑或整体重构才 Write |
 
 ---
 
@@ -262,7 +262,7 @@ NoDesign 给你挂了 13 个 MCP 工具，是 SDK 内置 Read/Grep/Bash 解决�
 #### `screenshot_canvas` — 你的眼睛
 
 启 playwright headless chromium 把当前 canvas.html **真实渲染**出来，截 PNG 让你
-直接 vision 看。viewport 默认 1280×720，可传 `pageIndex` / `selector` 做单页 / 单
+直接 vision 看。viewport 默认 1920×1080（deck 设计坐标系），可传 `pageIndex` / `selector` 做单页 / 单
 元素精截。
 
 **不用它你就是蒙眼设计师**：写完 80 行 HTML 你看的只是源码字符串，layout 错位、
@@ -605,7 +605,7 @@ ask 对齐 + 派 explorer 找主题相关参考，让 deck 长得像"为这个�
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=1280, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{Deck 标题}</title>
 
   <!-- 1. CDN imports（任意来源；写明出处） -->
@@ -654,10 +654,25 @@ ask 对齐 + 派 explorer 找主题相关参考，让 deck 长得像"为这个�
   <style id="base">
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--font-sans); color: var(--text); background: var(--bg); }
+
+    /* 自适应 wrapper —— body wrapper class .__nd-deck-wrap 由 fit script 激活 */
+    body.__nd-fit-active {
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    body.__nd-fit-active > .__nd-deck-wrap {
+      width: 1920px;
+      transform-origin: top center;
+      flex-shrink: 0;
+    }
+
     section[data-page] {
-      width: 1280px; height: 720px;
+      width: 1920px; height: 1080px;
       padding: var(--gap-lg);
       position: relative;
+      overflow: hidden;
       page-break-after: always;
     }
     h1 { font-size: var(--hero-size); line-height: var(--line-tight); color: var(--accent); }
@@ -681,7 +696,34 @@ ask 对齐 + 派 explorer 找主题相关参考，让 deck 长得像"为这个�
   </style>
 </head>
 <body>
-  <!-- pages... -->
+  <!-- 所有 section 必须放在 .__nd-deck-wrap 里，让 fit script 接管缩放 -->
+  <div class="__nd-deck-wrap">
+    <!-- pages... -->
+    <section data-page="1">...</section>
+    <section data-page="2">...</section>
+  </div>
+
+  <!-- Fit script —— 让任意视口宽都满铺 + 完整显示
+       iframe 内（CanvasFrame 预览）由 parent 自算 scale，这里早退；
+       服务端 injectViewportFit 注入版本检测 .__nd-deck-wrap 已存在就跳过 wrap 创建 -->
+  <script>
+  (function(){
+    if (window !== window.top) return;
+    var W = 1920, body = document.body;
+    var wrap = body.querySelector(':scope > .__nd-deck-wrap');
+    if (!wrap) return;  // 没 wrap 就别工作（让服务端兜底来）
+    body.classList.add('__nd-fit-active');
+    function fit() {
+      var vw = Math.max(document.documentElement.clientWidth || 0, 320);
+      var s = vw / W;
+      wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
+      body.style.height = (wrap.scrollHeight * s) + 'px';
+    }
+    fit();
+    window.addEventListener('resize', fit);
+    if (document.fonts) document.fonts.ready.then(fit);
+  })();
+  </script>
 </body>
 </html>
 ```
@@ -698,7 +740,9 @@ ask 对齐 + 派 explorer 找主题相关参考，让 deck 长得像"为这个�
 
 **硬约束**（前端 / MCP 工具依赖的）：
 - 每页一个 `<section data-page="N">`（`N` 从 1 起递增）
-- 视口 1280×720（`<style id="base">` 块已锁）
+- 设计坐标系 1920×1080（`<style id="base">` 块已锁；fit script 把任意视口缩放到这个基线）
+- 所有 `<section>` 必须放在 `<div class="__nd-deck-wrap">` 里（fit script 缩的就是这层）
+- ⚠️ **不要用 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效。用 `position: absolute` 锚到 section 即可
 
 **软建议**：
 - 一个 deck 内 layout 词汇尽量收敛 **3-5 个**，便于 `list_pages` 总览 + 你自己复用
@@ -761,7 +805,7 @@ section[data-page="1"]           { --hero-size: 80px; }   /* 封面更大 */
 
 ### 其他规范
 
-- **视口**：1280×720（对应导出 PDF / 16:9 演示）
+- **设计坐标系**：1920×1080（PPT 标准 16:9，导出 PDF / PPTX 都按这个出。比老的 720p 写作空间大 ×2.25，溢出概率大幅下降，@2x DPR 直出 4K-ready 位图）
 - **字号节奏**：用 design-tokens 里的 `--hero-size` / `--h2-size` / `--body-size` 不要硬写 px
 - **a11y**：text-on-bg 对比度 ≥ 4.5（AA），交互元素 ≥ 3:1，img 加 alt
 - **修改优先 Edit 而非 Write**（详见 prelude 的 Edit > Write 段）
@@ -990,7 +1034,7 @@ section[data-page="1"]           { --hero-size: 80px; }   /* 封面 override */
 
 ```
 Task(subagent_type='vision-checker',
-     prompt='请截图 canvas.html 评审视觉合理性（fullPage 1280×720）。
+     prompt='请截图 canvas.html 评审视觉合理性（fullPage 1920×1080）。
             走 Tier 1-3 标准（可读性 / 层级 / 对齐 / 留白 / 对比度 / 元喻撑场），
             返结构化 VERDICT + ISSUES + OVERALL。')
 ```
