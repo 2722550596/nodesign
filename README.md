@@ -41,6 +41,40 @@ dev 模式 server 自动热重载（`node --watch`）。生产部署看 [DEPLOY.
 
 ---
 
+## ⚠️ 开发约束：Linux 是 source of truth
+
+NoDesign 部署目标是 **Linux 服务器**（Ubuntu / Debian），Mac 只是 dev 便利。
+**任何"我本地能跑"都不算数**——必须在 Linux 上验证过才算 working。
+
+### 4 条铁律
+
+1. **路径**：永远 `os.homedir()` + `path.join` + `path.sep`，绝不硬编码 `/home/...` 或 `/Users/...`
+2. **跨平台决策**：所有跟 OS / 工具 / 外部状态相关的决策（CLAUDE_CONFIG_DIR、sandbox、preflight、凭据黑名单）**只在 [`server/runtime/platform.js`](server/runtime/platform.js) 里做**。业务文件 `import { platform }` 用结果，不要自己拼 env
+3. **状态显式声明**：外部状态（OAuth token、cache、env）在启动时 `platform.dump()` 打日志，运维一眼能看到
+4. **Loud fail，不 silent fallback**：失败默认 `throw`，需要降级用显式开关（如 `NODESIGN_ALLOW_SYMLINK_FALLBACK=1`）
+
+### 已知跨平台陷阱（踩过的）
+
+| 陷阱 | 现象 | 解决 |
+|---|---|---|
+| `CLAUDE_CONFIG_DIR` per-session | SDK list/fork/delete 找不到 jsonl | 统一全局 → `platform.claudeConfigDir` |
+| bwrap 不解析 symlink | Glob/Read 看不到 `assets/` `agent-memory/`（指向 shared 的软链） | sandbox 默认关 + 拓扑重排（`.claude/` 文件型 / session root 目录型） |
+| WebFetch preflight | `DomainCheckFailedError "blocking claude.ai"`，gateway key 模式 100% 复现 | `skipWebFetchPreflight: true` |
+| Mac 残留 OAuth token | "我本地能跑啊"幻觉，服务器 non-root user 100% 炸 | docker / CI 早测 Linux |
+
+### Linux 验证流程
+
+```bash
+# 方案 1：docker 本地 sanity check
+docker run --rm -v "$PWD:/app" -w /app -e ANTHROPIC_API_KEY \
+  --memory 1g node:20-bookworm bash -c "npm install && npm test"
+
+# 方案 2：服务器 dev 实例（推荐）
+# 见 DEPLOY.md § dev 实例搭建
+```
+
+---
+
 ## 主要功能
 
 ### Agent 设计协作

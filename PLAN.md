@@ -264,6 +264,8 @@ SDK（@anthropic-ai/claude-agent-sdk）**，我们只做：薄壳后端（包 SD
 | 2026-05-01 | S1-S4 + H1-H5：session-scoped 重构（11 commit）| 用户对齐 Anthropic Projects 模式 → workspace 改 shared/+sessions/<sid>/ + Hub 二级页 + 三 cards 真接后端 + timeline done 修正 + ContextPanel 清理。详见 HANDOVER_2026-05-01_session_scoped_workspace.md + memory `nodesign_session_scoped_summary.md` |
 | 2026-05-02 | F0-F3 FloatingPanel 布局重构 + S1-S4 canvas 焕新升级 | 浮动 panel 布局体系 → F2.x chat/canvas 改回固定栏 + 5 个次级 UI 浮窗；canvas S1 加 data-tweakable 标记 + S2 stage 视觉重做 |
 | 2026-05-02 | **A1-A6 + C1-C6 + agent paradigm 锚定（21 commit）** | 5 阶段 paradigm（ask→plan→explore→generate→vision-check）框架成型；Canvas v0.6 13 MCP 工具齐全；HTML 单文件 5-style-block 标准锁定；AskUserQuestion 走 SDK canUseTool 接通 + wizard；实时 context usage；assets 路径修；中文字体 CDN；scoped tweak vars。**详见 HANDOVER_2026-05-02_a4_a6_canvas_alignment.md + memory `nodesign_paradigm_5stage.md` + `nodesign_canvas_v06_html_standard.md` + `feedback_agent_not_junior.md`** |
+| 2026-05-03 | v0.1.0-mvp 上线 Ubuntu 服务器（生产可用）| 内部测试可访问；DEPLOY.md 落 4 个 Linux 部署坑（bubblewrap+socat / non-root 用户 / SDK musl 误判 / SDK dep 位置）|
+| 2026-05-06 | **跨平台决策落档 + Linux 部署修复合并** | merge `nodesign-server-ver` 分支（Linux 验证版）：CLAUDE_CONFIG_DIR 全局化 / 软链拓扑重排（bwrap 兼容）/ skipWebFetchPreflight / 导出质量升级。**新增 [`server/runtime/platform.js`](server/runtime/platform.js) 集中跨平台决策**；sandbox 暂时禁用（bwrap 不解析 symlink）。详见 README.md "开发约束" + DEPLOY.md "跨平台决策档案"。⚠️ memory `feedback_sandbox_replaces_whitelist.md` 已 superseded |
 
 ## 实施日志
 

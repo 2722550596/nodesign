@@ -561,3 +561,91 @@ pm2 reload nodesign
 ---
 
 > 部署遇到本文档没覆盖的问题，看 [HANDOVER.md](HANDOVER.md) 或翻 commit history。pm2 log + 浏览器 DevTools Network 是最常用的诊断双件套。
+
+---
+
+## dev 实例搭建（推荐：让 Linux 成为 source of truth）
+
+为什么需要：Mac 跟 Linux 在 path / sandbox / OAuth 行为上有非平凡差异（见下节"跨平台决策档案"）。
+**最优开发体验** = Mac 上跑 Cursor + SSH Remote 接到 Linux dev 实例上 = 真 Linux 内核 + Mac 工具链。
+
+### 在生产服务器上加一个 dev 用户（零成本）
+
+```bash
+# 1. root 登录服务器，建 dev 账号
+sudo useradd -m -s /bin/bash nodesign-dev
+sudo usermod -aG sudo nodesign-dev   # 可选；装依赖时方便
+sudo passwd nodesign-dev             # 设密码 / 或者 ssh-copy-id 推 key
+
+# 2. 切到 dev 用户，clone 代码（独立工作树，跟生产 nodesign 用户隔离）
+sudo -iu nodesign-dev
+cd ~ && git clone https://github.com/Xiaokebuyu/Nodesign.git
+cd Nodesign && npm install
+cd web && npm install && cd ..
+npx playwright install chromium
+
+# 3. 配 dev .env（端口换 4002 避开生产 4001）
+cp .env.example .env
+# 编辑：PORT=4002，其他 NODESIGN_GATEWAY_URL / KEY 跟生产一致或独立
+
+# 4. 起 dev server（手动启，不用 pm2，方便看 log）
+npm run dev
+# 或者也 pm2 跑：pm2 start ecosystem.config.cjs --only nodesign-dev
+```
+
+### Cursor / VS Code Remote 接进来
+
+```bash
+# Mac 上 Cursor 装 "Remote - SSH" 扩展（VS Code 同），然后：
+# Cmd+Shift+P → Remote-SSH: Connect to Host → 输入 nodesign-dev@<server-ip>
+# 接进去后 File → Open → /home/nodesign-dev/Nodesign
+```
+
+之后写代码体验跟本地完全一样（Cursor 的 AI 也跨 SSH work），但**所有运行 / 测试都在真 Linux 上**。
+
+### 端口分隔（生产 vs dev）
+
+| 实例 | 端口 | pm2 进程名 | 数据目录 |
+|---|---|---|---|
+| 生产 | 4001 | `nodesign` | `/home/nodesign/Nodesign/` |
+| dev  | 4002 | `nodesign-dev` | `/home/nodesign-dev/Nodesign/` |
+
+nginx 不反代 4002（dev 走 ssh 端口转发：`ssh -L 4002:localhost:4002 ...`），生产用户看不到 dev。
+
+---
+
+## 跨平台决策档案（2026-05 落档）
+
+NoDesign 部署到 Linux 时踩过 3 类坑，沉淀成 [`server/runtime/platform.js`](server/runtime/platform.js) 单一决策来源：
+
+### 坑 1：CLAUDE_CONFIG_DIR 设计假设
+
+- **现象**：原架构 per-session 隔离 `.claude/`，Linux 上 SDK list/fork/delete 找不到 jsonl
+- **根因**：SDK 假设 `CLAUDE_CONFIG_DIR` 全局 + per-cwd encoded subdir，per-session 跟设计哲学冲突
+- **修复**：`platform.claudeConfigDir = $HOME/.claude`（或 `NODESIGN_CONFIG_DIR` 覆盖）
+
+### 坑 2：bwrap 不解析 symlink
+
+- **现象**：sandbox 启动失败 / agent Glob/Read 看不到 `assets/` `agent-memory/`
+- **根因**：bwrap bind-mount 模型对目录型 symlink 不友好；Mac sandbox-exec 没此问题
+- **修复**：
+  - 软链拓扑重构（`.claude/` 文件型 / session root 目录型，全用绝对路径）
+  - sandbox 默认关：`platform.sandboxEnabled = false`，`NODESIGN_SANDBOX=on` 可强制开
+
+### 坑 3：WebFetch preflight 假设 OAuth
+
+- **现象**：`DomainCheckFailedError "blocking claude.ai"`，gateway key 模式 100% 复现
+- **根因**：SDK 内置 `nV7()` preflight 调 Anthropic 域名分类 API，需要 `~/.claude` 残留 OAuth token；gateway key 模式 + non-root user 没 token
+- **修复**：`platform.skipWebFetchPreflight = true`（SDK 官方 enterprise 开关）
+
+### 启动诊断
+
+server/index.js 启动时调 `platform.dump()` 打 OS / HOME / claudeConfigDir / sandbox / preflight 配置。Linux 排查问题第一步：`pm2 logs nodesign | grep '\[platform\]'`。
+
+### env 开关速查
+
+| env | 默认 | 何时改 |
+|---|---|---|
+| `NODESIGN_CONFIG_DIR` | `$HOME/.claude` | 容器化 / 多实例共享卷 |
+| `NODESIGN_SANDBOX` | (off) | 设 `on` 强制开 sandbox 验证（仅 SDK 修 symlink 后）|
+| `NODESIGN_ALLOW_SYMLINK_FALLBACK` | (off) | Windows / 不支持 symlink 的 docker volume 强制降级 warn |
