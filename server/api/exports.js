@@ -24,6 +24,7 @@ import {
   getSessionWorkspace, getSharedDir, validateSessionId,
 } from '../projects/workspace.js';
 import { DECK } from '../shared/deck.js';
+import { buildStandaloneHtml, isHybridHtml } from './exports/build-standalone.js';
 
 const router = express.Router();
 
@@ -117,7 +118,21 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
       if (err.code === 'ENOENT') return res.status(404).json({ error: 'canvas.html not yet generated' });
       throw err;
     }
-    html = injectViewportFit(html);
+
+    // Hybrid 文件 → 走自包含构建管道（CDN 全 inline，离线可双击打开）
+    // 老 deck（无 babel script）→ 降级到 injectViewportFit 文本替换
+    // 任一步骤失败也降级——保证用户至少拿到能用的 HTML
+    if (isHybridHtml(html)) {
+      try {
+        html = await buildStandaloneHtml(html);
+      } catch (err) {
+        console.warn('[exports/html] standalone build failed, falling back to viewport-fit:', err.message);
+        html = injectViewportFit(html);
+      }
+    } else {
+      html = injectViewportFit(html);
+    }
+
     const filename = `${safeFilename(project.name)}.html`;
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
