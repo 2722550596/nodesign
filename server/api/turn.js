@@ -313,8 +313,8 @@ async function composeUserMessage(chat, attachments, pendingSummary, assetsSumma
     blocks.push({
       type: 'text',
       text: hasDesignPlan
-        ? '[评论修改提醒 — 改前请 Read design-plan.md 对照对应页 c_decisions（reference / opposition / constraint / motion），偏离故事主线先 push back，等用户确认想偏离才动手]'
-        : '[评论修改提醒 — 改前请回看最近 decisions（已注入摘要 / 要细节 Read spec.json）确认改动方向；偏离主线先 push back]',
+        ? '[评论提示 — 改前可以 Read design-plan.md 对照该页 c_decisions（reference / opposition / constraint / motion）；如果改动跟主线方向不一致，在 chat 里跟用户点一下再动手]'
+        : '[评论提示 — 改前可以回看最近 decisions（hook 已注入摘要 / 细节去 Read spec.json）；如果改动方向不确定，跟用户点一下]',
     });
   }
 

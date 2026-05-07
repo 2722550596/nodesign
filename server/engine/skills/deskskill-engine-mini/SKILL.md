@@ -41,22 +41,22 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 
 ## 修改场景元规则 — 改前回故事
 
-任何**修改类请求**（评论 / 微调 / 图片替换 / 文案改写 / Tweaks Apply / DirectEdit pending）开工前**必须先回故事**——别被局部反馈牵着走偏离主线。
+修改类请求（评论 / 微调 / 图片替换 / 文案改写 / Tweaks Apply / DirectEdit pending）容易被局部反馈牵着走偏离主线，开工前最好回头看一眼故事载体。
 
 **回故事的优先级**：
 
-1. **优先 Read `design-plan.md`**（plan mode 产出的故事弧）→ grep 对应 page 节点的 `c_decisions`（reference / opposition / constraint / motion）
-2. **退而 Read `spec.json` decisions[]`**（无 plan 时；已被 hook 注入最近 5 条摘要，要细节直接 Read）
-3. **都没有** → 用户没建立故事弧，可直接做但在 chat 里说清你假设的方向
+1. 优先 Read `design-plan.md`（plan mode 产出的故事弧）→ grep 对应 page 节点的 `c_decisions`（reference / opposition / constraint / motion）
+2. 退而 Read `spec.json` decisions[]`（无 plan 时；已被 hook 注入最近 5 条摘要，要细节直接 Read）
+3. 都没有 → 用户没建立故事弧，可直接做，在 chat 里说清你假设的方向就行
 
-**判断**：忠于主线 → 直接做；偏离 → 先 push back（"plan 里这页定的是 X，你想换成 Y？"）等用户明确想偏离才动手；不确定 → 读全再判断。
+**判断**：忠于主线 → 直接做；明显偏离 → 在 chat 里点一下（"plan 里这页定的是 X，你想换成 Y 吗？"），用户确认想偏离再动手；不确定 → 读全再判断。
 
-**注入提示信号**：UserPromptSubmit hook 在 sessionRoot 存在 `design-plan.md` 时会在 systemMessage 末尾注入提醒；comment 触发时 turn 也会附一句提醒——看到这些信号 = "故事载体在那儿，去读"。
+**注入提示信号**：UserPromptSubmit hook 在 sessionRoot 存在 `design-plan.md` 时会注入一条提醒；comment 触发时 turn 也会附一条——看到这些信号即"故事载体在那儿，需要时去读"。
 
-**反模式**：
-- ❌ comment "改成更冷酷一点" 直接动手 → 没看 plan 的 tone 字段，可能跑偏
-- ❌ Tweaks Apply 不看 design-plan.md.meta.palette 就覆盖 :root → 丢了对齐过的主色
-- ❌ 改图调 generate_image 不读目标页 → 生成的图跟页面 layout / 主色脱节
+**常见走偏**：
+- comment "改成更冷酷一点" 直接动手，没看 plan 的 tone 字段 → 可能跑偏
+- Tweaks Apply 不参照 design-plan.md.meta.palette 就覆盖 :root → 丢了对齐过的主色
+- 改图调 generate_image 不读目标页 → 生成的图跟页面 layout / 主色脱节
 
 ---
 
@@ -72,7 +72,7 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 2. **用户上一轮回答让我离对齐近了多少？还差什么？** 写不出 delta 就说明你没真在听，别盲发下一轮
 3. **这个问题能用 web_search / Read assets / Read spec.json 先自答吗？** 能自答就别浪费用户回合
 
-**对齐验收（"复述测试"）**：你能用一两句话把以下四条复述清楚才算 Stage 0 对齐，缺一不行：
+**对齐验收（"复述测试"）**：复杂 deck 通常需要把以下四条都复述清楚才算 Stage 0 对齐；简单任务（改字 / 单元素调整）可以适当简化。
 
 1. **用户要什么**：3-5 个具体取值（色号 / 字号方向 / 节奏倾向 / 主题隐喻 / 案例参考）
 2. **用户不要什么**：≥2 个反例（"不要默认商务范" / "讨厌 PPT 模板感"）
@@ -151,14 +151,14 @@ NoDesign 双工作模式（用进不进 plan mode 来选）：
 
 | 轮次 | 必问 | 选问 |
 |---|---|---|
-| 第 1 轮 | **Tone 头脑风暴循环**（见下）+ **特效量对齐**（见下，跟 Tone 同等关键） | 节奏密度 / 章节切分 |
+| 第 1 轮 | Tone 头脑风暴循环（见下）+ 特效量对齐（见下，跟 Tone 同等关键） | 节奏密度 / 章节切分 |
 | 第 2 轮 | palette 三选 + 字体方向（preview HTML 让用户视觉对比） | 元素隐喻 |
 | 第 3 轮 | 核心元喻 + 收尾形态 | 反例 / 用户讨厌什么（"反例"问题特别值钱）|
 | 第 N 轮 | 还有歧义就接着问 | 没歧义就退出 |
 
-#### Tone 风格头脑风暴循环（不要用 fixed 4 选 1）
+#### Tone 风格头脑风暴循环
 
-Tone 决策必带——但**不再用 fixed 4 选 1**（旧做法把用户具体语境过滤光，选完用户还会觉得"不太对"）。改走多轮收敛循环：
+Tone 是设计第一根决策（palette / 字体 / 文案密度 / image prompt 都派生自它），值得多花轮次对齐。比起一次性 fixed 4 选 1（容易过滤掉用户具体语境，选完还觉得"不太对"），多轮收敛循环效果更稳：
 
 **R1 — 开放式探问**（仅当用户首句**没**具体风格描述时；已有"日系简约"/"Bloomberg 商务" / "Wong Kar-wai 风" 等具体方向就**跳过**直接 R2）：
 
@@ -183,7 +183,7 @@ Q: "这个 deck 你想要的整体感觉是什么？一句话即可（关键词 
 - **Mode A**（简单任务）：fast-path —— 用户首句含具体方向时跳 R1 直接 R2，最多 2 轮收敛
 - **Mode B**（多页 deck / 用户 toggle plan）：**循环必跑完**，不允许 fast-path（深度对齐就是要慢）
 
-**收敛后必做** — 调 `record_decision`（仅 Mode A 普通模式必做；Mode B 已通过 design-plan.md.meta.tone 落档）：
+**收敛后落痕** — 普通模式（Mode A）调 `record_decision` 留档（Mode B 已通过 design-plan.md.meta.tone 落档，无需重复）：
 
 ```
 record_decision({
@@ -194,67 +194,57 @@ record_decision({
 })
 ```
 
-**为什么必落** —— tone 是后续所有决策（palette / 字体 / 文案密度 / image prompt）的根。普通模式不落 = 走 3 页就忘 = 风格漂移。
+普通模式不落痕的代价：tone 是后续所有决策（palette / 字体 / 文案密度 / image prompt）的根，走 3 页 agent 容易忘 → 风格漂移。
 
-**preview 字段必带**：每个 option 都必带 240×140 self-contained HTML preview（详见 prelude § AskUserQuestion）—— 用户对"温暖人文"4 个字脑补的画面跟 agent 套的差很远，preview 是对齐的关键。
+**preview 字段建议带**：每个 option 配 240×140 self-contained HTML preview（详见 prelude § AskUserQuestion）。用户对"温暖人文"4 个字脑补的画面跟 agent 套的差很远，preview 让对齐有抓手。
 
-**反模式**：
-- ❌ 直接给 fixed 4 选 1（旧做法）→ 跳过 R1 等于把用户语境过滤光
-- ❌ R2 不带 visual preview → 用户没法判断 → 等于白问
-- ❌ Mode B 用户 toggle plan 还走 fast-path → 用户特意选了深度对齐你跳过了
-- ❌ 收敛了不 record_decision → generate 阶段忘了 → 风格漂移
+**常见走偏**：
+- 跳过 R1 直接给 fixed 4 选 1 → 等于把用户具体语境过滤光
+- R2 不带 visual preview → 用户没法判断方向 → 等于白问
+- Mode B（用户 toggle plan）还走 fast-path → 用户特意选了深度对齐被跳过
 
-#### 特效量对齐（Stage 0 第 2 必问，跟 Tone 同等关键）
+#### 特效量对齐（Stage 0 推荐问的一题）
 
-跟 Tone 一样是"agent 默认值跟用户脑里差远"的高方差决策——agent 不问 = 默认套微动效 = 严肃商务场景晕、戏剧叙事场景平。**Stage 0 必带这条 question**（除非用户首句已含具体描述如"全静态"/"满屏动效"）。
+motion 量是 agent 默认值容易跟用户脑里偏差大的维度——不问就默认套微动效，严肃商务场景可能嫌晕、戏剧叙事场景可能嫌平。Stage 0 多花一题问一下，比写完发现方向不对再回炉划算。
 
-**核心 question**（用 AskUserQuestion + preview 模板）：
+**简单任务（改字 / 单元素调整 / 已给 outline + 详细描述）可以跳**；多页 deck / brand pitch / 营销 landing 这类视觉重的建议问。
+
+**参考 question 模板**（AskUserQuestion + preview）：
 
 ```
 Q: "这份 deck 想要多少 motion / 特效量？"
 options:
-  - 静态       → 0 motion，所有元素一次性出现
-                  preview: 立现卡片 + 无任何过渡 + 静态对齐
+  - 静态       → 0 motion，元素一次性出现
+                  preview: 立现卡片 + 静态对齐
                   适合：严肃商务 / 学术克制 / 数据 dashboard
-                  技术：纯 HTML + Tailwind（importmap 不必加动画库）
-  - 微动效     → 轻量入场 + hover 反馈（"稳妥默认"）
-                  preview: 卡片 fade-in 100ms / 标题 stagger / hover 微抬
-                  适合：大部分场景的安全默认（产品 pitch / 团队介绍 / 数据复盘）
+                  技术：纯 HTML + Tailwind
+  - 微动效     → 轻量入场 + hover 反馈（稳妥默认）
+                  preview: 卡片 fade-in / 标题 stagger / hover 微抬
+                  适合：产品 pitch / 团队介绍 / 数据复盘等大部分场景
                   技术：CSS @keyframes / Tailwind animate-* / framer-motion 简单 props
   - entry 动效 → hero timeline + scroll-trigger reveal + 数字 count-up
-                  preview: 大字渐显 + 数字滚动 + 章节 wipe 转场
+                  preview: 大字渐显 + 数字滚动 + 章节转场
                   适合：营销 landing / 数据揭晓 / 故事叙事
-                  技术：framer-motion / gsap scroll-trigger / 数字 count-up
-  - 戏剧化     → 跨页 timeline + parallax + 文字遮罩 + cinematic 入场
-                  preview: scroll-triggered 时序 / 文字遮罩 / parallax 多层
-                  适合：戏剧化叙事 / 高端 brand pitch / 视觉重的 cover
-                  技术：gsap timeline + ScrollTrigger / lenis 平滑滚动 / 跨页 anchor
-  - Other      → 用户写关键词（"只在 cover 加 motion 其他全静态" 等）
+                  技术：framer-motion / gsap scroll-trigger
+  - 戏剧化     → 跨页 timeline + parallax + 文字遮罩
+                  preview: scroll-triggered 时序 / parallax 多层
+                  适合：戏剧化叙事 / 高端 brand pitch
+                  技术：gsap timeline + ScrollTrigger / lenis 平滑滚动
+  - Other      → 用户写关键词（"只 cover 加 motion 其他静态" / "想要 X 那种感觉" 等）
 ```
 
-**为什么必问**：motion 量是 token 消耗 + 加载性能 + UX 体验三大指标的根决策。低估（用户脑里要满屏动画你做了静态）= 重写；高估（用户要静态文档你写了 GSAP timeline）= 浪费 + 用户嫌晕。
+收敛后：
+- 普通模式（Mode A）：`record_decision({ topic:'motion-budget', decision, rationale, alternatives })` 落痕
+- Plan 模式（Mode B）：写到 `design-plan.md.meta.motion_budget`，逐页 brainstorm 时各页 `c_decisions.motion` 在预算内细化
 
-**preview 必带**：HTML preview 用 inline keyframes 演示动效形态（240×140，CSS-only 即可，不必引外部动画库）。
+**preview 字段尽量带**：HTML preview 用 inline keyframes 演示动效形态（240×140，CSS-only 即可），让用户看到差异比文字描述精准。
 
-**收敛后必落** — `record_decision`（普通模式 Mode A）：
+**与 § 动效自检的衔接**（Stage 3）：锁了 motion-budget 后写每页按预算执行；某页确实需要打破预算（cover 必须 cinematic）回去问一句即可，不用强行守预算。混搭也允许（"严肃商务 + cover 戏剧化"是合理选择），照用户意图来。
 
-```
-record_decision({
-  topic: "motion-budget",
-  decision: "<选定的特效量 level + 关键关注点>",
-  rationale: "<用户偏好 + 反例>",
-  alternatives: ["<被否的 level>"]
-})
-```
-
-Mode B plan 模式 → 落到 `design-plan.md.meta.motion_budget` + 逐页 brainstorm 时各页 `c_decisions.motion` 在预算内细化。
-
-**与 § 动效自检的衔接**（详见 Stage 3）：Stage 0 锁定整体特效量后，generate 写每页的 motion 时按预算执行。打破预算（cover 必须 cinematic）需先 push back 问用户。
-
-**反模式**：
-- ❌ 跳过特效量直接写 deck → 用户期待跟实际产物错位 = 全推倒
-- ❌ Mode B plan 阶段没在 meta 锁特效量 → 逐页 brainstorm 时方向飘
-- ❌ 严肃商务 + 戏剧化特效量混搭 → 不要同意这种自相矛盾的 brief，先回去用 Tone 反推问
+**常见走偏**：
+- 跳过特效量问 + 默认套微动效 → 严肃 deck 用户觉得晕、戏剧 deck 用户觉得平
+- 用户选了 entry / 戏剧化但实现走 CSS 凑数 → 实现感太弱，调 framer-motion / gsap 才到位
+- Plan 阶段没在 meta 锁 → 逐页 brainstorm 方向漂
 
 ### Escape hatch（仅当用户明说才跳）
 
@@ -576,19 +566,19 @@ ExitPlanMode({
 | **真实存在但模型不熟**（最新发布产品 / 小众品牌 / 用户自有 IP / 特定型号设备）| **`web_search { include_images:true }`** | 工具自动翻英文 + 下载到 `assets/references/`；选 1-2 张最切题的 `local_path` 喂 `referenceImages[]` |
 | 抽象概念 / 装饰 / 隐喻 | 不需要 reference | 直接 prompt（流派 + 5 元素公式）|
 
-**生图前的两个必做动作**：
+**生图前两个建议动作**：
 
-1. **必读目标页面** —— 调 `generate_image` 之前 `Read` 目标 `<section data-page="N">`，核对：
+1. **核对目标页面** —— 调 `generate_image` 之前 `Read` 目标 `<section data-page="N">`，看一眼：
    - 页面尺寸（多少行 / 多大留给图）
    - 主色（design-tokens 里的 `--bg` / `--accent` / `--hero`）
    - 已有视觉风格（hybrid 范式有无 React 组件 / 已有图片调性）
-   - **PreToolUse(generate_image) hook 第一次会注入提醒**——看到提醒即"去 Read 目标页"，不读 = 闭眼下笔，第一张大概率违和（暖色页面塞冷调插图、白底深色页面塞高对比 hero）。重生成本 >> 多读一次。
+   - PreToolUse(generate_image) hook 第一次会注入提醒——多数情况下第一张图会被当 referenceImages 种子用于全 deck，看一眼目标页能避免暖色页塞冷调插图这类违和。
 
-2. **参考图搜完先问意愿** —— `web_search { include_images:true }` 搜到参考图后**不要直接喂 generate_image**：
-   - 在 chat 里贴 web_search 返的 image content block（已自动嵌入 turn output）
-   - 自然语言问"这几张参考图哪张更接近你想要的方向？或者全都不对，调关键词重新搜？"
-   - 用户选定（"用第 2 张" / "都不太对"）后再决定喂哪些到 `referenceImages[]`
-   - **为什么** —— 搜到的"前 3 张"可能完全不是用户脑里的画面；让用户挑 1-2 张确认过的喂进去比 agent 默认前 2 张准 5×。多 1 轮交互省 5 轮重生。
+2. **搜到参考图先问意愿** —— `web_search { include_images:true }` 拿到参考图后，建议先在 chat 里给用户看一下再喂 `generate_image`：
+   - 贴 web_search 返的 image content block（已自动嵌入 turn output）
+   - 自然语言问"这几张哪张更接近你想要的方向？或者都不对，调关键词重搜？"
+   - 用户选定后再喂选中的几张到 `referenceImages[]`
+   - 多 1 轮确认通常能省 3-5 轮重生（搜到的前几张未必是用户脑里的画面）。
 
 **样张时机推荐 flow**：
 ```
