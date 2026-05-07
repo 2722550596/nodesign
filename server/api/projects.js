@@ -22,14 +22,19 @@ import { disposeProjectBus } from '../ws/broker.js';
 const router = express.Router();
 
 const KIND_VALUES = new Set(['project', 'quick']);
+const KIND_QUERY_VALUES = new Set(['project', 'quick', 'all']);
 
+// GET /api/projects 默认行为（2026-05-07）：不带 ?kind= 时 **只返 kind='project'**，
+// 把闪聊（kind='quick'）从主项目列表里挡掉 —— 避免老 client / 任何漏传 kind 的调用
+// 把闪聊泄漏到「我的项目」UI。要拿全集显式传 ?kind=all。kind=quick 仍可单独筛。
 router.get('/', (req, res, next) => {
   try {
-    const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
-    if (kind && !KIND_VALUES.has(kind)) {
-      return res.status(400).json({ error: `kind must be project|quick (got ${kind})` });
+    const raw = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+    if (raw && !KIND_QUERY_VALUES.has(raw)) {
+      return res.status(400).json({ error: `kind must be project|quick|all (got ${raw})` });
     }
-    res.json({ projects: listProjects({ kind }) });
+    const effectiveKind = raw === 'all' ? undefined : (raw || 'project');
+    res.json({ projects: listProjects({ kind: effectiveKind }) });
   } catch (err) { next(err); }
 });
 
