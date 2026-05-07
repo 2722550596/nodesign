@@ -139,6 +139,24 @@ NoDesign 双工作模式（用进不进 plan mode 来选）：
 - Mode A：Stage 0 问的是"deck 整体轮廓"（tone / palette / metaphor / 总体结构），对齐了直接 generate；**不做逐页 brainstorm**
 - Mode B：Stage 0 问的同样是整体轮廓，对齐了**进 plan mode 跑逐页 brainstorm**（详见 § Plan mode 工作流）
 
+### 抽核心视觉隐喻（Stage 0 收尾，双路径必经）
+
+信息对齐完成、动手之前，把主题翻译成一个**界面隐喻**——决定后续 layout / typography / micro-component 长什么样的具象 anchor。
+
+主题不是配色排版的同义词。"Scientific Witchery" ≠ "暗紫 + Serif 大字"，而是"伪论文 + 实验记录 + 公式证明 + 魔法阵"。同一个 content page，套不同隐喻出来视觉是两个东西。
+
+抽隐喻的思考方向：用户主题里有什么**领域符号系统**可以借？
+
+- 科学 → 公式 / 论文 / 实验台 / 二进制 / 仪器侧栏
+- 巫术 → 魔法阵 / 魔药标签 / 古籍页脚 / 占卜卡
+- 战争 → 报告 / 地图 / 电报 / 命令链
+- 童话 → 绘本插页 / 翻页书 / 故事书脚注
+- 考古 → 出土档案 / 拓片 / 标本卡
+
+隐喻一旦定，design-tokens / page 内 layout / micro-component 都有具象 anchor。Mode A 也走这一步——单页改动里"这一页代表什么"的问题同样存在。
+
+隐喻是 Stage 0 退出之前的最后一块拼图。复述时把隐喻一起说出来（"做 Mili Ga1ahad，主题是暗童话 + 实验巫术，视觉走伪论文 + 魔法阵"），跟 tone / palette 同等位重要。
+
 ### 0.5 Stage 0 退出条件
 
 满足以下任一退出 Stage 0：
@@ -453,6 +471,19 @@ ExitPlanMode({
 
 ## Stage 3 — Generate（Hybrid 范式写 canvas.html）
 
+### 写第一行 HTML 前的隐喻自检
+
+AI deck 的 default solution 大致长这样——"暗色背景 + 大标题 + 小字说明 + 强调色点缀"。漂亮但泛化：把它从主题剥离换成任何别的主题，视觉看不出差别。
+
+第一行 HTML 之前问自己：**Stage 0 抽的核心隐喻能让这个 default 怎么变？**
+
+- "暗童话 + 实验巫术" → 大标题能不能换成"魔法代码 + 编号"？小字能不能变成"实验记录条目"？
+- "复古工业" → 强调色点缀能不能换成"机械齿轮组件 + 标尺刻度"？
+- "诗意自然" → 暗背景能不能换成"水墨晕染 + 留白章法"？
+- "考古档案" → 卡片背景能不能换成"出土编号标签 + 拓片纹理"？
+
+Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout 没承载概念——就是 AI 套路。canvas.template.html 里 6 个范例骨架是 page type 占位，**不是视觉范例**——里面的 layout 长什么样由你的隐喻决定。
+
 ### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
 
 写 canvas.html 之前先 `Read canvas.template.html`——session 创建时系统自动拷到你的 cwd（跟 SKILL.md 同步），预置 importmap / Tailwind config / Babel / 4 shadcn 组件 / fit script / 键盘翻页 / image CSS vars / 1920×1080 base CSS 全部就位。**别从 0 拼**——template 已 0 console errors / 浏览器实测过，省 30 分钟 boilerplate。
@@ -537,7 +568,11 @@ ExitPlanMode({
 
 ### 页型决策表（image-led / text-led / data-led / hybrid）
 
-每个 `<section data-page>` **必标 `data-layout-role`**（见 [Canvas.md § 6.6.1](../../../../Canvas.md)）。按 brief 类型决定哪些页用哪种 role：
+每个 `<section data-page>` **必标 `data-layout-role`**（见 [Canvas.md § 6.6.1](../../../../Canvas.md)）。
+
+**页型是骨架，视觉隐喻是肌理。** 同样的 content page，套"实验报告 / 魔药菜单 / 故障日志 / 占卜卡 / 档案柜"5 个不同隐喻，最终视觉是 5 个完全不同东西。下面这张表只列页型角色和适配场景——**视觉表达由 Stage 0 抽的核心隐喻决定**。表不告诉你怎么画，表告诉你这一页在 deck 里承担什么作用。
+
+按 brief 类型决定哪些页用哪种 role：
 
 | brief 类型 | image-led | text-led | data-led | hybrid |
 |---|---|---|---|---|
@@ -681,26 +716,17 @@ deck/landing 写完每页前问自己：这页加 motion 是真的强化叙事�
 
 ---
 
-## 视觉默认风格（NoDesign DeskSkill 系）—— 兜底，不是首选
+## Fallback design-tokens（信息缺口 + 用户赶时间才用）
 
-**只有用户喊"赶时间 / 用默认 / 按你审美来"时才直接套这套**。其他场景都该走 ask 对齐 + 派 explorer 找主题相关参考，让 deck 长得像"为这个主题设计的"，而不是"NoDesign 默认风格套了一份"。
+canvas.template.html 预置的暖灰白 + 深棕 palette + Inter / Instrument Serif / JetBrains Mono 字体组合，是**信息缺口时的兜底**，不是设计起点。
 
-兜底 palette（用户喊"用默认"时套）：
+只要用户给了任何主题信号（品牌名 / 模仿对象 / 情绪关键词 / 故事内容），就应该**根据 Stage 0 抽的核心隐喻主动重定义 design-tokens**——把 `--bg / --ink / --accent / --muted` 整组覆盖，字体也按隐喻换（实验报告隐喻 → mono；古籍隐喻 → Serif；故障日志隐喻 → 等宽 + glitch）。
 
-```css
-:root {
-  --bg:      #F9F8F6;   /* 暖灰白 */
-  --surface: #ffffff;
-  --ink:     #1a120a;
-  --accent:  #2d2418;   /* 深棕 */
-  --muted:   #6b5d4f;
-  --cream:   #efe8df;
-}
-```
+预置那套兜底反过来想就是反例：同一套 palette 在"中医文化 / fintech pitch / 游戏团队 deck"上看起来都一样，因为它没承载任何主题。覆盖的目的是让 deck 长得像"为这个主题设计的"，不是"NoDesign 默认风格套了一份"。
 
-字体兜底：Inter（西文）+ PingFang SC（中文）/ Instrument Serif（标题斜体）。
-
-**这套是应急兜底而非高效起点** —— 同一套色在"中医文化"、"fintech pitch"、"游戏团队"deck 上看起来都一样，没有根据主题调研。更好的做法是问一轮 tone + 派 explorer 找主题参考再调调色，每份 deck 才像"为这个主题设计的"。
+直接套用预置的两个合理场景：
+1. 用户明确说"赶时间 / 用默认 / 按你审美来"
+2. brief 里完全没视觉线索且 tone 也模糊（这种情况通常应该先回 Stage 0 多问一轮，而不是直接套）
 
 ---
 

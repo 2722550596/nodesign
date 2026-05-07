@@ -102,9 +102,15 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <!-- ══ 5. Design tokens —— **可调维度全在这里**，agent 改这里、Tweaks 暴露这里 ══ -->
+  <!-- ┄┄┄ 下面这套 token 值是 fallback，主题对齐后**应主动按隐喻覆盖**：     ┄┄┄ -->
+  <!-- ┄┄┄   · Scientific Witchery → 暗紫 / 公式 mono / 旧纸纹              ┄┄┄ -->
+  <!-- ┄┄┄   · Cyberpunk          → 霓虹 / 等宽数字 / 玻璃拟态              ┄┄┄ -->
+  <!-- ┄┄┄   · Wabi-sabi          → 米黄 / 手写字 / 大量留白                ┄┄┄ -->
+  <!-- ┄┄┄ 直接套用预置 = 5 deck 出来都长一样的 AI default。每份 deck 的 token ┄┄┄ -->
+  <!-- ┄┄┄ 应该被它的隐喻穿透，把整组 --bg / --ink / --accent / --muted 重写。┄┄┄ -->
   <style id="design-tokens">
     :root {
-      /* === Color === */
+      /* === Color (fallback values — override per theme) === */
       --bg:       #F9F8F6;   /* page bg */
       --paper:    #F9F8F6;   /* page bg alias */
       --surface:  #ffffff;   /* card bg */
@@ -243,9 +249,14 @@
   ┄┄┄ -->
 
   <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- ⚠️ 6 类页型范例（Phase B 填充阶段 · cp 改用，按需取）            -->
-  <!-- 设计原则：image-led 文字 ≤ 5 行；图传达的别再用文字重述；overlay -->
-  <!-- 用大字 + drop-shadow / backdrop-blur，别加纯黑半透明压亮度       -->
+  <!-- 下面 6 个范例是 **page type 占位骨架**，不是视觉范例。          -->
+  <!-- 例如同一个 image-led cover 在不同隐喻下视觉完全不同：           -->
+  <!--   · 暗童话 → 主图 + 翻页书脚注 + 装饰花纹                       -->
+  <!--   · 实验报告 → 标题 + 编号 + 实验日期 + 仪器侧栏                -->
+  <!--   · 占卜卡 → 中心塔罗图案 + 周边古文符 + 烛火光晕               -->
+  <!-- 别直接 cp 范例当 final layout — 把它当骨架空白，按你的隐喻填。  -->
+  <!-- 设计原则：image-led 文字 ≤ 5 行；图传达的别再用文字重述；       -->
+  <!-- overlay 用大字 + drop-shadow / backdrop-blur，别加纯黑半透明压亮度。 -->
   <!-- ══════════════════════════════════════════════════════════ -->
 
   <!-- ┄┄┄ 范例 A · IMAGE-LED COVER（图占 100%，文字浮层）┄┄┄
