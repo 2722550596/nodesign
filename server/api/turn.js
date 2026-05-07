@@ -49,6 +49,7 @@ import {
 import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
 import { readPendingSummary } from './pending-changes.js';
+import { pendingRewinds } from './sessions.js';
 
 /** 直接 image input 阈值：> 1MB 走 path 让 agent Read，< 1MB inline base64 */
 const IMAGE_INLINE_MAX_BYTES = 1 * 1024 * 1024;
@@ -133,6 +134,12 @@ router.post('/:pid/turn', async (req, res, next) => {
     const isNewSession = !resumeSessionId;
     const sid = isNewSession ? randomUUID() : resumeSessionId;
     validateSessionId(sid);
+
+    // 守卫：临时 rewind query 在跑时拒绝同 sid 新 turn —— 防止两个 SDK subprocess
+    // 同时写同一 jsonl。临时 query ~3-5s，用户重试一次就 OK。
+    if (pendingRewinds.has(sid)) {
+      return res.status(409).json({ error: 'rewind in progress, retry shortly', code: 'REWIND_BUSY' });
+    }
 
     // 取 sessionRoot + 两类 workspace 主动提示：
     //   - pendingSummary（C4）：用户在 chat 间隔做的直接编辑/评论 buffer

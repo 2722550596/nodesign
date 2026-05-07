@@ -185,7 +185,7 @@ function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
 
   async function handleUndo() {
     if (!canUndo || busy) return;
-    if (!(await confirm({ title: '回到此处', message: '回到此处？这会丢弃后续所有文件改动。', confirmLabel: '回滚', danger: true }))) return;
+    if (!(await confirm({ title: '回到此处', message: '回到此处？这会丢弃后续所有文件改动。\n\n历史会话首次回滚需 3-5 秒（重启临时会话）；后续回滚瞬间完成。', confirmLabel: '回滚', danger: true }))) return;
     setBusy(true);
     try {
       const result = await Sessions.rewind(projectId, sessionId, message.id);
@@ -193,15 +193,21 @@ function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
         showToast(result.error || '此处不支持回滚', 'warn');
       } else {
         const n = result?.filesChanged?.length || 0;
+        // iframe reload 由后端 emit 的 run.file_changed event 自动触发（ProjectWorkspace 已 case），
+        // 不再依赖 onCanvasReload —— 但保留兼容调用（active query 路径同步返回时也 bump）
         showToast(n > 0 ? `已回滚 ${n} 个文件` : '已回滚（无文件改动）', 'success');
         if (onCanvasReload) onCanvasReload();
       }
     } catch (err) {
       const msg = err?.message || String(err);
-      if (msg.includes('410') || msg.includes('SESSION_CLOSED')) {
-        showToast('会话已关闭，无法撤销', 'warn');
+      if (msg.includes('REWIND_BUSY') || msg.includes('409')) {
+        showToast('上一个回滚还在进行，稍候重试', 'warn');
+      } else if (msg.includes('JSONL_MISSING') || msg.includes('404')) {
+        showToast('会话历史已删，无法回滚', 'warn');
+      } else if (msg.includes('REWIND_FAILED') || msg.includes('timeout')) {
+        showToast('回滚超时，请重试（临时会话启动较慢时偶发）', 'error');
       } else {
-        showToast(`撤销失败：${msg}`, 'error');
+        showToast(`回滚失败：${msg}`, 'error');
       }
     } finally {
       setBusy(false);

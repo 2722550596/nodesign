@@ -22,6 +22,7 @@ import {
   renameSession,
   tagSession,
   deleteSession,
+  query,
 } from '@anthropic-ai/claude-agent-sdk';
 import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
 import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
@@ -35,6 +36,14 @@ import {
 } from '../projects/workspace.js';
 import { withConfigDir } from '../lib/sdk-session.js';
 import { platform } from '../runtime/platform.js';
+import { AsyncQueue } from '../lib/async-queue.js';
+import { getProjectBus } from '../ws/broker.js';
+
+/**
+ * 进行中的 rewind 操作 sid 集合 —— 供 turn.js startNewRunSession 守卫使用，
+ * 防止同 sid 临时 rewind query 跟 normal turn query 同时启动撞 jsonl。
+ */
+export const pendingRewinds = new Set();
 
 const router = express.Router();
 
@@ -265,14 +274,21 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
 });
 
 // ── POST /:pid/sessions/:sid/rewind ──
-// SDK enableFileCheckpointing=true 给我们 Query.rewindFiles(userMessageId) 控制方法。
-// 调它会把 session 内文件状态回滚到 userMessageId 那条 user message 之前的样子
-// （所有后续 Edit/Write 撤销）。仅在 streamInput query 还活着时可用——session 已 close
-// 没法 control，返 410 让前端置灰按钮。
+// SDK Query.rewindFiles(userMessageId) 控制方法 —— 把 session 内文件回滚到该
+// user message 之前的状态（后续 Edit/Write 全撤销）。SDK file checkpoint 写在
+// session jsonl（type='file-history-snapshot'），跨进程持久化天然搞定。
+//
+// 两条路径：
+//   1. active query 在跑 → 直接用现有 query.rewindFiles（最快，无 spawn 成本）
+//   2. session 已 close（历史 session）→ 起临时 query (resume + drain) → rewindFiles → close
+//
+// 历史 session 也能 undo —— 之前返 410 是应用层偷懒，SDK 完全支持 resume + rewindFiles。
 //
 // body: { userMessageId }
 // 200 { canRewind, filesChanged?, insertions?, deletions? }
-// 410 { error: 'session not active' } - query 已关，无法回滚
+// 404 { code: 'JSONL_MISSING' }   jsonl 不存在（session 删了 / 部分创建）
+// 409 { code: 'REWIND_BUSY' }     同 sid 已有 rewind 进行中
+// 500 { code: 'REWIND_FAILED' }   临时 query 启动 / rewindFiles 失败
 router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
   try {
     validateProjectId(req.params.pid);
@@ -285,15 +301,99 @@ router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
       return res.status(400).json({ error: 'userMessageId required' });
     }
 
-    const rec = getQuerySession(req.params.sid);
-    if (!rec || !rec.query || rec.abortController.signal.aborted) {
-      // query 不在了——session 已 close 或从没起过 streamInput query
-      return res.status(410).json({ error: 'session not active', code: 'SESSION_CLOSED' });
+    const { pid, sid } = req.params;
+
+    // 路径 1：active query 在跑 —— 直接用现有 query
+    const rec = getQuerySession(sid);
+    if (rec?.query && !rec.abortController.signal.aborted) {
+      const result = await rec.query.rewindFiles(userMessageId);
+      emitRewindFiles(pid, sid, result);
+      return res.json(result);
     }
 
-    const result = await rec.query.rewindFiles(userMessageId);
-    res.json(result);
+    // 路径 2：起临时 query resume → rewindFiles → close
+    if (pendingRewinds.has(sid)) {
+      return res.status(409).json({ error: 'rewind in progress', code: 'REWIND_BUSY' });
+    }
+    const sessionRoot = getSessionWorkspace(pid, sid);
+    if (!await jsonlExistsForSession(sessionRoot, sid)) {
+      return res.status(404).json({ error: 'session jsonl not found', code: 'JSONL_MISSING' });
+    }
+
+    pendingRewinds.add(sid);
+    const inputQueue = new AsyncQueue();
+    let tempQuery = null;
+    let drain = null;
+    try {
+      tempQuery = query({
+        prompt: inputQueue,
+        options: {
+          resume: sid,
+          enableFileCheckpointing: true,
+          cwd: sessionRoot,
+          // 关键：跟 runSession 一致传 CLAUDE_CONFIG_DIR，否则 SDK 找不到 jsonl
+          env: { ...process.env, CLAUDE_CONFIG_DIR: GLOBAL_CLAUDE_CONFIG_DIR },
+          persistSession: true,
+          // 不传 hooks / mcpServers / agents / canUseTool —— 临时 query 不跑 turn
+        },
+      });
+      // fire-and-forget consume —— SDK control method 走 bidirectional protocol，
+      // stream 不消费会卡死 control RPC。drain 跑在后台，close 后自然结束。
+      drain = (async () => {
+        try { for await (const _ of tempQuery) { /* discard */ } }
+        catch { /* expected on close */ }
+      })();
+      // 15s timeout（SDK boot + jsonl load + control RPC ~3-5s 正常 → 3× margin）
+      const result = await Promise.race([
+        tempQuery.rewindFiles(userMessageId),
+        new Promise((_, rj) => setTimeout(() => rj(new Error('rewind timeout')), 15000)),
+      ]);
+      emitRewindFiles(pid, sid, result);
+      res.json(result);
+    } catch (err) {
+      console.warn(`[sessions.rewind] temp query failed (sid=${sid.slice(0, 8)}): ${err.message}`);
+      res.status(500).json({ error: err.message, code: 'REWIND_FAILED' });
+    } finally {
+      try { tempQuery?.close(); } catch { /* ignore */ }
+      try { inputQueue.close(); } catch { /* ignore */ }
+      if (drain) { try { await drain; } catch { /* ignore */ } }
+      pendingRewinds.delete(sid);
+    }
   } catch (err) { next(err); }
 });
+
+/**
+ * 检查 SDK jsonl 是否存在 —— 历史 session 在 ~/.claude/projects/<encoded-cwd>/<sid>.jsonl。
+ * encodeCwdForSDK + GLOBAL_CLAUDE_CONFIG_DIR 都已在文件顶部定义。
+ */
+async function jsonlExistsForSession(sessionRoot, sid) {
+  const encoded = encodeCwdForSDK(sessionRoot);
+  const jsonlPath = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', encoded, `${sid}.jsonl`);
+  try {
+    await fs.access(jsonlPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * rewindFiles 成功后 emit run.file_changed 事件让前端 iframe 自动 reload。
+ * 复用现有 event 类型 —— ProjectWorkspace.jsx 已 case 它（仅 .html 后缀 bump reloadToken），
+ * 0 前端事件代码改动。
+ */
+function emitRewindFiles(pid, sid, result) {
+  if (!result?.canRewind || !Array.isArray(result.filesChanged) || !result.filesChanged.length) return;
+  const bus = getProjectBus(pid);
+  for (const filePath of result.filesChanged) {
+    bus.publish({
+      type: 'run.file_changed',
+      filePath,
+      event: 'change',
+      sessionId: sid,
+      ts: new Date().toISOString(),
+    });
+  }
+}
 
 export default router;

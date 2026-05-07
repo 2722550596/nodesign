@@ -73,7 +73,9 @@ export const Canvas = {
   history: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/history`),
   revert: (pid, sid, commit) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/canvas/revert`, { commit }),
-  undo: (pid, sid) => jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/canvas/undo`, {}),
+  // Canvas.undo (git checkout 上一个 commit) 已砍 (2026-05-07) — SDK rewindFiles
+  // 通过对话里"回到此处"覆盖所有场景（含历史 session resume 链路）。后端 endpoint
+  // 留着不删但无前端调用。
   /** iframe src 用 — sid 必传 */
   artifactUrl: (pid, sid, version) =>
     `/api/projects/${pid}/sessions/${sid}/canvas${version ? `?v=${encodeURIComponent(version)}` : ''}`,

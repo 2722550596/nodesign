@@ -23,7 +23,6 @@ import UpgradeQuickModal from '../components/project/UpgradeQuickModal.jsx';
 import DirectEditModal from '../components/canvas/DirectEditModal.jsx';
 import PlanReviewCard from '../components/project/PlanReviewCard.jsx';
 import PlanRequestBanner from '../components/project/PlanRequestBanner.jsx';
-import UndoButton from '../components/canvas/UndoButton.jsx';
 import ContextUsageBar from '../components/project/ContextUsageBar.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
@@ -1367,21 +1366,9 @@ export default function ProjectWorkspace() {
           {(systemInfo || contextUsage) && (
             <ContextUsageBar info={systemInfo} liveUsage={contextUsage} />
           )}
-          <UndoButton
-            projectId={id}
-            sessionId={currentSessionId}
-            onUndone={() => {
-              setReloadToken(t => t + 1);
-              showToast('已撤销到上一版', 'success');
-            }}
-            onError={(err) => {
-              if (err.code === 'NO_PREV_COMMIT') {
-                showToast('已经是最早版本，没法再撤销', 'info');
-              } else {
-                showToast(`撤销失败：${err.message}`, 'error');
-              }
-            }}
-          />
+          {/* UndoButton (git checkout) 已砍（2026-05-07）—— SDK rewindFiles 通过
+              对话里"回到此处"覆盖所有 undo 场景（含历史 session resume 链路）。
+              git undo 不再必要，且语义跟对话里的精确 undo 重叠混淆。 */}
           <button style={iconBtnStyle} onClick={() => setShareOpen(true)}>
             <Share2 size={13} /> 分享
           </button>
