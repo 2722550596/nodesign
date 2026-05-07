@@ -317,11 +317,13 @@ export default function ProjectWorkspace() {
       },
       onStatusChange: (status) => {
         setWsStatus(status);
-        // Phase A.2（2026-05-07）：WS 断 / 重连中时强制 reset isStreaming —— 否则
-        // UI 卡 isStreaming=true 但收不到 delta，用户看到"在跑"实际没事件来。
-        // 不清 currentRunId（cancel 仍可用）；重连后若 run 还活着 SDK 会接续推。
-        // open / connecting 不动 state。
-        if (status === 'reconnecting' || status === 'closed') {
+        // 'closed'：连接彻底放弃 → 安全 fallback isStreaming=false（UI 不再显示
+        // stop 按钮，run 状态不可知）。'reconnecting' **不动** isStreaming：
+        // 重连成功后 server 在 ws.connected 帧里报 activeRunId 权威同步状态
+        // （见下面 case 'ws.connected'）。原版 reconnecting→false 是 over-correct
+        // —— run.start 是过去事件，重连若没新事件就永远拉不回 streaming UI，
+        // 后端消息源源不断但前端 stop 按钮没了，用户感知=流断了。
+        if (status === 'closed') {
           setIsStreaming(false);
         }
       },
@@ -457,12 +459,32 @@ export default function ProjectWorkspace() {
         });
         break;
       }
-      case 'ws.connected':
-        // ws.connected 由 ws-client 处理 lastSeq；此处不需做事。但若 gap=true 且
-        // 没收到对应的 ws.hydrate.start（无 sid 路径 / hydrate 失败），可考虑退到
-        // HTTP Sessions.read fallback 重新 hydrate（暂不主动触发，由 useEffect[sid]
-        // 兜底）
+      case 'ws.connected': {
+        // ws-client 处理 lastSeq；此处按 server 报的 activeRunId 恢复/同步 streaming 状态
+        // —— 抖动期间 onStatusChange 不再强制 reset isStreaming，重连后由这里权威决定。
+        //
+        // 三种情况：
+        //   ① server 有 activeRunId 且匹配前端持有的 currentRunIdRef → 同一 run 还活着，
+        //      恢复 isStreaming=true（重连前可能因 closed 短暂被 set false）
+        //   ② server 没 activeRunId 但前端以为还在跑 → run 在断线期间结束（run.done/error
+        //      早就发完且 buffer 已挤掉）→ cleanup state
+        //   ③ server activeRunId 跟前端不一致 → 多 tab race / 前端 stale；按 server 真相调整
+        const serverRunId = evt.activeRunId || null;
+        const localRunId = currentRunIdRef.current;
+        if (serverRunId) {
+          setIsStreaming(true);
+          if (serverRunId !== localRunId) {
+            setCurrentRunId(serverRunId);
+            setActiveRun({ pid: id, runId: serverRunId });
+          }
+        } else if (localRunId) {
+          setIsStreaming(false);
+          setCurrentRunId(null);
+          setActiveRun(null);
+          setMessages(prev => clearThinkingStreaming(prev));
+        }
         break;
+      }
 
       case 'run.start':
         setIsStreaming(true);

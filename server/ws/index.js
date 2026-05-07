@@ -21,6 +21,7 @@ import { getSessionWorkspace, validateSessionId } from '../projects/workspace.js
 import { withConfigDir } from '../lib/sdk-session.js';
 import { platform } from '../runtime/platform.js';
 import { getProjectBus } from './broker.js';
+import { getCurrentTurnRunId } from '../engine/runs/active-runs.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HYDRATE_CHUNK_SIZE = 50;
@@ -182,6 +183,11 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
 
   // 确认 + replay 元信息（gap=true 客户端可决定全量 hydrate）。
   // 故意放在 replay 之后发：客户端看到 ws.connected 就知道 backlog 已 drain，可切回正常 live 状态。
+  //
+  // activeRunId：sid 上当前在跑的 turn runId（无则 null）。前端用它重连后恢复
+  // isStreaming/currentRunId —— 否则 WS 抖动期间 run.start 已发完且 buffer 没新事件
+  // 时，前端永远不知道 run 还活着（stop 按钮消失，UX 表现"流没了"）。
+  const activeRunId = sid ? getCurrentTurnRunId(sid) : null;
   try {
     ws.send(JSON.stringify({
       type: 'ws.connected',
@@ -190,6 +196,7 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
       since,
       replayed,
       gap,
+      activeRunId,
     }));
   } catch { /* immediate close edge */ }
 }
