@@ -360,6 +360,13 @@ export default function ProjectWorkspace() {
     if (initialMessageSentRef.current) return;
     const initial = location.state?.initialMessage;
     if (typeof initial !== 'string' || !initial.trim()) return;
+    // QuickEntry / HubInput 入口在 navigate state 里捎带 attachments（已上传到
+    // shared/assets/，格式 [{ type:'asset', path, name, size, mime }]）—— 首条 turn
+    // 一起喂给 agent，turn.js composeUserMessage 会自动加"已附上 N 张参考图 / 可用素材路径"
+    // 的系统提示，agent 这一轮就能看到/读到。
+    const stateAttachments = Array.isArray(location.state?.attachments)
+      ? location.state.attachments
+      : [];
     initialMessageSentRef.current = true;
 
     const text = initial.trim();
@@ -370,7 +377,7 @@ export default function ProjectWorkspace() {
         const { runId } = await Turn.send({
           pid: id,
           chat: text,
-          attachments: [],
+          attachments: stateAttachments,
           sessionId: currentSessionId,  // /work 路径 → null（新会话）；/sessions/:sid → 续约
         });
         setCurrentRunId(runId);

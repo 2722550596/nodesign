@@ -7,13 +7,14 @@ import {
 import AppShell from '../components/layout/AppShell.jsx';
 import InstructionsCard from '../components/project/InstructionsCard.jsx';
 import PlanModeToggle from '../components/chat/PlanModeToggle.jsx';
+import ComposerTray from '../components/chat/ComposerTray.jsx';
 import FilesCard from '../components/project/FilesCard.jsx';
 import MemoryCard from '../components/project/MemoryCard.jsx';
 import BrandCard from '../components/project/BrandCard.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { Sessions } from '../lib/api.js';
+import { Sessions, Assets } from '../lib/api.js';
 import { timeAgo } from '../lib/helpers.js';
 
 /**
@@ -87,13 +88,18 @@ export default function ProjectHub() {
     );
   }
 
-  const handleStart = (text) => {
+  const handleStart = (text, attachments) => {
     // 砍空进入分支（2026-05-07）：必须输入内容才进 workspace。空进入触发的
     // 首条消息 race 已由 H1 hydrate 防御兜住，但用户体验上"先空进去再发"反而绕路，
     // 直接强制带消息进可少一条入口、少一条 race 路径。
     const trimmed = (text || '').trim();
     if (!trimmed) return;
-    navigate(`/projects/${id}/work`, { state: { initialMessage: trimmed } });
+    navigate(`/projects/${id}/work`, {
+      state: {
+        initialMessage: trimmed,
+        attachments: Array.isArray(attachments) ? attachments : [],
+      },
+    });
   };
 
   return (
@@ -148,7 +154,7 @@ export default function ProjectHub() {
             </div>
           )}
 
-          <HubInput onStart={handleStart} />
+          <HubInput onStart={handleStart} projectId={id} />
 
           <SessionList projectId={id} sessions={sessions} onRefresh={reloadSessions} />
         </div>
@@ -175,10 +181,16 @@ export default function ProjectHub() {
 /**
  * Hub 主入口的输入框：参考图样式。
  * Enter / 点发送：必须有内容才进 Workspace（auto-send 首条）。
+ * 附件：点 ➕ 选文件 → 立即 Assets.upload 到 project shared/assets/，
+ *      submit 时把已上传完成的 attachments 通过 navigate state 传给 ProjectWorkspace。
  */
-function HubInput({ onStart }) {
+function HubInput({ onStart, projectId }) {
   const [text, setText] = useState('');
+  const [attachments, setAttachments] = useState([]);
+  // [{ id, type:'asset', name, size, mime, path?, error? }] — path undefined = uploading
   const ref = useRef(null);
+  const fileInputRef = useRef(null);
+  const showToast = useGlobalStore(s => s.showToast);
 
   useEffect(() => {
     const el = ref.current;
@@ -187,10 +199,39 @@ function HubInput({ onStart }) {
     el.style.height = Math.min(el.scrollHeight, 280) + 'px';
   }, [text]);
 
+  const handlePickFile = (file) => {
+    const tempId = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setAttachments(arr => [...arr, {
+      id: tempId, type: 'asset',
+      name: file.name, size: file.size, mime: file.type,
+      // path: undefined → uploading 状态
+    }]);
+    Assets.upload(projectId, file)
+      .then(({ asset }) => {
+        setAttachments(arr => arr.map(a => a.id === tempId
+          ? { ...a, path: asset.path, name: asset.name, size: asset.size, mime: asset.mime }
+          : a,
+        ));
+      })
+      .catch(err => {
+        setAttachments(arr => arr.map(a => a.id === tempId ? { ...a, error: err.message } : a));
+        showToast(`${file.name} 上传失败：${err.message}`, 'error');
+      });
+  };
+
+  const handleRemoveAtt = (id) => {
+    setAttachments(arr => arr.filter(a => a.id !== id));
+  };
+
   const submit = () => {
     if (!text.trim()) return;
-    onStart?.(text);
+    // 只把已上传完成（有 path 且无 error）的 attachments 带过去；uploading / error 的丢弃
+    const ready = attachments
+      .filter(a => a.path && !a.error)
+      .map(a => ({ type: 'asset', path: a.path, name: a.name, size: a.size, mime: a.mime }));
+    onStart?.(text, ready);
     setText('');
+    setAttachments([]);
   };
 
   const handleKey = (e) => {
@@ -236,22 +277,36 @@ function HubInput({ onStart }) {
           boxSizing: 'border-box',
         }}
       />
+      <ComposerTray items={attachments} onRemove={handleRemoveAtt} />
       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm }}>
         <button
-          title="附加资料（占位 — 在工作台内上传）"
-          disabled
+          title="上传附件（图片 / PDF / HTML / 等）"
+          onClick={() => fileInputRef.current?.click()}
           style={{
             width: 28, height: 28, borderRadius: 14,
             background: 'transparent',
-            border: `1px solid ${COLOR.borderLt}`,
-            color: COLOR.sub,
+            border: `1px solid ${COLOR.borderMd}`,
+            color: COLOR.text2,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'not-allowed',
-            opacity: 0.6,
+            cursor: 'pointer',
+            transition: 'all 0.15s',
           }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = COLOR.text2; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = COLOR.borderMd; }}
         >
           <Plus size={14} />
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp,.md,.txt"
+          onChange={(e) => {
+            Array.from(e.target.files || []).forEach(handlePickFile);
+            e.target.value = '';
+          }}
+          style={{ display: 'none' }}
+        />
         <PlanModeToggle />
         <span style={{ flex: 1 }} />
         <button

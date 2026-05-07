@@ -4,10 +4,11 @@ import { Plus, Sparkles, Wrench, MoreHorizontal, Copy, Trash2, Edit2, ArrowUp } 
 import AppShell from '../components/layout/AppShell.jsx';
 import CreateProjectModal from '../components/project/CreateProjectModal.jsx';
 import PlanModeToggle from '../components/chat/PlanModeToggle.jsx';
+import ComposerTray from '../components/chat/ComposerTray.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { Sessions, Canvas } from '../lib/api.js';
+import { Sessions, Canvas, Assets } from '../lib/api.js';
 import { timeAgo } from '../lib/helpers.js';
 
 /**
@@ -158,7 +159,12 @@ function QuickEntry() {
   const [submitting, setSubmitting] = useState(false);
   const [greeting] = useState(pickGreeting);  // mount 时挑一次，刷新换一个
   const [placeholder] = useState(pickPlaceholder);
+  // 暂存附件（QuickEntry 阶段还没 project，只能存 File 对象，submit 时再 createProject + 上传）
+  // chip 形态：path/error 都 undefined → ComposerTray 显示 "上传中…"（实际是"待上传"，hover 看 title）
+  const [attachments, setAttachments] = useState([]);
+  // [{ id, type:'asset', name, size, mime, _file: File }]
   const ref = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     const el = ref.current;
@@ -166,6 +172,16 @@ function QuickEntry() {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 280) + 'px';
   }, [text]);
+
+  const handlePickFile = (file) => {
+    const tempId = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setAttachments(arr => [...arr, {
+      id: tempId, type: 'asset',
+      name: file.name, size: file.size, mime: file.type,
+      _file: file,  // 暂存 File 等 submit 时统一上传
+    }]);
+  };
+  const handleRemoveAtt = (id) => setAttachments(arr => arr.filter(a => a.id !== id));
 
   const submit = async () => {
     const v = text.trim();
@@ -178,11 +194,24 @@ function QuickEntry() {
         name: projName || '未命名对话',
         kind: 'quick',
       });
-      // 2. 跳 Workspace 并把首条消息塞 location.state；ProjectWorkspace 的
+      // 2. 上传暂存的附件到新 project（单文件失败不阻塞其他，让用户看到 toast 自决）
+      const ready = [];
+      for (const a of attachments) {
+        if (!a._file) continue;
+        try {
+          const { asset } = await Assets.upload(proj.id, a._file);
+          ready.push({ type: 'asset', path: asset.path, name: asset.name, size: asset.size, mime: asset.mime });
+        } catch (err) {
+          showToast(`${a.name} 上传失败：${err.message}`, 'error');
+        }
+      }
+      // 3. 跳 Workspace 把首条消息 + attachments 塞 location.state；ProjectWorkspace 的
       //    initialMessage useEffect（mount 后 250ms 等 WS 上线）单点负责发首条 turn。
       //    旧实现这里也调 Turn.send 预发一条 → 后端 isNewSession=true 起 session A，
       //    Workspace 上线后又发一条 → 起 session B，导致每次闪聊创 2 个 session。
-      navigate(`/projects/${proj.id}/work`, { state: { initialMessage: v } });
+      navigate(`/projects/${proj.id}/work`, {
+        state: { initialMessage: v, attachments: ready },
+      });
     } catch (err) {
       showToast(`创建失败：${err.message}`, 'error');
       setSubmitting(false);
@@ -240,22 +269,38 @@ function QuickEntry() {
           opacity: submitting ? 0.5 : 1,
         }}
       />
+      <ComposerTray items={attachments} onRemove={handleRemoveAtt} />
       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm }}>
         <button
-          title="附加资料（在工作台内上传）"
-          disabled
+          title="上传附件（图片 / PDF / HTML / 等）"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={submitting}
           style={{
             width: 28, height: 28, borderRadius: 14,
             background: 'transparent',
-            border: `1px solid ${COLOR.borderLt}`,
-            color: COLOR.sub,
+            border: `1px solid ${submitting ? COLOR.borderLt : COLOR.borderMd}`,
+            color: submitting ? COLOR.sub : COLOR.text2,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'not-allowed',
-            opacity: 0.6,
+            cursor: submitting ? 'not-allowed' : 'pointer',
+            opacity: submitting ? 0.6 : 1,
+            transition: 'all 0.15s',
           }}
+          onMouseEnter={e => { if (!submitting) e.currentTarget.style.borderColor = COLOR.text2; }}
+          onMouseLeave={e => { if (!submitting) e.currentTarget.style.borderColor = COLOR.borderMd; }}
         >
           <Plus size={14} />
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp,.md,.txt"
+          onChange={(e) => {
+            Array.from(e.target.files || []).forEach(handlePickFile);
+            e.target.value = '';
+          }}
+          style={{ display: 'none' }}
+        />
         <PlanModeToggle disabled={submitting} />
         <span style={{ flex: 1 }} />
         <button
