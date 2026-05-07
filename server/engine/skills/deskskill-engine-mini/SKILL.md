@@ -82,6 +82,49 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 
 **信息不足时多花 1-2 turn 对齐通常 ROI 很高**——视觉设计场景尤其如此，缺少 reference 或具体描述时方向确认通常比快速试错成本更低。
 
+### Stage 0 起手式：搜 + 问 + 不吝啬问 — 一条心智链
+
+收到 brief 后，整个 Stage 0 的核心姿势是**先搜后问、问到对齐、不怕麻烦用户**。这条姿势驱动后面所有 sub-step（0.0 / 0.1 / 0.2）：
+
+**第一动作 = 判断 + 搜 1 轮（强烈推荐）**
+
+任何 brief 进来，agent 先问自己"用户提到的内容里有没有可搜的信息源"，有就搜：
+
+- 用户提到的品牌 / 产品 / 名人 / 风格名 → `web_search` 拿现状（避免脑里训练数据滞后）
+- 用户指名模仿对象（"Linear 风" / "像小红书"）→ `web_search { include_images:true }` 拿真图当对齐 anchor
+- 用户聊到行业 / 趋势 / 最新事件 → 搜验证一下
+
+搜到内容后用搜到的事实回 chat 让用户**纠偏**而非**从零描述**：
+
+> ✅ "我搜到 X 公司主色是 cobalt blue + Lyon Display 字体，保留这套 brand identity 还是你想换？"
+>
+> ❌ "你想要什么颜色和字体？"（让用户从零描述，成本高且容易答得空泛）
+
+让用户纠偏比让用户从零描述成本低 10× —— 用户脑里有具体画面但描述能力有限，搜出来的真图 / 真色号是更好的 anchor。
+
+**不吝啬问问题 — senior 客户访谈姿态**
+
+senior 设计师跟客户访谈时不会怕"问太多"——客户嫌烦的是做错三遍重做，不是被多问 3 个精准问题。同理 agent：
+
+- "做错全 deck 重来 30 分钟" vs "多问 3 个精准问题 30 秒"——后者用户欢迎得多
+- agent 倾向"少问保流畅"是错的 default ——用户的偏好是反过来的：精准对齐 > 体验流畅
+- 一个 brief 问 5-8 轮才完全对齐是常态，不是失败信号
+
+**精准问 vs 空泛问**
+
+| 维度 | 精准问 | 空泛问 |
+|---|---|---|
+| 题面 | 对应一个具体歧义 dimension | 大而无当 |
+| 候选 | 带 2-3 个候选 + preview 视觉对比 | 让用户从零描述 |
+| 答完效果 | agent 能复述更多 | agent 还是不知道怎么动手 |
+| 例 | "你的 cover 想要 Wong Kar-wai 暖色 / Bloomberg 冷调 / 无印良品克制三选一？" | "你想要什么风格？" |
+
+**跳过的问题 — 不该浪费用户回合**
+
+- 信息性问题（web_search 能自答的）→ § 0.2 自己搜
+- 已经清楚的 dimension（brief 里说了"参考无印良品"）→ 别二次确认
+- 用户明说"赶时间 / 别问了" → § 0.6 escape hatch（但仍要识别 false escape）
+
 ### 0.0 Deck-kind 识别（最前置 —— 在所有视觉风格 ask 之前）
 
 **复述测试加必述要素**：Stage 0 退出前能用一句话复述 5 项算对齐 ——
@@ -206,6 +249,70 @@ deck-kind 锁定后主动列"对你这个 [kind] deck，这几种做法容易显
 
 视觉模仿是 web_search include_images 的最高 ROI 场景——用户指名模仿对象时，搜一张真图当 reference 比纯文字脑补对齐成本低一个数量级。
 
+**ask-vs-search 决策树**（agent 心里有冲动想问 X 时，先过这个判断）：
+
+```
+想问 X？先依次过：
+  ① X 能在 web_search 里找到吗？        是 → 搜，不问
+  ② X 在 spec.json / agent-memory 里有吗？  是 → Read，不问
+  ③ X 在 ./assets/ 上传素材里能看出来吗？   是 → Glob + Read，不问
+  ④ X 在 brief 文本里其实说了 / 暗示了？    是 → 复述给用户验，不问
+  ⑤ X 是用户主观偏好（无法外部查证）？     是 → 问（精准 + 候选 + preview）
+```
+
+**Search 反模式速查**：
+- ❌ "这个产品什么颜色？" → 先 `web_search` 拿 brand identity 比直接问效率高 10×
+- ❌ 用户给了品牌名立即 ask 配色 / 字体偏好 → 先 search 它的视觉规范，再问"保留这套还是换"
+- ❌ 用户提了 "Wong Kar-wai 风" 立即问"温暖还是冷调" → 模型脑里有这位导演色温（金色 / 翠绿），点名生图就行不必 ask
+
+### 0.2.5 Tone + Motion 收敛循环 — R2 必跑一轮带图搜
+
+Tone（视觉调性）和 motion（特效预算）是设计第一组决策（palette / 字体 / 文案密度 / image prompt / 动效全派生自这组），值得用专门的收敛循环对齐。比起一次性 fixed 4 选 1，多轮收敛效果更稳。
+
+**R1 — 开放式探问**（仅当用户首句没具体方向时；已有 "日系简约" / "Bloomberg 商务" / "Wong Kar-wai 风" 等具体方向就跳 R1 直接 R2）：
+
+```
+chat 直接问 1 题：
+  "这个 deck 你想要的整体感觉是什么？一句话即可（关键词 / 类比 / 场景皆可）"
+```
+
+**R2 — 必跑一轮带图搜 + Tone & Motion 一起问**（即使 Mode A 简单任务也跑一轮）：
+
+1. `web_search { include_images: true }` 按 R1 描述（或用户首句方向）搜 3-5 张参考图
+2. 拿到内嵌 image content block 直接 vision-check（不必再 Read）
+3. AskUserQuestion **2 道题一起问**（一次调用 2 个 question）：
+
+   **Q1 Tone**: 4 个 option
+   - option 1-3：每个对应 1 张代表参考图 + 240×140 visual preview HTML（主色 + 字体方向 + 排版示意）
+   - option 4 固定 "都不太对，再来一轮"
+
+   **Q2 Motion budget**: 4 个 option
+   - **静态** — 0 motion，元素一次性出现（适合严肃商务 / 学术克制 / 数据 dashboard；技术：纯 HTML + Tailwind）
+   - **微动效** — 轻量入场 + hover 反馈（稳妥默认；适合产品 pitch / 团队介绍；技术：Tailwind animate-* / framer-motion 简单 props）
+   - **entry 动效** — hero timeline + scroll-trigger reveal + 数字 count-up（适合营销 landing / 数据揭晓；技术：framer-motion / gsap scroll-trigger）
+   - **戏剧化** — 跨页 timeline + parallax + 文字遮罩（适合戏剧叙事 / 高端 brand pitch；技术：gsap timeline + ScrollTrigger / lenis 平滑滚动）
+   - 每个 option 配 240×140 inline @keyframes 演示动效形态
+
+**R3+ — 收敛 / 重跑**：
+- 用户都选定 → 收敛进 § 0.6 Stage 0 退出条件
+- Q1 选 "再来一轮" → 解读用户文字反馈（"太硬" / "再暖" / "再古"），重跑 R2 调整关键词
+- 收敛条件：用户明确选某 option / 连续选同方向 2 轮 / 用户说"就这个 / 你定吧"
+
+**Mode A vs Mode B 差异**：
+- **Mode A**（简单任务 / 用户首句含具体方向）：fast-path —— 跳 R1 直接 R2，最多 2 轮收敛
+- **Mode B**（多页 deck / 用户 toggle plan）：循环跑完，深度对齐就是要慢
+
+**为什么 R2 必跑带图搜**：
+- 用户文字描述能力有限，"温暖人文" 4 字脑补的画面跟 agent 套的可能差很远——一张真参考图比 5 句文字对齐高效 10×
+- motion 是用户偏差最大的维度（agent 默认套微动效；严肃 deck 用户嫌晕、戏剧 deck 用户嫌平），不主动问就跑偏
+- 视觉模仿是 web_search include_images 的最高 ROI 场景——用户脑里有特定页面 / 海报 / 截图当 anchor，搜出来的真图才是模仿对象
+
+**收敛后落痕**：
+- Mode A：`record_decision({ topic:'tone-collapse', decision, rationale, alternatives })` + `record_decision({ topic:'motion-budget', decision, rationale, alternatives })` 留档
+- Mode B：通过 `design-plan.md.meta.tone` + `meta.motion_budget` 落档，无需重复
+
+**与 Stage 3 § 动效自检的衔接**：R2 锁了 motion-budget 后写每页按预算执行；某页确实需要打破预算（cover 必须 cinematic）回去问一句即可。
+
 ### 0.3 三个信号源（按权重排）
 
 - **信号 1**：workspace 自动提示（pending changes / assets / spec.json decisions）
@@ -247,6 +354,18 @@ deck-kind 锁定后主动列"对你这个 [kind] deck，这几种做法容易显
 - "别问了 / 直接做 / 我赶时间" → 跳过 ask
 - "用默认风格 / 按你审美来" → 用 § Fallback design-tokens 兜底，**仍然问 1 题**确认 deck-kind
 - "改错字 / 调字号到 56" → 不必 ask 直接做
+
+**False escape 识别 — 别把客气话当免死金牌**
+
+用户说"自由发挥 / 你看着办"时**仍有隐性偏好**——只是描述能力有限或客气一下。直接当真完全不问，做出来 90% 概率方向跟用户脑里画面差很远。识别这 3 个 false escape 信号，对应不同处理：
+
+| 用户说 | 实际意思 | 应对 |
+|---|---|---|
+| **"你看着办 / 按你审美来"** | "我懒得想细节，但希望方向对" | 给候选不直接动手——展示 1-2 个关键页（cover / 收尾）的具体构思校准方向。"我打算 cover 走 X 方向，收尾走 Y，对不对路？" |
+| **"赶时间 / 别问太多"** | "缩短问题数，不是别问" | 缩成 1 题：用 § Fallback tokens 兜底但仍**问 1 题确认 deck-kind**。kind 错了赶时间也救不回 |
+| **"自由发挥 / 随意"** | "可能 ta 自己也不清楚要什么" | 展示 2-3 个差异明显的方向（戏剧化叙事 / 克制商务 / 温暖人文）让 ta 挑——比硬猜准很多 |
+
+**为什么这条值得专门写**：senior 设计师跟客户访谈时也是问到"我能在脑子里描出画面"才放下笔——客户嫌烦的不是被问，是被错误地理解了之后做错。"不要把客气话当免死金牌"是个 senior 直觉。
 
 ---
 
@@ -415,6 +534,28 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 **判断诀窍**：内容是否需要"组件库的真实力"？是 → React mount；不是 → 纯静态。简单页纯静态更容易维护，DirectEdit 也能改。
 
 **值得 record**：选了某个有分量的技术方案（GSAP timeline / Recharts / R3F 3D / 特殊字体 CDN），调一下 `record_decision` 记下来后续修改时不会忘"为什么当时选了这个"。
+
+### Hybrid 选型按 deck-kind 分流（首选库组合）
+
+不同 deck-kind 的视觉与叙事重心不同，库的选择跟着分流。下表是各 kind 的**首选组合 + 反例**，第一次起手选库可以照表参考；具体页型决策仍按 § 页型决策表走。
+
+| deck-kind | 首选库组合 | 反例（用了通常不合身） |
+|---|---|---|
+| **emotion / ceremony** | `framer-motion` + `gsap` (scroll-trigger) + `generate_image` (cover/portrait/section-divider，referenceImages 跨页固定角色) + `lenis` (戏剧化 deck) | recharts 用不上；mermaid 不需要；shiki 不需要 |
+| **decision / academic** | `recharts` / `echarts` + `Card` + `Tabs` + `lucide-react` + 静态布局 | 不要堆 framer-motion 装饰；gsap 复杂动画在严肃场景显轻浮；3D 场景违和 |
+| **sales** | `recharts` (ROI / 增长曲线) + `Card` + `Tabs` (feature 阵列) + `framer-motion` (轻量 stagger) + `generate_image` (cover) | 不要 cinematic gsap timeline；3D 场景显花哨 |
+| **funding** | `recharts` / `echarts` (市场规模 / 增长 / 财务) + `Card` (团队卡) + `framer-motion` (entry 动效适度) + `generate_image` (cover) | 装饰动画过重 = 不像专业 BP；mermaid 太工程感 |
+| **launch** (Apple Keynote 风) | `gsap` timeline (登场页 cinematic) + `generate_image` (产品 hero / 场景) + `framer-motion` (功能页 reveal) + `embla-carousel-react` (变体展示) + `three` + `r3f` (3D 产品旋转，确认要 3D 才用) | recharts 罕用；mermaid 不需要 |
+| **knowledge** (培训/教程) | `mermaid` (流程图 / 架构图 / 时序图) + `shiki` (代码块) + `react-katex` (公式) + `Card` (步骤) + `Tabs` (对比) | gsap 复杂动画分散学习注意力；3D 场景违和 |
+| **data** (报告 / 复盘) | `echarts` + `Card` + `Tabs` (drill-down) + 静态 hero（generate_image role='hero'） | 不要 r3f / lenis；framer-motion 限于数字 count-up |
+| **作品集**（决策汇报子场景）| `embla-carousel-react` (案例轮播) + `Card` (项目卡) + `framer-motion` (hover 反馈) + `generate_image` (cover / 项目 hero) | gsap 复杂 timeline 喧宾夺主 |
+
+**通用原则**：
+- 装饰库（gsap / framer-motion / lenis）默认在 emotion / launch / ceremony 才放开；decision / academic / data 默认 0 motion，要加得在 plan 里写明理由
+- 数据可视化库（recharts / echarts）跟 mermaid 不要混用：数据用 chart 库；流程 / 架构 / 时序用 mermaid
+- 3D（three + r3f）用之前想清楚——体积大、耗 GPU、对 deck 加分有限；多数情况一张 generate_image 出来更轻 + 可控
+
+详细库速查（用法 / 注意事项）见 [prelude § Hybrid 全家桶库速查](../../agent/prompts/nodesign-prelude.md)。
 
 ### Tweaks 哲学（精简版 —— 完整语法 PreToolUse hook 首调时注入）
 

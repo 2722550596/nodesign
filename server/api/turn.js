@@ -274,7 +274,7 @@ async function composeUserMessage(chat, attachments, pendingSummary, assetsSumma
   if (assetsSummary && assetsSummary.count > 0) {
     let hint = '建议挑 1 张关键图 Read 看一眼（你能直接 vision 看到颜色/质感/排版），再决定动手。如果跟用户的 brief 不相关可以先不看。';
     if (assetsSummary.hasBinaryDocs) {
-      hint += ' PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包），用 Bash 跑 python3 解：pdf 用 pdfplumber 或 PyPDF2、ppt 用 python-pptx、docx 用 python-docx、xlsx 用 openpyxl。提取文本 / 图片 / 结构后再判断怎么用。';
+      hint += ' PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包），用 Bash 跑 python3 解：pdf 用 pdfplumber 或 PyPDF2、ppt 用 python-pptx、docx 用 python-docx、xlsx 用 openpyxl。**python 提取出来的不只是文本，通常还包含嵌入图片**（导出到临时目录如 `/tmp/extracted/` 或 `./assets/extracted/`）—— 提取完一定 Read 看图片（vision 自动渲染），别只看 stdout 文本就以为信息齐了。文档里的图常含关键 brand 元素 / 数据图表 / 案例视觉，跳过看图等于丢了一半内容。';
     }
     blocks.push({
       type: 'text',
