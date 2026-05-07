@@ -115,7 +115,8 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 **HTML preview 约束**（视觉方向 / 配色 / 字体 / 排版示意场景）：
 - 尺寸：240×140（前端 sandbox iframe 渲染区）
-- 内容：inline `<style>` + `<div>`，不引外部图 / 外部 CSS / 外部 JS
+- 内容：**self-contained HTML 片段**——`<style>...</style>` 块 + `<div>` / `<h1>` / `<p>` 等结构标签都允许；不引外部图 / 外部 CSS / 外部 JS。
+  前端用 iframe srcDoc + `sandbox=""` 渲染：CSS 正常工作（`<style>` 块可以用，**不要被"inline"误读成只能用 `style=""` 属性**）；`<script>` 会被 sandbox 阻止，别加。
 - 体积：≤ 5KB（超出会被截断）
 - 用途：让用户视觉对比 4 个选项的差异（主色 + 字体方向 + 排版示意），不是渲染完整页面
 
@@ -134,7 +135,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 ### 何时用 image preview vs HTML preview vs 不带 preview
 
 - **image preview**（base64 / asset path）：多张候选图选哪张（cover / portrait / decoration）→ 先 generate_image 出 3 变体，每个 option 的 preview 字段贴对应图
-- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 → 用 inline style 演示给用户看主色 + 字体 + 排版差异
+- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 → 用 `<style>` 块 + 结构标签演示主色 / 字体 / 排版差异（`<style>` 块允许，不要被"inline"误读成只能用 `style=""`）
 - **不带 preview**：离散文字决策（yes/no, deck-kind 选择, 是否需要 PDF）→ 选项标签足够说明
 
 ---

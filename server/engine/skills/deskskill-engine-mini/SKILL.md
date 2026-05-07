@@ -129,7 +129,24 @@ senior 设计师跟客户访谈时不会怕"问太多"——客户嫌烦的是�
 
 3 步以上的任务（多页 deck / 重写流程 / 派子代理后接 generate）推荐起手就 `TodoWrite` 列出所有步骤，每完成一项立刻 mark completed，同时只保留一项 in_progress。前端 SuggestionChip / 计划面板靠这个数据展示进度，没列的话用户看不到 agent 在做什么。单一动作（"改封面颜色"）不必列。
 
+**ask-vs-search 决策树**（心里有冲动想问 X 时先过这个，详见 § 0.2）：
+
+```
+想问 X？依次过：
+  ① X 能 web_search 找到？      是 → 搜，不问
+  ② X 在 spec.json / agent-memory？  是 → Read，不问
+  ③ X 在 assets/ 上传素材里？    是 → Glob + Read，不问
+  ④ brief 文本其实说 / 暗示了？  是 → 复述给用户验，不问
+  ⑤ 主观偏好（外部查不到）？     是 → 问（精准 + 候选 + preview）
+```
+
+**deck-kind 锁定也走这套**——brief 含品牌 / 产品 / 模仿对象 / 行业关键词时，先搜再判 kind（搜到的事实 + kind 判断一起回 chat），比"先 ask kind 后续再搜"少 1-2 轮。
+
 ### 0.0 Deck-kind 识别（最前置 —— 在所有视觉风格 ask 之前）
+
+**先搜后判，不要先 ask 再判** —— deck-kind 识别 ≠ 第一动作。第一动作仍是 § 起手式的"判断 + 搜 1 轮"：
+
+> brief 里只要有可搜信源（品牌 / 产品 / 模仿对象 / 行业事件），先搜，搜到的事实跟 deck-kind 判断**一起回 chat 让用户纠偏**——一条消息搞定两件事，比"先 ask kind 后续再搜"少 1-2 轮。完全抽象描述确实没东西可搜时才走下面"第一句直接判断"路径。
 
 **复述测试加必述要素**：Stage 0 退出前能用一句话复述 5 项算对齐 ——
 
@@ -139,12 +156,13 @@ senior 设计师跟客户访谈时不会怕"问太多"——客户嫌烦的是�
 4. 视觉锚点（≥1 个具体画面：reference 图 / 引名作品 / 场景描述）
 5. 特效量预算（静态 / 微动效 / entry 动效 / 戏剧化）
 
-**怎么自然嵌入对话（不强制弹 AskUserQuestion 卡片）**：
+**怎么自然嵌入对话（搜完一轮后再回，不强制弹 AskUserQuestion 卡片）**：
 
-- 收到 brief 后**第一句**可以直接说判断 + 求确认："看你的 brief 我觉得这是个 [决策汇报型] deck，主要是要 [推动 CEO 批 X]，我按这个方向来你再纠偏？"
+- 搜到事实后回 chat 一并带上 deck-kind 判断："我搜到 [X 公司主色 cobalt blue + Lyon Display 字体]，看你的 brief 这是个 [决策汇报型] deck 推动 CEO 批 Y，保留这套 brand identity 还是换？我按这个方向来你再纠偏？"
+- brief 抽象到完全没东西可搜（极少数）→ 第一句可直接说判断 + 求确认："看你的 brief 我觉得这是个 [决策汇报型] deck，主要是要 [推动 CEO 批 X]，我按这个方向来你再纠偏？"
 - 用户简单回 "对" 或纠偏 "其实是要 [Y]" → 锁定 kind 进 Stage 0.1 后续 ask
 - 用户首句 brief 已经说清楚 kind（"做个 BP 给投资人"）→ 直接锁 funding 不必问
-- 完全模糊（"做个 deck"）→ 用 Glob 看 assets / spec.json 找信号，仍模糊就直接问 1 题
+- 完全模糊（"做个 deck"）→ 用 Glob 看 assets / spec.json 找信号，仍模糊就直接问 1 题（这种情况下 search 也无的放矢，跳过）
 
 **判断 deck-kind 的几个信号**：
 - 关键词：`汇报 / 立项 / 评审` → decision；`BP / 路演 / 投资人` → funding；`培训 / 教程 / onboarding` → knowledge；`复盘 / 报告 / 数据` → data；`年会 / 颁奖` → ceremony；`故事 / 品牌片 / 文化` → emotion；`新品 / 发布会 / Keynote` → launch；`方案 / 客户 / 提案` → sales；`论文 / 答辩` → academic
