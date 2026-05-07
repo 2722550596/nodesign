@@ -47,12 +47,6 @@ export class AgentContext {
     // SDK 在 message 流里返回 session_id，首次见到时记下
     this.sdkSessionId = null;
 
-    // turn 内累积的 thinking 文本（每个 thinking_delta / thinking block 都 push）。
-    // Stop hook 收尾时 join 给 summarizeForTimeline 出折叠标题（agent 思考摘要）。
-    // turn 切换时由 session-loop.startTurn() 清空。streamInput 模式 ctx 横跨多
-    // turn，所以 buffer 必须 turn-scoped 而非 session-scoped。
-    this.thinkingBuffer = [];
-
     // 可观测计数器（落 run.metadata 用）
     this.counters = {
       turns: 0,                  // SDK num_turns

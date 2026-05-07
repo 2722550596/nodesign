@@ -251,14 +251,6 @@ function maybeFixupMessagesBody(body) {
     mutated = true;
   }
 
-  // 2026-05-07 撤回：transformImagesToOpenAIStyle 转 image_url 在多轮 Read 图
-  // 路径下产生 Anthropic + OpenAI 混血 body（user msg 同时含 tool_result 与
-  // image_url），上游 adapter 大概率因此崩（"API Error: undefined is not an
-  // object (evaluating 'H.startsWith')"）。函数体保留留档，调用先撤。详见
-  // memory `idea_kimi_read_image_multi_turn_broken.md`。
-  // 副作用：用户在 chat 直接上传图（单 turn vision）会回到 400 状态，
-  // 由后续真正的 fix 单独解决。
-
   // thinking adaptive → enabled（保留 — kimi-k2.6 主代理）
   if (parsed.thinking && parsed.thinking.type === 'adaptive') {
     parsed.thinking = { type: 'enabled', budget_tokens: 8192 };
@@ -266,61 +258,6 @@ function maybeFixupMessagesBody(body) {
   }
 
   return mutated ? Buffer.from(JSON.stringify(parsed), 'utf8') : body;
-}
-
-/**
- * Anthropic image block → OpenAI image_url block。仅 kimi 路径调用。
- *
- * 输入：messages[].content[] 里的 `{type:'image', source:{type:'base64', media_type, data}}`
- *      或嵌在 tool_result.content[] 里同样格式（lift 之后理论上已经提到顶层，
- *      但 tool_result 里也 best-effort 转一下兜底）
- * 输出：替换为 `{type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}}`
- *
- * 不支持 source.type === 'url'（直接 https）的情况：把 url 原样塞 image_url.url。
- *
- * @returns {boolean} true 若有任何 block 被改写
- */
-function transformImagesToOpenAIStyle(messages) {
-  let mutated = false;
-  const convert = (block) => {
-    if (block?.type !== 'image' || !block.source) return null;
-    const src = block.source;
-    let url;
-    if (src.type === 'base64' && src.data && src.media_type) {
-      url = `data:${src.media_type};base64,${src.data}`;
-    } else if (src.type === 'url' && src.url) {
-      url = src.url;
-    } else {
-      return null;
-    }
-    return { type: 'image_url', image_url: { url } };
-  };
-
-  for (const msg of messages) {
-    if (!Array.isArray(msg.content)) continue;
-    for (let i = 0; i < msg.content.length; i++) {
-      const block = msg.content[i];
-      // 顶层 image
-      const replaced = convert(block);
-      if (replaced) {
-        msg.content[i] = replaced;
-        mutated = true;
-        continue;
-      }
-      // tool_result 内嵌 image（lift 之外的兜底）
-      if (block?.type === 'tool_result' && Array.isArray(block.content)) {
-        for (let j = 0; j < block.content.length; j++) {
-          const inner = block.content[j];
-          const innerReplaced = convert(inner);
-          if (innerReplaced) {
-            block.content[j] = innerReplaced;
-            mutated = true;
-          }
-        }
-      }
-    }
-  }
-  return mutated;
 }
 
 /**

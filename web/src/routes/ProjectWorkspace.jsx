@@ -424,7 +424,7 @@ export default function ProjectWorkspace() {
             toolName: evt.name,
             toolInput: undefined,  // 还没流完
             status: 'running',
-            runId: evt.runId,  // Phase B 批次 6：TimelineGroup 标题查表用
+            runId: evt.runId,  // 用于 delta merge 时判断同一 turn 边界
           }];
         });
         break;
@@ -890,12 +890,6 @@ export default function ProjectWorkspace() {
       // request 形如 { reqId, request: {...}, runId }
       case 'run.elicitation_request':
         setElicitRequest({ reqId: evt.reqId, request: evt.request, runId: evt.runId });
-        break;
-
-      // Phase B 批次 6：Stop hook 用 haiku 总结的 turn 标题 → globalStore
-      // TimelineGroup 用 group 首条 thinking/tool 消息的 runId 查表显示
-      case 'run.timeline_summary':
-        useGlobalStore.getState().setTimelineSummary(evt.runId, evt.summary);
         break;
 
       // 运维 / 调试信号——不展示 UI，只 console 留痕（dev 模式）。
@@ -1553,7 +1547,7 @@ function appendTextDelta(messages, role, text, runId) {
   }
   const created = { id: newId('msg'), role, content: text };
   if (role === 'thinking') created.isStreaming = true;
-  if (runId) created.runId = runId;  // Phase B 批次 6：TimelineGroup 标题查表用
+  if (runId) created.runId = runId;  // 用于 delta merge 时判断同一 turn 边界
   return [...cleared, created];
 }
 

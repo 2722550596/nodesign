@@ -334,8 +334,6 @@ function handleAssistantBlocks(ctx, content, skipTextThinking = false) {
       case 'thinking':
         if (!skipTextThinking && block.thinking) {
           ctx.emit(Events.deltaThinking(ctx.counters.turns, block.thinking));
-          // 累积到 turn-scoped buffer，Stop hook 出折叠标题用（非流式路径）
-          if (Array.isArray(ctx.thinkingBuffer)) ctx.thinkingBuffer.push(block.thinking);
         }
         break;
       case 'tool_use':
@@ -396,8 +394,6 @@ function handleStreamEvent(ctx, msg) {
     ctx.emit(Events.deltaText(ctx.counters.turns, delta.text));
   } else if (delta.type === 'thinking_delta' && delta.thinking) {
     ctx.emit(Events.deltaThinking(ctx.counters.turns, delta.thinking));
-    // 累积到 turn-scoped buffer（流式路径，每个 delta 进来就 push）
-    if (Array.isArray(ctx.thinkingBuffer)) ctx.thinkingBuffer.push(delta.thinking);
   }
   // input_json_delta / signature_delta / citations_delta 暂不处理
 }

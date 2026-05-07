@@ -396,7 +396,6 @@ export async function runSession({
     };
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
-    sharedCtx.thinkingBuffer = [];       // turn-scoped：本轮 thinking 文本累积，Stop hook 总结成折叠标题
     // 当前 turn id 写到 process.env，让 binary-fixup-proxy 拦截 LLM 请求时拿到
     // 透传成 ND-Trace-Id（NoDesk 后台按 trace 串单轮 LLM 调用链路）。SDK 串行
     // 处理 turn，全局变量在同一时刻只对应一个活动 turn，无 race。

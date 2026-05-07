@@ -44,7 +44,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Events } from './events.js';
-import { summarizeForTimeline } from '../../lib/llm-summary.js';
 import { getQuery } from '../runs/active-runs.js';
 
 /** 内部：UserPromptSubmit hook 读取 spec.json 时的最大字节数 */
@@ -293,16 +292,14 @@ function makeFileChangedHandler({ ctx }) {
  *
  * 两件事：
  * 1. emit run.stop_reflection（hasCanvas 信号给前端）
- * 2. Phase B 批次 6：用 last_assistant_message 调 haiku 出 ≤12 字标题摘要，
- *    emit run.timeline_summary { runId, summary }，前端 TimelineGroup 显示
- *    在折叠标题位置。fire-and-forget 不阻塞 hook 返回。
+ * 2. SDK getContextUsage 拉上下文占用 → emit run.context_usage + ≥80% 注 systemMessage
  *
  * input: StopHookInput (sdk.d.ts:5247)
  *   - stop_hook_active: boolean
  *   - last_assistant_message?: string
  */
 function makeStopReflectionHandler({ ctx, workspaceRoot }) {
-  return async (input, _toolUseId, _options) => {
+  return async (_input, _toolUseId, _options) => {
     let warnContextUsage = null;
     try {
       const hasCanvas = workspaceRoot
@@ -314,29 +311,6 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
         type: 'run.stop_reflection',
         hasCanvas,
       });
-
-      // 异步生成 timeline summary，不 await（让 hook 立即返回）；haiku 一般 1-2s
-      // 优先用本轮 thinking buffer（agent 思考过程,体现"在想什么"），空 → fallback
-      // 到 last_assistant_message（SDK 抽的 text content,体现"说了什么"）。
-      // 这样标题反映 agent 的内在动作而不只是对外说辞。
-      const thinkingText = (ctx.thinkingBuffer || []).join('\n').trim();
-      const lastMsg = input?.last_assistant_message;
-      const summarySource = thinkingText || (lastMsg && lastMsg.trim() ? lastMsg : null);
-      const summaryStyle = thinkingText ? 'thinking' : 'action';
-      const runIdSnapshot = ctx.runId;  // 闭包当前 runId（finishTurn 可能后续覆盖）
-      if (summarySource) {
-        summarizeForTimeline(summarySource, { style: summaryStyle })
-          .then(summary => {
-            if (summary) {
-              ctx.emit({
-                type: 'run.timeline_summary',
-                runId: runIdSnapshot,
-                summary,
-              });
-            }
-          })
-          .catch(err => console.warn(`[hooks/Stop] summary fail:`, err.message));
-      }
 
       // SDK 0.2.86+ getContextUsage —— 每个 turn 收尾时拉一次上下文占用，
       // emit 给前端做可视化条 + >= 80% 时注 systemMessage 提示 agent 注意
@@ -354,7 +328,7 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
                 : (max > 0 ? Math.round((used / max) * 100) : 0);
               ctx.emit({
                 type: 'run.context_usage',
-                runId: runIdSnapshot,
+                runId: ctx.runId,
                 used, max, percent,
                 model: usage.model,
                 categories: usage.categories,  // 前端可后续做分类柱图

@@ -104,24 +104,6 @@ export const useGlobalStore = create((set) => ({
     return { recallHistoryByProject: { ...s.recallHistoryByProject, [projectId]: next } };
   }),
 
-  // ── Phase B 批次 6：TimelineGroup 折叠标题（haiku 总结）──
-  // Stop hook 调 summarizeForTimeline 用 last_assistant_message 出 12 字标题
-  // → emit run.timeline_summary { runId, summary }，存这里。
-  // TimelineGroup 用 group 首条 message 的 runId 查表显示。
-  // 不分 project（runId 全局唯一足够），上限 200 条 LRU 防膨胀。
-  timelineSummaries: {},  // { [runId]: summary }
-  setTimelineSummary: (runId, summary) => set((s) => {
-    if (!runId || !summary) return s;
-    const next = { ...s.timelineSummaries, [runId]: summary };
-    // 简单 LRU：超 200 条删最早 50 条
-    const keys = Object.keys(next);
-    if (keys.length > 200) {
-      const remove = keys.slice(0, 50);
-      remove.forEach(k => delete next[k]);
-    }
-    return { timelineSummaries: next };
-  }),
-
   // ── 站内 Confirm / Prompt 对话框（替代 window.confirm / window.prompt）──
   // 命令式 Promise API：调用方 `await confirm({ message })` 拿 boolean，
   // `await prompt({ initialValue })` 拿 string|null。
