@@ -87,6 +87,24 @@ export async function getOrStartProxy(realUrl) {
         return;
       }
 
+      // 2026-05-07：DMXAPI 不实现 /v1/messages/count_tokens 端点 → 一律 404 →
+      // SDK binary 内部 R1.countTokens（每条 assistant message 后调）拿不到值
+      // → Query.getContextUsage() 永远 null → ContextUsageBar 永远"等待"
+      // + 80% 阈值预警从不触发（曾爆 418k 就是这条没起作用）
+      // 修：本地短路返伪造 200 + 粗估 input_tokens（body 字符数 / 3.5），
+      // 让 SDK 内部窗口计数有数据。估算 ±20% 够 UI 进度条用。
+      const isCountTokens = /^\/v1\/messages\/count_tokens\b/.test(origPath);
+      if (isCountTokens) {
+        const estimate = estimateInputTokens(body);
+        const respBody = JSON.stringify({ input_tokens: estimate });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(respBody)),
+        });
+        res.end(respBody);
+        return;
+      }
+
       // 1. 现有 kimi 修复（thinking adaptive→enabled、vision lift）
       body = maybeFixupMessagesBody(body);
       let modelHint = null;
@@ -380,6 +398,60 @@ function scanImageBlocks(messages) {
     }
   }
   return stats;
+}
+
+/**
+ * 粗估 messages body 的 input token 数。Anthropic count_tokens API 真实结果
+ * 用 SentencePiece tokenizer，CJK 1 字 ≈ 1.3 token，英文 ~4 char/token。
+ * 我们做平均：text 部分 length / 3.5；image base64 按 data 长度 / 4 单算
+ * （vision 模型按图块 token 计费，跟 base64 长度近似线性）。
+ *
+ * 不做 cache_creation/cache_read 拆分（SDK 内部不强依赖；input_tokens 一个数
+ * 就够 Query.getContextUsage 维护窗口计数）。
+ *
+ * fail-soft：解析失败返保守值 50000（约 1/5 上下文，触发 80% 警告概率低）。
+ */
+function estimateInputTokens(body) {
+  try {
+    const parsed = JSON.parse(body.toString('utf8'));
+    let total = 0;
+
+    const addText = (s) => { if (typeof s === 'string') total += s.length / 3.5; };
+    const addBlock = (b) => {
+      if (!b) return;
+      if (b.type === 'text' && b.text) addText(b.text);
+      else if (b.type === 'image' && b.source?.data) total += b.source.data.length / 4;
+      else if (b.type === 'tool_use') {
+        addText(b.name || '');
+        addText(JSON.stringify(b.input || {}));
+      }
+      else if (b.type === 'tool_result') {
+        if (typeof b.content === 'string') addText(b.content);
+        else if (Array.isArray(b.content)) b.content.forEach(addBlock);
+      }
+      else if (b.type === 'thinking' && b.thinking) addText(b.thinking);
+    };
+
+    if (Array.isArray(parsed.messages)) {
+      for (const msg of parsed.messages) {
+        if (typeof msg.content === 'string') addText(msg.content);
+        else if (Array.isArray(msg.content)) msg.content.forEach(addBlock);
+      }
+    }
+    if (typeof parsed.system === 'string') addText(parsed.system);
+    else if (Array.isArray(parsed.system)) parsed.system.forEach(addBlock);
+    if (Array.isArray(parsed.tools)) {
+      for (const t of parsed.tools) {
+        addText(t.name || '');
+        addText(t.description || '');
+        addText(JSON.stringify(t.input_schema || {}));
+      }
+    }
+
+    return Math.max(1, Math.round(total));
+  } catch {
+    return 50000;
+  }
 }
 
 /**

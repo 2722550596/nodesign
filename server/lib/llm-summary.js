@@ -45,6 +45,10 @@ export async function summarizeForTimeline(text, { style = 'action' } = {}) {
       + '只输出标题文本，不要引号、不要标点结尾、不要解释。',
     topic: '请把下面这段内容总结成 ≤12 个汉字的主题短语，只输出标题文本，'
       + '不要引号、不要标点结尾、不要解释。',
+    // thinking 风格：输入是 agent 思考过程（往往啰嗦反复），抽核心决策/动作
+    thinking: '下面是 agent 内心思考过程（可能反复斟酌、绕路）。请提取它"实际决定要做的核心动作或决策"，'
+      + '总结成 ≤12 个汉字的动作短语，类似"评估字体配对"/"决定重做封面"/"排查 vision 失败"。'
+      + '不要复述思考步骤，抓本质。只输出标题文本，不要引号、不要标点结尾、不要解释。',
   };
   const systemPrompt = promptByStyle[style] || promptByStyle.action;
 
@@ -71,14 +75,27 @@ export async function summarizeForTimeline(text, { style = 'action' } = {}) {
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    if (!resp.ok) {
-      console.warn(`[llm-summary] HTTP ${resp.status}: ${resp.statusText}`);
-      return null;
-    }
-    const json = await resp.json();
+
+    // NoDesk 偶尔返 5xx-with-success-body：HTTP 状态码报错但 body 是合法
+    // message response（id / type / role / content / usage 全在）。先解 body
+    // 再判,有合法 content[].text 就用;真错（4xx 鉴权 / 网络挂 / body 非 JSON）
+    // 才返 null。维持 fail-soft,但 NoDesk 协议怪异不再吞掉 summary。
+    const json = await resp.json().catch(() => null);
     const block = (json?.content || []).find(b => b?.type === 'text');
     const out = block?.text?.trim();
-    if (!out) return null;
+
+    if (!out) {
+      if (!resp.ok) {
+        console.warn(`[llm-summary] HTTP ${resp.status}: ${resp.statusText}`);
+      }
+      return null;
+    }
+
+    // 5xx 但成功解出 text → 警告记录但仍用结果（NoDesk gateway 状态码 bug）
+    if (!resp.ok && resp.status >= 500) {
+      console.warn(`[llm-summary] gateway returned ${resp.status} but body has valid content; using anyway`);
+    }
+
     // 单行 + 截 60（按字符；Modal/header 还会再截）+ 去尾标点
     return out.split('\n')[0].slice(0, 60).replace(/[。！?,，.!?；;]+$/, '').trim();
   } catch (err) {

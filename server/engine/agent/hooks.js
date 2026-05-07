@@ -316,10 +316,16 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
       });
 
       // 异步生成 timeline summary，不 await（让 hook 立即返回）；haiku 一般 1-2s
+      // 优先用本轮 thinking buffer（agent 思考过程,体现"在想什么"），空 → fallback
+      // 到 last_assistant_message（SDK 抽的 text content,体现"说了什么"）。
+      // 这样标题反映 agent 的内在动作而不只是对外说辞。
+      const thinkingText = (ctx.thinkingBuffer || []).join('\n').trim();
       const lastMsg = input?.last_assistant_message;
+      const summarySource = thinkingText || (lastMsg && lastMsg.trim() ? lastMsg : null);
+      const summaryStyle = thinkingText ? 'thinking' : 'action';
       const runIdSnapshot = ctx.runId;  // 闭包当前 runId（finishTurn 可能后续覆盖）
-      if (lastMsg && typeof lastMsg === 'string' && lastMsg.trim()) {
-        summarizeForTimeline(lastMsg, { style: 'action' })
+      if (summarySource) {
+        summarizeForTimeline(summarySource, { style: summaryStyle })
           .then(summary => {
             if (summary) {
               ctx.emit({
