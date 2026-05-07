@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Wrench, MoreHorizontal, Copy, Trash2, Edit2, ArrowUp } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import CreateProjectModal from '../components/project/CreateProjectModal.jsx';
+import PlanModeToggle from '../components/chat/PlanModeToggle.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
@@ -255,6 +256,7 @@ function QuickEntry() {
         >
           <Plus size={14} />
         </button>
+        <PlanModeToggle disabled={submitting} />
         <span style={{ flex: 1 }} />
         <button
           onClick={submit}

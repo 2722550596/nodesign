@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Square, Paperclip, AtSign, Wand2, ClipboardList, Upload } from 'lucide-react';
+import { Send, Square, Paperclip, Upload } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import { Plan } from '../../lib/api.js';
 import { useDropzone } from '../../lib/useDropzone.js';
 import ComposerTray from './ComposerTray.jsx';
 import SuggestionChip from './SuggestionChip.jsx';
+import PlanModeToggle from './PlanModeToggle.jsx';
 
 /**
  * Chat 输入框 — 双层结构（参考用户提供的设计图）
@@ -13,7 +13,7 @@ import SuggestionChip from './SuggestionChip.jsx';
  *   ┌──────────────────────────────────────┐
  *   │  描述你想做什么…                     │  ← textarea（单独占行，无装饰）
  *   │                                       │
- *   │  [@] [📎] [✨]  [深度对齐]      [✈ 发送] │  ← toolbar：左 3 icon / plan-mode toggle / 右 Send
+ *   │  [📎]  [深度对齐]              [✈ 发送] │  ← toolbar：附件 / plan-mode toggle / Send
  *   └──────────────────────────────────────┘
  *
  * 视觉：
@@ -21,10 +21,8 @@ import SuggestionChip from './SuggestionChip.jsx';
  *   - textarea: 纯文本输入区，自动增高
  *   - Send 按钮：亮黑 #2d2418（DeskSkill 主按钮色）+ 文字"发送" + 飞机图标
  *
- * 三个左侧 icon（P2 接通）：
- *   - AtSign     引用上下文（@ 引用项目内已上传的资料）
- *   - Paperclip  附件直传
- *   - Wand2      AI 建议（让 agent 帮写 brief 草稿）
+ * 2026-05-07：移除 @引用 + AI brief 建议两个未实装占位 icon，避免点击只 toast
+ *           "即将推出"的死交互；保留附件 + 深度对齐 toggle 与 QuickEntry/HubInput 三处对齐。
  */
 export default function ChatComposer({
   onSend, disabled, trayItems, onRemoveTrayItem, onPickFile,
@@ -39,36 +37,6 @@ export default function ChatComposer({
   const fileInputRef = useRef(null);
   const chatDraft = useGlobalStore(s => s.chatDraft);
   const setChatDraft = useGlobalStore(s => s.setChatDraft);
-  const planModeEnabled = useGlobalStore(s => s.planModeEnabled);
-  const setPlanModeEnabled = useGlobalStore(s => s.setPlanModeEnabled);
-  const showToast = useGlobalStore(s => s.showToast);
-  const activeRun = useGlobalStore(s => s.activeRun);
-  // UX 守卫：plan banner / approval card 弹时禁用 toggle 防双向操作打架
-  const planModeRequest = useGlobalStore(s => s.planModeRequest);
-  const planForApproval = useGlobalStore(s => s.planForApproval);
-  const planToggleLocked = !!planModeRequest || !!planForApproval;
-
-  // toggle handler：on/off 都要把当前活跃 query 的 permissionMode 同步切。
-  // - on:  bypassPermissions → plan
-  // - off: plan → bypassPermissions
-  // 无 active run（query 已 done）→ 跳过 API；下一 turn 自然走新的 initialPermissionMode
-  // API 失败（404 / 网络）silent 接受，只更新 localStorage
-  const handleTogglePlanMode = async () => {
-    if (planToggleLocked || disabled) return;
-    const next = !planModeEnabled;
-    setPlanModeEnabled(next);
-    if (activeRun?.pid && activeRun?.runId) {
-      try {
-        await Plan.grantViaPermissionMode({
-          pid: activeRun.pid,
-          runId: activeRun.runId,
-          mode: next ? 'plan' : 'bypassPermissions',
-        });
-      } catch {
-        // query 不 active（404）/ 网络抖动：silent；下一 turn 自然用新 mode
-      }
-    }
-  };
 
   // textarea 自动增高
   useEffect(() => {
@@ -203,12 +171,7 @@ export default function ChatComposer({
           alignItems: 'center',
           gap: GAP.sm,
         }}>
-          {/* 左：3 个 icon */}
-          <IconBtn
-            icon={<AtSign size={14} />}
-            title="引用项目内已上传的资料"
-            onClick={() => showToast('「@引用资料」即将推出', 'info')}
-          />
+          {/* 左：附件 + 深度对齐 toggle */}
           <IconBtn
             icon={<Paperclip size={14} />}
             title="上传附件（图片 / PDF / HTML / 等）"
@@ -227,47 +190,9 @@ export default function ChatComposer({
             }}
             style={{ display: 'none' }}
           />
-          <IconBtn
-            icon={<Wand2 size={14} />}
-            title="AI 建议（帮你写 brief 草稿）"
-            onClick={() => showToast('「AI brief 建议」即将推出', 'info')}
-          />
-
-          {/* Phase 3.2：plan-mode toggle —— 开 SDK 原生 plan mode（agent 先写 plan
-              让用户审批再执行）。LocalStorage 持久化，开/关在 chip 文字 + 高亮区分。
-              2026-05-06 修复 4 个 bug：
-                A) turn.js:71 默认值改为 'bypassPermissions'（不传 null）
-                B) toggle on/off 都调 /permission-mode 同步活跃 query（之前只有 on 路径）
-                C) plan banner/approval 弹时锁 toggle 防状态打架
-                D) plan-instructions 加载 fail 报 console.error
-          */}
-          <button
-            onClick={handleTogglePlanMode}
-            disabled={disabled || planToggleLocked}
-            title={
-              planToggleLocked
-                ? '审批进行中，请先在弹窗里做选择'
-                : planModeEnabled
-                  ? 'plan-mode 已开：agent 会先写 design plan 让你审批 / 编辑后再执行（点击关闭）'
-                  : 'plan-mode 关：agent 跑默认流程，复杂 brief 想先 review plan 再开（点击开启）'
-            }
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: `4px ${GAP.sm}px`,
-              fontFamily: FONT_SANS, fontSize: 11, fontWeight: 500,
-              color: planModeEnabled ? COLOR.btnText : COLOR.text2,
-              background: planModeEnabled ? COLOR.warn : 'transparent',
-              border: `1px solid ${planModeEnabled ? COLOR.warn : COLOR.borderMd}`,
-              borderRadius: 6,
-              cursor: (disabled || planToggleLocked) ? 'not-allowed' : 'pointer',
-              opacity: (disabled || planToggleLocked) ? 0.5 : 1,
-              transition: 'all 0.15s',
-              marginLeft: GAP.xs,
-            }}
-          >
-            <ClipboardList size={11} />
-            {planModeEnabled ? '深度对齐已开' : '深度对齐'}
-          </button>
+          <div style={{ marginLeft: GAP.xs }}>
+            <PlanModeToggle disabled={disabled} syncToActiveRun />
+          </div>
 
           <div style={{ flex: 1 }} />
 

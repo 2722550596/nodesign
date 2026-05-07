@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import InstructionsCard from '../components/project/InstructionsCard.jsx';
+import PlanModeToggle from '../components/chat/PlanModeToggle.jsx';
 import FilesCard from '../components/project/FilesCard.jsx';
 import MemoryCard from '../components/project/MemoryCard.jsx';
 import BrandCard from '../components/project/BrandCard.jsx';
@@ -251,6 +252,7 @@ function HubInput({ onStart }) {
         >
           <Plus size={14} />
         </button>
+        <PlanModeToggle />
         <span style={{ flex: 1 }} />
         <button
           onClick={submit}
