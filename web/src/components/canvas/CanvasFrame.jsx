@@ -3,12 +3,14 @@ import CanvasToolbar from './CanvasToolbar.jsx';
 import HtmlIframe from './HtmlIframe.jsx';
 import EditOverlay from './EditOverlay.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
-import SlideNavigator from './SlideNavigator.jsx';
 import CanvasCandidateBar from './CanvasCandidateBar.jsx';
 import A11yReviewPopover from './A11yReviewPopover.jsx';
 import SystemPopover from './SystemPopover.jsx';
 import InspectFloatingCard from './InspectFloatingCard.jsx';
+import CommentOverview from './CommentOverview.jsx';
+import CommentMarkers from './CommentMarkers.jsx';
 import { usePanelManager } from '../layout/PanelManager.jsx';
+import { SessionConfig } from '../../lib/api.js';
 import { COLOR, STAGE } from '../../lib/theme.js';
 
 /**
@@ -47,7 +49,8 @@ export default function CanvasFrame({
   // C3: Inspect contextual + Comments 嵌入
   comments = [],
   onAddComment, onResolveComment, onDeleteComment,
-  onDirectEdit, onTriggerRun,
+  // onDirectEdit / onTriggerRun 已不在 InspectFloatingCard 使用（DirectEdit UI 砍 — 2026-05-07）
+  // 父组件仍可能传入，destructure 忽略即可（未来 Tweaks v2 接管后再取用）
   // Tweaks 浮窗 toggle 按钮：仅 agent expose 过 controls 才显示
   tweaksAvailable = false,
 }) {
@@ -64,9 +67,34 @@ export default function CanvasFrame({
   const [iframeDoc, setIframeDoc] = useState(null);
   const [a11yOpen, setA11yOpen] = useState(false);
   const [systemOpen, setSystemOpen] = useState(false);
+  const [commentOverviewOpen, setCommentOverviewOpen] = useState(false);
+  // tweaks 启用/禁用 — 从 session-config.json 拉初始值
+  const [tweaksEnabled, setTweaksEnabled] = useState(true);
   const iframeWrapRef = useRef(null);
-  const a11yBtnRef = useRef(null);
+  // a11yBtnRef 已废 — A11y 按钮砍 toolbar 移到 SystemPopover；
+  // A11yReviewPopover 改 anchor 到 systemBtnRef（同 toolbar 位置）
   const systemBtnRef = useRef(null);
+  const commentBtnRef = useRef(null);
+
+  // 拉 session config 初始 tweaksEnabled
+  useEffect(() => {
+    if (!projectId || !sessionId) return;
+    let cancelled = false;
+    SessionConfig.read(projectId, sessionId).then(({ config }) => {
+      if (cancelled) return;
+      if (config && typeof config.tweaks_mode_enabled === 'boolean') {
+        setTweaksEnabled(config.tweaks_mode_enabled);
+      }
+    }).catch(() => { /* ignore；用默认值 true */ });
+    return () => { cancelled = true; };
+  }, [projectId, sessionId]);
+
+  const handleTweaksEnabledChange = useCallback((next) => {
+    setTweaksEnabled(next);
+    if (!projectId || !sessionId) return;
+    SessionConfig.patch(projectId, sessionId, { tweaks_mode_enabled: next })
+      .catch(() => { /* ignore；下次 turn 重新读取 */ });
+  }, [projectId, sessionId]);
 
   // 测 iframe wrap 尺寸（W + H）— fit 取 min 让单页完整可见 letterbox
   useEffect(() => {
@@ -211,21 +239,29 @@ export default function CanvasFrame({
         isAutoFit={zoom === 'fit'}
         onZoomChange={(z) => setZoom(z)}
         onFitToggle={() => setZoom('fit')}
-        onReload={handleReload}
-        onA11yClick={() => { setSystemOpen(false); setA11yOpen(o => !o); }}
-        a11yBtnRef={a11yBtnRef}
-        onSystemClick={() => { setA11yOpen(false); setSystemOpen(o => !o); }}
-        systemBtnRef={systemBtnRef}
-        systemActive={systemOpen}
         onTweaksClick={handleToggleTweaks}
         tweaksAvailable={tweaksAvailable}
         tweaksOpen={tweaksOpen}
+        tweaksEnabled={tweaksEnabled}
+        onTweaksEnabledChange={handleTweaksEnabledChange}
+        onCommentClick={() => {
+          setA11yOpen(false);
+          setSystemOpen(false);
+          setCommentOverviewOpen(o => !o);
+        }}
+        commentOverviewOpen={commentOverviewOpen}
+        commentBtnRef={commentBtnRef}
+        commentCount={Array.isArray(comments) ? comments.filter(c => c.status !== 'resolved').length : 0}
+        onSystemClick={() => {
+          setA11yOpen(false);
+          setCommentOverviewOpen(false);
+          setSystemOpen(o => !o);
+        }}
+        systemBtnRef={systemBtnRef}
+        systemActive={systemOpen}
       />
 
-      {/* Slide navigator — Edit/Preview 时扫 section[data-page]，多于 1 页才显示 */}
-      {(mode === 'edit' || mode === 'preview') && (
-        <SlideNavigator iframeDoc={iframeDoc} />
-      )}
+      {/* SlideNavigator 已删（2026-05-07）— 用户翻页用滚动 / 键盘 ←→ */}
 
       {(mode === 'edit' || mode === 'preview') && (
         <div ref={iframeWrapRef} style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
@@ -246,6 +282,16 @@ export default function CanvasFrame({
               zoom={effectiveZoom}
             />
           )}
+          {/* 已评论元素橙色 overlay 标记 — edit/preview 都显示，让用户随时看到反馈点 */}
+          <CommentMarkers
+            comments={comments}
+            iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+            zoom={effectiveZoom}
+            onSelectAnchor={(anchor) => {
+              if (mode !== 'edit') setMode('edit');
+              onSelectChange?.(anchor);
+            }}
+          />
           {mode === 'edit' && selectedAnchor && iframeDoc && (
             <InspectFloatingCard
               selectedAnchor={selectedAnchor}
@@ -258,8 +304,6 @@ export default function CanvasFrame({
               onAddComment={onAddComment}
               onResolveComment={onResolveComment}
               onDeleteComment={onDeleteComment}
-              onDirectEdit={onDirectEdit}
-              onTriggerRun={onTriggerRun}
             />
           )}
         </div>
@@ -271,7 +315,7 @@ export default function CanvasFrame({
 
       {a11yOpen && (
         <A11yReviewPopover
-          anchorRef={a11yBtnRef}
+          anchorRef={systemBtnRef}
           onClose={() => setA11yOpen(false)}
           iframeDoc={iframeDoc}
         />
@@ -286,6 +330,25 @@ export default function CanvasFrame({
           projectId={projectId}
           sessionId={sessionId}
           decisionsReloadKey={decisionsReloadKey}
+          onA11yClick={() => { setSystemOpen(false); setA11yOpen(true); }}
+          onReload={() => { setSystemOpen(false); handleReload(); }}
+        />
+      )}
+
+      {commentOverviewOpen && (
+        <CommentOverview
+          comments={comments}
+          iframeDoc={iframeDoc}
+          iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+          anchorRef={commentBtnRef}
+          onClose={() => setCommentOverviewOpen(false)}
+          onResolveComment={onResolveComment}
+          onDeleteComment={onDeleteComment}
+          onSelectAnchor={(anchor) => {
+            setCommentOverviewOpen(false);
+            if (mode !== 'edit') setMode('edit');
+            onSelectChange?.(anchor);
+          }}
         />
       )}
     </div>

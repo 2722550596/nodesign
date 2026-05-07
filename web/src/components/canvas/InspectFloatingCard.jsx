@@ -3,24 +3,18 @@ import { X, MapPin, MessageCircle, Trash2, Check } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { getElementRole, describePage, serializeForAI } from '../../lib/element-semantics.js';
-import InspectTab from '../context-panel/InspectTab.jsx';
 
 /**
- * InspectFloatingCard — 选中元素的 contextual 浮卡
+ * InspectFloatingCard — 选中元素的 contextual 浮卡（2026-05-07 瘦身版）
  *
- * C3：替代原 InspectTab + Comments 浮窗双开模式 ——
+ * 改造：原来含 [Comments + InspectTab(DirectEdit / 元素详情)] 双区，
+ * 这次只保留 Comments 区。DirectEdit / 元素属性编辑职责整体迁移到升级后的 Tweaks（下期，详见 memory idea_tweaks_v2_unified_panel.md）。
+ *
  *   - 选中元素 = 自动弹（贴元素右上角，溢出钳到 iframe 边缘）
  *   - ESC / 切元素 / 点空白 = 自动收（在 CanvasFrame 顶层挂 ESC handler）
- *   - 内嵌 Comments 区（filter 该 anchor 的评论）+ inline textarea（Enter 提交）
- *   - 下半部分复用 InspectTab compact 模式（去 padding + 去重复 header + 去重复"写评论"按钮）
+ *   - 评论列表 + inline textarea（Enter 提交）
  *
- * 位置算法（参考 EditOverlay 的 zoom 适配）：
- *   - 实时 findElementByAnchor + el.getBoundingClientRect() 取 iframe 内坐标
- *   - 视觉坐标 = elRect.{x,y,w,h} * zoom（外层 iframe 已 transform: scale(zoom)）
- *   - 浮卡贴元素右上角，钳到 iframeRect 内
- *   - iframe scroll → 重新算位置（节流 rAF）
- *
- * 元素移出视口时：浮卡贴 iframe 边缘 + 加"跳到该元素" pin 按钮（scrollIntoView）
+ * 位置算法保持不变（EditOverlay 同款 zoom 适配）。
  */
 
 const CARD_WIDTH = 340;
@@ -38,8 +32,6 @@ export default function InspectFloatingCard({
   onAddComment,
   onResolveComment,
   onDeleteComment,
-  onDirectEdit,
-  onTriggerRun,
 }) {
   const cardRef = useRef(null);
   const [, setTick] = useState(0);
@@ -277,15 +269,6 @@ export default function InspectFloatingCard({
             onBlur={(e) => { e.currentTarget.style.borderColor = COLOR.borderLt; }}
           />
         </div>
-
-        {/* 元素详情 — 复用 InspectTab compact 模式 */}
-        <InspectTab
-          compact
-          selectedAnchor={selectedAnchor}
-          iframeDoc={iframeDoc}
-          onDirectEdit={onDirectEdit}
-          onTriggerRun={onTriggerRun}
-        />
       </div>
     </div>
   );
