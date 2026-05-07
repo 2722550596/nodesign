@@ -72,11 +72,12 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 2. **用户上一轮回答让我离对齐近了多少？还差什么？** 写不出 delta 就说明你没真在听，别盲发下一轮
 3. **这个问题能用 web_search / Read assets / Read spec.json 先自答吗？** 能自答就别浪费用户回合
 
-**对齐验收（"复述测试"）**：你能用一两句话把以下三条复述清楚才算 Stage 0 对齐，缺一不行：
+**对齐验收（"复述测试"）**：你能用一两句话把以下四条复述清楚才算 Stage 0 对齐，缺一不行：
 
 1. **用户要什么**：3-5 个具体取值（色号 / 字号方向 / 节奏倾向 / 主题隐喻 / 案例参考）
 2. **用户不要什么**：≥2 个反例（"不要默认商务范" / "讨厌 PPT 模板感"）
 3. **视觉锚点**：≥1 个具体画面（reference 图 / 引名作品 / 场景描述）
+4. **特效量预算**：选定 level（静态 / 微动效 / entry 动效 / 戏剧化）+ 关键关注点（详见 § 0.6 § 特效量对齐）
 
 **复述失败的具体表现**：
 - ❌ "用户要现代感的 deck" — 没具体取值
@@ -150,7 +151,7 @@ NoDesign 双工作模式（用进不进 plan mode 来选）：
 
 | 轮次 | 必问 | 选问 |
 |---|---|---|
-| 第 1 轮 | **Tone / voice 4 选 1**（见下）+ 视觉调性方向 | 节奏密度 / 章节切分 |
+| 第 1 轮 | **Tone 头脑风暴循环**（见下）+ **特效量对齐**（见下，跟 Tone 同等关键） | 节奏密度 / 章节切分 |
 | 第 2 轮 | palette 三选 + 字体方向（preview HTML 让用户视觉对比） | 元素隐喻 |
 | 第 3 轮 | 核心元喻 + 收尾形态 | 反例 / 用户讨厌什么（"反例"问题特别值钱）|
 | 第 N 轮 | 还有歧义就接着问 | 没歧义就退出 |
@@ -202,6 +203,58 @@ record_decision({
 - ❌ R2 不带 visual preview → 用户没法判断 → 等于白问
 - ❌ Mode B 用户 toggle plan 还走 fast-path → 用户特意选了深度对齐你跳过了
 - ❌ 收敛了不 record_decision → generate 阶段忘了 → 风格漂移
+
+#### 特效量对齐（Stage 0 第 2 必问，跟 Tone 同等关键）
+
+跟 Tone 一样是"agent 默认值跟用户脑里差远"的高方差决策——agent 不问 = 默认套微动效 = 严肃商务场景晕、戏剧叙事场景平。**Stage 0 必带这条 question**（除非用户首句已含具体描述如"全静态"/"满屏动效"）。
+
+**核心 question**（用 AskUserQuestion + preview 模板）：
+
+```
+Q: "这份 deck 想要多少 motion / 特效量？"
+options:
+  - 静态       → 0 motion，所有元素一次性出现
+                  preview: 立现卡片 + 无任何过渡 + 静态对齐
+                  适合：严肃商务 / 学术克制 / 数据 dashboard
+                  技术：纯 HTML + Tailwind（importmap 不必加动画库）
+  - 微动效     → 轻量入场 + hover 反馈（"稳妥默认"）
+                  preview: 卡片 fade-in 100ms / 标题 stagger / hover 微抬
+                  适合：大部分场景的安全默认（产品 pitch / 团队介绍 / 数据复盘）
+                  技术：CSS @keyframes / Tailwind animate-* / framer-motion 简单 props
+  - entry 动效 → hero timeline + scroll-trigger reveal + 数字 count-up
+                  preview: 大字渐显 + 数字滚动 + 章节 wipe 转场
+                  适合：营销 landing / 数据揭晓 / 故事叙事
+                  技术：framer-motion / gsap scroll-trigger / 数字 count-up
+  - 戏剧化     → 跨页 timeline + parallax + 文字遮罩 + cinematic 入场
+                  preview: scroll-triggered 时序 / 文字遮罩 / parallax 多层
+                  适合：戏剧化叙事 / 高端 brand pitch / 视觉重的 cover
+                  技术：gsap timeline + ScrollTrigger / lenis 平滑滚动 / 跨页 anchor
+  - Other      → 用户写关键词（"只在 cover 加 motion 其他全静态" 等）
+```
+
+**为什么必问**：motion 量是 token 消耗 + 加载性能 + UX 体验三大指标的根决策。低估（用户脑里要满屏动画你做了静态）= 重写；高估（用户要静态文档你写了 GSAP timeline）= 浪费 + 用户嫌晕。
+
+**preview 必带**：HTML preview 用 inline keyframes 演示动效形态（240×140，CSS-only 即可，不必引外部动画库）。
+
+**收敛后必落** — `record_decision`（普通模式 Mode A）：
+
+```
+record_decision({
+  topic: "motion-budget",
+  decision: "<选定的特效量 level + 关键关注点>",
+  rationale: "<用户偏好 + 反例>",
+  alternatives: ["<被否的 level>"]
+})
+```
+
+Mode B plan 模式 → 落到 `design-plan.md.meta.motion_budget` + 逐页 brainstorm 时各页 `c_decisions.motion` 在预算内细化。
+
+**与 § 动效自检的衔接**（详见 Stage 3）：Stage 0 锁定整体特效量后，generate 写每页的 motion 时按预算执行。打破预算（cover 必须 cinematic）需先 push back 问用户。
+
+**反模式**：
+- ❌ 跳过特效量直接写 deck → 用户期待跟实际产物错位 = 全推倒
+- ❌ Mode B plan 阶段没在 meta 锁特效量 → 逐页 brainstorm 时方向飘
+- ❌ 严肃商务 + 戏剧化特效量混搭 → 不要同意这种自相矛盾的 brief，先回去用 Tone 反推问
 
 ### Escape hatch（仅当用户明说才跳）
 
@@ -322,6 +375,7 @@ meta:
   tone: <严肃商务 / 温暖人文 / 学术克制 / 戏剧化叙事 / Other>
   palette: <主色 + 强调色十六进制>
   metaphor: <核心隐喻一句话>
+  motion_budget: <静态 / 微动效 / entry 动效 / 戏剧化 / Other —— Stage 0 § 特效量对齐 锁定>
   page_count: N
   cross_page_anchor: <第 N 张图当 referenceImages 种子；或 portrait Maya 跨页固定>
 
@@ -581,6 +635,11 @@ deck/landing 写完每页前问自己：这页加 motion 是真的强化叙事�
 1. **没在 design-plan.md 对应页 c-segment 写 `motion:` 字段 → 不加**（plan 里写"none"也是写法）
 2. **跨页动效必须统一规范**（同一组 timing / easing），别每页一种节奏 — 跨页不一致比无动效更差
 3. **tone=严肃商务 / 学术克制 → 默认 0 motion**；agent 想加要在 plan 里写明理由（"数据揭晓需要 count-up 强调对比"）
+
+**与 Stage 0 § 0.6 § 特效量对齐 的衔接**：
+- 没经过 Stage 0 特效量 question 的简单任务（Mode A 改字 / 单元素调整）→ 默认遵守 motion=none，不要擅自加
+- Stage 0 锁了 motion-budget 的任务 → 写每页时按 budget 执行；要打破 budget（"这页必须 cinematic"）→ 回去 push back 问用户
+- 选了 entry 动效 / 戏剧化的 deck → 调对应库（framer-motion / gsap），别用 CSS 兜底凑数（用户已选重的，CSS 实现感太弱）
 
 **与 plan mode 的衔接**（详见 § Plan mode）：
 - 走 plan mode 的任务：motion 字段在 plan 期间逐页 brainstorm 时**已经跟用户对齐过**并落到 c_decisions.motion；generate 时照执行，本表是 plan 期间构思 motion 时的判断辅助
