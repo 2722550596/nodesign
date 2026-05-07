@@ -311,6 +311,17 @@ router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
       return res.json(result);
     }
 
+    // race guard：active session 存在但 query handle 未 attach（session 启动中
+    // 的窄 race window — registerQuerySession 已 set Map 但 attachSessionQuery
+    // 还没赋值 query 字段）→ 拒 409 让用户重试。如果直接 fallthrough 进路径 2
+    // 起临时 query，两个 SDK binary 会同时 attach 同一 jsonl 文件 → 错乱不可恢复。
+    if (hasActiveQuerySession(sid) && rec && !rec.abortController.signal.aborted) {
+      return res.status(409).json({
+        error: 'session is starting (query handle not yet attached), retry shortly',
+        code: 'SESSION_STARTING',
+      });
+    }
+
     // 路径 2：起临时 query resume → rewindFiles → close
     if (pendingRewinds.has(sid)) {
       return res.status(409).json({ error: 'rewind in progress', code: 'REWIND_BUSY' });
