@@ -205,10 +205,20 @@ export default function ProjectWorkspace() {
   }, [id, hydrated, hydrateError, project?.id, currentSessionId]);
 
   // H1：hydrate session messages（依赖 url sid）
+  // 防 wipe optimistic：streamInput 模式下 user msg 是 push 进 inputQueue（内存）
+  // 不立即写 JSONL，handleSend 后 navigate `/work` → `/sessions/<sid>` 触发本
+  // useEffect 时 Sessions.read 拿到的 JSONL 还没含刚发的 user msg → display 空 →
+  // 直接 setMessages(display) 会把 handleSend 乐观插入的 user msg 覆盖丢失。
+  // 现象：用户发首条消息后前端不显示，但后端已在跑 → assistant delta 突然推上来。
+  // 修法 ①：新建 session 路径（prevHydrateSidRef=null + prev 已含乐观 msg）跳过
+  //   hydrate，信任前端 state + WS run.delta.* 流式更新。
+  // 修法 ②：display 缺的乐观 user msg（按 content 匹配）保留——server 慢一拍 flush 时不丢。
+  const prevHydrateSidRef = useRef(null);
   useEffect(() => {
     if (!currentSessionId) {
       // /work 路径 = 新会话 → 空 chat 让用户从头开始
       setMessages([]);
+      prevHydrateSidRef.current = null;
       return;
     }
     let cancelled = false;
@@ -217,7 +227,29 @@ export default function ProjectWorkspace() {
         const { messages: sessionMsgs = [] } = await Sessions.read(id, currentSessionId);
         if (cancelled) return;
         const display = sessionMessagesToDisplay(sessionMsgs);
-        setMessages(display);
+        setMessages(prev => {
+          // 修法 ①：新建 session navigate 路径（null → 真 sid，prev 已乐观插入）
+          // → streamInput user msg 在 inputQueue 不在 JSONL，hydrate 拿到空数组
+          // 会把乐观插入吞掉。直接信任 prev 不替换。
+          const isNewSessionNavigation = prevHydrateSidRef.current === null && prev.length > 0;
+          if (isNewSessionNavigation) {
+            if (import.meta.env.DEV) console.info('[H1] skip hydrate on new-session navigation, trust optimistic + WS delta');
+            return prev;
+          }
+          // 修法 ②：display 缺的乐观 user msg（content 不匹配）保留——双保险
+          const displayUserContents = new Set(
+            display.filter(m => m.role === 'user').map(m => (m.content || '').trim())
+          );
+          const orphans = prev.filter(m =>
+            m.role === 'user' && !displayUserContents.has((m.content || '').trim())
+          );
+          if (orphans.length > 0) {
+            if (import.meta.env.DEV) console.warn(`[H1] kept ${orphans.length} orphan optimistic user msg(s) — JSONL flush race`);
+            return [...display, ...orphans];
+          }
+          return display;
+        });
+        prevHydrateSidRef.current = currentSessionId;
       } catch (err) {
         console.warn('[Project] hydrate session messages failed:', err.message);
         setMessages([]);
