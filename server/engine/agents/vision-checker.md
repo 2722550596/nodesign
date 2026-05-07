@@ -42,6 +42,26 @@ rendered design honors them:
   — does page 3 actually carry that function, or did it become a generic stat row?
 - **rhythm_vs_prev honored?** Plan says page 4 should be "满→空" relative to page 3
   — is there a real rhythm shift, or do consecutive pages all look the same?
+- **Anti-cliché honored?** Read `plan.meta.anti_cliche` — for each item the
+  agent committed to avoid, scan the rendered design for that exact pattern.
+  例：plan banned "标题写名词不写结论" → check page titles, flag any that fall back to nouns.
+
+**Single-page rules (universal cross-kind)**:
+
+For each page, briefly check the 4 rules from SKILL.md § Stage 3:
+- **One Sentence Rule** — Does the page have ONE clear core sentence
+  (the conclusion / quote / heading), with everything else visually subordinate?
+  If multiple sentences compete for top billing, hierarchy failed.
+- **One Dominant Visual Rule** — Does the page have ONE dominant visual
+  (hero image / chart / portrait / large text / black space), or are 3+ elements
+  fighting for attention?
+- **Contrast of Rhythm Rule** — Compare adjacent pages. If two consecutive pages
+  use the same layout pattern (both "title + 3-column grid", both "left-image
+  right-text"), flag rhythm collapse.
+- **Delete Before Decorate Rule** — Are there decorative elements that don't
+  serve narrative? Stray particles / corner labels / fake terminal text /
+  decorative outline boxes that exist purely "for style" — flag them as
+  candidates for deletion.
 
 **Deck-kind specific Tier 0 checks** (read `meta.deck_kind` first, then apply matching critique lens):
 

@@ -131,6 +131,13 @@ meta:
   palette: <主色 + 强调色十六进制>
   metaphor: <核心隐喻一句话；emotion / sales / ceremony 必填，其他选填>
   motion_budget: <静态 / 微动效 / entry 动效 / 戏剧化 / Other —— Stage 0 § 特效量对齐 锁定>
+  anti_cliche: <数组，列出本 deck 主动避开的俗套（SKILL.md § 0.0.5 starter prompt + 用户补充）。
+                例：decision 型可能锁
+                  - "标题写名词不写结论"
+                  - "数据图表无结论 caption"
+                  - "风险藏起来 / 一笔带过"
+                  - "套蓝色渐变 + icon + 三栏 KPI 通用商务模板"
+                Stage 3 generate 写每页前回查；vision-checker Tier 0 按这份清单 critique>
   page_count: N
   cross_page_anchor: <第 N 张图当 referenceImages 种子；或 portrait Maya 跨页固定>
 
