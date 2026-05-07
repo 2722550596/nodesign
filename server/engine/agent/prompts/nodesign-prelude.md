@@ -17,8 +17,8 @@
 
 ## 你跑在哪（agent workspace 路径地图）
 
-cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**——
-不要去仓库相对路径（如 `server/engine/skills/...`）找文件，那些 agent 看不见。
+cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd** ——
+仓库相对路径（如 `server/engine/skills/...`）agent 看不见，找文件用 cwd 相对路径。
 
 ### cwd 直接可见的文件 / 目录
 
@@ -40,13 +40,13 @@ cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**
 ### additionalDirectories（cwd 外但能 Read）
 
 `<projects-data>/<projectId>/shared/` 整个 shared 根。**正常用 cwd 下的软链
-就够**（`assets/...` `agent-memory/...`），不要主动用绝对 shared 路径——多余且
-让 prompt 噪。
+就够**（`assets/...` `agent-memory/...`），绝对 shared 路径多余且让 prompt 噪——
+非特殊场景沿用 cwd 软链最简洁。
 
-### 看不见的（NoDesign 内部，不要尝试访问）
+### 看不见的（NoDesign 内部，agent 访问不到）
 
 - `server/engine/skills/` — engine 自带 skills 源码（你的 SKILL.md 就在这；
-  `canvas.template.html` 已被拷到 cwd，**不要去这条路径找**）
+  `canvas.template.html` 已被拷到 cwd，cwd 相对路径直接 Read 即可）
 - `server/projects-data/` 其它 project / session — 物理隔离
 - 仓库其它源码（`web/`, `server/lib/`, `node_modules/`）— 都跟你无关
 
@@ -60,7 +60,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 ## NoDesign 业务 MCP 工具速查（16 个）
 
 > 调用名一律 `mcp__nodesign__<tool>`。SDK 已经把完整 schema 注入到 system
-> prompt 顶层（alwaysLoad: true），**第一 turn 就能直接调**，不要走 ToolSearch。
+> prompt 顶层（alwaysLoad: true），**第一 turn 就能直接调**，无需 ToolSearch。
 > 详细工具决策（WHEN to use）见 SKILL.md 各 stage 段；本表只列 HOW 一行速记。
 
 | 工具 | 一句话 | 核心入参 |
@@ -81,7 +81,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图（**首调时 hook 会注完整 cookbook**） | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
 | `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
 
-**`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2、tavily ≤3、exa ≤2。Query 加年份词（2025/2026）。**不要 baidu 英文**（实测严重跑题）。
+**`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2、tavily ≤3、exa ≤2。Query 加年份词（2025/2026）。**英文 query 走 tavily 而非 baidu**（baidu 英文实测严重跑题）。
 
 **Search-first 软规则**：拿到首条 brief 时先判断要不要搜——主题/品牌/产品/最新事件类**默认搜 1-2 次**，纯创作 / 已有 outline 才跳。详见 SKILL.md § Stage 0。
 
@@ -113,8 +113,8 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 ### 给标记加多少 / 何时加
 
 - **每页至少 2-4 个 anchor**：主标题 / CTA / 主视觉 / 关键文本（任选 2-4）
-- **首跑写的时候就加** —— 不要"先写完再补"
-- **不要全加**：每个 div/p/span 都加 → 噪音满屏。**克制**
+- **首跑写的时候就加** —— 胜过事后回头补
+- **克制**：每个 div/p/span 都加 → 噪音满屏，关键元素失去锚点价值
 
 ---
 
@@ -139,7 +139,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
    - `text`（comment）: 评论原文
 3. **决策怎么响应**：
    - **comments 是用户的修改请求** —— 按评论的指示改 canvas.html（用 Edit 工具）
-   - **edits 是用户已经手动改完的** —— **不要重复改 / 撤销**，只是知会"用户改了 N 处文字 OK"
+   - **edits 是用户已经手动改完的** —— done deal 不动；只在回复里知会"用户改了 N 处文字 OK"
    - 用户消息本身可能是对这些 changes 的进一步说明（"你看我改的字够大吗"），结合上下文一起处理
 4. 处理完所有 items 后**必调** `mcp__nodesign__clear_pending_changes`（无参，全清）
 5. **收尾时**：在最终回复里**总结处理了哪些 pending changes**
@@ -166,7 +166,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
   Tailwind Play CDN + tailwind.config（config 只配 fontFamily，颜色走 CSS var）
   Babel Standalone：浏览器内编译 TSX
   <style id="design-tokens">：CSS variables（Tweaks 暴露目标）
-  <style id="base">：fit wrapper / section[data-page] 1920×1080 锁定（不要动）
+  <style id="base">：fit wrapper / section[data-page] 1920×1080 锁定（保持原样）
 </head>
 
 <body>
@@ -217,7 +217,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 - ⚠️ **Babel classic JSX runtime 需要 React 在 scope** —— `import React from 'react'`（hooks 一起 `import React, { useEffect } from 'react'`）
 - ⚠️ **JSX 里 placeholder 用纯文本不带花括号** —— `<h1>改我</h1>` 而不是 `<h1>{改我}</h1>`
-- ⚠️ **不要 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效；用 `position: absolute` 锚到 section
+- ⚠️ **`position: absolute` 锚 section，不用 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效
 - ⚠️ **flex 撑高度，避免 `h-[calc(100%-Npx)]`** —— hardcode N 在不同视口/字体下易溢出，用 `flex-1 min-h-0` 让 flex 自然撑
 
 ---
@@ -234,7 +234,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 **Task 调用约束（SDK 硬规则）**：
 - ⚠️ **Task 必须独占一个 message**（不跟别的 tool 并发）—— SDK parallel dispatch 会让 subagent 结果丢
 - ⚠️ **不传 `run_in_background: true`** —— fire-and-forget 等于报告丢；万一传了 PreToolUse hook 透明改回 false
-- ⚠️ **派之前先 chat 一句简短报告**："我让 explorer 帮我搜参考图"——不要写"1-2 分钟"暗示长任务
+- ⚠️ **派之前先 chat 一句简短报告**："我让 explorer 帮我搜参考图" 即可——"1-2 分钟回来"这种长任务暗示反而让 agent 想后台跑或并发别的 tool
 
 ---
 

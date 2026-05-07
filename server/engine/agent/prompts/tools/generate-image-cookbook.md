@@ -48,15 +48,15 @@ mcp__nodesign__generate_image {
   ...
 }
 ```
-- ⚠️ **不要把 http url 喂进去** —— `generate_image.referenceImages` 只接 workspace 相对路径
-- ⚠️ **不要全 5 张全喂** —— 选 1-2 张最切题的；多 reference 反而稀释 anchor
+- ⚠️ **referenceImages 只接 workspace 相对路径** —— 喂 http url 会被拒
+- ⚠️ **选 1-2 张最切题的** —— 全 5 张全喂反而稀释 anchor，模型不知道该锚哪张
 
 **何时不该用 `include_images`**：
 - 抽象 / 装饰类（icon, decoration, pattern, texture）—— 模型自己脑补就行
 - 概念图（流程、拼贴、隐喻）—— 没有"真实参考"的语义
 - knowledge cutoff 内的著名实体（"Apple Park"、"Wong Kar-wai cinematography"）—— 直接 prompt 就够准
 
-## A. 模型本质 —— 用之前必须知道
+## A. 模型本质 —— 用之前先看一眼
 
 | 事实 | 你能利用什么 |
 |---|---|
@@ -146,7 +146,7 @@ mcp__nodesign__generate_image {
 
 ## G. Conversational in-painting 语言（精修 ≫ 重画）
 
-| 想做的 | ❌ 不要 | ✅ 应该 |
+| 想做的 | ❌ 重生整张（浪费） | ✅ 用 conversational editing |
 |---|---|---|
 | 改光线 | 重生整张 | "Keep composition, change lighting to golden hour" |
 | 换背景 | 重生整张 | "Replace the background with a neon-lit city street" |

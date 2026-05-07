@@ -14,7 +14,7 @@
 - **mcp__nodesign__generate_image**（探索性候选样张，**有时机规则见下**）
 - TodoWrite
 
-❌ **不能用**（动主产物 / 决策档案 / 打包都是 generate 阶段的活）：
+⛔ **canUseTool 会拒**（动主产物 / 决策档案 / 打包是 generate 阶段的活，plan 期间被 deny）：
 - Write / Edit / MultiEdit（含 canvas.html）
 - Bash（任何 shell 命令）
 - mcp__nodesign__screenshot_canvas / expose_tweaks / record_decision /
@@ -74,7 +74,7 @@ agent 先构思再问 = 给用户具体靶子打 = 比"你想要什么风格？"
      · tone / palette / metaphor / 4-stage chain
      · 跨页视觉锚（cover 当种子？还是 portrait 当种子？）
    - 整体方向定了 → 把 meta + four_stage_chain 段写到 design-plan.md（脑内 OR
-     在 plan 工具的 input 字符串里维护，不要 Write）
+     在 plan 工具的 input 字符串里维护——plan mode 下 Write 会被 deny）
    ↓
 2. 逐页 brainstorm 循环（核心，不是 nice-to-have）：
    for each page in plan:
@@ -196,7 +196,7 @@ ExitPlanMode({
 ```
 
 只调一次。SDK 会把 plan 转给 host，host 弹 PlanReviewCard 给用户最终审核。
-不要 Write design-plan.md，那会被 SDK deny —— 唯一落档路径是 ExitPlanMode 的
+Write design-plan.md 在 plan mode 下会被 SDK deny —— 唯一落档路径是 ExitPlanMode 的
 plan 参数。
 
 ## Plan mode 核心节奏（5 步）
@@ -213,7 +213,7 @@ plan 参数。
 
 ## escape hatch — 用户喊"赶时间 / 别 plan 了"
 
-- 如果用户进 plan mode 后改主意要立即开干 → **不要继续逐页 brainstorm**
+- 如果用户进 plan mode 后改主意要立即开干 → **从逐页 brainstorm 切到极简路径**
   - 用 AskUserQuestion 确认一次："看到你说赶时间，要不要我直接出一版让你看效果？"
   - 用户确认 → 调 ExitPlanMode 提交一份**极简 plan**（meta 段 + 极简
     pages 列表，每页只写 a_intent，c_decisions 标 user_decision='trust_agent'）

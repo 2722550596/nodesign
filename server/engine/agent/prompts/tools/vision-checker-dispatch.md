@@ -32,6 +32,6 @@ Task(subagent_type='vision-checker',
 
 ## 调用约束
 
-- **Task 必须独占一个 message**（不跟别的 tool 并发，否则 SDK parallel dispatch 会让 subagent 结果丢）
-- **不传 `run_in_background: true`**（fire-and-forget 等于自检结果丢）
+- **Task 独占一个 message**（不跟别的 tool 并发；SDK parallel dispatch 会让 subagent 结果丢，这是 SDK 硬规则）
+- **`run_in_background: true` 留空或 false**（fire-and-forget 等于自检结果丢；万一传了 PreToolUse hook 会透明改回）
 - **派之前先 chat 一句**："让 vision-checker 帮我自检视觉" —— 用户看到不卡死
