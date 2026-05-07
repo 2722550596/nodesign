@@ -86,6 +86,11 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
     }, {
       matcher: 'Grep',
       hooks: [makePreToolUseGrepContentDefaultHandler()],
+    }, {
+      // generate_image 第一次调用时提醒"先 Read 目标页"
+      // 设计原则 metadata-not-content：不预解析 HTML 注入，让 agent 自己 Read（防重读 hook 兜底）
+      matcher: 'mcp__nodesign__generate_image',
+      hooks: [makePreToolUseGenerateImageReadPageReminder()],
     }],
 
     // Stop —— agent 准备结束 query 时触发，发自检事件给前端
@@ -493,6 +498,43 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
         parts.push('canvas.html 还不存在 —— 这可能是首跑，按 brief 用 Write 工具创建。');
       }
 
+      // 3. design-plan.md：仅检查存在性，不读内容
+      // 设计原则 metadata-not-content：给 agent "地图"不给"答案"，保留主动 Read 的判断力
+      // 避免"被注入摘要后反而不主动读"的反模式
+      try {
+        const planPath = path.join(workspaceRoot, 'design-plan.md');
+        await fs.access(planPath);
+        parts.push(
+          'design-plan.md 已存在（plan mode 产出的故事弧）—— 涉及编辑/生成时请先 Read 对应页 c_decisions（reference / opposition / constraint / motion），对照故事主线再下笔。改动若偏离主线先 push back，不要偷偷改。',
+        );
+      } catch {
+        // design-plan.md 不存在：noop
+      }
+
+      // 4. session-config.json：tweaks_mode_enabled 注入对应行为提示
+      // 用户在 toolbar Tweaks toggle 控制；ON / OFF 对应不同的 agent 行为
+      try {
+        const cfgPath = path.join(workspaceRoot, 'session-config.json');
+        const stat = await fs.stat(cfgPath);
+        if (stat.size <= 8 * 1024) {
+          const raw = await fs.readFile(cfgPath, 'utf8');
+          const cfg = JSON.parse(raw);
+          // 默认 true（用户没改过 toggle 时 = 启用）
+          const tweaksEnabled = cfg?.tweaks_mode_enabled !== false;
+          if (tweaksEnabled) {
+            parts.push(
+              '【Tweaks 模式：启用】用户希望 deck 是"可调产品"。当 deck 形态稳定后，主动调 expose_tweaks 暴露核心微调参数（颜色 / 字号 / 排版密度等），让用户可以拖滑杆即时改样式。这是 NoDesign 的差异化价值，不暴露等于自废武功。',
+            );
+          } else {
+            parts.push(
+              '【Tweaks 模式：禁用】用户已在 toolbar 关闭 Tweaks 模式 —— 不要调 expose_tweaks 暴露控件，按对话方式让用户提需求你来 Edit 改。已暴露的 controls 不必清空，但不再新增 / 重 expose。',
+            );
+          }
+        }
+      } catch {
+        // session-config.json 不存在 / 解析失败：默认行为（启用），不注入
+      }
+
       if (parts.length === 0) return {};
 
       const additionalContext = `[NoDesign 工作台自动注入的当前状态]\n\n${parts.join('\n\n')}\n\n请基于这些信息处理用户的请求。`;
@@ -883,6 +925,21 @@ function makePostToolUseGenerateImageRegenWatchdog() {
       const next = (counts.get(base) || 0) + 1;
       counts.set(base, next);
 
+      // 第 1 次：邀请反馈 nudge（按 SKILL.md 高代价 / 低代价节点判断）
+      if (next === 1) {
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PostToolUse',
+            additionalContext:
+              `<system-reminder>\n[image-feedback-nudge] 这是本组（base="${base}"）第 1 张图。\n\n`
+            + `如果这张是 cover / portrait / 跨页 anchor 等**高代价节点**（将被当 referenceImages 种子用于全 deck），请在 chat 里自然邀请用户确认（"这个 cover 当全 deck 视觉锚 OK 吗？"），等用户回复再继续做后续。\n\n`
+            + `如果是 section-divider / decoration / icon 等**低代价单张**，可以直接继续——工具 caption 已天然在 chat 显示，不必硬 gate。\n\n`
+            + `判断诀窍：错了会不会导致全 deck 重生？会 → 邀请反馈；不会 → 继续。\n`
+            + `</system-reminder>`,
+          },
+        };
+      }
+
       if (next < REGEN_THRESHOLD) return {};
 
       // ≥ 3 次同 base outputName → 注 systemMessage
@@ -903,5 +960,39 @@ function makePostToolUseGenerateImageRegenWatchdog() {
       console.warn(`[hooks/regen-watchdog] threw:`, err.message);
       return {};
     }
+  };
+}
+
+/**
+ * PreToolUse(generate_image) — 第一次调用时提醒 agent 先 Read 目标页面。
+ *
+ * 设计原则 metadata-not-content：不预解析 canvas.html 注入页面 HTML，
+ * 而是提醒 agent 自己 Read。避免"被注入摘要后反而不主动读"的反模式。
+ *
+ * 触发：本 session（hook 工厂调用一次 → closure 一份 alreadyReminded）内
+ *      第 1 次调用 generate_image；后续不再注入。
+ *
+ * 不阻塞工具调用，permissionDecision='allow' 直接放行。
+ */
+function makePreToolUseGenerateImageReadPageReminder() {
+  let alreadyReminded = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyReminded) return {};
+    alreadyReminded = true;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[generate_image 目标页提醒]\n\n'
+        + '即将生成图片 — 改前请确认你已 Read 目标页面（canvas.html 中对应 <section data-page="N">），核对：\n'
+        + '  - 页面尺寸（多少行 / 多大留给图）\n'
+        + '  - 主色（design-tokens 里的 --bg / --accent / --hero）\n'
+        + '  - 已有视觉风格（hybrid 范式有无 React 组件 / 已有图片调性）\n\n'
+        + '没读目标页 = 闭眼下笔，第一张大概率违和（暖色页面塞冷调插图、白底深色页面塞高对比 hero）—— 重生成本远高于多读一次。\n\n'
+        + '本提醒每 session 只触发一次；后续同 session 内不再注入（防重读 hook 已能兜底重复 Read 场景）。\n'
+        + '</system-reminder>',
+      },
+    };
   };
 }

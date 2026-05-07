@@ -212,6 +212,67 @@ router.get('/:pid/sessions/:sid/spec', async (req, res, next) => {
 // SDK plan-approve 的产物保留（turn.js 落档），但前端不再有只读 modal。
 // vision-checker 子代理仍可 Read design-plan.md，走子代理的 cwd Read 路径。
 
+/**
+ * GET /:pid/sessions/:sid/config —— 读 session-config.json（用户/前端拥有的 session 配置）
+ *
+ * 跟 spec.json 区分：
+ *   - spec.json = agent 私域档案（agent 通过 record_decision/expose_tweaks/PostCompact 写）
+ *   - session-config.json = 用户/前端 session 偏好（前端 toggle 状态、UI 偏好）
+ *
+ * 当前字段：
+ *   - tweaks_mode_enabled: bool   是否启用 Tweaks 模式（agent 主动暴露微调参数）
+ *
+ * 文件不存在时返回默认 config。
+ */
+router.get('/:pid/sessions/:sid/config', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    res.json({ config: await readSessionConfig(sessionRoot) });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PATCH /:pid/sessions/:sid/config —— 部分更新 session-config.json
+ *
+ * body: 任意 partial config（只覆盖传进来的字段）
+ * 返回：merge 后的完整 config
+ */
+router.patch('/:pid/sessions/:sid/config', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const patch = req.body || {};
+    if (typeof patch !== 'object' || Array.isArray(patch)) {
+      return res.status(400).json({ error: 'body must be object' });
+    }
+    const current = await readSessionConfig(sessionRoot);
+    const merged = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    await fs.writeFile(
+      path.join(sessionRoot, 'session-config.json'),
+      JSON.stringify(merged, null, 2),
+      'utf8',
+    );
+    res.json({ config: merged });
+  } catch (err) { next(err); }
+});
+
+const DEFAULT_SESSION_CONFIG = Object.freeze({
+  tweaks_mode_enabled: true,
+});
+
+async function readSessionConfig(sessionRoot) {
+  try {
+    const raw = await fs.readFile(path.join(sessionRoot, 'session-config.json'), 'utf8');
+    const cfg = JSON.parse(raw);
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { ...DEFAULT_SESSION_CONFIG };
+    return { ...DEFAULT_SESSION_CONFIG, ...cfg };
+  } catch {
+    return { ...DEFAULT_SESSION_CONFIG };
+  }
+}
+
 const EMPTY_CANVAS_HTML = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><title>NoDesign canvas</title>
 <style>html,body{margin:0;height:100%;font-family:system-ui;background:#F9F8F6}

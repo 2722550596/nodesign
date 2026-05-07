@@ -300,6 +300,24 @@ async function composeUserMessage(chat, attachments, pendingSummary, assetsSumma
     }
   }
 
+  // 故事忠于：comment 类型的 attachment 触发"改前回故事"提醒
+  // 设计原则 metadata-not-content：只提醒 agent 去 Read，不注入 plan/decisions 内容
+  const hasComment = Array.isArray(attachments) && attachments.some((a) => a && a.type === 'comment');
+  if (hasComment) {
+    let hasDesignPlan = false;
+    try {
+      await fs.access(path.join(sessionRoot, 'design-plan.md'));
+      hasDesignPlan = true;
+    } catch { /* design-plan.md 不存在，用退化文案 */ }
+
+    blocks.push({
+      type: 'text',
+      text: hasDesignPlan
+        ? '[评论修改提醒 — 改前请 Read design-plan.md 对照对应页 c_decisions（reference / opposition / constraint / motion），偏离故事主线先 push back，等用户确认想偏离才动手]'
+        : '[评论修改提醒 — 改前请回看最近 decisions（已注入摘要 / 要细节 Read spec.json）确认改动方向；偏离主线先 push back]',
+    });
+  }
+
   // displayText：合并 blocks 用 \n\n，给 DB 审计 / fallback 显示用
   // image block 用占位文本而非 base64（base64 进 DB / 前端 fallback 都没意义）
   const displayText = blocks.map((b) => {

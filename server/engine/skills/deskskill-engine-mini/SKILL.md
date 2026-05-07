@@ -39,6 +39,27 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 
 ---
 
+## 修改场景元规则 — 改前回故事
+
+任何**修改类请求**（评论 / 微调 / 图片替换 / 文案改写 / Tweaks Apply / DirectEdit pending）开工前**必须先回故事**——别被局部反馈牵着走偏离主线。
+
+**回故事的优先级**：
+
+1. **优先 Read `design-plan.md`**（plan mode 产出的故事弧）→ grep 对应 page 节点的 `c_decisions`（reference / opposition / constraint / motion）
+2. **退而 Read `spec.json` decisions[]`**（无 plan 时；已被 hook 注入最近 5 条摘要，要细节直接 Read）
+3. **都没有** → 用户没建立故事弧，可直接做但在 chat 里说清你假设的方向
+
+**判断**：忠于主线 → 直接做；偏离 → 先 push back（"plan 里这页定的是 X，你想换成 Y？"）等用户明确想偏离才动手；不确定 → 读全再判断。
+
+**注入提示信号**：UserPromptSubmit hook 在 sessionRoot 存在 `design-plan.md` 时会在 systemMessage 末尾注入提醒；comment 触发时 turn 也会附一句提醒——看到这些信号 = "故事载体在那儿，去读"。
+
+**反模式**：
+- ❌ comment "改成更冷酷一点" 直接动手 → 没看 plan 的 tone 字段，可能跑偏
+- ❌ Tweaks Apply 不看 design-plan.md.meta.palette 就覆盖 :root → 丢了对齐过的主色
+- ❌ 改图调 generate_image 不读目标页 → 生成的图跟页面 layout / 主色脱节
+
+---
+
 ## Stage 0 — Ask + Search 直到意图清晰（无轮数上限）
 
 **信息不足时先问，不要瞎做**——这是元规则；视觉设计场景尤其严重，没 reference 就是猜，颜色、质感、字体、节奏全靠想象，猜对概率极低。
@@ -134,27 +155,53 @@ NoDesign 双工作模式（用进不进 plan mode 来选）：
 | 第 3 轮 | 核心元喻 + 收尾形态 | 反例 / 用户讨厌什么（"反例"问题特别值钱）|
 | 第 N 轮 | 还有歧义就接着问 | 没歧义就退出 |
 
-#### Tone 1Q 必问（除非用户明说"按你来"）
+#### Tone 风格头脑风暴循环（不要用 fixed 4 选 1）
 
-Stage 0 第 1 轮**必带**这条 question：
+Tone 决策必带——但**不再用 fixed 4 选 1**（旧做法把用户具体语境过滤光，选完用户还会觉得"不太对"）。改走多轮收敛循环：
+
+**R1 — 开放式探问**（仅当用户首句**没**具体风格描述时；已有"日系简约"/"Bloomberg 商务" / "Wong Kar-wai 风" 等具体方向就**跳过**直接 R2）：
 
 ```
-Q: 这份 deck 想要什么 tone / voice？
-options:
-  - 严肃商务   → 客观克制，长字短句，深色 palette，sans-serif，少装饰
-                preview: 一个 16:9 卡片，深灰底+白字标题"2026 Q1 Review"+ 数字排
-  - 温暖人文   → 故事感，长句多，暖色 palette，serif italic，留白多
-                preview: 米白底+衬线大字"那一天，他做出了选择"+ 手写感装饰
-  - 学术克制   → 数据导向，少形容词，浅色 palette，sans-serif，无装饰
-                preview: 白底+黑字"Hypothesis 3.2"+ 公式 + 引用编号
-  - 戏剧化叙事 → 大对比，戏剧字号，深色 + accent 高饱和，serif/display 混排
-                preview: 黑底+大金字"REVOLUTION"+ 红色细线条
-  - Other      → 用户写自己的关键词
+Q: "这个 deck 你想要的整体感觉是什么？一句话即可（关键词 / 类比 / 场景皆可）"
 ```
 
-为什么必问：tone 跟 palette / 字体 / 文案密度 / image gen prompt 风格全都强相关。**不问 = agent 默认走商务范**，跟用户脑里"古风茶道"差十万八千里，发现不对要回炉。
+**R2 — 搜参考图 + 4 选 1**：
 
-**preview 字段是设计场景关键**：视觉方向 / 配色 / 字体问题**必带 240×140 self-contained HTML preview**（详见 prelude § AskUserQuestion）。
+1. `web_search { include_images:true }` 按 R1 描述（或用户首句的具体方向）搜 3-5 张参考图
+2. AskUserQuestion 4 个 option：
+   - option 1-3：每个对应 1 张代表参考图 + **240×140 visual preview HTML**（含主色 + 字体方向 + 排版示意）
+   - **option 4 固定为 "都不太对，再来一轮"**
+
+**R3+ — 收敛 / 重跑**：
+
+- 用户选某 option → 收敛进 0.5 退出条件
+- 用户选 "再来一轮" → agent 解读用户文字反馈（"太硬" / "想要更暖" / "再古一点"），调 web_search 关键词重跑 R2
+- 收敛条件：用户明确选某 option / 连续选同方向 2 轮 / 用户说"就这个 / 差不多了 / 你定吧"
+
+**Mode A vs Mode B 差异**：
+- **Mode A**（简单任务）：fast-path —— 用户首句含具体方向时跳 R1 直接 R2，最多 2 轮收敛
+- **Mode B**（多页 deck / 用户 toggle plan）：**循环必跑完**，不允许 fast-path（深度对齐就是要慢）
+
+**收敛后必做** — 调 `record_decision`（仅 Mode A 普通模式必做；Mode B 已通过 design-plan.md.meta.tone 落档）：
+
+```
+record_decision({
+  topic: "tone-collapse",
+  decision: "<选定的 tone + 关键描述词>",
+  rationale: "<用户偏好关键词 + 反例 + 视觉锚>",
+  alternatives: ["<被否方向 1>", "<被否方向 2>"]
+})
+```
+
+**为什么必落** —— tone 是后续所有决策（palette / 字体 / 文案密度 / image prompt）的根。普通模式不落 = 走 3 页就忘 = 风格漂移。
+
+**preview 字段必带**：每个 option 都必带 240×140 self-contained HTML preview（详见 prelude § AskUserQuestion）—— 用户对"温暖人文"4 个字脑补的画面跟 agent 套的差很远，preview 是对齐的关键。
+
+**反模式**：
+- ❌ 直接给 fixed 4 选 1（旧做法）→ 跳过 R1 等于把用户语境过滤光
+- ❌ R2 不带 visual preview → 用户没法判断 → 等于白问
+- ❌ Mode B 用户 toggle plan 还走 fast-path → 用户特意选了深度对齐你跳过了
+- ❌ 收敛了不 record_decision → generate 阶段忘了 → 风格漂移
 
 ### Escape hatch（仅当用户明说才跳）
 
@@ -474,6 +521,20 @@ ExitPlanMode({
 | Knowledge cutoff 内的著名实体（Apple Park / Wong Kar-wai 风 / 艺术流派）| 模型脑里有 | prompt 直接点名，不必 reference |
 | **真实存在但模型不熟**（最新发布产品 / 小众品牌 / 用户自有 IP / 特定型号设备）| **`web_search { include_images:true }`** | 工具自动翻英文 + 下载到 `assets/references/`；选 1-2 张最切题的 `local_path` 喂 `referenceImages[]` |
 | 抽象概念 / 装饰 / 隐喻 | 不需要 reference | 直接 prompt（流派 + 5 元素公式）|
+
+**生图前的两个必做动作**：
+
+1. **必读目标页面** —— 调 `generate_image` 之前 `Read` 目标 `<section data-page="N">`，核对：
+   - 页面尺寸（多少行 / 多大留给图）
+   - 主色（design-tokens 里的 `--bg` / `--accent` / `--hero`）
+   - 已有视觉风格（hybrid 范式有无 React 组件 / 已有图片调性）
+   - **PreToolUse(generate_image) hook 第一次会注入提醒**——看到提醒即"去 Read 目标页"，不读 = 闭眼下笔，第一张大概率违和（暖色页面塞冷调插图、白底深色页面塞高对比 hero）。重生成本 >> 多读一次。
+
+2. **参考图搜完先问意愿** —— `web_search { include_images:true }` 搜到参考图后**不要直接喂 generate_image**：
+   - 在 chat 里贴 web_search 返的 image content block（已自动嵌入 turn output）
+   - 自然语言问"这几张参考图哪张更接近你想要的方向？或者全都不对，调关键词重新搜？"
+   - 用户选定（"用第 2 张" / "都不太对"）后再决定喂哪些到 `referenceImages[]`
+   - **为什么** —— 搜到的"前 3 张"可能完全不是用户脑里的画面；让用户挑 1-2 张确认过的喂进去比 agent 默认前 2 张准 5×。多 1 轮交互省 5 轮重生。
 
 **样张时机推荐 flow**：
 ```
