@@ -170,13 +170,18 @@ export default function Message({ message, projectId, sessionId, onCanvasReload 
  *   - 成功 → toast + onCanvasReload()（让 iframe bump reloadToken）
  *   - 410 (session 已 close) → toast 'session 已关闭，无法撤销'
  */
+// SDK uuid 36-char 形态（"abc12345-1234-1234-1234-123456789abc"）—— SDK Query.rewindFiles
+// 只认这个；前端乐观插入的 newId('msg') = "msg_xxx" 拿来调会被 SDK 拒（canRewind:false）
+// 一闪即逝，用户感觉"无反应"。所以 undo 按钮只在 hydrate 来的真 uuid 上启用。
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
   const showToast = useGlobalStore(s => s.showToast);
   const confirm = useGlobalStore(s => s.confirm);
   const [hover, setHover] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const canUndo = !!(projectId && sessionId && message.id);
+  const canUndo = !!(projectId && sessionId && message.id && UUID_RE.test(message.id));
 
   async function handleUndo() {
     if (!canUndo || busy) return;

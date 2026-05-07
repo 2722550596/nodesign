@@ -56,16 +56,65 @@ export function sessionMessagesToDisplay(sessionMessages) {
 
     if (!Array.isArray(content)) continue;
 
+    // user role 单独处理：合并所有 text block 推一条 display msg，id 用纯 sm.uuid
+    // —— SDK Query.rewindFiles(userMessageId) 只认 SDKUserMessage.uuid（纯 36-char），
+    // 之前 hydrate 加 ':text' 后缀让 SDK 不识别，"回到此处"按钮看似无反应 = 后端
+    // 返 canRewind:false，toast 一闪即逝。
+    // composeUserMessage 注入的 <system>...</system> 也会变成 user text block，跟用户
+    // chat 文本一起 join；显示侧的 noise 是另一回事，不影响 id 正确性。
+    if (role === 'user') {
+      const userTexts = [];
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        if (block.type === 'text' && block.text) {
+          userTexts.push(block.text);
+        } else if (block.type === 'tool_result') {
+          // 关联回之前 assistant tool_use 的 display msg（status / output / error / images）
+          const idx = toolIndexById.get(block.tool_use_id);
+          if (idx == null) continue;
+          const tool = display[idx];
+          tool.status = block.is_error ? 'error' : 'success';
+          const c = block.content;
+          if (block.is_error) {
+            tool.toolError = stringifyToolContent(c);
+          } else if (typeof c === 'string') {
+            tool.toolOutput = c;
+          } else if (Array.isArray(c)) {
+            const texts = [];
+            const images = [];
+            for (const cb of c) {
+              if (!cb || typeof cb !== 'object') continue;
+              if (cb.type === 'text' && cb.text) texts.push(cb.text);
+              else if (cb.type === 'image' && cb.source?.data) {
+                images.push({ data: cb.source.data, mediaType: cb.source.media_type });
+              }
+            }
+            if (texts.length) tool.toolOutput = texts.join('\n');
+            if (images.length) tool.toolImages = images;
+          }
+        }
+      }
+      if (userTexts.length > 0) {
+        display.push({
+          id: sm.uuid,  // 纯 SDK uuid → SDK rewindFiles 能认
+          role: 'user',
+          content: userTexts.join('\n\n'),
+        });
+      }
+      continue;
+    }
+
+    // assistant role：保持原 per-block 推送（thinking / text / tool_use 各占一条 display msg）
     for (const block of content) {
       if (!block || typeof block !== 'object') continue;
 
       switch (block.type) {
         case 'text': {
           if (!block.text) break;
-          // hydrate 用 sm.uuid + suffix 当稳定 id（避免 React key 冲突）
+          // assistant 用 sm.uuid + ':text' suffix 避免跟同 sm 的 thinking block React key 冲突
           display.push({
             id: `${sm.uuid}:text`,
-            role: role === 'user' ? 'user' : 'assistant',
+            role: 'assistant',
             content: block.text,
           });
           break;
