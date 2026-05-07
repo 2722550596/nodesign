@@ -194,7 +194,7 @@ record_decision({
 })
 ```
 
-普通模式不落痕的代价：tone 是后续所有决策（palette / 字体 / 文案密度 / image prompt）的根，走 3 页 agent 容易忘 → 风格漂移。
+为什么值得记 — tone 是后续所有决策（palette / 字体 / 文案密度 / image prompt）的根；记下来后续 generate 阶段你能 grep 回查（spec.json 自动注入最近 5 条决策摘要给你看），跨 turn / 跨 session 都不会遗失对齐过的方向。
 
 **preview 字段建议带**：每个 option 配 240×140 self-contained HTML preview（详见 prelude § AskUserQuestion）。用户对"温暖人文"4 个字脑补的画面跟 agent 套的差很远，preview 让对齐有抓手。
 
@@ -482,9 +482,11 @@ ExitPlanMode({
 | **3D 场景** | ⚠️ React mount + R3F + drei（确认用户真要 3D 才用） |
 | 静态图标（5 个 lucide icon 配文字） | ✅ 纯静态——`<svg>` inline 即可（不必 React） |
 
-**判断诀窍**：内容是否需要"组件库的真实力"？是 → React mount；不是 → 纯静态。**不要为了用 React 而 React** —— 简单页纯静态更容易维护，DirectEdit 也能改。
+**判断诀窍**：内容是否需要"组件库的真实力"？是 → React mount；不是 → 纯静态。简单页纯静态更容易维护，DirectEdit 也能改，没必要为了用 React 而 React。
 
-### Tweaks 暴露什么（5-8 个核心维度，不超过 8）
+**值得 record 一下**：如果选了某个有分量的技术方案（GSAP timeline / Recharts / R3F 3D / 特殊字体 CDN），调一下 `record_decision` 记下来后续修改时不会忘"为什么当时选了这个"——尤其换 session 续做或 vision-checker subagent 评审时能查回。
+
+### Tweaks 暴露什么（核心维度按 deck 实际形态判断少而精）
 
 > 暴露语法见 prelude § Tweaks。本节讲哲学。
 
@@ -720,13 +722,13 @@ vision-checker 返一段含 `VERDICT: <ok|minor-issues|major-issues> / ISSUES: .
 2. **关键设计决策**（metaphor / 配色 / 节奏）
 3. **用户接下来可以做什么**（"双击改字 / 用 ⋯ 看历史 / 跟我说调整方向 / 让我截图自检 / 拖 Tweaks slider 微调"）
 
-**关键基础设施收尾动作**（写完一版 deck 后**一次性主动调**）：
+**收尾时的几个有价值动作**（看场景调，不必每次全套）：
 
-| 动作 | 何时 | 为什么必做 |
+| 动作 | 适合的时机 | 它能带来什么 |
 |---|---|---|
-| `record_decision` | 定下核心 metaphor / palette / 字体后**一次** | 跨 session 持久化，下次 resume 不失忆 |
-| `expose_tweaks`（5-8 个 control） | deck 第一版完整写完后**一次** | 让 deck 从"静态产物"变"可调产品"，**这是 NoDesign 的差异化**，不暴露等于自废武功 |
-| `export_handoff` | 用户说"差不多 / 可以发了 / 给我交付"时**主动调** | 用户不必摸 UI 找 export 按钮——senior designer 该有的收尾意识 |
+| `record_decision` | 在每个有意义的决策节点都可以记（tone 收敛 / palette 锁定 / metaphor 选定 / 关键页技术选择 / 反例对齐 / 重要的 motion 取舍）；不必等收尾才一次性补 | 跨 turn / 跨 session 持久化；后续 turn 自动注入最近 5 条决策让你 grep 回查；下次 resume 不失忆。density 高一点（5-8 条/session 比 1-2 条更值）通常更好用 |
+| `expose_tweaks` | deck 第一版完整写完、形态稳定后调一次 | 让 deck 从"静态产物"变"可调产品"，是 NoDesign 的差异化价值。控件数量按 deck 实际形态判断少而精 |
+| `export_handoff` | 用户说"差不多 / 可以发了 / 给我交付"时主动调 | 用户不用摸 UI 找 export 按钮，体验更顺 |
 
 **关键页自检**：写完封面 / 数据页 / 章节扉页后调 screenshot_canvas 过一眼——布局问题（错位 / 截断 / 对比度低）vision 直接能看到，发现就迭代一次。
 
