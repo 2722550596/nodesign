@@ -6,7 +6,7 @@ import CreateProjectModal from '../components/project/CreateProjectModal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { Sessions, Turn, Canvas } from '../lib/api.js';
+import { Sessions, Canvas } from '../lib/api.js';
 import { timeAgo } from '../lib/helpers.js';
 
 /**
@@ -177,14 +177,10 @@ function QuickEntry() {
         name: projName || '未命名对话',
         kind: 'quick',
       });
-      // 2. 触发首跑（agent 后台跑，Workspace WS 看流）
-      try {
-        await Turn.send({ pid: proj.id, chat: v, attachments: [] });
-      } catch (err) {
-        showToast(`首跑触发失败：${err.message}（项目已创建，可在工作台重发）`, 'error');
-      }
-      // 3. 跳 Workspace（无 sid，新会话）。Workspace 接到首跑事件后会 navigate
-      //    replace 到 /sessions/<sid>，让 URL 反映真实 sid。
+      // 2. 跳 Workspace 并把首条消息塞 location.state；ProjectWorkspace 的
+      //    initialMessage useEffect（mount 后 250ms 等 WS 上线）单点负责发首条 turn。
+      //    旧实现这里也调 Turn.send 预发一条 → 后端 isNewSession=true 起 session A，
+      //    Workspace 上线后又发一条 → 起 session B，导致每次闪聊创 2 个 session。
       navigate(`/projects/${proj.id}/work`, { state: { initialMessage: v } });
     } catch (err) {
       showToast(`创建失败：${err.message}`, 'error');
