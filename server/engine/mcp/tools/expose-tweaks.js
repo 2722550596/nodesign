@@ -21,10 +21,9 @@
  *     除了写 canvas.html 还应该 expose_tweaks 更新 default 值）
  */
 
-import path from 'node:path';
-import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { mutateSpecJson } from '../../../projects/workspace.js';
 
 const ControlSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/, 'id must be kebab/snake case'),
@@ -100,37 +99,26 @@ Frontend will refresh once it sees run.tweaks_exposed event.`,
           };
         }
 
-        const specPath = path.join(workspaceRoot, 'spec.json');
-        let spec = {};
-        try {
-          const raw = await fs.readFile(specPath, 'utf8');
-          spec = JSON.parse(raw);
-          if (!spec || typeof spec !== 'object') spec = {};
-        } catch {
-          spec = {};
-        }
-
-        const existing = (spec.tweaks && Array.isArray(spec.tweaks.controls))
-          ? spec.tweaks.controls
-          : [];
-
+        // 串行 read-modify-write 防 spec.json 三路并发覆盖（详见 workspace.js mutateSpecJson）
         let merged;
-        if (replace) {
-          merged = controls;
-        } else {
-          const byId = new Map(existing.map(c => [c.id, c]));
-          for (const c of controls) byId.set(c.id, c);
-          merged = [...byId.values()];
-        }
-
-        spec.tweaks = {
-          version: 1,
-          controls: merged,
-          updatedAt: new Date().toISOString(),
-          updatedBy: 'agent',
-        };
-
-        await fs.writeFile(specPath, JSON.stringify(spec, null, 2), 'utf8');
+        await mutateSpecJson(workspaceRoot, (spec) => {
+          const existing = (spec.tweaks && Array.isArray(spec.tweaks.controls))
+            ? spec.tweaks.controls
+            : [];
+          if (replace) {
+            merged = controls;
+          } else {
+            const byId = new Map(existing.map(c => [c.id, c]));
+            for (const c of controls) byId.set(c.id, c);
+            merged = [...byId.values()];
+          }
+          spec.tweaks = {
+            version: 1,
+            controls: merged,
+            updatedAt: new Date().toISOString(),
+            updatedBy: 'agent',
+          };
+        });
 
         try {
           ctx?.emit?.({

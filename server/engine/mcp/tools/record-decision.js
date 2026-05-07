@@ -19,10 +19,9 @@
  *   }
  */
 
-import path from 'node:path';
-import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { mutateSpecJson } from '../../../projects/workspace.js';
 
 /**
  * @param {object} deps
@@ -77,18 +76,6 @@ Do NOT use this tool for:
           };
         }
 
-        const specPath = path.join(workspaceRoot, 'spec.json');
-        let spec = {};
-        try {
-          const raw = await fs.readFile(specPath, 'utf8');
-          spec = JSON.parse(raw);
-          if (!spec || typeof spec !== 'object') spec = {};
-        } catch {
-          spec = {};
-        }
-
-        if (!Array.isArray(spec.decisions)) spec.decisions = [];
-
         const entry = {
           ts: new Date().toISOString(),
           title: title.trim(),
@@ -98,9 +85,11 @@ Do NOT use this tool for:
             ? { alternatives: alternatives.map(s => String(s).trim()).filter(Boolean) }
             : {}),
         };
-        spec.decisions.push(entry);
-
-        await fs.writeFile(specPath, JSON.stringify(spec, null, 2), 'utf8');
+        // 串行 read-modify-write 防 spec.json 三路并发覆盖（详见 workspace.js mutateSpecJson）
+        await mutateSpecJson(workspaceRoot, (spec) => {
+          if (!Array.isArray(spec.decisions)) spec.decisions = [];
+          spec.decisions.push(entry);
+        });
 
         try {
           ctx?.emit?.({

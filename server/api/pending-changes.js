@@ -18,6 +18,7 @@ import express from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { mutex } from 'async-mutex-lite';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { ensureSessionWorkspace, validateSessionId } from '../projects/workspace.js';
 
@@ -92,7 +93,6 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
     }
 
     const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
-    const { items, file } = await readBuf(sessionRoot);
 
     const item = {
       id: randomUUID(),
@@ -102,12 +102,19 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
       ...(kind === 'edit' ? { diff: body.diff } : { text: body.text }),
       ts: new Date().toISOString(),
     };
-    items.push(item);
-    // 上限保护：超 MAX_ITEMS 时砍掉最老的（防 buffer 失控）
-    const trimmed = items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items;
-    await writeBuf(file, trimmed);
 
-    res.json({ ok: true, item, count: trimmed.length });
+    // 串行 read-modify-write 防多点击 race（用户连点 5 次评论 → 5 个 POST 几乎同时
+    // 到达，原版 readBuf→push→writeBuf 无锁，后写者覆盖前写者 → 用户感"评论凭空消失"。
+    // per-sessionRoot mutex 串行所有 pending-changes 写。
+    const trimmedCount = await mutex(`pending:${sessionRoot}`, async () => {
+      const { items, file } = await readBuf(sessionRoot);
+      items.push(item);
+      const trimmed = items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items;
+      await writeBuf(file, trimmed);
+      return trimmed.length;
+    });
+
+    res.json({ ok: true, item, count: trimmedCount });
   } catch (err) { next(err); }
 });
 
@@ -115,20 +122,20 @@ router.delete('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
-    const { items, file } = await readBuf(sessionRoot);
 
-    let next;
+    // 同 POST：mutex 串行避免 DELETE / POST 并发互踩
     const idsParam = req.query?.ids;
-    if (idsParam) {
-      const ids = String(idsParam).split(',').map(s => s.trim()).filter(Boolean);
-      const set = new Set(ids);
-      next = items.filter(it => !set.has(it.id));
-    } else {
-      next = [];
-    }
-    const removed = items.length - next.length;
-    await writeBuf(file, next);
-    res.json({ ok: true, removed, count: next.length });
+    const idsSet = idsParam
+      ? new Set(String(idsParam).split(',').map(s => s.trim()).filter(Boolean))
+      : null;
+    const result = await mutex(`pending:${sessionRoot}`, async () => {
+      const { items, file } = await readBuf(sessionRoot);
+      const filtered = idsSet ? items.filter(it => !idsSet.has(it.id)) : [];
+      await writeBuf(file, filtered);
+      return { removed: items.length - filtered.length, count: filtered.length };
+    });
+
+    res.json({ ok: true, ...result });
   } catch (err) { next(err); }
 });
 

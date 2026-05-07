@@ -41,9 +41,39 @@ import { promises as fs } from 'fs';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { mutex } from 'async-mutex-lite';
 import { validateProjectId } from './store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Per-sessionRoot read-modify-write 串行 utility。
+ *
+ * 解决：record_decision / expose_tweaks / PostCompact 3 处都 readFile→mutate→writeFile
+ * 同 spec.json，无锁 → 后写者 silent 覆盖前写者全量内容（"刚 record 的 decision 没了"
+ * 类 bug）。三处统一通过本 helper 写，async-mutex-lite 是 module-singleton，所有
+ * import 共享 lock map，按 key 串行。
+ *
+ * @param {string} workspaceRoot - sessions/<sid>/ 路径
+ * @param {(spec: object) => (object|void|Promise<object|void>)} mutator
+ *        接收已 parse 的 spec object（不存在 / 解析失败时是 {}），同步或异步 mutate；
+ *        return 的 object 当新 spec 写回（或 mutate 原 object 不 return 也行）。
+ * @returns {Promise<object>} 写入后的 spec
+ */
+export async function mutateSpecJson(workspaceRoot, mutator) {
+  return mutex(`spec:${workspaceRoot}`, async () => {
+    const specPath = path.join(workspaceRoot, 'spec.json');
+    let spec = {};
+    try {
+      const raw = await fs.readFile(specPath, 'utf8');
+      spec = JSON.parse(raw);
+      if (!spec || typeof spec !== 'object') spec = {};
+    } catch { /* file not exist / parse error → fresh */ }
+    const next = (await mutator(spec)) || spec;
+    await fs.writeFile(specPath, JSON.stringify(next, null, 2), 'utf8');
+    return next;
+  });
+}
 
 export const PROJECTS_DATA_ROOT = path.resolve(
   process.env.PROJECTS_DATA_DIR || path.join(__dirname, '../projects-data'),
@@ -412,16 +442,21 @@ export async function removeSessionWorkspace(projectId, sessionId) {
 export async function commitWorkspace(projectId, sessionId, message, { author = 'system' } = {}) {
   const sessionRoot = getSessionWorkspace(projectId, sessionId);
   if (!(await fileExists(sessionRoot))) return null;
-  await runGit(sessionRoot, ['add', '-A']);
-  const { stdout } = await runGit(sessionRoot, ['status', '--porcelain'], { capture: true });
-  if (!stdout.trim()) return null;
-  await runGit(sessionRoot, [
-    '-c', `user.email=${author}@nodesign`,
-    '-c', `user.name=${author}`,
-    'commit', '-q', '-m', message,
-  ]);
-  const { stdout: hash } = await runGit(sessionRoot, ['rev-parse', 'HEAD'], { capture: true });
-  return hash.trim();
+  // git race guard：用户 PUT canvas（DirectEdit 上行）+ agent Edit canvas.html
+  // 同时触发会撞 .git/index.lock，最坏 lock 残留导致后续 commit 全卡死。per-sessionRoot
+  // mutex 串行所有 git 写操作（commit / revert）。同 sid 共享 key=`git:${sessionRoot}`。
+  return mutex(`git:${sessionRoot}`, async () => {
+    await runGit(sessionRoot, ['add', '-A']);
+    const { stdout } = await runGit(sessionRoot, ['status', '--porcelain'], { capture: true });
+    if (!stdout.trim()) return null;
+    await runGit(sessionRoot, [
+      '-c', `user.email=${author}@nodesign`,
+      '-c', `user.name=${author}`,
+      'commit', '-q', '-m', message,
+    ]);
+    const { stdout: hash } = await runGit(sessionRoot, ['rev-parse', 'HEAD'], { capture: true });
+    return hash.trim();
+  });
 }
 
 export async function listHistory(projectId, sessionId, { limit = 50 } = {}) {
@@ -446,8 +481,24 @@ export async function revertWorkspace(projectId, sessionId, commitHash) {
     throw Object.assign(new Error(`invalid commit hash: ${commitHash}`), { code: 'INVALID_COMMIT' });
   }
   const sessionRoot = getSessionWorkspace(projectId, sessionId);
-  await runGit(sessionRoot, ['checkout', commitHash, '--', '.']);
-  return commitWorkspace(projectId, sessionId, `revert to ${commitHash.slice(0, 7)}`, { author: 'user' });
+  // git race guard: 同 commitWorkspace —— checkout + 后续 commit 全 wrap mutex
+  // 串行。注意：内层调 commitWorkspace 也会进 mutex，async-mutex-lite 对同 key 同
+  // 调用栈会按 prev Promise chain，**不会死锁**（mutex 拿到后释放 prev、await prev
+  // 已是 resolved 立即继续）—— 但为简洁还是把 checkout + commit 做成原子段，避免
+  // checkout 完别的 commit 抢进来覆盖待 commit 的 staged 状态。
+  return mutex(`git:${sessionRoot}`, async () => {
+    await runGit(sessionRoot, ['checkout', commitHash, '--', '.']);
+    await runGit(sessionRoot, ['add', '-A']);
+    const { stdout } = await runGit(sessionRoot, ['status', '--porcelain'], { capture: true });
+    if (!stdout.trim()) return null;
+    await runGit(sessionRoot, [
+      '-c', 'user.email=user@nodesign',
+      '-c', 'user.name=user',
+      'commit', '-q', '-m', `revert to ${commitHash.slice(0, 7)}`,
+    ]);
+    const { stdout: hash } = await runGit(sessionRoot, ['rev-parse', 'HEAD'], { capture: true });
+    return hash.trim();
+  });
 }
 
 // ── fork ──

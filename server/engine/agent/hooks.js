@@ -47,6 +47,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
+import { mutateSpecJson } from '../../projects/workspace.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -408,25 +409,16 @@ function makePostCompactHandler({ ctx, workspaceRoot }) {
       const summary = input?.compact_summary;
       if (!summary || typeof summary !== 'string') return {};
 
-      const specPath = path.join(workspaceRoot, 'spec.json');
-      let spec = {};
-      try {
-        const raw = await fs.readFile(specPath, 'utf8');
-        spec = JSON.parse(raw);
-        if (!spec || typeof spec !== 'object') spec = {};
-      } catch {
-        spec = {};
-      }
-
-      if (!Array.isArray(spec.history)) spec.history = [];
-      spec.history.push({
-        ts: new Date().toISOString(),
-        source: 'compact',
-        trigger: input.trigger || 'auto',
-        summary,
+      // 串行 read-modify-write 防 spec.json 三路并发覆盖（详见 workspace.js mutateSpecJson）
+      await mutateSpecJson(workspaceRoot, (spec) => {
+        if (!Array.isArray(spec.history)) spec.history = [];
+        spec.history.push({
+          ts: new Date().toISOString(),
+          source: 'compact',
+          trigger: input.trigger || 'auto',
+          summary,
+        });
       });
-
-      await fs.writeFile(specPath, JSON.stringify(spec, null, 2), 'utf8');
 
       try {
         ctx.emit({
