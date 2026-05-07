@@ -452,24 +452,6 @@ chat 直接问 1 题：
 
 **Plan mode 详细 workflow**：进入 plan mode 后 SDK 自动注入 [`prompts/nodesign-plan-instructions.md`](../../agent/prompts/nodesign-plan-instructions.md)（含完整流程 + design-plan.md 升级版 schema）。**进了 plan mode 跟着那份走即可。**
 
-### Plan mode 进入后必做 4 步（兜底，即使详细 workflow 没读到也按这个跑）
-
-万一 plan-instructions.md 注入失败 / 部分模型不严格遵循 system reminder，**记住这 4 步骨架**：
-
-1. **整体破局先行** — AskUserQuestion 锁 deck_kind / director_target / tone / palette / metaphor / motion_budget / 4-stage chain。**别一上来就逐页**——meta 没锁，逐页风格各自为政
-2. **逐页 brainstorm 循环** — for each page：构思（哪个画面 / metaphor 落点 / motion / reference）→ AskUserQuestion 给用户 2-3 个候选方向 + preview → 用户反馈 → 落 c_decisions → 下一页。一次问一页，不要 12 页一起问淹用户
-3. **全部页对齐后调 ExitPlanMode** — 把完整 design-plan.md（meta + four_stage_chain + pages[] + sealed_test + risks_pending）作为 `plan` 参数传入：
-   ```
-   ExitPlanMode({ plan: "<<完整 design-plan.md markdown 内容>>" })
-   ```
-   **唯一落档路径** —— Write design-plan.md 在 plan mode 下会被 SDK deny
-4. **SDK 暂停 → 用户审核 → approve 切 default mode → 进 generate**
-
-**Plan mode 期间能 / 不能用的工具**（canUseTool 硬 enforce）：
-- ✅ Read / Grep / Glob / WebFetch / Task(explorer) / AskUserQuestion / web_search / generate_image（探索性候选）/ TodoWrite
-- ⛔ Write / Edit / MultiEdit / Bash / screenshot_canvas / expose_tweaks / record_decision / export_handoff / navigate_to_page / highlight / clear_pending_changes（这些是 generate 阶段的活，plan 期间被 deny）
-
-**plan mode ≠ "agent 闭门写完 plan 一次性给用户审"**。是 agent ↔ user 逐页 brainstorm 时段——好 HTML 的瓶颈不在执行，在意图挖掘。
 
 ---
 
