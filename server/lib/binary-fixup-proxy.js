@@ -251,15 +251,13 @@ function maybeFixupMessagesBody(body) {
     mutated = true;
   }
 
-  // 2026-05-07：DMXAPI Kimi 通道走 OpenAI 风格 image block —— Anthropic 格式
-  // {type:'image', source:{type:'base64', media_type, data}} 会直接被网关拒 400：
-  //   "ModelArts.81001 message[0].content[1] has invalid field(s): text, ***"
-  // 转换成 {type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}} 即放行。
-  // （Kimi K2.6 本身可能仍无 vision 能力 —— 模型若返"I don't see"是单独问题，
-  // 但至少不再拒收 → 不带图的 chat 不会被 history 里的旧图拖累 400）
-  if (Array.isArray(parsed.messages) && transformImagesToOpenAIStyle(parsed.messages)) {
-    mutated = true;
-  }
+  // 2026-05-07 撤回：transformImagesToOpenAIStyle 转 image_url 在多轮 Read 图
+  // 路径下产生 Anthropic + OpenAI 混血 body（user msg 同时含 tool_result 与
+  // image_url），上游 adapter 大概率因此崩（"API Error: undefined is not an
+  // object (evaluating 'H.startsWith')"）。函数体保留留档，调用先撤。详见
+  // memory `idea_kimi_read_image_multi_turn_broken.md`。
+  // 副作用：用户在 chat 直接上传图（单 turn vision）会回到 400 状态，
+  // 由后续真正的 fix 单独解决。
 
   // thinking adaptive → enabled（保留 — kimi-k2.6 主代理）
   if (parsed.thinking && parsed.thinking.type === 'adaptive') {
