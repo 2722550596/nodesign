@@ -8,6 +8,8 @@ import {
   HelpCircle, SkipForward, Send, Check,
   Clock4, Compass, ScanEye, Palette, Sliders,
   ImagePlus,
+  Trash2, Inbox, Highlighter, LayoutList, Navigation,
+  MousePointerClick, BookOpen, ClipboardCheck, Camera,
 } from 'lucide-react';
 import { diffLines } from 'diff';
 import ReactMarkdown from 'react-markdown';
@@ -998,11 +1000,22 @@ const TOOL_ICONS = {
   WebSearch: Globe,
   Task: Bot,                                   // 通用 fallback（无 agentType 时）
   AskUserQuestion: HelpCircle,                 // 问号 = 主动问用户
-  // MCP nodesign 工具
-  'mcp__nodesign__screenshot_canvas': Eye,
+  // MCP nodesign 工具（2026-05-07 补齐 11 个漏映射；之前都走 fallback Wrench）
+  'mcp__nodesign__screenshot_canvas': Camera,
   'mcp__nodesign__export_handoff': Download,
   'mcp__nodesign__record_decision': Bookmark,
   'mcp__nodesign__generate_image': ImagePlus,
+  'mcp__nodesign__expose_tweaks': Sliders,
+  'mcp__nodesign__get_pending_changes': Inbox,
+  'mcp__nodesign__clear_pending_changes': Trash2,
+  'mcp__nodesign__request_plan_mode': ClipboardCheck,
+  'mcp__nodesign__read_page': BookOpen,
+  'mcp__nodesign__list_pages': LayoutList,
+  'mcp__nodesign__navigate_to_page': Navigation,
+  'mcp__nodesign__highlight': Highlighter,
+  'mcp__nodesign__query_elements': MousePointerClick,
+  'mcp__nodesign__get_computed_styles': Palette,
+  'mcp__nodesign__web_search': Globe,
 };
 
 // Subagent 类型 → 专属 icon（Task 工具特化，让用户一眼分清派的是哪个子代理）
