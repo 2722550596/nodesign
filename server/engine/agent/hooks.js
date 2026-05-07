@@ -45,9 +45,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Events } from './events.js';
 import { summarizeForTimeline } from '../../lib/llm-summary.js';
+import { getQuery } from '../runs/active-runs.js';
 
 /** 内部：UserPromptSubmit hook 读取 spec.json 时的最大字节数 */
 const SPEC_JSON_MAX_BYTES = 200 * 1024;
+/** Context usage 阈值：>=该百分比时注 systemMessage 提示 agent 注意 token 占用 */
+const CONTEXT_USAGE_WARN_PERCENT = 80;
 /** 内部：UserPromptSubmit hook 读 canvas.html 数页数时的最大字节数（防大文件吞内存） */
 const CANVAS_HTML_MAX_BYTES = 2 * 1024 * 1024;
 /** 内部：spec.json.decisions 注入摘要时取最近 N 条 */
@@ -300,6 +303,7 @@ function makeFileChangedHandler({ ctx }) {
  */
 function makeStopReflectionHandler({ ctx, workspaceRoot }) {
   return async (input, _toolUseId, _options) => {
+    let warnContextUsage = null;
     try {
       const hasCanvas = workspaceRoot
         ? await fs.access(path.join(workspaceRoot, 'canvas.html'))
@@ -327,8 +331,42 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
           })
           .catch(err => console.warn(`[hooks/Stop] summary fail:`, err.message));
       }
+
+      // SDK 0.2.86+ getContextUsage —— 每个 turn 收尾时拉一次上下文占用，
+      // emit 给前端做可视化条 + >= 80% 时注 systemMessage 提示 agent 注意
+      // （Kimi gateway 上限 256k，曾经爆过 418k）
+      if (ctx.runId) {
+        try {
+          const query = getQuery(ctx.runId);
+          if (query?.getContextUsage) {
+            const usage = await query.getContextUsage();
+            if (usage && typeof usage.totalTokens === 'number') {
+              const used = usage.totalTokens;
+              const max = usage.maxTokens || usage.rawMaxTokens || 256000;
+              const percent = typeof usage.percentage === 'number'
+                ? usage.percentage
+                : (max > 0 ? Math.round((used / max) * 100) : 0);
+              ctx.emit({
+                type: 'run.context_usage',
+                runId: runIdSnapshot,
+                used, max, percent,
+                model: usage.model,
+                categories: usage.categories,  // 前端可后续做分类柱图
+              });
+              if (percent >= CONTEXT_USAGE_WARN_PERCENT) {
+                warnContextUsage = `<system-reminder>\n[context-usage] 当前对话上下文已用 ${percent}%（${used.toLocaleString()}/${max.toLocaleString()} tokens）。\n\n如果接近 256k 上限可能触发自动 compact 中断当前思路；建议主动整理或在合适节点收尾，避免长对话累积。\n</system-reminder>`;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`[hooks/Stop] getContextUsage fail:`, err.message);
+        }
+      }
     } catch (err) {
       console.warn(`[hooks/Stop] handler threw:`, err.message);
+    }
+    if (warnContextUsage) {
+      return { systemMessage: warnContextUsage };
     }
     return {};
   };

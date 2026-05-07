@@ -11,7 +11,7 @@
     "smoke:agent": "node --env-file-if-exists=.env server/engine/agent/_smoke.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.123",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.132",
     "async-mutex-lite": "^1.0.0",
     "better-sqlite3": "^12.8.0",
     "cors": "^2.8.5",
