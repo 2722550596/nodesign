@@ -334,7 +334,8 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
                 categories: usage.categories,  // 前端可后续做分类柱图
               });
               if (percent >= CONTEXT_USAGE_WARN_PERCENT) {
-                warnContextUsage = `<system-reminder>\n[context-usage] 当前对话上下文已用 ${percent}%（${used.toLocaleString()}/${max.toLocaleString()} tokens）。\n\n如果接近 256k 上限可能触发自动 compact 中断当前思路；建议主动整理或在合适节点收尾，避免长对话累积。\n</system-reminder>`;
+                const maxK = Math.round(max / 1000);
+                warnContextUsage = `<system-reminder>\n[context-usage] 当前对话上下文已用 ${percent}%（${used.toLocaleString()}/${max.toLocaleString()} tokens）。\n\n如果接近 ${maxK}k 上限可能触发自动 compact 中断当前思路；建议主动整理或在合适节点收尾，避免长对话累积。\n</system-reminder>`;
               }
             }
           }

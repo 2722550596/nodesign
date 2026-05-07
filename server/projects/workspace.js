@@ -98,14 +98,14 @@ The agent will see this verbatim. Keep it concise and actionable.
  *   2026-05-01 加 — Kimi gateway 上下文上限 256k（262144 tokens）。当前默认
  *   模型 kimi-k2.6 一旦 prompt 累积超 256k → gateway 直接 400 报错（用户实测
  *   request id 20260501104913995449543DV62Dl5F：requested 418547 tokens）。
- *   留 10% 阈值 → 230000 tokens 触发自动 compact，SDK 用同模型压缩对话历史。
+ *   按 256k × 90% = 230400 tokens 触发自动 compact，SDK 用同模型压缩对话历史。
  *   PostCompact hook（hooks.js:84）已就位，compact 后摘要写 spec.json 长期记忆。
  *   1M context 模型（如 claude-opus-4-7[1m]）使用时建议手动调高这个值。
  */
 const DEFAULT_NODESIGN_SETTINGS = {
   $schema: 'https://json.schemastore.org/claude-code-settings.json',
   autoCompactEnabled: true,
-  autoCompactWindow: 230000,
+  autoCompactWindow: 230400,  // 256000 × 0.9
 };
 
 /**
