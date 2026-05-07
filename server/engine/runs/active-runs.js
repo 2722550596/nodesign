@@ -460,11 +460,30 @@ export function getRun(runId) {
 }
 
 /**
- * 快捷方法：拿 query handle。
+ * 快捷方法：从 runId 拿 query handle —— streamInput 模式下走 sessionId 反查。
+ *
+ * ⚠️ 历史包袱：activeRuns 的 rec.query 字段在 streamInput 模式下**永远是 null**
+ * （session-loop.js 只调 attachSessionQuery 不调 attachQuery，因为 query handle
+ * 是 per-session 不是 per-run 的）。直接读 activeRuns.get(runId)?.query 永远拿
+ * 不到 → turn.js plan-approve / plan-reject / rewindFiles / setModel 4 个
+ * endpoint 历史上**全部 broken**，用户体验是 "run not active"（虽然 run 真在跑）。
+ *
+ * 本函数现在反查：runId → sessionId → activeQuerySessions[sid].query。
+ * 兼容老路径：若 activeRuns.get(runId)?.query 真有值（比如非 streamInput 路径
+ * 留下的），优先返它。
+ *
  * @returns {import('@anthropic-ai/claude-agent-sdk').Query | null | undefined}
  */
 export function getQuery(runId) {
-  return activeRuns.get(runId)?.query;
+  if (!runId) return null;
+  // 老路径（非 streamInput / 测试 stub）
+  const runRec = activeRuns.get(runId);
+  if (runRec?.query) return runRec.query;
+  // streamInput 路径：runId → sessionId → query
+  for (const [, rec] of activeQuerySessions) {
+    if (rec.currentRunId === runId) return rec.query;
+  }
+  return null;
 }
 
 /**
