@@ -28,18 +28,17 @@ generate_image 在 plan 期间是**探索性候选样张**，不是 brainstorm �
 按这个节奏跑：
 
 1. **先 AskUserQuestion 锁方向** — reference 来源 / 调性 / 主体描述 / metaphor
-   落点。一上来就画 = 用户没给你足够信息你就在烧 token
+   落点。无方向就生图通常意味着用户还没给到足够信息，先对齐再画 ROI 更高
 2. **方向基本对齐**或**用户明显需要"看图说话"** → 这时才生 1-2 张候选
 3. **AskUserQuestion 带 preview** 把样张贴进 option preview 让用户视觉对比
 4. 用户反馈 → conversational editing 1-2 次微调 → 定下来 → 落 c_decisions
 5. 进下一页
 
-**反模式**（plan 阶段烧 token）：
-- ❌ 接到 brief 第一件事就 generate_image —— **必须先 AskUserQuestion** 至少
-  1 轮锁方向
-- ❌ 用户说"看着办" 你直接画 8 张 —— 先确认 1-2 个方向再画
-- ❌ 同一页 reroll 4-5 次同 prompt —— 让用户从已有候选选，别无止境 reroll
-- ❌ plan 画的图当"最终图" —— 这是探索性，generate 阶段会重新校准
+**plan 阶段生图的有效节奏**：
+- 先 1-2 轮 AskUserQuestion 锁方向（reference / 调性 / 主体）— 无方向的生图通常是 token 浪费
+- 用户给了充分反馈后再生 1-2 张候选样张 — 用户有具体视觉靶子来反馈
+- 同一思路的迭代收敛在 3 次内 — reroll 超过这个阈值，改 prompt 关键参数或问用户新方向通常更有效
+- Plan 阶段的图是探索性候选，generate 阶段会重新对焦校准 — 这是分工，不是返工
 
 ## 这是什么模式
 
@@ -156,23 +155,17 @@ ExitPlanMode({
 不要 Write design-plan.md，那会被 SDK deny —— 唯一落档路径是 ExitPlanMode 的
 plan 参数。
 
-## 反模式（每一条都要避开）
+## Plan mode 核心节奏（5 步）
 
-- ❌ **进 plan mode 后不 ask 直接埋头写完 design-plan.md** → 等于没 plan mode；
-  逐页 brainstorm 是核心不是装饰
-- ❌ **一次性把 12 页都问完才进下一步** → AskUserQuestion 单轮塞 12 个 question
-  用户被淹；一次只问当前这一页（外加跨页统一规范类整体性问题除外）
-- ❌ **跳过整体 meta 对齐直接进逐页** → 页与页之间会风格漂；先锁 metaphor +
-  palette + 跨页锚再开始逐页
-- ❌ **用户说"你看着办"就跳过所有 brainstorm** → 至少把整体方向 + 1-2 个
-  关键页（cover / 数据页 / 收尾）的构思说一遍校准
-- ❌ **提问只说"这页打算做 X" 没给具体画面细节** → 用户没法判断 → 等于白问；
-  question 必须 2-3 句具体描述（主体 / 构图 / 字号 / 风格 / motion / reference）
-- ❌ **Per-page c_decisions 写抽象**（"要克制"）→ 没法执行；必须有具体
-  OPPOSITION/REFERENCE/CONSTRAINT/motion 字段
-- ❌ **plan 写完不调 ExitPlanMode 直接结束** → host 永远等不到 plan，run 卡住
-- ❌ **plan mode 下还想 Write 文件 / 截图 / generate_image** → SDK 会 deny，
-  浪费 turn
+效果最好的流程顺序，每步有它的价值：
+
+1. **整体对齐先行** — 先锁 tone / palette / metaphor / 4-stage chain / 跨页锚，再开始逐页 brainstorm。跳过总体方向直接逐页时，各页容易各自为政、风格漂。
+2. **逐页节奏是核心价值** — Plan mode 的产出不是闭门写完的文档，而是逐页 brainstorm 对齐过的产物。"进 mode 后埋头写完一次性给用户审"的做法基本等于没用 plan mode。
+3. **一轮一页** — 一次 AskUserQuestion 对焦当前这页（跨页统一规范类整体问题除外）；一次问 12 页用户容易被选项淹。
+4. **问题质量决定反馈质量** — 提问带 2-3 句具体画面细节（主体 / 构图 / 字号 / 风格 / motion / reference）+ 2-3 个候选方向，用户才有靶子反馈；笼统说"这页打算做 X"用户没法判断。即使用户说"你看着办"，至少展示 1-2 个关键页（cover / 数据页 / 收尾）的具体构思校准方向。
+5. **Per-page c_decisions 写具体** — opposition / reference / constraint / motion 字段写明具体内容，generate 阶段才能照执行；抽象描述（"要克制"）实现时容易偏离。
+
+**流程结束**：全部页对齐后调 ExitPlanMode 提交 plan（host 弹 PlanReviewCard 给用户审核）；不调的话 run 等不到 plan 会卡住。Plan mode 内专注对齐，Write 文件 / 截图 / generate_image 这些动手活留给 generate 阶段（SDK 在 plan mode 也会 deny，省得浪费 turn）。
 
 ## escape hatch — 用户喊"赶时间 / 别 plan 了"
 

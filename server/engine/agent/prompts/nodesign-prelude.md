@@ -168,7 +168,7 @@ input：`{ questions: [{ question, header, options: [{label, description, previe
 ### 看到错直面根因，不绕路
 
 工具失败别瞎换工具试运气：
-- Edit 失败 oldString mismatch → **Read 看现在文件长什么样**，不要瞎改 oldString 重试
+- Edit 失败 oldString mismatch → 先 Read 看现在文件长什么样再精确改，盲目重试 oldString 通常浪费 turn
 - Bash sandbox 拦截 → 想想你为什么用 Bash，是不是该换 Read/Glob/Grep
 - screenshot / 业务工具失败 → 看 PostToolUseFailure 注入的恢复建议（hook 已经
   告诉你常见原因），按它做
@@ -375,21 +375,23 @@ mcp__nodesign__generate_image({
 })
 ```
 
-#### I. 反例（NOT to do — 一条踩 = 整张废）
+#### I. Prompt 质量自检 6 维度（输出不理想时对照看）
 
-- ❌ 关键词堆砌（`"woman blue dress sunny"`）
-- ❌ 否定描述（`"no cars"` / `"without people"`）
-- ❌ 抽象形容词（`"nice"` / `"pretty"` / `"cool"` / `"高级感"`）
-- ❌ 不指定艺术流派 / 摄影风格
-- ❌ 文字不带引号 + 不指定字体
-- ❌ 同 outputName regenerate ≥ 3 次（应改 prompt 或 ask user）
-- ❌ icon / sticker 不说"白底"（Nano Banana 不支持 transparent，会出灰底）
-- ❌ 跨页讲故事但不用 referenceImages（每张图独立瞎画 → 角色 / 风格漂移）
+- **结构** — 关键词堆砌（`"woman blue dress sunny"`）vs 自然段落描述。后者通常输出更稳，见 § 5 元素公式
+- **逻辑** — 否定描述（`"no cars"` / `"without people"`）模型容易理解反；改用肯定场景（`"empty pedestrianized street"`）更可控
+- **修饰词** — `"nice"` / `"pretty"` / `"cool"` / `"高级感"` 过度抽象；用具体视觉词（灯光 / 材质 / 色温 / 字号）替代效果更可控
+- **风格锚** — 没指定艺术流派 / 摄影风格 → 输出容易游移；点名一两个参考（`"Saul Bass minimalist"` / `"Fujifilm color science"`）会定向
+- **文字精度** — 渲文字不带引号 + 不指定字体 → 容易跑样；明确 `render the text "XXX" in [Font Name]` 更稳
+- **跨页一致** — 多页角色故事缺 referenceImages anchor → 每页独立生成时角色 / 调性容易漂；第 1 张定好后用 referenceImages 跨页复用
+
+**额外注意**：
+- icon / sticker 默认会出灰底（Nano Banana 不支持 transparent）— 明确 `"white background"` 可消除
+- 同 outputName 反复 reroll（≥3 次同 prompt）收益递减；改 prompt 关键参数或询问用户新方向通常更有效
 
 #### J. 调完必做
 
 1. **`record_decision`** —— 把 prompt + role + path + 用户评价记 spec.json，重生时能查回
-2. **关键节点邀请反馈**：cover / 第一个 portrait / logo 嵌入这种"高代价决策"产生的图（错了全 deck 重生），生完图后**必须在自然回话里邀请用户反馈**，例如："这个 cover 当全 deck 视觉锚行不行？想换风格直接说"；用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到）
+2. **关键节点的反馈循环**：cover / 第一个 portrait / logo 嵌入这种页面级 anchor（会被当 referenceImages 种子用于 downstream），生完图后在自然回话里邀请用户反馈一下方向（例如："这个 cover 当全 deck 视觉锚 OK 吗？想换风格告诉我"）。这些是 downstream 的种子，早定早收益；用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到）。
 
 ### `request_plan_mode`（plan 模式自决）
 
@@ -756,17 +758,20 @@ turn 2: [tool_use: Write(...引用 URL...)]
 - "字体名 + CDN link + 兼容性"（找字体）
 - "数字 + 来源"（验证事实）
 
-| 场景 | ❌ 自己干（吃 context） | ✅ 派 explorer |
+| 场景 | 自己干（吃 context） | 派 explorer 通常更高效 |
 |---|---|---|
 | "fintech onboarding 风" 没参考图 | 自己 web_search 5 次 | `Task(explorer, '找 3-5 个 fintech onboarding deck 视觉参考图 URL')` |
 | 想用 Inter 字体不确定 CDN | 自己 web_search + WebFetch | `Task(explorer, 'Inter 字体 Google Fonts CDN + 兼容性')` |
 | 缺一张表"数据驱动决策"的图 | 自己搜资源站 | `Task(explorer, '找一张"数据驱动决策"高质量插画/icon URL')` |
 
-### 何时**不**该派 explorer
+### Explorer 派遣的判断标准
 
-- 一次性 web_search 就能搞定的（"baidu 搜 'NoDesign'" → 自己一行）
-- 不需要外部信息的（视觉判断 / 排版调整 / 写文案）
-- 紧急 / 流程关键路径上的 single fact
+**通常值得派 explorer**：多步骤研究（≥3 turn 信息汇总）/ 视觉参考拍板的方向选择 / 陌生领域的快速事实验证。
+
+**自己做通常更快**：
+- 单行命令级搜索（一次 web_search 就够）
+- 已有足够信息、纯粹需要视觉判断 / 排版调整 / 文案输出
+- 时间紧张且结果是单点事实（不需要综合整理）
 
 ---
 
@@ -791,15 +796,19 @@ curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
 
 ---
 
-## 通用 don'ts（NoDesign 共性）
+## 工作流的关键约束（SDK 硬规则 + 经验最佳实践）
 
-- ❌ 自己 git commit / git checkout（git 由 server 管）
-- ❌ 装 npm 包 / pnpm install（stage 1 不允许）
-- ❌ 用 Bash 做 Glob/Grep/Read 能做的事（ls / find / cat / grep -r 全是反模式）
-- ❌ Edit 失败就盲目 Write 整文件（先 Read 看现在长什么样，再精确改）
-- ❌ Task 跟别的 tool 并发（Task 独占一个 message）
-- ❌ 看到 system 提示有 pending changes 但跳过 get_pending_changes 直接回应
-- ❌ 处理完 pending changes 忘记 clear
+约束分两类，用对的方式应对：
+
+**SDK 硬规则**（系统会 enforce，违反 = 直接失败）：
+- git commit / git checkout 由 server 托管管理（用户通过 Undo 操作 git 历史）
+- npm install / pnpm install 在 stage 1 被沙箱禁止
+- Task 工具独占一个 message（并发会让 subagent 结果丢失）
+
+**经验最佳实践**（建议遵循，效率显著更高）：
+- Bash 的 ls / find / cat / grep -r 改用 Glob / Grep 工具 — 速度快且结果格式更易处理
+- Edit 失败时先 Read 确认文件现状再精确改 — 盲目重试 oldString 容易循环；盲目 Write 整文件会让 git diff 脏乱
+- 看到 system 提示有 pending changes → 调 get_pending_changes 看一眼再回复，处理完 clear buffer（不清下一 turn 又见同样的 change）
 
 ---
 
