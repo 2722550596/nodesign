@@ -37,11 +37,21 @@
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
+import sharp from 'sharp';
 
 let _instance = null;
 
 const NODESK_PATH = '/default/passthrough';
 const PREFIX_RE = /^\/__nd\/([^/]+)(\/.*)$/;
+
+// Vision 下采样阈值（长边像素）。> 这个值的 image 在 fixup 阶段重 encode。
+// 默认 1568（Anthropic token 优化阈值，也是多数中转网关安全线）。
+// 触发原因：mili 项目 mili-logo.png 2500×2500 RGBA 触发 DMXAPI 400；
+// 经 cross-check 唯一区别是长边超出常见 vision 网关阈值。
+const VISION_MAX_DIM = (() => {
+  const n = Number(process.env.NODESIGN_VISION_MAX_DIM);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1568;
+})();
 
 /**
  * 启动 fixup proxy（幂等：第一次调启动，后续复用同一个 instance）。
@@ -58,15 +68,28 @@ export async function getOrStartProxy(realUrl) {
   const targetPort = target.port || (useHttps ? 443 : 80);
   const reqLib = useHttps ? https : http;
 
-  // NoDesk 渠道映射 —— 当前所有模型走同一 channel（DMX → DMXAPI）
-  const nodeskChannel = process.env.NODESIGN_GATEWAY_CHANNEL || 'DMX';
-  const nodeskChannelUrlBase = (process.env.NODESIGN_GATEWAY_CHANNEL_URL_BASE
+  // NoDesk 渠道映射 —— 主代理 vs subagent/helper 分流（2026-05-08）：
+  //   - 主代理（kimi-* model）→ MAIN channel（默认 kimi → moonshot anthropic 兼容端点）
+  //   - subagent + SDK helper（haiku-cc 等其他 model）→ SUB channel（DMX → DMXAPI）
+  // 路由依据 = 出口请求 body.model 字段；同一 proxy 实例内动态分流，不需要起两个 server。
+  //
+  // 主代理用 moonshot.cn 自带 anthropic 兼容端点（base = /anthropic，origPath /v1/messages
+  // 自动拼成 /anthropic/v1/messages）—— 实测响应/SSE 都是纯 Anthropic 协议，含
+  // thinking_delta + signature + cache_*_tokens，SDK binary 直插即用，无需协议转换。
+  // OpenAI 端点 (/v1/chat/completions) 的 SSE 是 chat.completion.chunk，SDK 解析崩，
+  // 严禁切到那条路径。
+  const nodeskMainChannel = process.env.NODESIGN_GATEWAY_MAIN_CHANNEL || 'kimi';
+  const nodeskMainChannelUrlBase = (process.env.NODESIGN_GATEWAY_MAIN_CHANNEL_URL_BASE
+    || 'https://api.moonshot.cn/anthropic').replace(/\/$/, '');
+  const nodeskSubChannel = process.env.NODESIGN_GATEWAY_CHANNEL || 'DMX';
+  const nodeskSubChannelUrlBase = (process.env.NODESIGN_GATEWAY_CHANNEL_URL_BASE
     || 'https://www.dmxapi.cn').replace(/\/$/, '');
 
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
+    req.on('end', async () => {
+     try {
       let body = Buffer.concat(chunks);
 
       // 剥 /__nd/<sessionTag> 前缀
@@ -105,15 +128,18 @@ export async function getOrStartProxy(realUrl) {
         return;
       }
 
-      // 1. 现有 kimi 修复（thinking adaptive→enabled、vision lift）
-      body = maybeFixupMessagesBody(body);
+      // 1. 现有 kimi 修复（thinking adaptive→enabled、vision lift、长边超限下采样）
+      body = await maybeFixupMessagesBody(body);
       let modelHint = null;
       try { modelHint = JSON.parse(body.toString('utf8'))?.model || null; } catch { /* ignore */ }
 
-      // 2. NoDesk passthrough 包装：注入 channel + channel_url
+      // 2. NoDesk passthrough 包装：按 model 分流（kimi-* 走主代理 channel，其他走 sub channel）
+      const isMainAgent = !!modelHint && /^kimi/i.test(modelHint);
+      const routeChannel = isMainAgent ? nodeskMainChannel : nodeskSubChannel;
+      const routeBase = isMainAgent ? nodeskMainChannelUrlBase : nodeskSubChannelUrlBase;
       body = wrapAsNodeskPassthrough(body, {
-        channel: nodeskChannel,
-        channelUrl: nodeskChannelUrlBase + origPath,
+        channel: routeChannel,
+        channelUrl: routeBase + origPath,
       });
 
       // 3. headers 处理：
@@ -174,6 +200,11 @@ export async function getOrStartProxy(realUrl) {
 
       proxyReq.write(body);
       proxyReq.end();
+     } catch (err) {
+       // async handler 抛出（如 sharp meta 异常 + downsample 漏网）：保 502 不让连接卡死
+       console.error(`[binary-fixup-proxy] handler error: ${err?.stack || err?.message || err}`);
+       try { res.writeHead(502); res.end(`proxy handler error: ${err?.message || 'unknown'}`); } catch { /* ignore */ }
+     }
     });
 
     req.on('error', (err) => {
@@ -192,7 +223,10 @@ export async function getOrStartProxy(realUrl) {
 
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
-  console.log(`[binary-fixup-proxy] listening on ${baseUrl} → ${realUrl}${NODESK_PATH} (channel=${nodeskChannel})`);
+  console.log(
+    `[binary-fixup-proxy] listening on ${baseUrl} → ${realUrl}${NODESK_PATH} `
+    + `(main=${nodeskMainChannel}@${nodeskMainChannelUrlBase} | sub=${nodeskSubChannel}@${nodeskSubChannelUrlBase})`
+  );
 
   _instance = {
     baseUrl,
@@ -206,8 +240,12 @@ export async function getOrStartProxy(realUrl) {
 /**
  * Body fixup（Kimi）：只在 model=kimi-* 时改 thinking + vision。
  * 其他情况原样返回（不解析 / 不改）。fail-soft：parse 异常一律透传。
+ *
+ * async：downsampleOversizedImages 用 sharp（异步）做尺寸下采样 —— 起因是 mili
+ * 项目的 mili-logo.png 2500×2500 触发 DMXAPI 400，常见 vision 网关长边阈值 ≤2048。
+ * 调用方 `req.on('end', async ...)` 已 await + try/catch 兜底。
  */
-function maybeFixupMessagesBody(body) {
+async function maybeFixupMessagesBody(body) {
   let parsed;
   try {
     parsed = JSON.parse(body.toString('utf8'));
@@ -249,6 +287,12 @@ function maybeFixupMessagesBody(body) {
   // Kimi vision lift（保留 — 主代理仍 kimi-k2.6）
   if (Array.isArray(parsed.messages) && liftImagesFromToolResult(parsed.messages)) {
     mutated = true;
+  }
+
+  // 长边超限的 image 下采样到 VISION_MAX_DIM（lift 后扫顶层即可，但保险扫两层）
+  if (Array.isArray(parsed.messages)) {
+    const resized = await downsampleOversizedImages(parsed.messages, VISION_MAX_DIM);
+    if (resized) mutated = true;
   }
 
   // thinking adaptive → enabled（保留 — kimi-k2.6 主代理）
@@ -309,6 +353,105 @@ function liftImagesFromToolResult(messages) {
     }
   }
   return mutated;
+}
+
+/**
+ * 长边超限下采样：扫所有 image block（user msg 顶层 + tool_result 内嵌），
+ * 长边 > maxDim 的 base64 image 用 sharp 重 encode 到长边 = maxDim。
+ *
+ * 起因：mili 项目 mili-logo.png 2500×2500 RGBA 触发 DMXAPI 400。常见 vision 网关
+ * 长边限制 ≤2048（Anthropic 官方 8000 但 token 优化在 1568）。
+ *
+ * fail-soft：单张图 sharp 抛错 → console.warn 后保留原图透传，不阻断整 turn。
+ *
+ * @param {Array} messages
+ * @param {number} maxDim 长边像素阈值
+ * @returns {Promise<boolean>} 是否有任何 image 被替换
+ */
+async function downsampleOversizedImages(messages, maxDim) {
+  let mutated = false;
+  for (const msg of messages) {
+    if (!Array.isArray(msg?.content)) continue;
+    for (let i = 0; i < msg.content.length; i++) {
+      const block = msg.content[i];
+      // 顶层 image
+      if (block?.type === 'image') {
+        const replaced = await maybeResizeImageBlock(block, maxDim);
+        if (replaced) { msg.content[i] = replaced; mutated = true; }
+      }
+      // tool_result 内嵌 image（lift 后理论上不会有，但防御扫描）
+      if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+        for (let j = 0; j < block.content.length; j++) {
+          const inner = block.content[j];
+          if (inner?.type === 'image') {
+            const replaced = await maybeResizeImageBlock(inner, maxDim);
+            if (replaced) { block.content[j] = replaced; mutated = true; }
+          }
+        }
+      }
+    }
+  }
+  return mutated;
+}
+
+/**
+ * 检查单个 image block 是否需要 resize：
+ *   - 仅 base64 source（URL 引用图不动）
+ *   - media_type 限 png/jpeg/webp（gif 跳过避免动图丢帧）
+ *   - 长边 ≤ maxDim 跳过
+ *
+ * resize 时若有 alpha 通道则 flatten 白底（部分 vision 网关对 RGBA 不友好；副作用是
+ * 透明背景的 logo 会变白底，但比 400 报错好）。
+ *
+ * @returns {Promise<object|null>} 替换后的 block，或 null（无需替换 / 失败透传）
+ */
+async function maybeResizeImageBlock(block, maxDim) {
+  const src = block?.source;
+  if (!src || src.type !== 'base64' || !src.data) return null;
+  const writers = {
+    'image/png': (p) => p.png({ compressionLevel: 9 }),
+    'image/jpeg': (p) => p.jpeg({ quality: 85, mozjpeg: true }),
+    'image/webp': (p) => p.webp({ quality: 85 }),
+  };
+  const writer = writers[src.media_type];
+  if (!writer) return null;
+
+  try {
+    const inputBuf = Buffer.from(src.data, 'base64');
+    const meta = await sharp(inputBuf).metadata();
+    const w = meta.width || 0;
+    const h = meta.height || 0;
+    const longEdge = Math.max(w, h);
+    if (longEdge <= maxDim) return null;
+
+    let pipeline = sharp(inputBuf).resize({
+      width: w >= h ? maxDim : null,
+      height: h > w ? maxDim : null,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
+    if (meta.hasAlpha) pipeline = pipeline.flatten({ background: '#ffffff' });
+    const outBuf = await writer(pipeline).toBuffer();
+
+    if (process.env.NODESIGN_DEBUG_VISION === '1') {
+      console.info(
+        `[binary-fixup vision] resized ${w}x${h} ${src.media_type} `
+        + `(${inputBuf.length}B) → longEdge=${maxDim} (${outBuf.length}B)`
+      );
+    }
+
+    return {
+      ...block,
+      source: {
+        type: 'base64',
+        media_type: src.media_type,
+        data: outBuf.toString('base64'),
+      },
+    };
+  } catch (err) {
+    console.warn(`[binary-fixup vision] resize failed (passthrough): ${err?.message || err}`);
+    return null;
+  }
 }
 
 function scanImageBlocks(messages) {
