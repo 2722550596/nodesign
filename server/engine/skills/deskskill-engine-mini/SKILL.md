@@ -94,7 +94,7 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 |---|:---:|---|
 | 具体公司 / 产品 / 品牌（"OpenAI Atlas" / "Tesla Cybertruck"） | ✅ 必搜 | `web_search` 拿现状，避免脑里训练数据滞后 |
 | 最新数据 / 事件（"2026 Q1 AI 动态"） | ✅ 必搜 | 加年份词；CJK→baidu / 英文→tavily |
-| 设计风格陌生（"brutalist" / "Y2K" / "wabi-sabi"） | ✅ 必搜参考图 | `web_search { include_images: true }`，拿到内嵌 image content block 直接 vision-check |
+| 用户指名了**模仿对象**（"Linear 风" / "像小红书那种" / "Apple Park 现代风" / "wabi-sabi" / "brutalist"） | ✅ 必搜参考图 | `web_search { include_images: true }`，拿到内嵌 image content block 直接 vision-check |
 | 真实存在物体生图前（产品照 / 场景）| ✅ 必搜 reference | `web_search { include_images: true }` 下 `assets/references/`，喂 generate_image |
 | 给了精确 outline + 素材（"照这 5 页做"） | ❌ 跳搜直接 ask 细节 | — |
 | 纯创作 / 风格化文字（"写首爱情诗 deck"） | ❌ 跳搜直接 ask | — |
@@ -102,8 +102,12 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 
 **Search 反模式**：
 - ❌ "这个产品什么颜色？" → 你 search 一下不就好了
-- ❌ "brutalist 是什么意思" → search "brutalist design" 看 5 张图你自己就 brief 出方向了
+- ❌ "Linear / Apple / brutalist 我懂" → 你脑里的 "Linear 风" 跟用户脑里的可能差很远，用户实际见过的某个 Linear 页面 vs 你训练数据里的可能完全两个东西。看一张真图秒对齐，比文字描述高一个数量级
 - ❌ 用户给了品牌名 → 立即 ask 配色 / 字体偏好（应该先 search 它的 brand identity guideline 再问"你想保留还是换"）
+
+**视觉模仿是 web_search include_images 的最高 ROI 场景**——用户指名模仿对象时，搜一张真图当 reference 比纯文字脑补对齐成本低一个数量级。哪怕你以为你懂这个风格，搜图也比靠记忆稳，因为：用户提到品牌时心里有具体页面 / 海报 / 截图，那张特定的视觉是 anchor，不是泛泛的风格定义。
+
+**反滥用边界**：抽象需求（"温暖人文"）/ 没有 anchor 的纯创作 / 改字调样式这种局部 tweak 不要搜——只在用户给了**具体可见的模仿对象**（品牌名 / 风格代名词 / "像 X 那种"句式）时搜。
 
 **搜完接着 AskUserQuestion** 把信息消化成 2-3 个具体方向让用户从中选，比"想突出什么"高效 10×。
 
