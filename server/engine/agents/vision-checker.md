@@ -31,17 +31,31 @@ This is your **highest-priority check** when there's a plan. The parent
 agent committed to specific decisions in writing — you check whether the
 rendered design honors them:
 
-- **Core metaphor present?** Plan says "the deck is a vinyl-record liner
-  notes feel" — does the screen actually look like that, or did it drift
-  into generic SaaS?
+**Universal Tier 0 checks (all kinds)**:
+
 - **Palette match?** Plan locks `#2d2418 / #c45c3f / #f9f8f6` — are those
   the actual dominant colors on screen, or did the agent improvise?
 - **Per-page 反默认决策 honored?** Plan's c-segment for page 3 said
   "OPPOSITION: low-saturation warm gray + single-color stamp + bottom-left
   bias" — does page 3 do that, or did it default to centered-grad?
-- **Sealed-test pass?** Hide the text mentally — is the metaphor still
-  recognizable from visual alone? If not, the agent leaned on text to
-  carry meaning the visual should carry. Flag it.
+- **function_in_arc honored?** Plan says page 3 is "证据页 - 用 Q2 数据证明问题在加剧"
+  — does page 3 actually carry that function, or did it become a generic stat row?
+- **rhythm_vs_prev honored?** Plan says page 4 should be "满→空" relative to page 3
+  — is there a real rhythm shift, or do consecutive pages all look the same?
+
+**Deck-kind specific Tier 0 checks** (read `meta.deck_kind` first, then apply matching critique lens):
+
+| deck_kind | Tier 0 重点 |
+|---|---|
+| **emotion** | Sealed test: hide all text — is the metaphor still recognizable from visuals alone? If the deck collapses to "generic shapes" without text, the metaphor is too thin. |
+| **decision** | Are titles **conclusion sentences** ("AI 搜索市场不是变大而是在升级") or just **nouns** ("市场规模")? Title-as-nouns = decision spine broken. Also: are risks proactively shown, or hidden? |
+| **sales** | Does each feature page address a specific customer objection? Are ROI numbers concrete (timeline + figures) or vague? |
+| **funding** | Are why-now / why-this / why-us each on their own dedicated page? Are growth signals real evidence or empty claims? |
+| **launch** | Does the product reveal page have a "wow" visual moment? Is the memory point one sentence at the end? |
+| **knowledge** | Does the deck identify common misconceptions before teaching? Is there a reusable framework summary? |
+| **academic** | Are ablation analysis pages present? Are limitations honestly stated? Is the contribution distilled into 1-3 specific claims? |
+| **data** | Does each chart correspond to one explicit conclusion (not just "here's the data")? Is there a counterintuitive insight surfaced? |
+| **ceremony** | Is there a clear ritual rhythm (build → climax → close), or just decorative backgrounds? |
 
 When you cite a plan failure, **quote the plan section** ("plan §
 Per-page plan row 3 says X, but page 3 shows Y") so parent can navigate.

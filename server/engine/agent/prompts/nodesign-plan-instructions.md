@@ -50,6 +50,16 @@ agent 先构思再问 = 给用户具体靶子打 = 比"你想要什么风格？"
 确认 = 单页错了只重做一页，全 plan 错了 = 全推翻；用户能在每页 redirect
 方向，不会被 agent 拖到尽头才发现整体走偏。
 
+**Deck-kind aware**：进 plan mode 之前 Stage 0 应该已经锁定 deck_kind（见 SKILL.md
+§ 0.0 Deck-kind 识别）。plan mode 的整体破局 + 逐页 brainstorm 都按 kind 分流：
+
+- decision/sales/funding/launch 等"导演决策"类 → 重点对齐 decision_spine 各步骤分页 + 每页 function_in_arc 承担哪一步
+- emotion/ceremony → 重点对齐 metaphor + 情绪曲线节奏对比
+- data/academic → 重点对齐核心论点 + 证据链顺序
+- knowledge → 重点对齐心智模型重建路径（误区 → 正确）
+
+如果你在 plan mode 还没看到 deck_kind 锁定的信号（meta.deck_kind 还空着），优先用 AskUserQuestion 把 kind 问出来再继续整体破局——kind 错了后面所有分流都跑偏。
+
 ## 标准流程
 
 ```
@@ -100,22 +110,33 @@ agent 先构思再问 = 给用户具体靶子打 = 比"你想要什么风格？"
 - ✅ 你能用 1-2 句话复述这一页的画面（具体到主体 / 构图 / 字号 / 风格）
 - ✅ 知道 reference 从哪来（用户上传 / web_search 哪条 / 模型脑里）
 - ✅ motion 字段写得出来（"无 motion" 也是写法）
+- ✅ **function_in_arc 写得出来**——这页在 deck_kind 对应脊柱里承担什么功能（决策型 → 决策脊柱第几步；情绪型 → 情绪曲线哪一阶；数据型 → 证据链哪一节）
+- ✅ **rhythm_vs_prev 写得出来**——跟上一页节奏怎么变（满→空 / 图→字 / 解释→沉默）
 - ✅ 用户在最近一轮 AskUserQuestion 里明确说 OK 或 trust_agent
 
-## design-plan.md schema（必须按这个结构）
+## design-plan.md schema（deck-kind aware，按这个结构）
 
 ```yaml
 meta:
   brief_recap: <一句话复述>
+  deck_kind: <emotion | decision | sales | funding | launch | knowledge | academic | data | ceremony>
+  director_target: <一句话 "我要让观众从 X 状态变成 Y 状态"，例：从"觉得这事不紧急"变成"批准 Q3 立刻启动">
+  decision_spine: <**仅 deck_kind=decision/sales/funding/launch 必填**；其他 kind 留空。
+                  按对应 kind 的结构脊柱写出每步对应内容。
+                  decision 9 步：要做什么决策 → 为什么现在 → 当前问题 → 关键洞察 → 推荐方案 → 凭什么相信 → 成本收益 → 风险 → 下一步
+                  sales 7 步：你的损失 → 旧办法解决不了 → 我们怎么解决 → 你会得到什么 → 接入成本 → 风险控制 → 下一步
+                  funding 10 步：why now → 旧玩家失效 → 新机会 → 产品切入 → 增长证据 → 商业模式 → 护城河 → 团队 → 融资用途 → 请求
+                  launch 7 步：旧体验痛苦 → 新时代/新需求 → 我们的新答案 → 产品登场 → 核心能力 → 场景证明 → 记忆点收束>
   tone: <严肃商务 / 温暖人文 / 学术克制 / 戏剧化叙事 / Other>
   palette: <主色 + 强调色十六进制>
-  metaphor: <核心隐喻一句话>
+  metaphor: <核心隐喻一句话；emotion / sales / ceremony 必填，其他选填>
+  motion_budget: <静态 / 微动效 / entry 动效 / 戏剧化 / Other —— Stage 0 § 特效量对齐 锁定>
   page_count: N
   cross_page_anchor: <第 N 张图当 referenceImages 种子；或 portrait Maya 跨页固定>
 
 four_stage_chain:
-  1_metaphor: <隐喻>
-  2_palette_font: <从隐喻派生的 palette + 字体方向，落到具体 hex>
+  1_metaphor: <隐喻 OR "克制实事求是"（决策型 / 数据型 / 学术型默认）>
+  2_palette_font: <从 kind + 隐喻派生的 palette + 字体方向，落到具体 hex>
   3_layout_vocab: <3-5 个隐喻派生的 layout 名 — dig-cross-section / vinyl-spread />
   4_rhythm_media: <留白多/少 / 整体 motion 规范 / 引图引音频>
 
@@ -123,20 +144,36 @@ pages:
   - index: 1
     role: cover
     a_intent: <一句话画面描述（主体+动作+构图+风格）>
-    b_layout: <hero-led / image-led / hybrid / chart-led>
+    b_layout: <hero-led / image-led / text-led / data-led / hybrid>
     c_decisions:
       reference: <来源 + 具体>
       opposition: <反默认决策一行 — OPPOSITION：不走"标题居中纯文字"的偷懒做法>
       constraint: <硬约束一行 — 不能用渐变 / 不能用 Pacifico 字体>
       motion: <一行 OR 'none'>
       copy_direction: <文案密度 + tone fit>
+      function_in_arc: <这页在情绪曲线 / 决策脊柱 / 学习路径里承担什么功能。
+                       例：emotion → "失真转折，让观众从沉浸跌出"
+                           decision → "证据页 - 用 Q2 数据证明问题在加剧"
+                           data → "结论页 - 一句反直觉洞察"
+                           knowledge → "误区识别 - 让学员意识到默认理解错在哪"〉
+      rhythm_vs_prev: <跟上一页相比节奏怎么变。
+                      例：满→空 / 图→字 / 解释→沉默 / 静态→微动 / 现实→系统>
     user_alignment: <最近一轮 AskUserQuestion 用户回应摘要>
 
   - index: 2
     ...
 
 sealed_test:
-  question: <写完 deck 怎么验证"用户能感受到核心隐喻"，例：把每页文字遮了画面是否还能看出隐喻>
+  # 按 deck_kind 分流的验证问题
+  question: <emotion → "把每页文字遮了画面是否还能感受到隐喻？"
+            decision → "只看每页标题能否串成一条决策路径？"
+            sales → "每页是否对应一个具体客户疑虑？"
+            funding → "是否能在 30 秒内说清 why now / why this / why us？"
+            launch → "登场页有没有'哇'的视觉瞬间？记忆点一句话能收住吗？"
+            knowledge → "看完是否能用框架解决类似问题？"
+            academic → "贡献是否凝练成 1-3 句具体声明？消融分析有没有？"
+            data → "每张图是否对应一句结论？"
+            ceremony → "仪式节奏清晰吗？群体共振点明确吗？">
 
 risks_pending:
   - <用户没给 brand color，可能跟既有 brand 冲突>

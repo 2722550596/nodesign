@@ -42,9 +42,13 @@
  */
 
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** 内部：UserPromptSubmit hook 读取 spec.json 时的最大字节数 */
 const SPEC_JSON_MAX_BYTES = 200 * 1024;
@@ -54,6 +58,31 @@ const CONTEXT_USAGE_WARN_PERCENT = 80;
 const CANVAS_HTML_MAX_BYTES = 2 * 1024 * 1024;
 /** 内部：spec.json.decisions 注入摘要时取最近 N 条 */
 const SPEC_DECISIONS_TAIL = 5;
+
+/**
+ * 工具 prompt lazy 注入文件加载（首调即缓存）。仿 agents/index.js loadPrompt 模式。
+ *
+ * 用途：cookbook / tweaks-syntax / vision-checker-dispatch 这些 reference 文档
+ * 不放系统 prompt 恒驻（每 turn 拖累），改由 PreToolUse hook 在 agent 首次调对应工具时
+ * 通过 additionalContext 注入。文件存 prompts/tools/*.md，模块加载时一次性读完缓存到 map。
+ *
+ * fail-soft：缺失 / 读失败返回 stub 字符串，hook 注入也不至于崩；console.warn 让部署
+ * 日志能立刻发现。
+ */
+const TOOL_PROMPT_CACHE = {};
+function loadToolPrompt(name) {
+  if (TOOL_PROMPT_CACHE[name] !== undefined) return TOOL_PROMPT_CACHE[name];
+  const file = path.join(HERE, 'prompts', 'tools', `${name}.md`);
+  try {
+    TOOL_PROMPT_CACHE[name] = fsSync.readFileSync(file, 'utf8');
+  } catch (err) {
+    console.warn(`[hooks] failed to load tool prompt ${name}.md (${err.message}); using stub`);
+    TOOL_PROMPT_CACHE[name] =
+      `(tool prompt ${name}.md not found at ${file}. PreToolUse hook will skip lazy injection — `
+      + `agent fallbacks to whatever guidance lives in SKILL.md core.)`;
+  }
+  return TOOL_PROMPT_CACHE[name];
+}
 
 /**
  * 工厂：根据当前 run 上下文 + workspace 路径生成 hooks 配置。
@@ -84,15 +113,25 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
     // 懂。硬拦：true → deny + 提示重试不带这个字段。
     PreToolUse: [{
       matcher: 'Task',
-      hooks: [makePreToolUseTaskBackgroundDenyHandler()],
+      hooks: [
+        makePreToolUseTaskBackgroundDenyHandler(),
+        // vision-checker 派遣 prompt 模板首次注入（仅当 subagent_type='vision-checker'）
+        makePreToolUseTaskVisionCheckerDispatchInjector(),
+      ],
     }, {
       matcher: 'Grep',
       hooks: [makePreToolUseGrepContentDefaultHandler()],
     }, {
-      // generate_image 第一次调用时提醒"先 Read 目标页"
-      // 设计原则 metadata-not-content：不预解析 HTML 注入，让 agent 自己 Read（防重读 hook 兜底）
+      // generate_image 两个 hook 串：先目标页提醒（已有），再首次注 cookbook 完整版
       matcher: 'mcp__nodesign__generate_image',
-      hooks: [makePreToolUseGenerateImageReadPageReminder()],
+      hooks: [
+        makePreToolUseGenerateImageReadPageReminder(),
+        makePreToolUseGenerateImageCookbookInjector(),
+      ],
+    }, {
+      // expose_tweaks 首次调用时注入完整语法
+      matcher: 'mcp__nodesign__expose_tweaks',
+      hooks: [makePreToolUseExposeTweaksSyntaxInjector()],
     }],
 
     // Stop —— agent 准备结束 query 时触发，发自检事件给前端
@@ -1008,6 +1047,96 @@ function makePreToolUseGenerateImageReadPageReminder() {
         + '  - 主色（design-tokens 里的 --bg / --accent / --hero）\n'
         + '  - 已有视觉风格（hybrid 范式有无 React 组件 / 已有图片调性）\n\n'
         + '多数情况下第一张图会被当 referenceImages 种子用于全 deck，看一眼能避免后续违和（暖色页塞冷调插图这类）。本提醒每 session 只触发一次。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
+/**
+ * PreToolUse(generate_image) — 第一次调用时注 完整 cookbook（A-J 段）。
+ *
+ * 配套 SKILL.md 里的精简版 cookbook（5 元素公式 + 渲文字铁律 + 反例正例）保第一张
+ * 图质量底线；本 hook 注入完整深度内容，让第二张起 agent 拿出更稳的 prompt。
+ *
+ * 触发：本 session 第 1 次调 generate_image；后续不再注入（避免 spam）。
+ * 文件源：prompts/tools/generate-image-cookbook.md（模块加载时缓存）。
+ */
+function makePreToolUseGenerateImageCookbookInjector() {
+  let alreadyInjected = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    alreadyInjected = true;
+    const cookbook = loadToolPrompt('generate-image-cookbook');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[generate_image 完整 cookbook — 首次注入]\n\n'
+        + cookbook
+        + '\n\n本 cookbook 每 session 只注入一次，已读完后续生图调用直接用即可。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
+/**
+ * PreToolUse(expose_tweaks) — 第一次调用时注 完整控件 schema 语法。
+ *
+ * SKILL.md 已有"何时暴露 / 暴露什么"哲学（5-8 个核心维度即可）；本 hook 注入完整
+ * 控件类型 / target_var vs target_class_on / target_scope / Tailwind 桥接 / 常坑
+ * 等参考语法，让 agent 写 controls JSON 时一次到位。
+ *
+ * 触发：本 session 第 1 次调 expose_tweaks；后续不再注入。
+ * 文件源：prompts/tools/tweaks-syntax.md（模块加载时缓存）。
+ */
+function makePreToolUseExposeTweaksSyntaxInjector() {
+  let alreadyInjected = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    alreadyInjected = true;
+    const syntax = loadToolPrompt('tweaks-syntax');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[expose_tweaks 完整语法 — 首次注入]\n\n'
+        + syntax
+        + '\n\n本语法每 session 只注入一次。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
+/**
+ * PreToolUse(Task) — subagent_type='vision-checker' 时首次注 派遣 prompt 模板。
+ *
+ * 注：跟 makePreToolUseTaskBackgroundDenyHandler 共存于同一 'Task' matcher 下，
+ * SDK 按数组顺序串行执行多个 hook。本 hook 仅在 input.subagent_type==='vision-checker'
+ * 命中时注 dispatch 模板（含全 deck 自检 / 有 plan 时按计划 critique / 单页评审 3 模板）。
+ *
+ * 触发：本 session 第 1 次派 vision-checker；后续不再注入。
+ * 文件源：prompts/tools/vision-checker-dispatch.md（模块加载时缓存）。
+ */
+function makePreToolUseTaskVisionCheckerDispatchInjector() {
+  let alreadyInjected = false;
+  return async (input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    if (input?.subagent_type !== 'vision-checker') return {};
+    alreadyInjected = true;
+    const dispatch = loadToolPrompt('vision-checker-dispatch');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[vision-checker 派遣 prompt 模板 — 首次注入]\n\n'
+        + dispatch
+        + '\n\n本模板每 session 只注入一次。后续派遣按这套结构写 prompt 即可。\n'
         + '</system-reminder>',
       },
     };
