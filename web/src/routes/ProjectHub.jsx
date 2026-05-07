@@ -87,11 +87,12 @@ export default function ProjectHub() {
   }
 
   const handleStart = (text) => {
-    if (text && text.trim()) {
-      navigate(`/projects/${id}/work`, { state: { initialMessage: text.trim() } });
-    } else {
-      navigate(`/projects/${id}/work`);
-    }
+    // 砍空进入分支（2026-05-07）：必须输入内容才进 workspace。空进入触发的
+    // 首条消息 race 已由 H1 hydrate 防御兜住，但用户体验上"先空进去再发"反而绕路，
+    // 直接强制带消息进可少一条入口、少一条 race 路径。
+    const trimmed = (text || '').trim();
+    if (!trimmed) return;
+    navigate(`/projects/${id}/work`, { state: { initialMessage: trimmed } });
   };
 
   return (
@@ -172,7 +173,7 @@ export default function ProjectHub() {
 
 /**
  * Hub 主入口的输入框：参考图样式。
- * Enter 跳 Workspace 并 auto-send；空文本时点按钮 = 直接进工作台。
+ * Enter / 点发送：必须有内容才进 Workspace（auto-send 首条）。
  */
 function HubInput({ onStart }) {
   const [text, setText] = useState('');
@@ -186,6 +187,7 @@ function HubInput({ onStart }) {
   }, [text]);
 
   const submit = () => {
+    if (!text.trim()) return;
     onStart?.(text);
     setText('');
   };
@@ -252,22 +254,23 @@ function HubInput({ onStart }) {
         <span style={{ flex: 1 }} />
         <button
           onClick={submit}
-          title={empty ? '直接进入工作台' : '发送（Enter）'}
+          disabled={empty}
+          title={empty ? '输入内容后发送（Enter）' : '发送（Enter）'}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
             color: COLOR.btnText,
-            background: COLOR.btn,
-            border: `1px solid ${COLOR.btn}`,
+            background: empty ? COLOR.dim : COLOR.btn,
+            border: `1px solid ${empty ? COLOR.dim : COLOR.btn}`,
             borderRadius: 10,
-            cursor: 'pointer',
+            cursor: empty ? 'not-allowed' : 'pointer',
             transition: 'background 0.15s',
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = COLOR.btnHover; }}
-          onMouseLeave={e => { e.currentTarget.style.background = COLOR.btn; }}
+          onMouseEnter={e => { if (!empty) e.currentTarget.style.background = COLOR.btnHover; }}
+          onMouseLeave={e => { if (!empty) e.currentTarget.style.background = COLOR.btn; }}
         >
-          {empty ? '进入工作台' : '发送'}
+          发送
           <ArrowUp size={13} strokeWidth={2.25} />
         </button>
       </div>
