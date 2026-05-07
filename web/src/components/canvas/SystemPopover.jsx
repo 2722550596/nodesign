@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Settings as SettingsIcon, ShieldCheck, RotateCcw } from 'lucide-react';
+import { ChevronRight, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import SystemTab from '../context-panel/SystemTab.jsx';
 import DecisionsTab from '../context-panel/DecisionsTab.jsx';
@@ -7,10 +7,10 @@ import DecisionsTab from '../context-panel/DecisionsTab.jsx';
 /**
  * SystemPopover — 项目档案 popover（贴 toolbar Settings 按钮）
  *
- * 2026-05-07 改造：toolbar 把 A11y / Reload 收到这里（Mode 和 Zoom 留 toolbar）。
+ * 2026-05-07：A11y 留在这里（mock，次要工具）；Reload 改回 toolbar 直接显示。
  *
  * 内容：
- *   - 顶部 Canvas 工具（A11y / Reload）— 2026-05-07 新增
+ *   - 顶部 Canvas 工具（A11y）
  *   - 中部 SystemTab 4 段（Skill / DS / Model / Spec 摘要）
  *   - 底部"项目档案"折叠（默认收起）：展开后嵌 DecisionsTab（含 decisions + history）
  */
@@ -18,8 +18,7 @@ export default function SystemPopover({
   anchorRef, onClose,
   project, deckSpec,
   projectId, sessionId, decisionsReloadKey = 0,
-  // 2026-05-07 新增：从 CanvasToolbar 收纳的次要工具
-  onA11yClick, onReload,
+  onA11yClick,
 }) {
   const ref = useRef(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -74,8 +73,8 @@ export default function SystemPopover({
 
       {/* Body — scrollable */}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-        {/* Canvas 工具（A11y / Reload） — 2026-05-07 从 toolbar 收纳 */}
-        {(onA11yClick || onReload) && (
+        {/* Canvas 工具（A11y） */}
+        {onA11yClick && (
           <div style={{
             padding: `${GAP.md}px ${GAP.lg}px`,
             borderBottom: `1px solid ${COLOR.borderLt}`,
@@ -88,24 +87,13 @@ export default function SystemPopover({
               Canvas 工具
             </div>
             <div style={{ display: 'flex', gap: GAP.sm }}>
-              {onA11yClick && (
-                <button
-                  onClick={() => { onA11yClick(); onClose?.(); }}
-                  style={popoverToolBtn}
-                  title="无障碍审查（mock）"
-                >
-                  <ShieldCheck size={11} /> A11y
-                </button>
-              )}
-              {onReload && (
-                <button
-                  onClick={() => { onReload(); onClose?.(); }}
-                  style={popoverToolBtn}
-                  title="重载 iframe"
-                >
-                  <RotateCcw size={11} /> Reload
-                </button>
-              )}
+              <button
+                onClick={() => { onA11yClick(); onClose?.(); }}
+                style={popoverToolBtn}
+                title="无障碍审查（mock）"
+              >
+                <ShieldCheck size={11} /> A11y
+              </button>
             </div>
           </div>
         )}

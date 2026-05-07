@@ -1,4 +1,4 @@
-import { Edit3, Eye, Code2, Maximize2, Settings, Sliders, MessageSquare } from 'lucide-react';
+import { Edit3, Eye, Code2, Maximize2, Settings, Sliders, MessageSquare, RotateCcw } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, STAGE } from '../../lib/theme.js';
 
 const MODES = [
@@ -20,7 +20,9 @@ const MODES = [
  *     - ON：agent 主动暴露核心微调参数让用户拖动
  *     - OFF：agent 不 expose_tweaks，按对话方式让用户提需求 agent 改
  *   - **Comment = 按钮**：点击打开评论汇总（CommentOverview），不是"进入评论模式"
- *   - **A11y / Reload 移到 SystemPopover**（次要工具，收起来）
+ *   - **Reload 直接放 toolbar**（2026-05-07 改回；之前藏 SystemPopover 太隐蔽，
+ *     iframe 偶发不刷新时用户找不到入口）
+ *   - **A11y 仍在 SystemPopover**（mock，次要）
  */
 export default function CanvasToolbar({
   mode, onModeChange,
@@ -28,6 +30,7 @@ export default function CanvasToolbar({
   onTweaksClick, tweaksAvailable = false, tweaksOpen = false,
   tweaksEnabled = true, onTweaksEnabledChange,
   onCommentClick, commentOverviewOpen = false, commentCount = 0, commentBtnRef,
+  onReload,
   onSystemClick, systemBtnRef, systemActive = false,
 }) {
   return (
@@ -178,7 +181,27 @@ export default function CanvasToolbar({
         </button>
       )}
 
-      {/* System — 项目档案 + 收纳 A11y / Reload */}
+      {/* Reload — iframe 偶发不刷新时用户主动 reload；常用，留 toolbar */}
+      {onReload && (
+        <button
+          onClick={onReload}
+          style={{
+            padding: `${GAP.xs + 1}px ${GAP.sm + 1}px`,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+            color: COLOR.text4,
+            background: 'transparent',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: 4,
+          }}
+          title="重载 iframe（agent 改完没刷的时候用）"
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <RotateCcw size={11} />
+        </button>
+      )}
+
+      {/* System — 项目档案 + 收纳 A11y */}
       {onSystemClick && (
         <button
           ref={systemBtnRef}
@@ -191,7 +214,7 @@ export default function CanvasToolbar({
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             borderRadius: 4,
           }}
-          title="System — A11y / Reload / 项目档案"
+          title="System — A11y / 项目档案"
         >
           <Settings size={11} />
         </button>

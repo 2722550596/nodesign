@@ -252,6 +252,7 @@ export default function CanvasFrame({
         commentOverviewOpen={commentOverviewOpen}
         commentBtnRef={commentBtnRef}
         commentCount={Array.isArray(comments) ? comments.filter(c => c.status !== 'resolved').length : 0}
+        onReload={handleReload}
         onSystemClick={() => {
           setA11yOpen(false);
           setCommentOverviewOpen(false);
@@ -331,7 +332,6 @@ export default function CanvasFrame({
           sessionId={sessionId}
           decisionsReloadKey={decisionsReloadKey}
           onA11yClick={() => { setSystemOpen(false); setA11yOpen(true); }}
-          onReload={() => { setSystemOpen(false); handleReload(); }}
         />
       )}
 
