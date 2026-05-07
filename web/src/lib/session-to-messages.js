@@ -105,15 +105,16 @@ export function sessionMessagesToDisplay(sessionMessages) {
     }
 
     // assistant role：保持原 per-block 推送（thinking / text / tool_use 各占一条 display msg）
-    for (const block of content) {
+    // 同 sm 内多个 text / thinking block 用 blockIdx 区分（thinking 模式下 content 经常
+    // 是 [thinking, text, thinking, text] 交替，纯 sm.uuid+":text" 会撞 React duplicate key）
+    for (const [blockIdx, block] of content.entries()) {
       if (!block || typeof block !== 'object') continue;
 
       switch (block.type) {
         case 'text': {
           if (!block.text) break;
-          // assistant 用 sm.uuid + ':text' suffix 避免跟同 sm 的 thinking block React key 冲突
           display.push({
-            id: `${sm.uuid}:text`,
+            id: `${sm.uuid}:text:${blockIdx}`,
             role: 'assistant',
             content: block.text,
           });
@@ -122,7 +123,7 @@ export function sessionMessagesToDisplay(sessionMessages) {
         case 'thinking': {
           if (!block.thinking) break;
           display.push({
-            id: `${sm.uuid}:thinking`,
+            id: `${sm.uuid}:thinking:${blockIdx}`,
             role: 'thinking',
             content: block.thinking,
             // hydrate 历史不再 streaming
