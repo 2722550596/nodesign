@@ -315,7 +315,9 @@ export function provideAnswer(runId, toolUseId, answers) {
  * 当前 turn 的 run record 在 turn 结束时清掉但 session 还活着。直接传 sessionId 简化逻辑。
  *
  * @param {string} sessionId
- * @param {string} toolUseId  - SDK 的 tool_use_id（MCP tool handler options.toolUseID）
+ * @param {string} toolUseId  - 不透明 banner-side request id（**不是** SDK 的 tool_use_id —— MCP
+ *                              RequestHandlerExtra 没这字段；request-plan-mode.js 内部 randomUUID 生成。
+ *                              全链路只要 register / provide / 前端 emit→POST 用同一个 string 即可）
  * @returns {Promise<{ approved: boolean }>}
  */
 export function registerPendingPlanRequest(sessionId, toolUseId) {

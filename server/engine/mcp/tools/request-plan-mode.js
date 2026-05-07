@@ -12,20 +12,24 @@
  *
  * 流程：
  *   1. agent 调 mcp__nodesign__request_plan_mode({reason, estimatedPages?})
- *   2. handler emit 'run.plan_mode_requested' { toolUseId, reason, ... }
- *      然后 await registerPendingPlanRequest(sessionId, toolUseId)
- *   3. 前端 PlanRequestBanner 弹横幅，含 toolUseId 给 decide 端点
- *   4. 用户 yes
+ *   2. handler 自生成 requestId = randomUUID()（**不是** SDK tool_use_id —— MCP
+ *      RequestHandlerExtra 规范没这字段，Anthropic SDK 转发 mcp_message 时也不注入；
+ *      banner 句柄全程是不透明 string，前后端串起来即可）
+ *   3. handler emit 'run.plan_mode_requested' { toolUseId: requestId, reason, ... }
+ *      然后 await registerPendingPlanRequest(sessionId, requestId)
+ *   4. 前端 PlanRequestBanner 弹横幅，含 toolUseId 给 decide 端点
+ *   5. 用户 yes
  *      → 前端先 POST /permission-mode { mode:'plan' }（实际切 SDK）
  *      → 再 POST /plan-request/:tid/decide { approved:true }（解阻塞 + agent 拿到结果）
  *      → handler return text 提示 agent 已切 plan，按 plan-instructions.md 走
- *   5. 用户 no
+ *   6. 用户 no
  *      → 前端 POST /plan-request/:tid/decide { approved:false }
  *      → handler return text 让 agent 按原计划继续
- *   6. session 关掉 / abort → pending Promise reject → handler 返 error 给 agent
+ *   7. session 关掉 / abort → pending Promise reject → handler 返 error 给 agent
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { registerPendingPlanRequest } from '../../runs/active-runs.js';
 
@@ -84,25 +88,23 @@ If session aborts while waiting (rare), tool returns an error.`,
         .describe('Coarse task kind; helps user banner show the right framing.'),
     },
     async ({ reason, estimatedPages, taskKind }, _extra) => {
-      const toolUseId = _extra?.toolUseID || _extra?.toolUseId;
-
+      // banner-side request id（不是 SDK 的 tool_use_id）：MCP RequestHandlerExtra
+      // 规范字段没有 toolUseID，Anthropic SDK 转发 mcp_message 时也不注入 _meta，
+      // 所以 handler 拿不到 SDK 真 tool_use_id。这里改用自生成 UUID 当 banner 句柄
+      // —— 全链路（emit 事件 → 前端 banner → POST decide → providePlanRequestDecision）
+      // 只需要前后用同一个不透明 string 串起来，跟 SDK 内部 tool_use_id 无关。
       if (!sessionId) {
         return {
           content: [{ type: 'text', text: 'request_plan_mode internal error: sessionId not configured.' }],
           isError: true,
         };
       }
-      if (!toolUseId) {
-        return {
-          content: [{ type: 'text', text: 'request_plan_mode internal error: missing toolUseID from SDK.' }],
-          isError: true,
-        };
-      }
+      const requestId = randomUUID();
 
       try {
         ctx?.emit?.({
           type: 'run.plan_mode_requested',
-          toolUseId,
+          toolUseId: requestId,  // 字段名保留 toolUseId（前端 PlanRequestBanner / decide 端点协议不变）
           reason,
           ...(estimatedPages != null ? { estimatedPages } : {}),
           ...(taskKind ? { taskKind } : {}),
@@ -110,7 +112,7 @@ If session aborts while waiting (rare), tool returns an error.`,
       } catch { /* fail-safe */ }
 
       try {
-        const decision = await registerPendingPlanRequest(sessionId, toolUseId);
+        const decision = await registerPendingPlanRequest(sessionId, requestId);
         if (decision?.approved) {
           return {
             content: [{
