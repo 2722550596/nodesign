@@ -144,6 +144,19 @@ router.post('/:pid/turn', async (req, res, next) => {
     const assetsSummary = await readAssetsSummary(sessionRoot);
     const { displayText, blocks } = await composeUserMessage(chat, attachments, pendingSummary, assetsSummary, sessionRoot);
 
+    // 上传/附件诊断：NODESIGN_DEBUG_TURN=1 时打印 blocks 概况，定位 image 体积/媒体类型
+    // 引发的 400/超 token 类问题（配合 binary-fixup-proxy 的 /tmp dump）
+    if (process.env.NODESIGN_DEBUG_TURN === '1') {
+      const summary = blocks.map((b) => {
+        if (b.type === 'image') {
+          const dataLen = b.source?.data?.length || 0;
+          return `image(${b.source?.media_type},${(dataLen / 1024).toFixed(1)}KB-base64)`;
+        }
+        return `${b.type}(${(b.text || '').length}c)`;
+      });
+      console.info(`[turn.compose] sid=${sid.slice(0, 8)} blocks=[${summary.join(', ')}]`);
+    }
+
     // 创建 run（pending）— per-turn record，displayText 落 brief 字段做审计
     const run = createRun({ skillId: finalSkillId, brief: displayText, projectId: project.id });
 

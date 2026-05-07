@@ -123,19 +123,24 @@ export async function getOrStartProxy(realUrl) {
         method: 'POST',
         headers,
       }, (proxyRes) => {
-        if (process.env.NODESIGN_DEBUG_KIMI_400 === '1' && proxyRes.statusCode >= 400) {
-          const tag = `400-${Date.now()}-${Math.random().toString(36).slice(2,6)}.json`;
-          try {
-            fs.writeFileSync('/tmp/nodesign-fail-req-' + tag, body);
-            console.warn(`[binary-fixup-proxy] ${proxyRes.statusCode} response — request body saved: /tmp/nodesign-fail-req-${tag}`);
-          } catch (e) { /* ignore */ }
+        // 上游 4xx/5xx：默认 console.warn 一行 status + model + body 前 200 字
+        // 让 PM2 日志直接看到根因（base64 大 → context too long / 拒收 image block 等）；
+        // NODESIGN_DEBUG_KIMI_400=1 仍然额外把完整 req+resp dump 到 /tmp 方便深挖
+        if (proxyRes.statusCode >= 400) {
           const respChunks = [];
           proxyRes.on('data', c => respChunks.push(c));
           proxyRes.on('end', () => {
-            try {
-              fs.writeFileSync('/tmp/nodesign-fail-resp-' + tag, Buffer.concat(respChunks));
-              console.warn(`[binary-fixup-proxy] response body saved: /tmp/nodesign-fail-resp-${tag}`);
-            } catch (e) { /* ignore */ }
+            const respBody = Buffer.concat(respChunks);
+            const preview = respBody.slice(0, 200).toString('utf8').replace(/\s+/g, ' ');
+            console.warn(`[binary-fixup-proxy] upstream ${proxyRes.statusCode} model=${modelHint || '?'} body=${preview}`);
+            if (process.env.NODESIGN_DEBUG_KIMI_400 === '1') {
+              const tag = `${proxyRes.statusCode}-${Date.now()}-${Math.random().toString(36).slice(2,6)}.json`;
+              try {
+                fs.writeFileSync('/tmp/nodesign-fail-req-' + tag, body);
+                fs.writeFileSync('/tmp/nodesign-fail-resp-' + tag, respBody);
+                console.warn(`[binary-fixup-proxy] dumped: /tmp/nodesign-fail-req-${tag} + resp`);
+              } catch (e) { /* ignore */ }
+            }
           });
         }
         res.writeHead(proxyRes.statusCode, proxyRes.headers);
@@ -143,8 +148,10 @@ export async function getOrStartProxy(realUrl) {
       });
 
       proxyReq.on('error', (err) => {
-        console.error(`[binary-fixup-proxy] forward error: ${err.message}`);
-        try { res.writeHead(502); res.end(`proxy forward error: ${err.message}`); } catch { /* ignore */ }
+        // 包含 errno/code 让前端 502 文案能区分网络抖动（ECONNRESET）vs 协议错误（EPROTO）
+        const detail = err.code ? `${err.code}: ${err.message}` : err.message;
+        console.error(`[binary-fixup-proxy] forward error: ${detail}`);
+        try { res.writeHead(502); res.end(`proxy forward error: ${detail}`); } catch { /* ignore */ }
       });
 
       proxyReq.write(body);
@@ -226,6 +233,16 @@ function maybeFixupMessagesBody(body) {
     mutated = true;
   }
 
+  // 2026-05-07：DMXAPI Kimi 通道走 OpenAI 风格 image block —— Anthropic 格式
+  // {type:'image', source:{type:'base64', media_type, data}} 会直接被网关拒 400：
+  //   "ModelArts.81001 message[0].content[1] has invalid field(s): text, ***"
+  // 转换成 {type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}} 即放行。
+  // （Kimi K2.6 本身可能仍无 vision 能力 —— 模型若返"I don't see"是单独问题，
+  // 但至少不再拒收 → 不带图的 chat 不会被 history 里的旧图拖累 400）
+  if (Array.isArray(parsed.messages) && transformImagesToOpenAIStyle(parsed.messages)) {
+    mutated = true;
+  }
+
   // thinking adaptive → enabled（保留 — kimi-k2.6 主代理）
   if (parsed.thinking && parsed.thinking.type === 'adaptive') {
     parsed.thinking = { type: 'enabled', budget_tokens: 8192 };
@@ -233,6 +250,61 @@ function maybeFixupMessagesBody(body) {
   }
 
   return mutated ? Buffer.from(JSON.stringify(parsed), 'utf8') : body;
+}
+
+/**
+ * Anthropic image block → OpenAI image_url block。仅 kimi 路径调用。
+ *
+ * 输入：messages[].content[] 里的 `{type:'image', source:{type:'base64', media_type, data}}`
+ *      或嵌在 tool_result.content[] 里同样格式（lift 之后理论上已经提到顶层，
+ *      但 tool_result 里也 best-effort 转一下兜底）
+ * 输出：替换为 `{type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}}`
+ *
+ * 不支持 source.type === 'url'（直接 https）的情况：把 url 原样塞 image_url.url。
+ *
+ * @returns {boolean} true 若有任何 block 被改写
+ */
+function transformImagesToOpenAIStyle(messages) {
+  let mutated = false;
+  const convert = (block) => {
+    if (block?.type !== 'image' || !block.source) return null;
+    const src = block.source;
+    let url;
+    if (src.type === 'base64' && src.data && src.media_type) {
+      url = `data:${src.media_type};base64,${src.data}`;
+    } else if (src.type === 'url' && src.url) {
+      url = src.url;
+    } else {
+      return null;
+    }
+    return { type: 'image_url', image_url: { url } };
+  };
+
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (let i = 0; i < msg.content.length; i++) {
+      const block = msg.content[i];
+      // 顶层 image
+      const replaced = convert(block);
+      if (replaced) {
+        msg.content[i] = replaced;
+        mutated = true;
+        continue;
+      }
+      // tool_result 内嵌 image（lift 之外的兜底）
+      if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+        for (let j = 0; j < block.content.length; j++) {
+          const inner = block.content[j];
+          const innerReplaced = convert(inner);
+          if (innerReplaced) {
+            block.content[j] = innerReplaced;
+            mutated = true;
+          }
+        }
+      }
+    }
+  }
+  return mutated;
 }
 
 /**
