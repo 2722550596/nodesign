@@ -413,7 +413,22 @@ export default function ProjectWorkspace() {
         const display = sessionMessagesToDisplay(buffer);
         // 防 wipe optimistic：hydrate 拿到空 messages（jsonl 还没 flush）但 current 有
         // 内容（用户刚 setMessages 的 user msg + 流式 delta）→ 信任 current 不替换
-        setMessages(prev => (display.length === 0 && prev.length > 0 ? prev : display));
+        setMessages(prev => {
+          if (display.length === 0 && prev.length > 0) return prev;
+          // orphan merge：display 不空但缺乐观 user msg（server flush 了 metadata 但
+          // user msg 还在 inputQueue 没落 JSONL）—— 保留 prev 里 content 不匹配的 user msg
+          const displayUserContents = new Set(
+            display.filter(m => m.role === 'user').map(m => (m.content || '').trim())
+          );
+          const orphans = prev.filter(m =>
+            m.role === 'user' && !displayUserContents.has((m.content || '').trim())
+          );
+          if (orphans.length > 0) {
+            if (import.meta.env.DEV) console.warn(`[hydrate.end] kept ${orphans.length} orphan optimistic user msg(s) — JSONL flush race`);
+            return [...display, ...orphans];
+          }
+          return display;
+        });
         break;
       }
       case 'ws.connected':
