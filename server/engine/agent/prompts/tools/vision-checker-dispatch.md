@@ -8,17 +8,30 @@
 ```
 Task(subagent_type='vision-checker',
      prompt='请截图 canvas.html 评审视觉合理性（fullPage 1920×1080）。
-            走 Tier 1-3 标准（可读性 / 层级 / 对齐 / 留白 / 对比度 / 元喻撑场），
+            先看 cwd 有没有 design-plan.md：
+              有 → 先 Read 跑 Tier 0（plan compliance：deck_kind 导演对象兑现 /
+                  meta.palette 配色匹配 / meta.anti_cliche 主动避开的俗套是否真避开 /
+                  各页 c_decisions.function_in_arc + rhythm_vs_prev + 单页 4 铁律 / sealed test）
+              没有 → 跳 Tier 0 直接 Tier 1
+            然后跑 Tier 1-3（可读性 / 层级 / 对齐 / 留白 / 对比度 / 元喻撑场 /
+            构图平衡 / 反 AI 套路）。
             返结构化 VERDICT + ISSUES + OVERALL。')
 ```
 
-## 有 design-plan.md 时（按计划 critique）
+## 有 design-plan.md 时（按计划 critique，重 Tier 0）
 
 ```
 Task(subagent_type='vision-checker',
      prompt='请先 Read design-plan.md，再截图评审 canvas.html。
-            重点对照 plan 的承诺（核心隐喻 / palette / per-page 决策 / deck_kind 导演对象）
-            检查兑现度，指出 plan 说要 X 但页面没做到 X 的具体差异。
+            **Tier 0 重点对照 plan 的承诺**：
+              - 核心隐喻 / palette 是否在视觉上撑住
+              - meta.deck_kind 的导演对象是否兑现（决策型标题是否结论而非名词；
+                数据型每图是否对应一句结论；情绪型 sealed test 能否过等等，按 kind 分流）
+              - meta.anti_cliche 列的俗套是否真避开（逐条对照页面）
+              - 每页 c_decisions.function_in_arc / rhythm_vs_prev 是否真兑现
+              - 单页 4 铁律（One Sentence / One Dominant Visual / Contrast of Rhythm /
+                Delete Before Decorate）逐页打分
+            指出 plan 说要 X 但页面没做到 X 的具体差异。
             返结构化 VERDICT + ISSUES + OVERALL，每条 ISSUE 引用 plan 段落。')
 ```
 

@@ -47,7 +47,7 @@ brief is complex enough you want to align on a structured plan before any
 generation work.
 
 WHEN TO USE:
-  - 5+ page deck / strong narrative arc
+  - 3+ page deck / strong narrative arc (aligned with SKILL Mode B threshold)
   - User brief > 200 words with multiple constraints
   - Conflicting requirements that need explicit trade-off decisions
   - Tasks where rework cost is high (heavy data viz, multi-character story)

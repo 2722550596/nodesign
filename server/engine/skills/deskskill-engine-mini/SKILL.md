@@ -125,6 +125,10 @@ senior 设计师跟客户访谈时不会怕"问太多"——客户嫌烦的是�
 - 已经清楚的 dimension（brief 里说了"参考无印良品"）→ 别二次确认
 - 用户明说"赶时间 / 别问了" → § 0.6 escape hatch（但仍要识别 false escape）
 
+**多步骤任务用 TodoWrite 列计划**
+
+3 步以上的任务（多页 deck / 重写流程 / 派子代理后接 generate）推荐起手就 `TodoWrite` 列出所有步骤，每完成一项立刻 mark completed，同时只保留一项 in_progress。前端 SuggestionChip / 计划面板靠这个数据展示进度，没列的话用户看不到 agent 在做什么。单一动作（"改封面颜色"）不必列。
+
 ### 0.0 Deck-kind 识别（最前置 —— 在所有视觉风格 ask 之前）
 
 **复述测试加必述要素**：Stage 0 退出前能用一句话复述 5 项算对齐 ——

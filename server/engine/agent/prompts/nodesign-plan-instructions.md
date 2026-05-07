@@ -151,7 +151,7 @@ pages:
   - index: 1
     role: cover
     a_intent: <一句话画面描述（主体+动作+构图+风格）>
-    b_layout: <hero-led / image-led / text-led / data-led / hybrid>
+    b_layout: <text-led / image-led / data-led / hybrid>   # 跟 SKILL § 页型决策表 + canvas data-layout-role 对齐
     c_decisions:
       reference: <来源 + 具体>
       opposition: <反默认决策一行 — OPPOSITION：不走"标题居中纯文字"的偷懒做法>

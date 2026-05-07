@@ -159,7 +159,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `get_pending_changes` | 拉用户在 canvas 上的双击改字 / 评论 buffer | 无参 |
 | `clear_pending_changes` | 处理完清 buffer（不清下个 turn 又见同样变更） | `ids?`（不传清全部） |
 | `export_handoff` | 打 zip（canvas + spec + assets + chat history + README）到 `./exports/` | 无参 |
-| `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu；`include_images=true` 给 generate_image 找 reference | `query` / `provider?` / `include_images?` |
+| `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu；`include_images=true` 返结果含 N 个 image content block，turn 内直接 vision-check 不必再 Read | `query` / `provider?` / `include_images?` |
 | `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图（**首调时 hook 会注完整 cookbook**） | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
 | `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
 
@@ -176,15 +176,17 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 > 在 deck 关键元素上加稳定锚点，让 agent 跨 turn 引用 / 用户评论 pin /
 > 前端 InspectFloatingCard 找元素都有靠。
 
-### 4 个标记 — 1 必装 + 2 关键 + 1 hybrid 专用
+### 6 个标记 — 2 必装 + 2 关键 + 1 hybrid 专用 + 1 临时
 
 | 属性 | 装在哪 | 用途 |
 |---|---|---|
 | `data-page="N"` | section 必装 | 分页（前端 SlideNavigator / list_pages 全靠它） |
+| `data-layout-role="<text-led \| image-led \| data-led \| hybrid>"` | section 必装 | 页型角色，跟 SKILL § 页型决策表联动 + 决定每页内容承载方式 |
 | `data-anchor="kebab-name"` | 每页 2-4 个关键元素 | agent 跨 turn 引用 + 用户评论 pin（**全文件唯一**） |
 | `data-node-id="<page>-<role>-<n>"` | 同上 | 前端找元素的稳定 id（findElementByAnchor 第一层） |
 | `data-react-mount="<id>"` | **React mount 容器 div 必装** | DirectEdit guard 识别——不挂 contenteditable，防止 React re-render 覆盖用户改的字 |
 | `data-layout="<自由词>"` | section 选填 | layout 名 hint，list_pages 给你做总览；按隐喻自由命名 |
+| `data-skeleton="<slug>"` | section 临时（骨架优先模式）| 骨架先行写法的占位锚——空 section 等待逐页 Edit 填充时用，填完应替换成 `data-anchor`（slug 保留作为 vision-checker 反查锚）。详见 SKILL § 起手式骨架优先 5 步 |
 
 ### 命名规范
 
@@ -197,6 +199,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 - **每页至少 2-4 个 anchor**：主标题 / CTA / 主视觉 / 关键文本（任选 2-4）
 - **首跑写的时候就加** —— 胜过事后回头补
 - **克制**：每个 div/p/span 都加 → 噪音满屏，关键元素失去锚点价值
+- **`data-skeleton` 是临时锚**，骨架阶段用完就替换成 `data-anchor`；自检时 grep `data-skeleton=` 残留 = 漏填的页
 
 ---
 
@@ -248,6 +251,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 工具失败时第一反应不该是"换个工具试试"——多数工具失败是有具体根因的，瞎换工具浪费 turn 且容易陷入循环：
 
 - **Edit 失败 oldString mismatch** → 先 `Read` / `read_page` 看现在文件长什么样再精确改。盲目重试同样的 oldString 99% 还是 mismatch；盲目改用 Write 整文件覆盖会让 git diff 脏到看不出你改了哪儿
+- **Edit 改多处同一字符串** → 用 `replace_all: true`（重命名变量 / 统一改色号 / 批量改 anchor 名）。比循环单次 Edit 省 token + 不会半路状态不一致
 - **Bash sandbox 拦截** → 想想为什么用 Bash。`ls` / `find` / `cat` / `grep -r` 都该换 Glob / Grep；只有真需要 shell 的事（git status / 跑 python 脚本 / 网络 curl）才用 Bash
 - **screenshot / 业务 MCP 工具失败** → 看 PostToolUseFailure hook 注入的恢复建议（hook 会在 tool result 里带常见原因 + 应对），按它做。比"再试一次同样调用"准很多
 - **generate_image 输出不理想** → 不要重 reroll 同一 prompt 第 3 次。改 prompt 关键参数（5 元素公式 / 风格锚词 / 文字带引号）或问用户新方向，比刷 token 有效

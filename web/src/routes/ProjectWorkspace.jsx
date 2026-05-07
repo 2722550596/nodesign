@@ -372,24 +372,44 @@ export default function ProjectWorkspace() {
     // 等 WS 连上一两个 tick 再发，确保 run.start 等事件能收到
     const t = setTimeout(async () => {
       setMessages((ms) => [...ms, { id: newId('msg'), role: 'user', content: text }]);
+      // 跟 handleSend 同步：sidForRequest 优先用 ref（避 React 闭包陈旧）
+      const sidForRequest = sessionIdRef.current ?? currentSessionId;
       try {
-        const { runId } = await Turn.send({
+        // Plan mode wiring 修复：Home QuickEntry / ProjectHub 都 navigate 到这条
+        // initialMessage 路径，store 里的 planModeEnabled 必须传给 Turn.send，否则
+        // 首条 turn 落进后端时 initialPermissionMode='bypassPermissions'，session
+        // 起在 default mode；用户即便在 Home/Hub 开了 toggle 也无效。
+        const planModeEnabled = useGlobalStore.getState().planModeEnabled;
+        const { runId, sessionId: returnedSid } = await Turn.send({
           pid: id,
           chat: text,
           attachments: stateAttachments,
-          sessionId: currentSessionId,  // /work 路径 → null（新会话）；/sessions/:sid → 续约
+          sessionId: sidForRequest,  // /work 路径 → null（新会话）；/sessions/:sid → 续约
+          permissionMode: planModeEnabled ? 'plan' : undefined,
         });
         setCurrentRunId(runId);
         setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
+        // Phase A.1 对齐 handleSend：从 /work 起新 session 时立即同步 ref + navigate
+        // 到 /sessions/<sid>。否则用户在 agent 回复 H4a 首条 turn 期间追加消息，
+        // sessionIdRef.current 仍是 null，handleSend 会带 sessionId=null 再起一条
+        // 新 session，URL 跳走，原 session 脱钩——典型现象就是"在 agent 回复时追加
+        // 消息会被自动跳转然后开个新 session"。
+        if (!sidForRequest && returnedSid) {
+          sessionIdRef.current = returnedSid;
+          navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
+        } else {
+          // 续约场景：只清 location.state 防 navigate 后退/刷新重发
+          navigate(location.pathname, { replace: true, state: null });
+        }
       } catch (err) {
         setMessages((ms) => [...ms, {
           id: newId('msg'), role: 'assistant',
           content: `_⚠️ 发送失败：${err.message}_`,
         }]);
         showToast(`发送失败：${err.message}`, 'error');
+        // 失败也清 location.state 防 navigate 后退/刷新重发
+        navigate(location.pathname, { replace: true, state: null });
       }
-      // 清 location.state 防 navigate 后退/刷新重发
-      navigate(location.pathname, { replace: true, state: null });
     }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
