@@ -102,10 +102,9 @@ Stage 4  Vision-check ── 截图自检 + 派 vision-checker 挑剔评审
 
 **Search 反模式**：
 - ❌ "这个产品什么颜色？" → 你 search 一下不就好了
-- ❌ "Linear / Apple / brutalist 我懂" → 你脑里的 "Linear 风" 跟用户脑里的可能差很远，用户实际见过的某个 Linear 页面 vs 你训练数据里的可能完全两个东西。看一张真图秒对齐，比文字描述高一个数量级
 - ❌ 用户给了品牌名 → 立即 ask 配色 / 字体偏好（应该先 search 它的 brand identity guideline 再问"你想保留还是换"）
 
-**视觉模仿是 web_search include_images 的最高 ROI 场景**——用户指名模仿对象时，搜一张真图当 reference 比纯文字脑补对齐成本低一个数量级。哪怕你以为你懂这个风格，搜图也比靠记忆稳，因为：用户提到品牌时心里有具体页面 / 海报 / 截图，那张特定的视觉是 anchor，不是泛泛的风格定义。
+**视觉模仿是 web_search include_images 的最高 ROI 场景**——用户指名模仿对象时，搜一张真图当 reference 比纯文字脑补对齐成本低一个数量级。原因是：用户提到品牌 / "像 X 那种" 时，心里有具体页面 / 海报 / 截图当 anchor，那张**特定**的视觉才是模仿对象，不是泛泛的风格定义。
 
 **搜完接着 AskUserQuestion** 把信息消化成 2-3 个具体方向让用户从中选，比"想突出什么"高效 10×。
 
