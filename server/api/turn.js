@@ -696,8 +696,12 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
  * Phase 3.2：POST /api/projects/:pid/runs/:runId/plan-approve
  *
  * 用户在 PlanReviewCard 点"批准"（可选编辑过 plan）→ 落 design-plan.md 留档 →
- * query.setPermissionMode('default') → agent 自然继续（plan mode 下 agent 调
- * ExitPlanMode 后 SDK 阻塞等 host 切 mode；切完 SDK 自动放行）。
+ * query.setPermissionMode('bypassPermissions') → agent 自然继续（plan mode 下
+ * agent 调 ExitPlanMode 后 canUseTool 阻塞等 host 切 mode；切完 SDK 自动放行）。
+ *
+ * ⚠️ 切 'bypassPermissions' 而非 'default' —— session 起初就是 bypassPermissions
+ * （session-loop.js:232），切 'default' 会让 SDK 走 per-tool 询问流程，多数写工具
+ * 默认 deny → ExitPlanMode 后 Edit/Write 仍被拦的根因。
  *
  * Body: { editedPlan?: string } - 用户编辑过的 plan markdown（无则用 agent 原版）
  */
@@ -748,9 +752,14 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
     // 顺序关键：① 先切 mode → ② 再 resolve canUseTool 的 pending Promise。
     // 反过来 resolve 先发生 → canUseTool return → ExitPlanMode tool 执行 → agent
     // next turn 看到的可能仍是 plan-mode reminder（race condition）。
-    await query.setPermissionMode('default');
+    //
+    // 切 'bypassPermissions' 而非 'default'（用户报告"ExitPlanMode 后 Edit 还是被
+    // 拦"的根因）—— session 起初就是 'bypassPermissions'（session-loop.js:232），
+    // plan 退出回到同一 mode 才一致。'default' 让 SDK 走 per-tool 询问流程，多数
+    // 写工具默认 deny。
+    await query.setPermissionMode('bypassPermissions');
     const sid = getSessionIdByRunId(req.params.runId);
-    if (sid) setSessionPermissionMode(sid, 'default');
+    if (sid) setSessionPermissionMode(sid, 'bypassPermissions');
     if (sid && toolUseId) {
       // resolve canUseTool 里 await 的 pending plan approval Promise，agent 阻塞解开
       const ok = providePlanApprovalDecision(sid, toolUseId, {
