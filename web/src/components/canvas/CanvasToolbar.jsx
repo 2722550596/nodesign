@@ -1,4 +1,4 @@
-import { Edit3, Eye, Code2, RotateCcw, ShieldCheck, Maximize2, Settings, Sliders } from 'lucide-react';
+import { Edit3, Eye, Code2, Maximize2, Settings, Sliders, MessageSquare } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, STAGE } from '../../lib/theme.js';
 
 const MODES = [
@@ -7,25 +7,41 @@ const MODES = [
   { id: 'code',    label: 'Code',    icon: Code2 },
 ];
 
+/**
+ * CanvasToolbar — 2026-05-07 改造
+ *
+ * 布局（左→右）：
+ *   [Mode segment Edit/Preview/Code]  ……spacer……  [Zoom Fit -% +]  [Tweaks 按钮+开关]  [Comment 按钮]  [System gear]
+ *
+ * 改造点：
+ *   - **Mode segment 保留**（用户反馈：3 模式切换有用）
+ *   - **Zoom 保留**（用户反馈：fit + +/- 挺有用）
+ *   - **Tweaks = 按钮 + 旁边 toggle switch**：开关 ON/OFF 对应后端注入不同提示词
+ *     - ON：agent 主动暴露核心微调参数让用户拖动
+ *     - OFF：agent 不 expose_tweaks，按对话方式让用户提需求 agent 改
+ *   - **Comment = 按钮**：点击打开评论汇总（CommentOverview），不是"进入评论模式"
+ *   - **A11y / Reload 移到 SystemPopover**（次要工具，收起来）
+ */
 export default function CanvasToolbar({
-  mode, onModeChange, onReload,
+  mode, onModeChange,
   zoom = 1, isAutoFit = false, onZoomChange, onFitToggle,
-  onA11yClick, a11yBtnRef,
-  onSystemClick, systemBtnRef, systemActive = false,
   onTweaksClick, tweaksAvailable = false, tweaksOpen = false,
+  tweaksEnabled = true, onTweaksEnabledChange,
+  onCommentClick, commentOverviewOpen = false, commentCount = 0, commentBtnRef,
+  onSystemClick, systemBtnRef, systemActive = false,
 }) {
   return (
     <div style={{
       height: 44,
       flexShrink: 0,
-      borderBottom: `1px solid ${STAGE.borderWarm}`,    // 暖棕极淡边对齐 stage
-      background: 'rgba(255,255,255,0.95)',             // 半透明白，融入 stage 卡片
+      borderBottom: `1px solid ${STAGE.borderWarm}`,
+      background: 'rgba(255,255,255,0.95)',
       display: 'flex',
       alignItems: 'center',
       padding: `0 ${GAP.lg}px`,
       gap: GAP.lg,
     }}>
-      {/* Mode 切换 */}
+      {/* Mode 切换 — 保留 3 段 */}
       <div style={{
         display: 'inline-flex',
         background: 'rgba(0,0,0,0.04)',
@@ -59,7 +75,7 @@ export default function CanvasToolbar({
 
       <div style={{ flex: 1 }} />
 
-      {/* Zoom — fit 模式自动按 canvas 宽算；+/- 切到 manual；Fit 按钮回 fit */}
+      {/* Zoom */}
       {onZoomChange && (
         <div style={{
           display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
@@ -86,42 +102,83 @@ export default function CanvasToolbar({
         </div>
       )}
 
-      {/* Tweaks 浮窗 toggle — agent expose 过控件后才显示 */}
-      {tweaksAvailable && onTweaksClick && (
+      {/* Tweaks 按钮 + 旁边 toggle switch — 永远显示（不再受 tweaksAvailable 控制）
+          tweaksAvailable=false 表示 agent 还没 expose 任何 control，按钮还在但 panel 内是 empty state */}
+      {onTweaksClick && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+        }}>
+          <button
+            onClick={() => { if (tweaksEnabled) onTweaksClick?.(); }}
+            disabled={!tweaksEnabled}
+            style={{
+              padding: `${GAP.xs + 1}px ${GAP.md}px`,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+              color: !tweaksEnabled ? COLOR.text5 : (tweaksOpen ? COLOR.text : (tweaksAvailable ? COLOR.text4 : COLOR.text5)),
+              background: tweaksEnabled && tweaksOpen ? 'rgba(0,0,0,0.06)' : 'transparent',
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              borderRadius: 4,
+              opacity: tweaksEnabled ? (tweaksAvailable ? 1 : 0.7) : 0.5,
+              cursor: tweaksEnabled ? 'pointer' : 'not-allowed',
+            }}
+            title={
+              !tweaksEnabled
+                ? 'Tweaks 已禁用 — 用旁边开关启用'
+                : !tweaksAvailable
+                  ? 'agent 还没暴露任何微调参数 — 跟 agent 说一句让它 expose_tweaks（或等当前 deck 形态稳定后自动暴露）'
+                  : tweaksOpen ? '关闭 Tweaks 面板' : '打开 Tweaks 面板（拖控件实时改样式）'
+            }
+          >
+            <Sliders size={11} /> Tweaks
+            {!tweaksAvailable && tweaksEnabled && (
+              <span style={{
+                fontSize: 9, color: COLOR.text5, marginLeft: 2,
+                fontStyle: 'italic',
+              }}>(空)</span>
+            )}
+          </button>
+          {/* Toggle switch — 启用/禁用 Tweaks 模式（对应后端注入不同提示词）*/}
+          <ToggleSwitch
+            checked={tweaksEnabled}
+            onChange={onTweaksEnabledChange}
+            title={tweaksEnabled
+              ? '已启用 Tweaks 模式 — agent 会主动暴露核心微调参数'
+              : '已禁用 Tweaks 模式 — agent 走对话改样式不暴露控件'}
+          />
+        </div>
+      )}
+
+      {/* Comment 按钮 — 打开评论汇总（不是进入评论模式）*/}
+      {onCommentClick && (
         <button
-          onClick={onTweaksClick}
+          ref={commentBtnRef}
+          onClick={onCommentClick}
           style={{
             padding: `${GAP.xs + 1}px ${GAP.md}px`,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-            color: tweaksOpen ? COLOR.text : COLOR.text4,
-            background: tweaksOpen ? 'rgba(0,0,0,0.06)' : 'transparent',
+            color: commentOverviewOpen ? COLOR.text : COLOR.text4,
+            background: commentOverviewOpen ? 'rgba(0,0,0,0.06)' : 'transparent',
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             borderRadius: 4,
+            position: 'relative',
           }}
-          title={tweaksOpen ? '关闭 Tweaks 面板' : '打开 Tweaks 面板（拖控件实时改样式）'}
+          title="查看本 deck 已有评论"
         >
-          <Sliders size={11} /> Tweaks
+          <MessageSquare size={11} /> Comment
+          {commentCount > 0 && (
+            <span style={{
+              minWidth: 16, height: 14,
+              padding: '0 4px',
+              fontFamily: FONT_MONO, fontSize: 9, lineHeight: '14px',
+              color: '#fff', background: COLOR.accent || '#c97c4a',
+              borderRadius: 7,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            }}>{commentCount}</span>
+          )}
         </button>
       )}
 
-      {/* A11y review */}
-      {onA11yClick && (
-        <button
-          ref={a11yBtnRef}
-          onClick={onA11yClick}
-          style={{
-            padding: `${GAP.xs + 1}px ${GAP.md}px`,
-            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
-            display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-            borderRadius: 4,
-          }}
-          title="无障碍审查（mock）"
-        >
-          <ShieldCheck size={11} /> A11y
-        </button>
-      )}
-
-      {/* System — 项目档案 popover */}
+      {/* System — 项目档案 + 收纳 A11y / Reload */}
       {onSystemClick && (
         <button
           ref={systemBtnRef}
@@ -134,24 +191,45 @@ export default function CanvasToolbar({
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             borderRadius: 4,
           }}
-          title="System — skill / 设计系统 / 模型 / spec / 项目档案"
+          title="System — A11y / Reload / 项目档案"
         >
           <Settings size={11} />
         </button>
       )}
-
-      {/* Reload */}
-      {onReload && (
-        <button onClick={onReload} style={{
-          padding: `${GAP.xs + 1}px ${GAP.md}px`,
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
-          display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-          borderRadius: 4,
-        }} title="重载 iframe">
-          <RotateCcw size={11} /> Reload
-        </button>
-      )}
     </div>
+  );
+}
+
+/**
+ * 极简 toggle switch（避免引第三方）
+ */
+function ToggleSwitch({ checked, onChange, title }) {
+  return (
+    <button
+      onClick={() => onChange?.(!checked)}
+      title={title}
+      style={{
+        width: 28, height: 16,
+        padding: 0,
+        border: 'none',
+        borderRadius: 8,
+        background: checked ? '#3a2a18' : 'rgba(0,0,0,0.18)',
+        position: 'relative',
+        cursor: 'pointer',
+        transition: 'background 0.15s',
+        flexShrink: 0,
+      }}
+    >
+      <span style={{
+        position: 'absolute',
+        top: 2, left: checked ? 14 : 2,
+        width: 12, height: 12,
+        borderRadius: '50%',
+        background: '#fff',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+        transition: 'left 0.15s',
+      }} />
+    </button>
   );
 }
 

@@ -84,6 +84,13 @@ export const Spec = {
   read: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/spec`),
 };
 
+// ── SessionConfig（用户/前端拥有的 session 配置，区别于 agent 私域 spec.json）──
+// 字段：tweaks_mode_enabled
+export const SessionConfig = {
+  read: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/config`),
+  patch: (pid, sid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/sessions/${sid}/config`, patch),
+};
+
 // ── Plan（Phase 3.2：SDK 原生 plan mode 审批流）──
 // 用户在 PlanReviewCard 点按钮 → approve 切 SDK permissionMode='default'；
 // reject 走 cancelRun 中断

@@ -128,7 +128,7 @@ export default function TweaksPanel({
   };
 
   const handleExposeCTA = () => {
-    onChat?.('基于当前 deck **一次性**暴露 5-8 个最有价值的可调参数（hero 字号 / 主色 / 间距密度 / layout variant 等），调 mcp__nodesign__expose_tweaks 写入 spec.tweaks。这是一次性动作，不要后续每次改 deck 都重 expose。');
+    onChat?.('基于当前 deck **一次性**暴露最有价值的核心可调参数（hero 字号 / 主色 / 间距密度 / layout variant 等，按 deck 实际形态判断数量，少而精），调 mcp__nodesign__expose_tweaks 写入 spec.tweaks。这是一次性动作，不要后续每次改 deck 都重 expose。');
   };
 
   if (loading && controls.length === 0) {

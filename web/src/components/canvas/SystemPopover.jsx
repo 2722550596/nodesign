@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, Settings as SettingsIcon } from 'lucide-react';
+import { ChevronRight, Settings as SettingsIcon, ShieldCheck, RotateCcw } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import SystemTab from '../context-panel/SystemTab.jsx';
 import DecisionsTab from '../context-panel/DecisionsTab.jsx';
@@ -7,17 +7,19 @@ import DecisionsTab from '../context-panel/DecisionsTab.jsx';
 /**
  * SystemPopover — 项目档案 popover（贴 toolbar Settings 按钮）
  *
- * 替代原来的 system / decisions floating panel：
- *   - 顶部 SystemTab 4 段（Skill / DS / Model / Spec 摘要）
- *   - 底部"项目档案"折叠（默认收起）：展开后嵌 DecisionsTab（含 decisions + history）
+ * 2026-05-07 改造：toolbar 把 A11y / Reload 收到这里（Mode 和 Zoom 留 toolbar）。
  *
- * 形状：跟 A11yReviewPopover 同款（top:78 right:16，click-outside 关）。
- * 跟 A11y 互斥（同侧不能同时显示，由 CanvasFrame 切 state 时互斥控制）。
+ * 内容：
+ *   - 顶部 Canvas 工具（A11y / Reload）— 2026-05-07 新增
+ *   - 中部 SystemTab 4 段（Skill / DS / Model / Spec 摘要）
+ *   - 底部"项目档案"折叠（默认收起）：展开后嵌 DecisionsTab（含 decisions + history）
  */
 export default function SystemPopover({
   anchorRef, onClose,
   project, deckSpec,
   projectId, sessionId, decisionsReloadKey = 0,
+  // 2026-05-07 新增：从 CanvasToolbar 收纳的次要工具
+  onA11yClick, onReload,
 }) {
   const ref = useRef(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -72,6 +74,42 @@ export default function SystemPopover({
 
       {/* Body — scrollable */}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        {/* Canvas 工具（A11y / Reload） — 2026-05-07 从 toolbar 收纳 */}
+        {(onA11yClick || onReload) && (
+          <div style={{
+            padding: `${GAP.md}px ${GAP.lg}px`,
+            borderBottom: `1px solid ${COLOR.borderLt}`,
+            display: 'flex', flexDirection: 'column', gap: GAP.sm,
+          }}>
+            <div style={{
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+              color: COLOR.sub, textTransform: 'uppercase', letterSpacing: '0.05em',
+            }}>
+              Canvas 工具
+            </div>
+            <div style={{ display: 'flex', gap: GAP.sm }}>
+              {onA11yClick && (
+                <button
+                  onClick={() => { onA11yClick(); onClose?.(); }}
+                  style={popoverToolBtn}
+                  title="无障碍审查（mock）"
+                >
+                  <ShieldCheck size={11} /> A11y
+                </button>
+              )}
+              {onReload && (
+                <button
+                  onClick={() => { onReload(); onClose?.(); }}
+                  style={popoverToolBtn}
+                  title="重载 iframe"
+                >
+                  <RotateCcw size={11} /> Reload
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <SystemTab project={project} deckSpec={deckSpec} />
 
         {/* 项目档案 折叠 — 默认收起（agent 内部知识，用户偶尔翻） */}
@@ -139,3 +177,13 @@ export default function SystemPopover({
     </div>
   );
 }
+
+const popoverToolBtn = {
+  padding: `${GAP.xs + 1}px ${GAP.md}px`,
+  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
+  background: 'rgba(0,0,0,0.04)',
+  border: 'none',
+  borderRadius: 4,
+  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+  cursor: 'pointer',
+};
