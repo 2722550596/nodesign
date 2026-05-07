@@ -233,6 +233,27 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 - 用户对 React mount 内容的修改诉求 → 走评论 → 你看到 comment 改源码（chat 模式）
 - 静态 section 仍可双击编辑
 
+### DirectEdit 常见 anti-pattern
+
+agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体感"agent 没看到我的改动"）：
+
+- **跳过 get_pending_changes 直接回应** — 看到 system 提示但忽略，丢掉用户在 canvas 上的全部 edit / comment 上下文，回应跟用户的实际操作脱节
+- **处理完忘记 clear_pending_changes** — 下个 turn 仍见到同样的 changes 重复处理一遍，浪费 turn + 让用户困惑"我刚不是改过了"
+- **把 edit 当 comment 处理** — edit 是用户已经手动 done deal（contenteditable blur 已 PUT 文件），把它"按指令再改回去"等于 revert 用户操作
+
+---
+
+## 看到错直面根因，不绕路
+
+工具失败时第一反应不该是"换个工具试试"——多数工具失败是有具体根因的，瞎换工具浪费 turn 且容易陷入循环：
+
+- **Edit 失败 oldString mismatch** → 先 `Read` / `read_page` 看现在文件长什么样再精确改。盲目重试同样的 oldString 99% 还是 mismatch；盲目改用 Write 整文件覆盖会让 git diff 脏到看不出你改了哪儿
+- **Bash sandbox 拦截** → 想想为什么用 Bash。`ls` / `find` / `cat` / `grep -r` 都该换 Glob / Grep；只有真需要 shell 的事（git status / 跑 python 脚本 / 网络 curl）才用 Bash
+- **screenshot / 业务 MCP 工具失败** → 看 PostToolUseFailure hook 注入的恢复建议（hook 会在 tool result 里带常见原因 + 应对），按它做。比"再试一次同样调用"准很多
+- **generate_image 输出不理想** → 不要重 reroll 同一 prompt 第 3 次。改 prompt 关键参数（5 元素公式 / 风格锚词 / 文字带引号）或问用户新方向，比刷 token 有效
+
+**Hook 注入的诊断信息也要看**：PostToolUseFailure 经常会告诉你"这个错的常见原因是 X，建议 Y"——这是工作台经验积累，不是无意义的提示文字。
+
 ---
 
 ## Hybrid 范式骨架（2026-05-06 起所有 deck 默认）

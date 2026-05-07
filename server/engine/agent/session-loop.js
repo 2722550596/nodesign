@@ -332,11 +332,12 @@ export async function runSession({
     forwardSubagentText: true,
 
     // streamInput 模式 budget 也是全局累计 —— 长 session 1$ 极易触顶。改默
-    // 认 5$（env override 仍生效）。Kimi 价位下 5$ 够跑很长一个 deck 项目；
-    // Claude/Opus 烧得快可以用 env 提到 10
+    // 认 10$（env override 仍生效）。原 default 5$ 实测让 agent 后期偏保守
+    // （少调工具 / 少派子代理 / 收尾仓促）。10$ 给充裕迭代空间，K2.6 价位下
+    // 也极少真烧到上限；Claude/Opus 长 session 可以再 env 提到 20。
     maxBudgetUsd: (() => {
       const v = Number(process.env.NODESIGN_MAX_BUDGET_USD);
-      return Number.isFinite(v) && v > 0 ? v : 5;
+      return Number.isFinite(v) && v > 0 ? v : 10;
     })(),
 
     // Sandbox 开/关来自 runtime/platform.js（NODESIGN_SANDBOX=on 显式打开）
