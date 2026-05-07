@@ -65,10 +65,21 @@ const router = express.Router();
  *
  * 数据：Map<requestId, { pid, runId, sessionId, ts }>，简单 5 分钟 TTL + 1024 容量上限
  * （超过先驱逐最旧）。同进程内存，重启清空（此时活 run 也都死了，一致）。
+ *
+ * race 修复（2026-05-08）：原版 lruGet → createRun → lruPut 之间无并发保护。两个
+ * 并发 POST 同 requestId 都通过 lruGet 返 null → 各自 createRun → 双 run 同 sid
+ * 推进同 inputQueue → agent 收两条同 chat 处理两轮（双倍 token / canvas 双写）。
+ *
+ * 加 inflightTurns Map<requestId, Promise<result>>：第一 POST 进来注册 in-flight
+ * Promise；第二 POST 看到 in-flight 就 await 拿第一个的 result 返 deduped。
+ * 第一个 POST 拿到 res 写完 lruPut + resolveInflight，5s 后 delete in-flight（让
+ * LRU 接管后续幂等查询）。
  */
 const REQUEST_LRU_TTL_MS = 5 * 60 * 1000;
 const REQUEST_LRU_MAX = 1024;
 const requestLru = new Map();
+const inflightTurns = new Map();  // requestId → Promise<{ pid, runId, sessionId }>
+const INFLIGHT_RETENTION_MS = 5_000;
 function lruGet(requestId) {
   const rec = requestLru.get(requestId);
   if (!rec) return null;
@@ -99,11 +110,30 @@ router.post('/:pid/turn', async (req, res, next) => {
     }
 
     // Phase A.6：requestId 命中 LRU → 直接返已存在的 run/session（弱网重发幂等）
+    // race 修复：① LRU 命中（已完成请求）→ 立即返；② in-flight 命中（正在跑）→
+    // await 第一 POST 的 result 后返 deduped；③ 都 miss → 注册 in-flight Promise
+    // 后继续走 createRun 路径，结尾 resolve / reject 通知后续等待者。
+    let inflightResolve = null;
+    let inflightReject = null;
     if (typeof requestId === 'string' && requestId) {
       const cached = lruGet(requestId);
       if (cached && cached.pid === project.id) {
         return res.status(202).json({ runId: cached.runId, sessionId: cached.sessionId, deduped: true });
       }
+      const inflight = inflightTurns.get(requestId);
+      if (inflight) {
+        try {
+          const r = await inflight;
+          if (r && r.pid === project.id) {
+            return res.status(202).json({ runId: r.runId, sessionId: r.sessionId, deduped: true });
+          }
+        } catch { /* first POST failed → fall through 让本 POST 重新跑 */ }
+      }
+      // 注册 in-flight Promise，后到的同 requestId POST 会 await 这个
+      const p = new Promise((rs, rj) => { inflightResolve = rs; inflightReject = rj; });
+      inflightTurns.set(requestId, p);
+      // 防 promise unhandled rejection 警告：失败时也 attach catch
+      p.catch(() => {});
     }
     // Phase 3.2：前端 plan-mode toggle 传 permissionMode='plan' 启用 SDK 原生 plan mode；
     // 其他值（含不传）显式走 bypassPermissions（自动化 design agent 默认 — 见 SDK
@@ -169,8 +199,14 @@ router.post('/:pid/turn', async (req, res, next) => {
     const run = createRun({ skillId: finalSkillId, brief: displayText, projectId: project.id });
 
     // Phase A.6：写 LRU 让后续重试同 requestId 拿到一致 (runId, sid)
+    // 同时 resolve in-flight Promise 通知正在 await 的并发 POST，5s 后清 in-flight
+    // entry（让 LRU 接管后续 dedup 查询）。
     if (typeof requestId === 'string' && requestId) {
       lruPut(requestId, { pid: project.id, runId: run.id, sessionId: sid });
+      if (inflightResolve) {
+        inflightResolve({ pid: project.id, runId: run.id, sessionId: sid });
+      }
+      setTimeout(() => inflightTurns.delete(requestId), INFLIGHT_RETENTION_MS);
     }
 
     // 立即返回，agent 后台跑
@@ -205,7 +241,14 @@ router.post('/:pid/turn', async (req, res, next) => {
 
     // 写回 active_session_id（让下次不带 sessionId 的 turn fallback 续到这个）
     try { setActiveSession(project.id, sid); } catch { /* ignore */ }
-  } catch (err) { next(err); }
+  } catch (err) {
+    // 处理失败时通知正在 await in-flight 的并发同 requestId POST：reject + 清 entry
+    // 让它们 fallthrough 自己跑（subagent 提的 race 修复完整闭环）。
+    try { if (typeof inflightReject === 'function') inflightReject(err); } catch { /* */ }
+    const rid = req.body?.requestId;
+    if (typeof rid === 'string' && rid) inflightTurns.delete(rid);
+    next(err);
+  }
 });
 
 /**
