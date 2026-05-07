@@ -452,19 +452,45 @@ ExitPlanMode({
 
 ## Stage 3 — Generate（Hybrid 范式写 canvas.html）
 
-### 起手式：cp canvas.template.html
+### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
 
-**强约束**：写 canvas.html 之前先 `Read canvas.template.html`——session 创建时系统自动拷到你的 cwd（跟 SKILL.md 保持同步），预置 importmap / Tailwind config / Babel / 4 shadcn 组件 / fit script / 键盘翻页 / image CSS vars / 1920×1080 base CSS 全部。
+写 canvas.html 之前先 `Read canvas.template.html`——session 创建时系统自动拷到你的 cwd（跟 SKILL.md 同步），预置 importmap / Tailwind config / Babel / 4 shadcn 组件 / fit script / 键盘翻页 / image CSS vars / 1920×1080 base CSS 全部就位。**别从 0 拼**——template 已 0 console errors / 浏览器实测过，省 30 分钟 boilerplate。
 
-```
-1. Read canvas.template.html       (cwd 下，直接 Read)
-2. Write canvas.html               (cp template + 改 title / 改 design-tokens / 改 sections)
-3. 改：design-tokens 的 --bg / --accent / --hero（按你 stage 1 plan 的 palette）
-4. 改：<section data-page="N"> 按你 plan 的 per-page 设计填
-5. 改：<script type="text/babel"> 加你的 React mount components
-```
+预估这次产出 > 400 行（多页 deck / 复杂单页）就走"骨架优先"——单次 Write 短而稳定 / 单次 Edit 锚点小而唯一 / 失败只丢一页。预估 < 400 行（改字 / 单元素调整 / 加一页）直接 Edit 局部即可，不必骨架。
 
-**别从 0 拼**——template 已 0 console errors / 浏览器实测过，省你 30 分钟 boilerplate。
+**骨架优先 5 步**：
+
+1. Write canvas.html（≤ 400 行）— 基础设施一字不动 cp，design-tokens 按 plan palette 一次写完，body 里每页只放空骨架 section：
+   ```html
+   <section data-page="1" data-layout-role="image-led" data-layout="cover"
+            data-anchor="cover" data-skeleton="cover-hero">
+     <div class="h-full flex items-center justify-center bg-[var(--ink)]/5
+                 text-[var(--muted)] font-mono text-sm tracking-widest">
+       PAGE 1 · cover-hero · WIP
+     </div>
+   </section>
+   ```
+   涉及数据图表 / 流程图等 React mount 的页，在底部 `<script type="text/babel">` 里预留 `// §mount:N` 注释行。
+
+2. expose_tweaks 一次（accent / hero / 排版密度）— 骨架 tokens 已稳定，用户可以一边调色一边等 agent 填页（这是骨架先行的隐藏红利）。
+
+3. 逐页 Edit 填充 — 一次 Edit = 一页 = 替换整个空 section。oldString 把 `<section data-page="N" data-skeleton="<slug>" ...>` 从开标签到关标签整段带上（`data-page` + `data-skeleton` 复合锚保唯一）。填完把 `data-skeleton` 换成 `data-anchor`（保留 slug 作为 vision-checker 反查锚）。
+
+4. 涉及 React mount 的页填完 section 后立即 Edit 把 `// §mount:N` 替换为组件实现 — 一页一对同回合落地，不留尾巴。
+
+5. 关键页（封面 / 数据页 / 章节扉页）填完立即 screenshot_canvas 自检 — 别等全 deck 写完才发现封面有问题。
+
+**Edit 前顺手核对一下锚点**：
+
+骨架 Write 完过几 turn 再来填某页时，记忆容易漂移——placeholder 当时的精确格式 / 上次 Edit 的属性顺序 / DirectEdit 用户改过的字符可能跟你印象里差几个字符。Edit canvas.html 之前先确认 oldString 真实存在通常更稳：
+
+- `mcp__nodesign__read_page N` 切片读单页是首选（比 Read 整文件省 token，跟 K2.6 长 context 死循环防护没张力）
+- 或 Bash `grep -n 'data-page="N" data-skeleton=' canvas.html` 一行确认锚还在
+- oldString mismatch 一次后建议先 read_page 拿真实文本再拼，硬猜第二次容易变成重写整段，把骨架优先的好处折回去
+
+刚 Write 完骨架紧接着 Edit 第一页通常可以直接拼（记忆新鲜）；从第 2 页开始 / 跨 turn / vision-checker 跑过之后再改，先核对会顺一点。
+
+**接手 session（resume / 中断后续做）**：grep `data-skeleton=` 和 `// §mount:` 残留 = 漏填信号，从残留处继续，不要重写整个 canvas.html。
 
 ### Hybrid 决策：什么时候用 React mount，什么时候纯静态
 
@@ -684,6 +710,11 @@ deck/landing 写完每页前问自己：这页加 motion 是真的强化叙事�
 ### 自检 vs 派 vision-checker
 
 **先自己 screenshot_canvas 看一眼**——你能 vision 看图，发现明显的错位 / 截断 / 对比度低**就直接自己改**。**别凡事都派 vision-checker**——它跑要 8 turn，浪费 budget。
+
+**残留骨架自检**（骨架先行模式专用）：截图 / 派 vision-checker 之前先 grep canvas.html 一次：
+- `data-skeleton=` 残留 → 漏填的页（应该都被换成 `data-anchor`）
+- `// §mount:` 残留 → 漏的 React mount
+- 残留任何一项都先补完再走自检 / vision-checker，不然带着 WIP placeholder 去截图会被认成"封面有问题"误判
 
 **真正派 vision-checker 的场景**：
 | 场景 | 派？ | 理由 |
