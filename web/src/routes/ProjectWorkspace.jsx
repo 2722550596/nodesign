@@ -75,6 +75,8 @@ export default function ProjectWorkspace() {
   const systemInfo = useProjectStore(s => s.contextByProject[id]?.systemInfo || null);
   const contextUsage = useProjectStore(s => s.contextByProject[id]?.contextUsage || null);
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
+  const prompt = useGlobalStore(s => s.prompt);
   const setChatDraft = useGlobalStore(s => s.setChatDraft);
   // A4.3：维护活跃 run 的 (pid, runId)，让 AskUserQuestionView 能直接 POST /answer
   const setActiveRun = useGlobalStore(s => s.setActiveRun);
@@ -1132,8 +1134,15 @@ export default function ProjectWorkspace() {
 
   // C3 起：InspectFloatingCard 内嵌 textarea 直接传 ctx.text；老调用兼容 prompt
   const handleAddComment = async (ctx) => {
-    const text = (ctx?.text && ctx.text.trim())
-      || window.prompt('为这个元素写评论（之后 AI 会按这条评论改它）：');
+    let text = ctx?.text && ctx.text.trim();
+    if (!text) {
+      text = await prompt({
+        title: '元素评论',
+        message: '之后 AI 会按这条评论改它',
+        placeholder: '描述要改的样子……',
+        multiline: true,
+      });
+    }
     if (!text || !text.trim()) return;
     const trimmed = text.trim();
     setComments(arr => [...arr, {
@@ -1203,7 +1212,12 @@ export default function ProjectWorkspace() {
   // ── 顶栏 actions（async store ops）──
   const handleRename = async () => {
     setActionsOpen(false);
-    const next = window.prompt('重命名为：', project.name);
+    const next = await prompt({
+      title: '重命名项目',
+      initialValue: project.name,
+      placeholder: '项目名',
+      validate: (v) => v.trim() ? null : '不能为空',
+    });
     if (!next || !next.trim() || next === project.name) return;
     try {
       await updateProject(project.id, { name: next.trim() });
@@ -1226,7 +1240,12 @@ export default function ProjectWorkspace() {
   };
   const handleDelete = async () => {
     setActionsOpen(false);
-    if (!window.confirm(`删除「${project.name}」？此操作不可撤销。`)) return;
+    if (!(await confirm({
+      title: '删除项目',
+      message: `删除「${project.name}」？此操作不可撤销。`,
+      confirmLabel: '删除',
+      danger: true,
+    }))) return;
     try {
       await deleteProject(project.id);
       showToast('项目已删除', 'info');

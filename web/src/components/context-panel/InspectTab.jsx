@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { ChevronRight, Crosshair, MessageCircle, Edit3, RefreshCw } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 import {
   getElementRole,
   describePage,
@@ -29,6 +30,7 @@ import { findElementByAnchor } from '../../lib/html-utils.js';
 export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, onDirectEdit, onTriggerRun, compact = false }) {
   const [scope, setScope] = useState('this');         // this | sameType-page | sameType-deck | spec
   const [aiOpen, setAiOpen] = useState(false);
+  const showToast = useGlobalStore(s => s.showToast);
 
   const el = useMemo(
     () => (selectedAnchor && iframeDoc ? findElementByAnchor(selectedAnchor, iframeDoc.body) : null),
@@ -124,7 +126,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
             {adjustables.map(a => (
               <button
                 key={a.key}
-                onClick={() => alert(`P5 实现：调整 ${a.label}`)}
+                onClick={() => showToast(`「调整 ${a.label}」即将推出`, 'info')}
                 style={{
                   padding: `${GAP.xs}px ${GAP.md}px`,
                   fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,

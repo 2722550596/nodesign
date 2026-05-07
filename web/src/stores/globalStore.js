@@ -122,6 +122,39 @@ export const useGlobalStore = create((set) => ({
     return { timelineSummaries: next };
   }),
 
+  // ── 站内 Confirm / Prompt 对话框（替代 window.confirm / window.prompt）──
+  // 命令式 Promise API：调用方 `await confirm({ message })` 拿 boolean，
+  // `await prompt({ initialValue })` 拿 string|null。
+  // 实际 UI 由 <GlobalDialogs /> 在根挂载，监听这两个 state 渲染 ConfirmDialog/PromptDialog。
+  // resolve 在用户点确认/取消时被调，随后清掉 state。
+  confirmDialog: null,
+  promptDialog: null,
+  confirm: ({ title = '确认', message = '', confirmLabel = '确认', cancelLabel = '取消', danger = false } = {}) =>
+    new Promise((resolve) => {
+      // 同时只允许一个 confirm 弹窗——若上一个未关，先 resolve(false) 再起新的
+      const prev = useGlobalStore.getState().confirmDialog;
+      if (prev?.resolve) prev.resolve(false);
+      useGlobalStore.setState({
+        confirmDialog: { title, message, confirmLabel, cancelLabel, danger, resolve },
+      });
+    }),
+  prompt: ({ title = '请输入', message = '', initialValue = '', placeholder = '', confirmLabel = '确认', cancelLabel = '取消', validate, multiline = false } = {}) =>
+    new Promise((resolve) => {
+      const prev = useGlobalStore.getState().promptDialog;
+      if (prev?.resolve) prev.resolve(null);
+      useGlobalStore.setState({
+        promptDialog: { title, message, initialValue, placeholder, confirmLabel, cancelLabel, validate, multiline, resolve },
+      });
+    }),
+  closeConfirmDialog: (result) => set((s) => {
+    if (s.confirmDialog?.resolve) s.confirmDialog.resolve(result);
+    return { confirmDialog: null };
+  }),
+  closePromptDialog: (result) => set((s) => {
+    if (s.promptDialog?.resolve) s.promptDialog.resolve(result);
+    return { promptDialog: null };
+  }),
+
   // ── 模拟登录态（MVP 单用户）──
   user: { id: 'u_self', name: '我', avatar: null },
 }));

@@ -23,6 +23,7 @@ const EMPTY_RECALL_HISTORY = [];
  */
 export default function MemoryCard({ projectId }) {
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
   const addPendingMemoryRecall = useGlobalStore(s => s.addPendingMemoryRecall);
   const recallHistory = useGlobalStore(s => s.recallHistoryByProject[projectId] || EMPTY_RECALL_HISTORY);
   const [memory, setMemory] = useState([]);
@@ -70,7 +71,12 @@ export default function MemoryCard({ projectId }) {
 
   const handleDelete = async (agentType) => {
     const label = agentType || 'main agent';
-    if (!window.confirm(`删除「${label}」的 memory？此操作不可撤销。`)) return;
+    if (!(await confirm({
+      title: '删除 memory',
+      message: `删除「${label}」的 memory？此操作不可撤销。`,
+      confirmLabel: '删除',
+      danger: true,
+    }))) return;
     try {
       await Memory.remove(projectId, agentType || '_root');
       showToast('已删除', 'info');

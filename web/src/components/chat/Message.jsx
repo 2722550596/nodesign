@@ -172,6 +172,7 @@ export default function Message({ message, projectId, sessionId, onCanvasReload 
  */
 function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
   const [hover, setHover] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -179,7 +180,7 @@ function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
 
   async function handleUndo() {
     if (!canUndo || busy) return;
-    if (!window.confirm('回到此处？这会丢弃后续所有文件改动。')) return;
+    if (!(await confirm({ title: '回到此处', message: '回到此处？这会丢弃后续所有文件改动。', confirmLabel: '回滚', danger: true }))) return;
     setBusy(true);
     try {
       const result = await Sessions.rewind(projectId, sessionId, message.id);

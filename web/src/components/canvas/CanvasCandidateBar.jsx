@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Plus, X, GitBranch } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * CanvasCandidateBar — 候选切换条
@@ -81,13 +82,22 @@ export default function CanvasCandidateBar({ candidates, activeId, onSelect, onA
 
 function CandidateTab({ candidate, active, onSelect, onRemove, onRename }) {
   const [hover, setHover] = useState(false);
+  const prompt = useGlobalStore(s => s.prompt);
+  const confirm = useGlobalStore(s => s.confirm);
 
-  const handleDblClick = (e) => {
+  const handleDblClick = async (e) => {
     e.stopPropagation();
     if (!onRename) return;
-    const next = window.prompt('重命名候选：', candidate.label);
+    const next = await prompt({ title: '重命名候选', initialValue: candidate.label, placeholder: '候选名' });
     if (next && next.trim() && next !== candidate.label) {
       onRename(candidate.id, next.trim());
+    }
+  };
+
+  const handleRemove = async (e) => {
+    e.stopPropagation();
+    if (await confirm({ title: '删除候选', message: `删除候选「${candidate.label}」？`, confirmLabel: '删除', danger: true })) {
+      onRemove();
     }
   };
 
@@ -123,7 +133,7 @@ function CandidateTab({ candidate, active, onSelect, onRemove, onRename }) {
       </button>
       {onRemove && hover && (
         <button
-          onClick={(e) => { e.stopPropagation(); if (window.confirm(`删除候选「${candidate.label}」？`)) onRemove(); }}
+          onClick={handleRemove}
           style={{
             position: 'absolute', right: 2, top: '50%', transform: 'translateY(-50%)',
             width: 14, height: 14, borderRadius: 3,

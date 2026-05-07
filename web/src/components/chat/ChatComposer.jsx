@@ -41,6 +41,7 @@ export default function ChatComposer({
   const setChatDraft = useGlobalStore(s => s.setChatDraft);
   const planModeEnabled = useGlobalStore(s => s.planModeEnabled);
   const setPlanModeEnabled = useGlobalStore(s => s.setPlanModeEnabled);
+  const showToast = useGlobalStore(s => s.showToast);
   const activeRun = useGlobalStore(s => s.activeRun);
   // UX 守卫：plan banner / approval card 弹时禁用 toggle 防双向操作打架
   const planModeRequest = useGlobalStore(s => s.planModeRequest);
@@ -206,7 +207,7 @@ export default function ChatComposer({
           <IconBtn
             icon={<AtSign size={14} />}
             title="引用项目内已上传的资料"
-            onClick={() => alert('P2 实现：选择资料 @引用')}
+            onClick={() => showToast('「@引用资料」即将推出', 'info')}
           />
           <IconBtn
             icon={<Paperclip size={14} />}
@@ -229,7 +230,7 @@ export default function ChatComposer({
           <IconBtn
             icon={<Wand2 size={14} />}
             title="AI 建议（帮你写 brief 草稿）"
-            onClick={() => alert('P5 实现：让 agent 给 brief 候选')}
+            onClick={() => showToast('「AI brief 建议」即将推出', 'info')}
           />
 
           {/* Phase 3.2：plan-mode toggle —— 开 SDK 原生 plan mode（agent 先写 plan

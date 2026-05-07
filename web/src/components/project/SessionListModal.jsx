@@ -25,6 +25,8 @@ export default function SessionListModal({
   onSwitch,
 }) {
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
+  const prompt = useGlobalStore(s => s.prompt);
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -81,7 +83,12 @@ export default function SessionListModal({
 
   const handleRename = async (s) => {
     setMenuOpenSid(null);
-    const next = window.prompt('重命名会话：', s.customTitle || s.summary || '');
+    const next = await prompt({
+      title: '重命名会话',
+      initialValue: s.customTitle || s.summary || '',
+      placeholder: '会话标题',
+      validate: (v) => v.trim() ? null : '不能为空',
+    });
     if (next == null || !next.trim()) return;
     try {
       await Sessions.update(projectId, s.sessionId, { title: next.trim() });
@@ -94,7 +101,12 @@ export default function SessionListModal({
 
   const handleTag = async (s) => {
     setMenuOpenSid(null);
-    const next = window.prompt('标签（留空清除）：', s.tag || '');
+    const next = await prompt({
+      title: '会话标签',
+      message: '留空清除标签',
+      initialValue: s.tag || '',
+      placeholder: '标签',
+    });
     if (next == null) return;
     const tag = next.trim() ? next.trim() : null;
     try {
@@ -109,7 +121,12 @@ export default function SessionListModal({
   const handleDelete = async (s) => {
     setMenuOpenSid(null);
     const title = s.customTitle || s.summary || s.sessionId.slice(0, 8);
-    if (!window.confirm(`删除会话「${title}」？此操作不可撤销。`)) return;
+    if (!(await confirm({
+      title: '删除会话',
+      message: `删除会话「${title}」？此操作不可撤销。`,
+      confirmLabel: '删除',
+      danger: true,
+    }))) return;
     try {
       await Sessions.remove(projectId, s.sessionId);
       showToast('已删除', 'info');

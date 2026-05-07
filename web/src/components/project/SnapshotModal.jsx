@@ -3,6 +3,7 @@ import { Camera, RotateCcw, Trash2, Edit2, Plus } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { timeAgo } from '../../lib/helpers.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * SnapshotModal — 项目版本快照管理
@@ -119,9 +120,25 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
 }
 
 function SnapshotRow({ snapshot, onRestore, onDelete, onRename }) {
-  const handleRename = () => {
-    const next = window.prompt('重命名快照：', snapshot.label);
+  const prompt = useGlobalStore(s => s.prompt);
+  const confirm = useGlobalStore(s => s.confirm);
+
+  const handleRename = async () => {
+    const next = await prompt({
+      title: '重命名快照',
+      initialValue: snapshot.label,
+      placeholder: '快照名',
+    });
     if (next && next.trim() && next !== snapshot.label) onRename(next.trim());
+  };
+
+  const handleDelete = async () => {
+    if (await confirm({
+      title: '删除快照',
+      message: `删除快照「${snapshot.label}」？`,
+      confirmLabel: '删除',
+      danger: true,
+    })) onDelete();
   };
 
   return (
@@ -154,7 +171,7 @@ function SnapshotRow({ snapshot, onRestore, onDelete, onRename }) {
       <button onClick={handleRename} style={iconBtn} title="重命名"><Edit2 size={11} /></button>
       <button onClick={onRestore} style={iconBtn} title="恢复（mock）"><RotateCcw size={11} /></button>
       <button
-        onClick={() => { if (window.confirm(`删除快照「${snapshot.label}」？`)) onDelete(); }}
+        onClick={handleDelete}
         style={iconBtnDanger}
         title="删除"
       ><Trash2 size={11} /></button>

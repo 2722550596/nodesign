@@ -4,6 +4,7 @@ import ProjectHub from './routes/ProjectHub.jsx';
 import ProjectWorkspace from './routes/ProjectWorkspace.jsx';
 import SkillList from './routes/SkillList.jsx';
 import ToastContainer from './components/ui/ToastContainer.jsx';
+import GlobalDialogs from './components/ui/GlobalDialogs.jsx';
 
 const router = createBrowserRouter([
   { path: '/', element: <Home /> },
@@ -22,6 +23,7 @@ export default function App() {
     <>
       <RouterProvider router={router} />
       <ToastContainer />
+      <GlobalDialogs />
     </>
   );
 }

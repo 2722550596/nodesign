@@ -28,6 +28,7 @@ export default function PlanReviewCard() {
   const clearPlanForApproval = useGlobalStore((s) => s.clearPlanForApproval);
   const activeRun = useGlobalStore((s) => s.activeRun);
   const showToast = useGlobalStore((s) => s.showToast);
+  const confirm = useGlobalStore((s) => s.confirm);
 
   const [editing, setEditing] = useState(false);
   const [editedPlan, setEditedPlan] = useState('');
@@ -73,7 +74,12 @@ export default function PlanReviewCard() {
       clearPlanForApproval();
       return;
     }
-    if (!confirm('确定拒绝这个 plan？run 会中止，你需要重新发 brief。')) return;
+    if (!(await confirm({
+      title: '拒绝 plan',
+      message: '确定拒绝这个 plan？run 会中止，你需要重新发 brief。',
+      confirmLabel: '拒绝',
+      danger: true,
+    }))) return;
     setSubmitting(true);
     try {
       await Plan.reject({

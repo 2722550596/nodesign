@@ -14,6 +14,7 @@ import { useDropzone } from '../../lib/useDropzone.js';
  */
 export default function FilesCard({ projectId }) {
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -64,7 +65,12 @@ export default function FilesCard({ projectId }) {
   });
 
   const handleDelete = async (filename) => {
-    if (!window.confirm(`删除「${filename}」？`)) return;
+    if (!(await confirm({
+      title: '删除文件',
+      message: `删除「${filename}」？`,
+      confirmLabel: '删除',
+      danger: true,
+    }))) return;
     try {
       await Assets.remove(projectId, filename);
       showToast('已删除', 'info');

@@ -304,10 +304,16 @@ function RecentQuickSection() {
   }, []);
 
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
 
   const handleDelete = async (s) => {
     const title = s.customTitle || s.summary || s.firstPrompt || s.projectName || '未命名对话';
-    if (!window.confirm(`删除对话「${title}」？此操作不可撤销。`)) return;
+    if (!(await confirm({
+      title: '删除对话',
+      message: `删除对话「${title}」？此操作不可撤销。`,
+      confirmLabel: '删除',
+      danger: true,
+    }))) return;
     try {
       await Sessions.remove(s.projectId, s.sessionId);
       setSessions(prev => prev.filter(x => x.sessionId !== s.sessionId));
@@ -431,6 +437,8 @@ function ProjectCard({ project }) {
   const deleteProject = useProjectStore(s => s.deleteProject);
   const duplicateProject = useProjectStore(s => s.duplicateProject);
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
+  const prompt = useGlobalStore(s => s.prompt);
 
   // mount: 拉最新 session sid 用于 iframe 封面
   useEffect(() => {
@@ -448,7 +456,12 @@ function ProjectCard({ project }) {
   const handleRename = async (e) => {
     e.preventDefault(); e.stopPropagation();
     setMenuOpen(false);
-    const next = window.prompt('重命名为：', project.name);
+    const next = await prompt({
+      title: '重命名项目',
+      initialValue: project.name,
+      placeholder: '项目名',
+      validate: (v) => v.trim() ? null : '不能为空',
+    });
     if (!next || !next.trim() || next === project.name) return;
     try {
       await updateProject(project.id, { name: next.trim() });
@@ -470,7 +483,12 @@ function ProjectCard({ project }) {
   const handleDelete = async (e) => {
     e.preventDefault(); e.stopPropagation();
     setMenuOpen(false);
-    if (!window.confirm(`删除「${project.name}」？此操作不可撤销。`)) return;
+    if (!(await confirm({
+      title: '删除项目',
+      message: `删除「${project.name}」？此操作不可撤销。`,
+      confirmLabel: '删除',
+      danger: true,
+    }))) return;
     try {
       await deleteProject(project.id);
       showToast('项目已删除', 'info');

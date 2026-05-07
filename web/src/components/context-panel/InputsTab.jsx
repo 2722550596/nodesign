@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { Plus, X, FileText, Image as ImageIcon, Link2, Github, Globe } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { formatSize, newId } from '../../lib/helpers.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * Inputs tab — 上传资料 / 链接 repo / 网页 capture
@@ -15,16 +16,24 @@ import { formatSize, newId } from '../../lib/helpers.js';
  */
 export default function InputsTab({ inputs = [], onAdd, onRemove }) {
   const fileRef = useRef(null);
+  const showToast = useGlobalStore(s => s.showToast);
+  const prompt = useGlobalStore(s => s.prompt);
 
   // 直接把 File 上抛给父级（由父级走 multipart Assets.upload + 进托盘）；
   // 不再 FileReader 本地预览（缩略图依赖 Assets.upload 后的 thumbnail —— P0+ 加）
   const handleFile = (files) => {
     if (!files || files.length === 0) return;
-    Array.from(files).forEach((file) => onAdd?.(file));
+    const arr = Array.from(files);
+    arr.forEach((file) => onAdd?.(file));
+    showToast(arr.length === 1 ? `已添加 ${arr[0].name}` : `已添加 ${arr.length} 个文件`, 'success');
   };
 
-  const handlePasteUrl = () => {
-    const url = window.prompt('粘贴 URL（网页 / 在线 PDF / 任意公开链接）');
+  const handlePasteUrl = async () => {
+    const url = await prompt({
+      title: '粘贴 URL',
+      message: '网页 / 在线 PDF / 任意公开链接',
+      placeholder: 'https://...',
+    });
     if (!url || !url.trim()) return;
     const trimmed = url.trim();
     onAdd?.({
@@ -33,12 +42,15 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
       filename: trimmed,
       addedAt: new Date().toISOString(),
     });
+    showToast('已添加 URL', 'success');
   };
 
-  const handleConnectRepo = () => {
-    const url = window.prompt(
-      '连接代码库（GitHub URL）\n\n建议挂指定子目录而不是整个 monorepo（参考 Claude_design §13.3）\n例如：https://github.com/your-org/repo/tree/main/src/components'
-    );
+  const handleConnectRepo = async () => {
+    const url = await prompt({
+      title: '连接代码库',
+      message: '建议挂指定子目录而不是整个 monorepo（参考 Claude_design §13.3）\n例如：https://github.com/your-org/repo/tree/main/src/components',
+      placeholder: 'https://github.com/...',
+    });
     if (!url || !url.trim()) return;
     const trimmed = url.trim();
     onAdd?.({
@@ -48,6 +60,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
       addedAt: new Date().toISOString(),
       meta: { connector: 'github' },
     });
+    showToast('已连接代码库', 'success');
   };
 
   return (
