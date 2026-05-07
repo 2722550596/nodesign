@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import { Upload } from "lucide-react";
 import { FONT_MONO, FONT_SANS, COLOR, GAP, FONT_SIZE } from "../../lib/theme.js";
+import { useGlobalStore } from "../../stores/globalStore.js";
 
 /**
  * Markdown 编辑输入 — 手写 + 拖拽/点选 .md 文件自动解析
@@ -10,6 +11,7 @@ export default function MarkdownInput({ value, onChange, placeholder, minHeight 
   const [dragging, setDragging] = useState(false);
   const dragCounter = useRef(0);
   const fileRef = useRef(null);
+  const showToast = useGlobalStore(s => s.showToast);
 
   const readFile = useCallback((file) => {
     if (!file) return;
@@ -17,9 +19,13 @@ export default function MarkdownInput({ value, onChange, placeholder, minHeight 
     reader.onload = (e) => {
       const text = e.target?.result || "";
       onChange(value ? value + "\n\n" + text : text);
+      showToast(`已导入 ${file.name}`, 'success');
+    };
+    reader.onerror = () => {
+      showToast(`读取 ${file.name} 失败`, 'error');
     };
     reader.readAsText(file, "utf-8");
-  }, [value, onChange]);
+  }, [value, onChange, showToast]);
 
   const acceptFile = useCallback((file) => {
     if (!file) return false;
