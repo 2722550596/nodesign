@@ -241,7 +241,11 @@ export async function runSession({
     },
 
     permissionMode: initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions',
-    allowDangerouslySkipPermissions: initialPermissionMode !== 'plan',
+    // 永远 true：与 permissionMode 正交——只是"允许运行时切 bypassPermissions"的安全
+    // 开关，启动当下的 mode 由 permissionMode 字段定。plan-mode 启动也必须带，否则用户
+    // 批准 plan 后 host 调 query.setPermissionMode('bypassPermissions') 会被 SDK 拒：
+    // "session was not launched with --dangerously-skip-permissions"。
+    allowDangerouslySkipPermissions: true,
     planModeInstructions: NODESIGN_PLAN_INSTRUCTIONS,
 
     // 通用 permission gate

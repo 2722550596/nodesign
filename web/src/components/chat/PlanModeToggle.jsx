@@ -3,6 +3,10 @@ import { COLOR, GAP, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plan } from '../../lib/api.js';
 
+// 服务器报"run not active"（run 已结束）= 切 store 即可，不算错；下次 turn 用新 mode。
+// 其他错误（SDK 拒切 mode / 网络抖到失败 / 500）→ 回滚 store + toast 让用户重试。
+const RUN_INACTIVE_RE = /404|RUN_NOT_ACTIVE|run not active/i;
+
 /**
  * 深度对齐 toggle —— SDK 原生 plan mode 开关。
  *
@@ -22,11 +26,13 @@ export default function PlanModeToggle({ disabled = false, syncToActiveRun = fal
   const activeRun = useGlobalStore(s => s.activeRun);
   const planModeRequest = useGlobalStore(s => s.planModeRequest);
   const planForApproval = useGlobalStore(s => s.planForApproval);
+  const showToast = useGlobalStore(s => s.showToast);
   const locked = !!planModeRequest || !!planForApproval;
   const isDisabled = disabled || locked;
 
   const handleClick = async () => {
     if (isDisabled) return;
+    const prev = planModeEnabled;
     const next = !planModeEnabled;
     setPlanModeEnabled(next);
     if (syncToActiveRun && activeRun?.pid && activeRun?.runId) {
@@ -36,8 +42,15 @@ export default function PlanModeToggle({ disabled = false, syncToActiveRun = fal
           runId: activeRun.runId,
           mode: next ? 'plan' : 'bypassPermissions',
         });
-      } catch {
-        // query 不 active（404）/ 网络抖动：silent；下一 turn 自然用新 mode
+      } catch (err) {
+        const msg = err?.message || String(err || '');
+        if (RUN_INACTIVE_RE.test(msg)) {
+          // run 已结束：保留 store 切换，下次 turn 自然用新 mode
+          return;
+        }
+        // 真失败（SDK 拒切 / 5xx / 网络）→ 回滚 store 让 UI 跟 SDK 真相一致 + 提示
+        setPlanModeEnabled(prev);
+        showToast(`切换深度对齐失败：${msg || '未知错误'}`, 'error');
       }
     }
   };
