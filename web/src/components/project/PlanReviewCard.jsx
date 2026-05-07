@@ -58,6 +58,7 @@ export default function PlanReviewCard() {
       await Plan.approve({
         pid: activeRun.pid,
         runId: activeRun.runId,
+        toolUseId: planForApproval.toolUseId,
         editedPlan: editing && editedPlan.trim() !== plan.trim() ? editedPlan : undefined,
       });
       showToast('plan 已批准，agent 开始执行', 'success');
@@ -85,6 +86,7 @@ export default function PlanReviewCard() {
       await Plan.reject({
         pid: activeRun.pid,
         runId: activeRun.runId,
+        toolUseId: planForApproval.toolUseId,
         reason: 'plan_rejected_by_user',
       });
       showToast('plan 已拒绝，run 已中止', 'info');

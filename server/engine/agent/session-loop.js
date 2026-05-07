@@ -39,6 +39,7 @@ import {
   setCurrentTurnRunId,
   registerPendingQuestion,
   registerPendingElicitation,
+  registerPendingPlanApproval,
   getSessionPermissionMode,
 } from '../runs/active-runs.js';
 import { loadSkill, ensureSkillStarterFiles } from './skill.js';
@@ -257,6 +258,40 @@ export async function runSession({
             + `所有页对齐了 → 调 ExitPlanMode 提交 design-plan.md → 用户批准后 SDK 自动切 default → 那时再做这个。`,
           interrupt: false,
         };
+      }
+
+      // ExitPlanMode 阻塞：agent 调 ExitPlanMode 后必须等用户审批 PlanReviewCard
+      // 才能继续。原 PostToolUse hook 只 emit 不阻塞 → agent 直接 next turn ≈
+      // "自动批准"体感（hooks.js:756 旧版只 ctx.emit 不 await）。改用 canUseTool
+      // 拦截：emit + await registerPendingPlanApproval —— 跟 AskUserQuestion 同
+      // 模式。host 调 plan-approve/reject 时通过 providePlanApprovalDecision resolve。
+      if (toolName === 'ExitPlanMode') {
+        const toolUseId = options?.toolUseID;
+        if (!toolUseId) {
+          return { behavior: 'deny', message: 'ExitPlanMode missing toolUseID', interrupt: false };
+        }
+        const plan = String(input?.plan || '').trim();
+        if (!plan) {
+          return { behavior: 'deny', message: 'ExitPlanMode plan content empty', interrupt: false };
+        }
+        sharedCtx.emit({ type: 'run.plan_for_approval', toolUseId, plan });
+        try {
+          const decision = await registerPendingPlanApproval(sessionId, toolUseId);
+          if (decision?.approved) {
+            // 用户 approve（含编辑过的 plan）→ host 已先调 setPermissionMode('default')
+            // 让 SDK 切回；canUseTool 这边 allow + 把 editedPlan 替换原 input.plan 让
+            // ExitPlanMode tool 落档用户实际批准的版本
+            const finalPlan = (typeof decision.editedPlan === 'string' && decision.editedPlan.trim())
+              ? decision.editedPlan
+              : plan;
+            return { behavior: 'allow', updatedInput: { ...input, plan: finalPlan } };
+          }
+          // 用户 reject —— 通常 plan-reject endpoint 已 cancelRun (abort 整个 query)，
+          // 走到这里是兜底：deny 让 agent 重新对齐
+          return { behavior: 'deny', message: '用户希望重新对齐，请基于反馈重新组织 plan', interrupt: true };
+        } catch (err) {
+          return { behavior: 'deny', message: err.message, interrupt: true };
+        }
       }
 
       if (toolName !== 'AskUserQuestion') return { behavior: 'allow', updatedInput: input };

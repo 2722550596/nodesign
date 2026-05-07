@@ -380,6 +380,76 @@ export function providePlanRequestDecision(sessionId, toolUseId, decision) {
 }
 
 /**
+ * 注册一个 pending plan approval（agent 调 ExitPlanMode 触发）。canUseTool
+ * await 这个 Promise 阻塞 agent 直到 host 处理 PlanReviewCard。原版 PostToolUse
+ * hook 只 emit 不阻塞，agent 调完 ExitPlanMode 直接 next turn = "自动批准"体感。
+ *
+ * 跟 registerPendingPlanRequest 实现完全平行（前者 banner 入口，后者 ExitPlanMode 出口）。
+ *
+ * @param {string} sessionId
+ * @param {string} toolUseId  - SDK 的 ExitPlanMode tool_use_id
+ * @returns {Promise<{ approved: boolean, editedPlan?: string }>}
+ */
+export function registerPendingPlanApproval(sessionId, toolUseId) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return Promise.reject(new Error(`session ${sessionId} not active`));
+  if (!toolUseId) return Promise.reject(new Error('toolUseId required'));
+
+  const existing = rec.pendingPlanApprovals.get(toolUseId);
+  if (existing) {
+    try { existing.reject(new Error('superseded by new plan approval with same toolUseId')); } catch { /* ignore */ }
+  }
+
+  return new Promise((resolve, reject) => {
+    rec.pendingPlanApprovals.set(toolUseId, {
+      resolve: (decision) => {
+        rec.pendingPlanApprovals.delete(toolUseId);
+        resolve(decision);
+      },
+      reject: (err) => {
+        rec.pendingPlanApprovals.delete(toolUseId);
+        reject(err);
+      },
+      createdAt: Date.now(),
+    });
+
+    const onAbort = () => {
+      const p = rec.pendingPlanApprovals.get(toolUseId);
+      if (p) {
+        rec.pendingPlanApprovals.delete(toolUseId);
+        reject(new Error(`aborted before user decided plan approval: ${rec.abortController.signal.reason || 'unknown'}`));
+      }
+    };
+    if (rec.abortController.signal.aborted) {
+      onAbort();
+    } else {
+      rec.abortController.signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
+}
+
+/**
+ * 用户在 PlanReviewCard 决定后调 → resolve pending plan approval。
+ *
+ * @param {string} sessionId
+ * @param {string} toolUseId
+ * @param {{ approved: boolean, editedPlan?: string }} decision
+ * @returns {boolean}  true=找到 pending 并已 resolve；false=没找到
+ */
+export function providePlanApprovalDecision(sessionId, toolUseId, decision) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return false;
+  const p = rec.pendingPlanApprovals.get(toolUseId);
+  if (!p) return false;
+  try {
+    p.resolve(decision);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 取回完整 record（abortController + ctx + query handle + startedAt）。
  * 上层 API endpoint 可用：rewind / setModel / getContextUsage 等都通过 record.query 调。
  *
@@ -506,6 +576,7 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     pendingQuestions: new Map(),
     pendingElicitations: new Map(),
     pendingPlanRequests: new Map(),
+    pendingPlanApprovals: new Map(),
     currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
   });
@@ -684,6 +755,10 @@ export function unregisterQuerySession(sessionId) {
     try { p.reject(new Error('session ended before user decided plan-mode request')); } catch { /* */ }
   }
   rec.pendingPlanRequests?.clear?.();
+  for (const [, p] of (rec.pendingPlanApprovals || new Map())) {
+    try { p.reject(new Error('session ended before user decided plan approval')); } catch { /* */ }
+  }
+  rec.pendingPlanApprovals?.clear?.();
   activeQuerySessions.delete(sessionId);
 }
 

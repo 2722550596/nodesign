@@ -739,33 +739,23 @@ function makePostToolUseCanvasFocusPageHandler({ ctx }) {
 }
 
 /**
- * PostToolUse(ExitPlanMode) handler — Phase 3.2 SDK plan mode 接通。
+ * PostToolUse(ExitPlanMode) handler — 当前 noop（保留挂载点）。
  *
- * agent 在 permissionMode='plan' 下调 ExitPlanMode 工具提交 plan：
- *   tool_input: { plan: string, allowedPrompts?: [...] }
+ * 历史：原版在这里 emit run.plan_for_approval 给前端弹卡，但 PostToolUse 不阻塞
+ * agent 继续 next turn —— 实际表现是"agent 提交 plan 后自动批准，弹窗用户也没法关"。
  *
- * SDK 自身在 plan mode 下会停 agent 等待 host 处理（切 mode 或 interrupt）；
- * 我们的工作是 emit 事件让前端展示 PlanReviewCard。审批通过后 host 调
- * POST /plan-approve 走 query.setPermissionMode('default')，agent 自然继续。
+ * 重构（2026-05-08）：阻塞机制迁到 session-loop.js canUseTool 路径——SDK 在工具
+ * 调用**之前**触发 canUseTool，await registerPendingPlanApproval 真阻塞 agent 等
+ * 用户审批 PlanReviewCard。host 调 plan-approve / plan-reject 通过
+ * providePlanApprovalDecision resolve Promise → canUseTool return allow/deny。
+ *
+ * 本 hook 现在只在 ExitPlanMode tool 真执行后触发（用户已 approve），是 future
+ * extension point（比如未来想在 plan 真落档后做额外 emit / 统计）。当前 noop。
  *
  * input: PostToolUseHookInput (sdk.d.ts:1926)
- *   - tool_name: 'ExitPlanMode'
- *   - tool_input: ExitPlanModeInput
- *   - tool_use_id: string
  */
-function makePostToolUseExitPlanModeHandler({ ctx }) {
-  return async (input, _toolUseId, _options) => {
-    try {
-      const plan = String(input?.tool_input?.plan || '').trim();
-      const toolUseId = input?.tool_use_id;
-      if (!plan) {
-        console.warn(`[hooks/ExitPlanMode] empty plan input — skip emit`);
-        return {};
-      }
-      ctx.emit(Events.planForApproval(toolUseId, plan));
-    } catch (err) {
-      console.warn(`[hooks/ExitPlanMode] handler threw:`, err.message);
-    }
+function makePostToolUseExitPlanModeHandler(_deps) {
+  return async (_input, _toolUseId, _options) => {
     return {};
   };
 }

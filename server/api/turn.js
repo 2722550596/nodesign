@@ -45,6 +45,7 @@ import {
   hasActiveQuerySession, pushUserMessage, getQuerySession, closeQuerySession,
   getQueueDepth, setSessionPermissionMode, getSessionIdByRunId,
   providePlanRequestDecision,
+  providePlanApprovalDecision,
 } from '../engine/runs/active-runs.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
@@ -707,7 +708,7 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const { runId } = req.params;
-    const { editedPlan } = req.body || {};
+    const { editedPlan, toolUseId } = req.body || {};
 
     const query = getQuery(runId);
     if (!query) {
@@ -744,10 +745,24 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
       }
     }
 
+    // 顺序关键：① 先切 mode → ② 再 resolve canUseTool 的 pending Promise。
+    // 反过来 resolve 先发生 → canUseTool return → ExitPlanMode tool 执行 → agent
+    // next turn 看到的可能仍是 plan-mode reminder（race condition）。
     await query.setPermissionMode('default');
-    // 同步更新 session 级 mode（同 /permission-mode endpoint 的逻辑）
     const sid = getSessionIdByRunId(req.params.runId);
     if (sid) setSessionPermissionMode(sid, 'default');
+    if (sid && toolUseId) {
+      // resolve canUseTool 里 await 的 pending plan approval Promise，agent 阻塞解开
+      const ok = providePlanApprovalDecision(sid, toolUseId, {
+        approved: true,
+        editedPlan: typeof editedPlan === 'string' && editedPlan.trim() ? editedPlan.trim() : undefined,
+      });
+      if (!ok) {
+        // 兼容老 session（PR 之前没 canUseTool 拦的 case）：providePlanApprovalDecision
+        // 找不到 pending → 不 fail，agent 应该已经在 PostToolUse 路径继续了
+        console.warn(`[plan-approve] no pending plan approval for tid=${toolUseId} (legacy hook path?)`);
+      }
+    }
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -765,7 +780,17 @@ router.post('/:pid/runs/:runId/plan-reject', async (req, res, next) => {
     if (!project) return res.status(404).json({ error: 'project not found' });
 
     const { runId } = req.params;
-    const reason = (req.body || {}).reason || 'plan_rejected';
+    const { toolUseId, reason: reasonRaw } = req.body || {};
+    const reason = reasonRaw || 'plan_rejected';
+
+    // 顺序：先显式 resolve pending plan approval（让 canUseTool 拿到 reject 决议
+    // → return deny/interrupt）→ 再 cancelRun 兜底（abortController 关 query
+    // 防漏网）。registerPendingPlanApproval 的 abort listener 也会 reject Promise，
+    // 但显式 resolve 让 canUseTool 拿到的是用户意图（reject）而非 abort 错误。
+    const sid = getSessionIdByRunId(runId);
+    if (sid && toolUseId) {
+      providePlanApprovalDecision(sid, toolUseId, { approved: false });
+    }
 
     const ok = cancelRun(runId, reason);
     if (!ok) {

@@ -97,12 +97,12 @@ export const SessionConfig = {
 // 用户在 PlanReviewCard 点按钮 → approve 切 SDK permissionMode='default'；
 // reject 走 cancelRun 中断
 export const Plan = {
-  approve: ({ pid, runId, editedPlan }) =>
+  approve: ({ pid, runId, toolUseId, editedPlan }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-approve`,
-      editedPlan !== undefined ? { editedPlan } : {}),
-  reject: ({ pid, runId, reason }) =>
+      { ...(toolUseId ? { toolUseId } : {}), ...(editedPlan !== undefined ? { editedPlan } : {}) }),
+  reject: ({ pid, runId, toolUseId, reason }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-reject`,
-      reason ? { reason } : {}),
+      { ...(toolUseId ? { toolUseId } : {}), ...(reason ? { reason } : {}) }),
   // Phase C：agent 调 mcp__nodesign__request_plan_mode → 前端 PlanRequestBanner
   // 用户点 yes → 调通用 /permission-mode 切到 plan；no 时纯前端 dismiss 不触发后端。
   // 也用于 ChatComposer 手动 toggle on/off 时同步当前活跃 query 的 permissionMode
