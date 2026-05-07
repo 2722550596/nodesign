@@ -566,7 +566,18 @@ export function listActiveRuns() {
  * @param {string} [deps.initialPermissionMode='bypassPermissions']  - 初始 permission mode
  */
 export function registerQuerySession(sessionId, { abortController, inputQueue, initialPermissionMode = 'bypassPermissions' } = {}) {
-  if (!sessionId || !abortController || !inputQueue) return;
+  if (!sessionId || !abortController || !inputQueue) return false;
+  // 关键去重：同 sid 已注册就拒绝（旧 record .set 覆盖会让旧 abortController + inputQueue
+  // 失去引用，旧 SDK binary 仍在跑变孤儿 → 跟新 binary 并行 Write 同 canvas.html
+  // = 用户看到"独立 main 进程在 write"的 bug 来源）。caller 拿到 false 不再 spawn
+  // 第二个 query。前端 race / 后端 fallback / resume race 都靠这条兜底。
+  if (activeQuerySessions.has(sessionId)) {
+    console.warn(
+      `[active-runs] registerQuerySession: sid=${sessionId.slice(0, 8)} already active, `
+      + `refusing duplicate registration (would orphan existing SDK binary + cause double-write race)`
+    );
+    return false;
+  }
   activeQuerySessions.set(sessionId, {
     abortController,
     ctx: null,
@@ -580,6 +591,7 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
   });
+  return true;
 }
 
 /**

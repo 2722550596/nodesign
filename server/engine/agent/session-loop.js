@@ -139,11 +139,22 @@ export async function runSession({
   // 切 mode 时也会同步更新本字段。
   const initialModeNormalized =
     initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions';
-  registerQuerySession(sessionId, {
+  const registered = registerQuerySession(sessionId, {
     abortController: sessionAbortController,
     inputQueue,
     initialPermissionMode: initialModeNormalized,
   });
+  // 关键 race guard：registerQuerySession 拒绝重复注册（同 sid 已活跃）→ 这次
+  // runSession 是冗余调用（前端 race / 后端 fallback / resume race），直接 early
+  // return 不 spawn 第二个 SDK binary。否则两个 binary 并行 Write 同 canvas.html
+  // 就是用户报告的"独立 main 进程在 write"。
+  if (!registered) {
+    console.warn(
+      `[session-loop] runSession sid=${sessionId.slice(0, 8)} skipped — already active. `
+      + `Caller (turn.js) should have used pushUserMessage instead of startNewRunSession.`
+    );
+    return;
+  }
   // initialRunId：register 后立刻设 currentRunId，让 for-await-of 第一次见到
   // SDK 转发首条 user message 时直接知道当前 turn 的 runId（否则 turn.js 那边
   // 必须在 register 之后才能调 pushUserMessage —— race window）
