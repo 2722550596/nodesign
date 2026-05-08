@@ -7,7 +7,7 @@
 
 ```
 Task(subagent_type='vision-checker',
-     prompt='请截图 canvas.html 评审视觉合理性（fullPage 1920×1080）。
+     prompt='请截图 canvas.html 评审视觉合理性（fullPage，按 deck 比例 viewport——screenshot_canvas 默认会读 wrap data-deck-aspect）。
             先看 cwd 有没有 design-plan.md：
               有 → 先 Read 跑 Tier 0（plan compliance：deck_kind 导演对象兑现 /
                   meta.palette 配色匹配 / meta.anti_cliche 主动避开的俗套是否真避开 /

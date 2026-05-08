@@ -163,7 +163,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 | 工具 | 一句话 | 核心入参 |
 |---|---|---|
-| `screenshot_canvas` | 截 canvas.html PNG（playwright 真渲染） | `viewport?` (默认 1920×1080) / `fullPage?` / `selector?` / `pageIndex?` |
+| `screenshot_canvas` | 截 canvas.html PNG（playwright 真渲染） | `viewport?` (默认 = canvas wrap data-deck-aspect 对应尺寸) / `fullPage?` / `selector?` / `pageIndex?` |
 | `list_pages` | 扫所有 `<section data-page>` 返每页 1 行摘要 | 无参 |
 | `read_page` | 按 `pageIndex` 切片返该页 outerHTML（hybrid 文件还会附 React mount 源段） | `pageIndex` |
 | `query_elements` | CSS selector 一次查全部匹配元素，返 anchor + bbox + text | `selector` / `pageIndex?` / `max?` |
@@ -297,7 +297,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
   Tailwind Play CDN + tailwind.config（config 只配 fontFamily，颜色走 CSS var）
   Babel Standalone：浏览器内编译 TSX
   <style id="design-tokens">：CSS variables（Tweaks 暴露目标）
-  <style id="base">：fit wrapper / section[data-page] 1920×1080 锁定（保持原样）
+  <style id="base">：section[data-page] 由 wrap data-deck-aspect 锁定 W/H（4 档可选；保持原样）
 </head>
 
 <body>
@@ -352,7 +352,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 - ⚠️ **JSX 里 placeholder 用纯文本不带花括号** —— `<h1>改我</h1>` 而不是 `<h1>{改我}</h1>`
 - ⚠️ **`position: absolute` 锚 section 内部元素，不用 `position: fixed`** —— section 自身有 transform: scale（系统注的），fixed 会锚 section 不锚 viewport，没意义还容易 confusion；absolute 即可
 - ⚠️ **flex 撑高度，避免 `h-[calc(100%-Npx)]`** —— hardcode N 在不同视口/字体下易溢出，用 `flex-1 min-h-0` 让 flex 自然撑
-- ⚠️ **每页内容必须装在 1920×1080 单屏内** —— 单页铺满屏幕是系统硬契约，section 内部不允许滚动；信息多就拆成多页，宁可 8 页空一点也比 6 页塞爆好
+- ⚠️ **每页内容必须装在单屏（deck 比例对应 W×H）内** —— 单页铺满屏幕是系统硬契约，section 内部不允许滚动；信息多就拆成多页，宁可 8 页空一点也比 6 页塞爆好
 
 ---
 

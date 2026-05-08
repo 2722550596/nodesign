@@ -5,7 +5,8 @@
   ║                                                                      ║
   ║  cp 这份做起点。下面 4 块预置好的，**别动结构**：                      ║
   ║    1. <head> 里的 Tailwind / importmap / Babel + design-tokens       ║
-  ║    2. <head> base CSS 里 section[data-page] 1920×1080（设计稿坐标系） ║
+  ║    2. <head> base CSS 里 section[data-page] var(--deck-w/h)           ║
+  ║       （设计稿坐标系，由 wrap data-deck-aspect 4 档决定 W×H）          ║
   ║    3. body 的 .__nd-deck-wrap 包裹 + <section data-page>              ║
   ║    4. <script id="__nd-shadcn-lite"> 里的 4 件 shadcn-lite 组件       ║
   ║       (Card/Button/Badge/Tabs)，直接 <Card> 用，不需要 import        ║
