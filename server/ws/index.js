@@ -197,6 +197,13 @@ async function sendHydrate(ws, pid, sid, asOfSeq) {
 async function handleProjectWS(ws, pid, since = 0, sid = null) {
   const bus = getProjectBus(pid);
 
+  // 诊断 log：用户重启服务器后报"前端收不到事件"——这条 log 让 pm2 logs 一眼看出
+  // WS 是不是真连上 + 客户端传的 sid 跟 server 端 active session 状态对不对。
+  console.info(
+    `[ws] connect pid=${pid} sid=${sid ? sid.slice(0, 8) : 'none'} `
+    + `hasActiveSession=${sid ? hasActiveQuerySession(sid) : 'n/a'} since=${since}`,
+  );
+
   // sid lifecycle ref：带 sid 的 WS 连上即 ref++，close/error 时 unref。0 ref 触发
   // grace timer N ms 后 closeQuerySession 让 SDK subprocess 自然退出。
   refSession(sid);

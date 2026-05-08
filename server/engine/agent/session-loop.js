@@ -249,7 +249,18 @@ export async function runSession({
       append: [NODESIGN_PRELUDE, skill.systemPrompt].filter(Boolean).join('\n\n---\n\n'),
     },
 
-    permissionMode: initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions',
+    // resume 时不传 permissionMode：SDK 会从 JSONL 读原 session flags + 检查
+    // bypassPermissions 必须有 --dangerously-skip-permissions 启动才允许。如果
+    // 老 session 是在没这个 flag 的版本下创建的（老 SDK / 老代码），现在硬传
+    // permissionMode: 'bypassPermissions' 会让 SDK 抛：
+    //   "Cannot set permission mode to bypassPermissions because the session
+    //    was not launched with --dangerously-skip-permissions"
+    // 这个错没有 runId 会被前端 stale guard 吞掉 → 用户看到"完全没反应"。
+    // 修：resume 不传 permissionMode 让 SDK 用 JSONL 保存的；运行时切 mode 通过
+    // query.setPermissionMode + turn.js POST /turn 入口的 mode 校正路径完成。
+    ...(isResume
+      ? {}
+      : { permissionMode: initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions' }),
     // 永远 true：与 permissionMode 正交——只是"允许运行时切 bypassPermissions"的安全
     // 开关，启动当下的 mode 由 permissionMode 字段定。plan-mode 启动也必须带，否则用户
     // 批准 plan 后 host 调 query.setPermissionMode('bypassPermissions') 会被 SDK 拒：
@@ -593,6 +604,15 @@ export async function runSession({
       // 真错路径
       if (activeTurnRunId) {
         await finishTurn('error', err);
+      } else if (initialRunId) {
+        // 错误发生在 startTurn 之前（如 SDK query() 启动权限冲突 / workspace.ensure
+        // 抛错等）→ activeTurnRunId 还是 null，sharedCtx.runId 仍是占位符
+        // '__session_pending__'。直接 emit run.error 会让 enriched event 带这个占位
+        // runId，前端 stale guard `evt.runId !== liveRunId` 把事件吞掉 → 用户看到
+        // "完全没反应"。修：手动把 sharedCtx.runId 设到本次 turn 的 initialRunId 让
+        // emit 出去的 run.error 带正确 runId 让前端能渲染错误。
+        sharedCtx.runId = initialRunId;
+        try { markRunFailed(initialRunId, err.message || 'unknown'); } catch { /* ignore */ }
       }
       sharedCtx.emit(Events.error(err.message, err.code, err.stack));
       throw err;

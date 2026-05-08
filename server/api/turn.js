@@ -689,8 +689,21 @@ router.post('/:pid/runs/:runId/permission-mode', async (req, res, next) => {
       });
     }
 
-    await query.setPermissionMode(mode);
-    // 同步更新 session 级 currentPermissionMode：canUseTool 钩子按它分流（plan
+    // inner try/catch：SDK 拒切 mode 的具体原因（如老 session resume 后没
+    // --dangerously-skip-permissions flag → "Cannot set permission mode to
+    // bypassPermissions ..."）应该返给前端让用户知道；走 next(err) 让 Express
+    // 默认 handler 处理就只剩通用 500 错，前端 toast 显示不出有效信息。
+    try {
+      await query.setPermissionMode(mode);
+    } catch (err) {
+      console.warn(`[permission-mode] setPermissionMode(${mode}) failed: ${err.message}`);
+      const isPermissionFlagErr = /dangerously-skip-permissions|permission mode/i.test(err.message);
+      return res.status(isPermissionFlagErr ? 409 : 500).json({
+        error: err.message,
+        code: isPermissionFlagErr ? 'PERMISSION_FLAG_MISMATCH' : 'SET_MODE_FAILED',
+      });
+    }
+    // 同步更新 session 级 currentPermissionMode：canUseTool 钩子按此分流（plan
     // mode deny 列表）。不同步会让 mode 切回 default 后 canUseTool 仍按 plan 拦。
     const sid = getSessionIdByRunId(runId);
     if (sid) {
