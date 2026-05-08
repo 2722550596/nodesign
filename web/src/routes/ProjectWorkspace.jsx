@@ -419,6 +419,19 @@ export default function ProjectWorkspace() {
 
   /** WS 事件 → chat messages / iframe reload 翻译层 */
   function handleEvent(evt) {
+    // Stale event guard — WS replay / 跨 session 旁路事件 / 多 tab 同 sid 收到非
+    // 当前 turn 的 delta 时直接 ignore。projectBuses per-project 共享，server 端虽然
+    // 在 ws/index.js 已按 sid 过滤但仍可能漏（旧事件没 enrich sessionId / 多 tab 同 sid
+    // 时 currentRunIdRef 跨 tab 不同步）。这里再做一道 guard。
+    //
+    // ws.* / run.done / run.error / run.cancelled / run.query.* 等"控制帧"或本身已带
+    // stale guard 的事件不走这个 helper。
+    const liveRunId = currentRunIdRef.current;
+    const liveSid = sessionIdRef.current;
+    const isStale = (
+      (evt.runId && liveRunId && evt.runId !== liveRunId)
+      || (evt.sessionId && liveSid && evt.sessionId !== liveSid)
+    );
     switch (evt.type) {
       // ── Phase A.4：WS hydrate 协议（server 推完整 messages 让前端不依赖 HTTP Sessions.read）──
       case 'ws.hydrate.start':
@@ -487,27 +500,34 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.start':
+        if (isStale) break;
         setIsStreaming(true);
         setTodos([]);
         break;
       case 'run.queue.depth':
+        if (isStale) break;
         // streamInput 模式：inputQueue 积压数变化（push 后 / 处理完一条后）
         setQueueDepth(typeof evt.depth === 'number' ? evt.depth : 0);
         break;
       case 'run.query.end':
+        if (isStale) break;
         // 整个 session 的 query 死了 —— 清 queue depth + 提示用户
         setQueueDepth(0);
         break;
       case 'run.todo.updated':
+        if (isStale) break;
         setTodos(Array.isArray(evt.todos) ? evt.todos : []);
         break;
       case 'run.delta.text':
+        if (isStale) break;
         setMessages(prev => appendTextDelta(prev, 'assistant', evt.text, evt.runId));
         break;
       case 'run.delta.thinking':
+        if (isStale) break;
         setMessages(prev => appendTextDelta(prev, 'thinking', evt.text, evt.runId));
         break;
       case 'run.tool_use.started':
+        if (isStale) break;
         // 工具 streaming 起点（SDK content_block_start 触发）。立即推 icon + name
         // 让用户看到"agent 在调 X 工具"，input 待 run.delta.tool_use 来时补。
         setMessages(prev => {
@@ -524,6 +544,7 @@ export default function ProjectWorkspace() {
         });
         break;
       case 'run.delta.tool_use':
+        if (isStale) break;
         // assistant message 完成时 SDK 推完整 tool_use block 来。如果同 blockId
         // 的 tool message 已存在（被 run.tool_use.started 推过），就 update input；
         // 否则补 push（兼容 SDK 没出 content_block_start 的情况，如某些 stream 边界）。
@@ -545,6 +566,7 @@ export default function ProjectWorkspace() {
         });
         break;
       case 'run.delta.tool_result':
+        if (isStale) break;
         setMessages(prev => prev.map(m =>
           m.role === 'tool' && m.id === evt.blockId
             ? {
@@ -654,6 +676,7 @@ export default function ProjectWorkspace() {
       // ── SDK helper events（P0：Phase B 批次 1）──
 
       case 'run.rate_limit': {
+        if (isStale) break;
         // 速率限制状态变化（rate_limit_event）。SDK 只在状态变化时推，不会刷屏。
         // - rejected：真触发限制 → error toast
         // - allowed_warning：接近限制 → warn toast 带使用率
@@ -669,6 +692,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.status':
+        if (isStale) break;
         // SDK 内部状态：'compacting' | 'requesting' | null。
         // requesting 每个 LLM call 都触发，太频繁 → 跳过；只 toast compacting
         // （少见但耗时长，需要让用户知道"在压缩、不是卡住"）。
@@ -678,11 +702,13 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.system_init':
+        if (isStale) break;
         // SDK 启动元信息：model / tools / mcp_servers / agents
         setProjectSystemInfo(id, evt.info);
         break;
 
       case 'run.context_usage': {
+        if (isStale) break;
         // A2.1 后端 loop.js 每个 assistant message 后推一次。
         // 整条 evt 已是 ContextUsageBar 期望的 liveUsage 形态（events.js
         // Events.contextUsage 已轻量化）。merge 而非 replace —— partial event 缺字段时不
@@ -707,11 +733,13 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.prompt_suggestion':
+        if (isStale) break;
         // 每轮后预测的下条 prompt（C19 SuggestionChip 消费）
         setPromptSuggestion(evt.suggestion);
         break;
 
       case 'run.task.started':
+        if (isStale) break;
         // C28：把 task 元信息绑到 main agent 的 Task tool message
         // tool_use_id 关联 → 用户能在 Task chip 上看到 agentType / description
         if (evt.toolUseId) {
@@ -730,6 +758,7 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.task.progress':
+        if (isStale) break;
         // subagent 30s 摘要（ChatPanel header progress chip 消费）+ 同步到 Task tool message
         setAgentProgress({
           taskId: evt.taskId,
@@ -747,6 +776,7 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.task.notification':
+        if (isStale) break;
         // subagent 完成 / 失败 / 停止 → 更新对应 Task tool message status
         setAgentProgress(null);
         if (evt.toolUseId) {
@@ -768,6 +798,7 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.tool_progress':
+        if (isStale) break;
         // 工具执行 >1s 时定期推 → 写到对应 tool message 的 elapsed 字段
         // C23 Message ToolMessage 渲染 "· 12s" 在工具调用 chip 旁边
         if (evt.blockId) {
@@ -780,6 +811,7 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.bash_blocked':
+        if (isStale) break;
         // C25：PreToolUse hook 拦了一条 Bash —— 用 system role 区分自 assistant 消息
         setMessages(prev => [...prev, {
           id: newId('msg'),
@@ -790,16 +822,19 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.screenshot_taken':
+        if (isStale) break;
         // MCP screenshot_canvas 调用成功（agent 在自检）
         showToast('agent 正在视觉自检', 'info');
         break;
 
       case 'run.export_built':
+        if (isStale) break;
         // MCP export_handoff 调用成功 —— agent 主动打了交付包
         showToast(`已生成交付包：${evt.path || ''}`, 'success');
         break;
 
       case 'run.decision_recorded':
+        if (isStale) break;
         // MCP record_decision 调用成功 —— agent 沉淀了一条设计决策
         // 不弹 toast 避免噪音（agent 可能频繁调）；
         // 触发 DecisionsTab 自动刷新 + console 留痕
@@ -811,12 +846,14 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.compact_persisted':
+        if (isStale) break;
         // PostCompact hook 写完 spec.json → DecisionsTab 也更新
         setDecisionsReloadKey(k => k + 1);
         showToast(`已沉淀 compact 摘要（${evt.summaryLength || '?'} chars）`, 'info');
         break;
 
       case 'run.tweaks_exposed':
+        if (isStale) break;
         // C5: agent 调 expose_tweaks 写 spec.tweaks → TweaksPanel reload schema
         setTweaksReloadKey(k => k + 1);
         setIsTweaksExposed(true);  // ChatPanel header 上显示打开按钮（PanelMenu 下架后唯一入口）
@@ -824,6 +861,7 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.canvas_navigate': {
+        if (isStale) break;
         // C6: agent 调 navigate_to_page → 前端 scrollIntoView 该 section
         try {
           const iframeEl = document.querySelector('iframe');
@@ -834,6 +872,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.canvas_highlight': {
+        if (isStale) break;
         // C6: agent 调 highlight → pulse outline 短暂高亮匹配元素
         try {
           const iframeEl = document.querySelector('iframe');
@@ -864,6 +903,7 @@ export default function ProjectWorkspace() {
       // ── P1：Phase 1+2 漏接事件补齐 ──
 
       case 'run.tool_failure':
+        if (isStale) break;
         // PostToolUseFailure hook → 让用户看到"哪个工具失败了"
         setMessages(prev => [...prev, {
           id: newId('msg'),
@@ -874,12 +914,14 @@ export default function ProjectWorkspace() {
         break;
 
       case 'run.notification':
+        if (isStale) break;
         // SDK / hook 主动 emit 的通知 → toast
         // priority 映射：error/high → error；success → success；其他 → info
         showToast(evt.text || '通知', mapNotificationKind(evt.priority));
         break;
 
       case 'run.compact_boundary': {
+        if (isStale) break;
         // 上下文压缩边界 —— 让用户知道"agent 重新整理了上下文"
         // A2.3：升级提示带 pre/post token 数 + trigger（manual/auto）
         const meta = evt.compactMetadata;
@@ -897,6 +939,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.api_retry': {
+        if (isStale) break;
         // SDK API 重试（rate limit / server error 等）。
         // 多次重试用 fixed id 替换，避免刷屏。
         const text = `API 重试中（${evt.attempt}/${evt.maxRetries}）${evt.errorKind ? ` — ${evt.errorKind}` : ''}${evt.errorStatus != null ? ` HTTP ${evt.errorStatus}` : ''}`;
@@ -910,6 +953,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.subagent.stop': {
+        if (isStale) break;
         // S3b：子代理收尾的 lastAssistantMessage 挂回对应 Task tool message。
         // 前端 Message.jsx ToolMessage 在 agentType === 'vision-checker' 时
         // 渲染 critique 卡（VERDICT/ISSUES/OVERALL），其他 subagent 暂不渲染（可拓展）。
@@ -936,6 +980,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.plan_for_approval': {
+        if (isStale) break;
         // Phase 3.2：SDK 原生 plan mode — agent 调 ExitPlanMode 提交 plan，
         // 显示 PlanReviewCard 让用户 approve / edit / reject
         useGlobalStore.getState().setPlanForApproval({
@@ -947,6 +992,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.plan_mode_requested': {
+        if (isStale) break;
         // Phase C：agent 调 mcp__nodesign__request_plan_mode 主动请求进 plan mode。
         // 阻塞态（2026-05-07）：agent 工具 await 用户决定，前端 banner 处理：
         //   - yes → POST /permission-mode { mode:'plan' } + POST /plan-request/:tid/decide { approved:true }
@@ -963,6 +1009,7 @@ export default function ProjectWorkspace() {
       }
 
       case 'run.image_generated': {
+        if (isStale) break;
         // generate_image MCP 工具完成 → toast 提示。
         // 注：原 Phase Image-1 的自动 ImageApprovalBanner gate 已废弃（2026-05-06）—
         // generate_image CallToolResult 已返 image content block，前端 chat 自动渲染；
@@ -974,6 +1021,7 @@ export default function ProjectWorkspace() {
 
       // Phase B 批次 3：SDK 自动 recall 写入 globalStore，MemoryCard 折叠区显示
       case 'run.memory_recall':
+        if (isStale) break;
         useGlobalStore.getState().appendRecallHistory(id, {
           mode: evt.mode,
           memories: evt.memories,
@@ -984,6 +1032,7 @@ export default function ProjectWorkspace() {
       // Phase B 批次 4：MCP 工具 elicitInput 请求 → 弹 ElicitationModal
       // request 形如 { reqId, request: {...}, runId }
       case 'run.elicitation_request':
+        if (isStale) break;
         setElicitRequest({ reqId: evt.reqId, request: evt.request, runId: evt.runId });
         break;
 

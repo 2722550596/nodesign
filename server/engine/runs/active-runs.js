@@ -78,6 +78,8 @@ const activeRuns = new Map();
  *   setPermissionMode）必须同步调 setSessionPermissionMode 更新本字段，否则 canUseTool
  *   仍按旧 mode 拦截。
  * @property {number} startedAt
+ * @property {number} lastActivityAt - 最近一次"活跃信号"时间戳（push message / turn 边界 /
+ *   WS subscriber 连上）。session-loop.js 的 idle scan 据此判断是否超时关闭。
  */
 
 /** @type {Map<string, ActiveQuerySession>} */
@@ -609,8 +611,33 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     pendingPlanApprovals: new Map(),
     currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
+    lastActivityAt: Date.now(),
   });
   return true;
+}
+
+/**
+ * 标记 session 活跃（更新 lastActivityAt）。每个有意义的"用户/系统在用这个 session"
+ * 信号都该调：pushUserMessage / turn 边界 / WS subscriber 连上 / WS 收 hydrate 请求等。
+ *
+ * idle timeout 扫描（session-loop.js）按此字段判断 now - lastActivityAt > IDLE_TIMEOUT
+ * 时关 session。
+ *
+ * @param {string} sessionId
+ */
+export function markSessionActivity(sessionId) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return;
+  rec.lastActivityAt = Date.now();
+}
+
+/**
+ * @param {string} sessionId
+ * @returns {number|null} lastActivityAt 时间戳；session 不存在时 null
+ */
+export function getSessionLastActivity(sessionId) {
+  const rec = activeQuerySessions.get(sessionId);
+  return rec?.lastActivityAt ?? null;
 }
 
 /**
@@ -682,6 +709,7 @@ export function pushUserMessage(sessionId, runId, sdkUserMessage) {
   // 用作 currentTurn 标记。SDKUserMessage 没有自定义字段，我们走旁路：先在
   // session record 上设 currentRunId，runSession 收到 user message 时读这个值
   rec.currentRunId = runId;
+  rec.lastActivityAt = Date.now();
   try {
     rec.inputQueue.push(sdkUserMessage);
     return true;

@@ -32,13 +32,16 @@ export class AgentContext {
    * @param {object} [opts.metadata={}]
    * @param {string} [opts.workspaceRoot]   - 外部 workspace（如 per-project 目录）；
    *                                          传了就走它，否则用 runId 推路径（旧 smoke 兼容）
+   * @param {string} [opts.sessionId]       - 当前 SDK session id；emit 时自动 enrich 到事件，
+   *                                          让 WS 端按 sid 过滤防跨 session 串扰
    */
-  constructor({ runId, skillId, eventBus, abortController, metadata = {}, workspaceRoot = null }) {
+  constructor({ runId, skillId, eventBus, abortController, metadata = {}, workspaceRoot = null, sessionId = null }) {
     if (!runId) throw new Error('AgentContext: runId required');
     if (!skillId) throw new Error('AgentContext: skillId required');
 
     this.runId = runId;
     this.skillId = skillId;
+    this.sessionId = sessionId;
     this.eventBus = eventBus || new EventBus();
     this.abortController = abortController || new AbortController();
     this.metadata = metadata;
@@ -100,8 +103,11 @@ export class AgentContext {
 
   emit(event) {
     if (!event || !event.type) throw new Error('emit: event.type required');
+    // sessionId 自动 enrich 让 WS 端按 sid 过滤事件，防多 session / 多 tab 跨 session
+    // 串扰（同 project bus 共享）。`...event` 在后保证调用方显式传的字段不被覆盖。
     const enriched = {
       runId: this.runId,
+      sessionId: this.sessionId,
       ts: new Date().toISOString(),
       ...event,
     };

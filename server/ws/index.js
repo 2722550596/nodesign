@@ -21,11 +21,71 @@ import { getSessionWorkspace, validateSessionId } from '../projects/workspace.js
 import { withConfigDir } from '../lib/sdk-session.js';
 import { platform } from '../runtime/platform.js';
 import { getProjectBus } from './broker.js';
-import { getCurrentTurnRunId } from '../engine/runs/active-runs.js';
+import {
+  getCurrentTurnRunId,
+  hasActiveQuerySession,
+  closeQuerySession,
+  markSessionActivity,
+} from '../engine/runs/active-runs.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HYDRATE_CHUNK_SIZE = 50;
 const GLOBAL_CLAUDE_CONFIG_DIR = platform.claudeConfigDir;
+
+/**
+ * WS 全部断开后再 N ms 仍无重连 → closeQuerySession 让 SDK subprocess 退出，
+ * 防止用户关 tab / 刷新后服务器孤儿 SDK process 永久占内存（每个 ~250MB RSS）。
+ *
+ * 默认 60s 给前端 ws-client.js exponential backoff（1s→2s→...→30s）足够重连窗口。
+ * env NODESIGN_WS_GRACE_MS 可调（生产可拉到 5min 给移动端弱网）。
+ */
+const WS_GRACE_MS = Number(process.env.NODESIGN_WS_GRACE_MS) || 60_000;
+
+/**
+ * sid → { count: 当前活跃 WS 连接数, graceTimer: 0 引用时启动的关闭定时器 }
+ *
+ * 每条带 sid 的 WS 连接 ref++，close 时 ref--；归零启 grace timer，N ms 内有新 WS
+ * 进同 sid 立即清 timer 续命；timer 到期再确认 0 ref 后 closeQuerySession。
+ *
+ * /work 路径（无 sid）的 WS 不进 sessionRefs（无 session 可绑）。
+ */
+const sessionRefs = new Map();
+
+function refSession(sid) {
+  if (!sid) return;
+  let entry = sessionRefs.get(sid);
+  if (!entry) {
+    entry = { count: 0, graceTimer: null };
+    sessionRefs.set(sid, entry);
+  }
+  entry.count += 1;
+  if (entry.graceTimer) {
+    clearTimeout(entry.graceTimer);
+    entry.graceTimer = null;
+  }
+  // WS 连上算一次活跃信号（idle scan 不会立即把刚连的 session 当僵尸关掉）
+  markSessionActivity(sid);
+}
+
+function unrefSession(sid) {
+  if (!sid) return;
+  const entry = sessionRefs.get(sid);
+  if (!entry) return;
+  entry.count = Math.max(0, entry.count - 1);
+  if (entry.count > 0) return;
+  // 0 ref → 启 grace timer。若 grace 期内有新 WS 进同 sid，refSession 会清掉 timer
+  if (entry.graceTimer) clearTimeout(entry.graceTimer);
+  entry.graceTimer = setTimeout(() => {
+    const cur = sessionRefs.get(sid);
+    if (!cur || cur.count > 0) return;  // 期间有新连上，不关
+    sessionRefs.delete(sid);
+    if (hasActiveQuerySession(sid)) {
+      console.info(`[ws] grace expired for sid=${sid.slice(0, 8)}, closing session (no_active_subscriber)`);
+      closeQuerySession(sid, 'no_active_subscriber');
+    }
+  }, WS_GRACE_MS);
+  entry.graceTimer.unref?.();
+}
 
 export function setupWS(httpServer) {
   const wss = new WebSocketServer({ noServer: true });
@@ -137,6 +197,10 @@ async function sendHydrate(ws, pid, sid, asOfSeq) {
 async function handleProjectWS(ws, pid, since = 0, sid = null) {
   const bus = getProjectBus(pid);
 
+  // sid lifecycle ref：带 sid 的 WS 连上即 ref++，close/error 时 unref。0 ref 触发
+  // grace timer N ms 后 closeQuerySession 让 SDK subprocess 自然退出。
+  refSession(sid);
+
   // Phase A.4：先 hydrate（仅当 sid 给了 + (since=0 或 gap)）；后 subscribe replay+live。
   // since>0 且 buffer 完整覆盖时跳过 hydrate（当作 reconnect 续连，replay 即可）。
   // 这里先用 since===0 触发 hydrate；gap 情况由 subscribeFromSeq 后判断（见下面 if (sid && gap)）。
@@ -147,7 +211,12 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
 
   // subscribeFromSeq 同步先 replay buffer 里 seq > since 的，然后切 live。
   // listener 抛错被 EventBus 内部吞 + warn —— ws.send 失败也只是 warn 不抛，避免影响别人。
+  //
+  // sid 过滤：projectBuses 是 per-project 共享，多 session 同时跑时 bus 上有跨 session
+  // 事件交错。带 sid 的 WS 只推 event.sessionId === sid 的事件 + event.sessionId 缺失
+  // 的"全局事件"（兼容老事件 / ws.* 控制帧）。无 sid 的 WS（/work 路径）保持原样收全部。
   const { unsubscribe, replayed, gap } = bus.subscribeFromSeq(since, (event) => {
+    if (sid && event.sessionId && event.sessionId !== sid) return;
     if (ws.readyState === ws.OPEN) {
       try {
         ws.send(JSON.stringify(event));
@@ -170,9 +239,13 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
     }
   }, HEARTBEAT_INTERVAL_MS);
 
+  let cleanedUp = false;
   const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     clearInterval(heartbeat);
     unsubscribe();
+    unrefSession(sid);
   };
 
   ws.on('close', cleanup);

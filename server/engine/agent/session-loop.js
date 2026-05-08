@@ -41,6 +41,9 @@ import {
   registerPendingElicitation,
   registerPendingPlanApproval,
   getSessionPermissionMode,
+  getSessionLastActivity,
+  closeQuerySession,
+  markSessionActivity,
 } from '../runs/active-runs.js';
 import { loadSkill, ensureSkillStarterFiles } from './skill.js';
 import { createHooks } from './hooks.js';
@@ -165,12 +168,15 @@ export async function runSession({
 
   // sharedCtx：跨 turn 复用。每个 turn 边界覆盖 runId + 重置 counters。
   // hooks / mcp 闭包持稳定引用即可。
+  // sessionId 传入让 ctx.emit 自动 enrich event.sessionId，WS handler 按 sid 过滤
+  // 防多 session / 多 tab 跨 session 串扰（project bus 共享）。
   const sharedCtx = new AgentContext({
     runId: '__session_pending__',
     skillId,
     eventBus,
     abortController: sessionAbortController,
     workspaceRoot: cwdRoot,
+    sessionId,
   });
 
   const wsRoot = await sharedCtx.workspace.ensure();
@@ -436,6 +442,7 @@ export async function runSession({
 
   const startTurn = (runId) => {
     activeTurnRunId = runId;
+    markSessionActivity(sessionId);  // turn 边界 = 活跃信号
     // 重置 sharedCtx 的 per-turn state
     sharedCtx.runId = runId;
     sharedCtx.counters = {
@@ -476,6 +483,7 @@ export async function runSession({
       sharedCtx.emit(Events.error(info?.message || 'unknown', info?.code, info?.stack));
     }
     activeTurnRunId = null;
+    markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
     // 同步清 active-runs 的 currentRunId —— 否则 SDK 在 result 之后推的"尾巴
     // system message"（status / post_turn_summary 等）进 stream 时，cid 仍 = 已结束
     // 的老 runId 会触发 startTurn() 再调 markRunStarted() 抛"不在 pending 状态"
@@ -483,6 +491,22 @@ export async function runSession({
     // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
   };
+
+  // ── idle timeout 兜底 ──
+  // 用户关 tab 后 WS-disconnect grace 是常规清理路径；这里再加一道：
+  // session 超过 IDLE_TIMEOUT 无任何活动（push message / turn 边界）→ 自动关。
+  // 防止"WS 还在但 user 走开几小时"的隐性占用。
+  const IDLE_TIMEOUT_MS = Number(process.env.NODESIGN_SESSION_IDLE_MS) || 30 * 60_000;
+  const IDLE_SCAN_INTERVAL_MS = Math.min(5 * 60_000, IDLE_TIMEOUT_MS);
+  const idleScanTimer = setInterval(() => {
+    const last = getSessionLastActivity(sessionId);
+    if (last == null) return;  // session 已被 unregister，scan 等会儿自然结束
+    if (Date.now() - last > IDLE_TIMEOUT_MS) {
+      console.info(`[session-loop] sid=${sessionId.slice(0, 8)} idle > ${IDLE_TIMEOUT_MS}ms, closing`);
+      closeQuerySession(sessionId, 'idle_timeout');
+    }
+  }, IDLE_SCAN_INTERVAL_MS);
+  idleScanTimer.unref?.();
 
   // ── main stream loop ──
 
@@ -571,6 +595,7 @@ export async function runSession({
       throw err;
     }
   } finally {
+    clearInterval(idleScanTimer);
     unregisterQuerySession(sessionId);
     // session-level end event（Phase 2）
     try {
