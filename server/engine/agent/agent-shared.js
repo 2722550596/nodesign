@@ -420,11 +420,19 @@ function handleUserBlocks(ctx, content) {
         for (const b of block.content) {
           if (b?.type === 'text' && b.text) {
             textParts.push(b.text);
-          } else if (b?.type === 'image' && b.source?.data) {
-            images.push({
-              mediaType: b.source.media_type || 'image/png',
-              data: b.source.data,
-            });
+          } else if (b?.type === 'image') {
+            // 双格式兼容：
+            //   - Anthropic content block: { type:'image', source:{ type:'base64', media_type, data } }
+            //   - MCP CallToolResult ImageContent: { type:'image', data, mimeType }
+            // SDK 透传 MCP CallToolResult 时格式不一定转换；只查 source.data 会漏接
+            // generate_image 返的图，前端 chat 缩略图就空。
+            const imgData = b.source?.data || b.data;
+            const imgMime = b.source?.media_type || b.mimeType || 'image/png';
+            if (imgData) {
+              images.push({ mediaType: imgMime, data: imgData });
+            } else {
+              textParts.push(JSON.stringify(b));  // 拿不到 data 时留痕不丢数据
+            }
           } else if (b) {
             // 未识别 block 类型 → fallback JSON.stringify 留痕（不丢数据）
             textParts.push(JSON.stringify(b));

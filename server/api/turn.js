@@ -98,6 +98,32 @@ function lruPut(requestId, rec) {
   requestLru.set(requestId, { ...rec, ts: Date.now() });
 }
 
+/**
+ * Emit run.permission_mode_changed —— 让前端 PlanModeToggle 按钮 visual 跟 SDK
+ * 实际 permissionMode 双向同步。所有 mode 切换路径（用户 toggle / plan-approve /
+ * plan-reject / turn 入口 mode 校正）调完 setPermissionMode 后都该 emit 一次。
+ *
+ * 前端 ProjectWorkspace.handleEvent case 'run.permission_mode_changed' 收事件
+ * → setPlanModeEnabled(mode === 'plan')，UI toggle 自动反映 SDK 真相。
+ *
+ * @param {string} pid
+ * @param {string} sid
+ * @param {string} mode  - 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'
+ */
+function emitPermissionModeChanged(pid, sid, mode) {
+  if (!pid || !sid || !mode) return;
+  try {
+    getProjectBus(pid).publish({
+      type: 'run.permission_mode_changed',
+      sessionId: sid,
+      mode,
+      ts: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn(`[turn] emitPermissionModeChanged failed: ${err.message}`);
+  }
+}
+
 router.post('/:pid/turn', async (req, res, next) => {
   try {
     validateProjectId(req.params.pid);
@@ -223,6 +249,24 @@ router.post('/:pid/turn', async (req, res, next) => {
       // streamInput 模式：session 已有 long-running query 在跑 →
       // push 这条 message 进 queue，由 runSession 的 for-await-of 拉走处理。
       // 适用：① 续 chat（agent 已结束上一轮 idle 等）② 用户在 agent 跑时追加消息
+      //
+      // permissionMode 校正：用户 cancel 后切了"深度对齐" toggle 时，PlanModeToggle
+      // 看 activeRun=null 跳过了 /permission-mode API（前端 store 切了但 SDK 没切），
+      // pushUserMessage 路径下 SDK 仍按旧 mode 处理新 chat → canUseTool 拦 Write/Edit。
+      // 这里在 push 前对齐 mode 让 SDK 看到用户最新意图。setPermissionMode 是 SDK
+      // 原生 API，可在 turn 边界外调；fail-soft 不阻塞。
+      const querySession = getQuerySession(sid);
+      const currentMode = querySession?.currentPermissionMode;
+      const desiredMode = initialPermissionMode;
+      if (currentMode && desiredMode && currentMode !== desiredMode && querySession?.query?.setPermissionMode) {
+        try {
+          await querySession.query.setPermissionMode(desiredMode);
+          setSessionPermissionMode(sid, desiredMode);
+          emitPermissionModeChanged(project.id, sid, desiredMode);
+        } catch (err) {
+          console.warn(`[turn] mode sync failed sid=${sid.slice(0, 8)} (${currentMode}→${desiredMode}): ${err.message}`);
+        }
+      }
       const ok = pushUserMessage(sid, run.id, sdkUserMessage);
       if (!ok) {
         // race：刚 close 的 session（理论上极少）—— fallback 起新
@@ -649,7 +693,10 @@ router.post('/:pid/runs/:runId/permission-mode', async (req, res, next) => {
     // 同步更新 session 级 currentPermissionMode：canUseTool 钩子按它分流（plan
     // mode deny 列表）。不同步会让 mode 切回 default 后 canUseTool 仍按 plan 拦。
     const sid = getSessionIdByRunId(runId);
-    if (sid) setSessionPermissionMode(sid, mode);
+    if (sid) {
+      setSessionPermissionMode(sid, mode);
+      emitPermissionModeChanged(project.id, sid, mode);
+    }
     res.json({ ok: true, mode });
   } catch (err) { next(err); }
 });
@@ -802,7 +849,10 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
     // 写工具默认 deny。
     await query.setPermissionMode('bypassPermissions');
     const sid = getSessionIdByRunId(req.params.runId);
-    if (sid) setSessionPermissionMode(sid, 'bypassPermissions');
+    if (sid) {
+      setSessionPermissionMode(sid, 'bypassPermissions');
+      emitPermissionModeChanged(project.id, sid, 'bypassPermissions');
+    }
     if (sid && toolUseId) {
       // resolve canUseTool 里 await 的 pending plan approval Promise，agent 阻塞解开
       const ok = providePlanApprovalDecision(sid, toolUseId, {
@@ -842,6 +892,23 @@ router.post('/:pid/runs/:runId/plan-reject', async (req, res, next) => {
     const sid = getSessionIdByRunId(runId);
     if (sid && toolUseId) {
       providePlanApprovalDecision(sid, toolUseId, { approved: false });
+    }
+
+    // 切回 bypassPermissions：reject 语义是"放弃这个 plan"，session 续命后继续走
+    // 普通模式。不切的话 cancelRun → SDK query 续命但 currentPermissionMode 仍 'plan'
+    // → 用户重发 chat 经 pushUserMessage 路径 → canUseTool 仍按 plan deny Write/Edit。
+    // 对称 plan-approve 路径（line 803-805）。fail-soft 不阻塞 cancel。
+    if (sid) {
+      const qs = getQuerySession(sid);
+      if (qs?.query?.setPermissionMode) {
+        try {
+          await qs.query.setPermissionMode('bypassPermissions');
+          setSessionPermissionMode(sid, 'bypassPermissions');
+          emitPermissionModeChanged(project.id, sid, 'bypassPermissions');
+        } catch (err) {
+          console.warn(`[plan-reject] setPermissionMode failed sid=${sid.slice(0, 8)}: ${err.message}`);
+        }
+      }
     }
 
     const ok = cancelRun(runId, reason);

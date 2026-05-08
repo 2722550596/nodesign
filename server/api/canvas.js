@@ -95,7 +95,15 @@ router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const file = path.join(sessionRoot, 'canvas.html');
     try {
-      const content = await fs.readFile(file, 'utf8');
+      let content = await fs.readFile(file, 'utf8');
+      // 注入 <base href>：让 iframe 内 <img src="assets/...">/url("assets/...") 等
+      // 相对资源解析显式锚到 sessions/<sid>/，不依赖 iframe.src 的隐式 base URL
+      // （src 带 ?v=xxx query / 部署 redirect 等都可能让浏览器解析跑偏）。
+      // 已含 <base> 时跳过；正则只匹配开始 <head> tag。
+      if (!/<base\s+href=/i.test(content)) {
+        const baseHref = `/api/projects/${encodeURIComponent(req.params.pid)}/sessions/${encodeURIComponent(req.params.sid)}/`;
+        content = content.replace(/<head([^>]*)>/i, `<head$1>\n  <base href="${baseHref}">`);
+      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.send(content);

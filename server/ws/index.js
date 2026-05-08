@@ -201,21 +201,27 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
   // grace timer N ms 后 closeQuerySession 让 SDK subprocess 自然退出。
   refSession(sid);
 
-  // Phase A.4：先 hydrate（仅当 sid 给了 + (since=0 或 gap)）；后 subscribe replay+live。
-  // since>0 且 buffer 完整覆盖时跳过 hydrate（当作 reconnect 续连，replay 即可）。
-  // 这里先用 since===0 触发 hydrate；gap 情况由 subscribeFromSeq 后判断（见下面 if (sid && gap)）。
+  // hydrate 起点 seq：sendHydrate 是 await 异步（拉 jsonl + chunk send，100~500ms），
+  // 期间若 agent 推 run.delta.* 进 bus，listener 还没 attach → 事件丢失（jsonl 是
+  // turn 边界 flush，hydrate 拍到的不含中间 deltas）。用起点 seq 作为 subscribeFromSeq
+  // 的 since 让它 replay hydrate 期间产生的 live event，覆盖时间差漏洞。
+  const seqAtHydrateStart = bus._seq || 0;
   const shouldHydrateFirst = !!sid && since === 0;
   if (shouldHydrateFirst) {
-    await sendHydrate(ws, pid, sid, bus._seq || 0);
+    await sendHydrate(ws, pid, sid, seqAtHydrateStart);
   }
 
   // subscribeFromSeq 同步先 replay buffer 里 seq > since 的，然后切 live。
   // listener 抛错被 EventBus 内部吞 + warn —— ws.send 失败也只是 warn 不抛，避免影响别人。
   //
+  // since=0 + hydrate 路径走 hydrate 起点 seq；其他场景沿用 client 传的 since。
+  // hydrate 拿 jsonl 快照 + replay 拿 hydrate 期间中间 deltas，两者无重叠不重复推送。
+  //
   // sid 过滤：projectBuses 是 per-project 共享，多 session 同时跑时 bus 上有跨 session
   // 事件交错。带 sid 的 WS 只推 event.sessionId === sid 的事件 + event.sessionId 缺失
   // 的"全局事件"（兼容老事件 / ws.* 控制帧）。无 sid 的 WS（/work 路径）保持原样收全部。
-  const { unsubscribe, replayed, gap } = bus.subscribeFromSeq(since, (event) => {
+  const subscribeSince = shouldHydrateFirst ? seqAtHydrateStart : since;
+  const { unsubscribe, replayed, gap } = bus.subscribeFromSeq(subscribeSince, (event) => {
     if (sid && event.sessionId && event.sessionId !== sid) return;
     if (ws.readyState === ws.OPEN) {
       try {

@@ -80,11 +80,13 @@ export default function PlanRequestBanner() {
         approved: true,
       });
       showToast('已切到 plan 模式，等待 agent 提交计划…', 'info');
-      // 不立即 clear —— 等 plan_for_approval 来再 clear，这样 banner 会跟
-      // 「正在切换中」自然衔接（约 1-2 个 thinking turn）
     } catch (err) {
       showToast(`切换失败：${err.message}`, 'error');
-      // 切失败时清掉 banner，让用户能继续操作
+    } finally {
+      // 立即清 banner——不再依赖"agent 必须立即 ExitPlanMode 来 plan_for_approval"。
+      // 实际场景：agent 可能在 plan mode 下 AskUserQuestion / generate_image 探索小样
+      // 多轮才 ExitPlanMode，期间 banner 卡屏让 PlanModeToggle 永久 locked。
+      // chat 区 streaming + toast 已经给用户"切换中"反馈，banner 不需要再持留。
       clearPlanModeRequest();
     }
   };

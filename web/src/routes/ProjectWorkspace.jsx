@@ -295,6 +295,7 @@ export default function ProjectWorkspace() {
     setLastEventAt(Date.now());       // 重置事件时间避免切 session 时误报"卡住"
     setIsTweaksExposed(false);        // 切 session 时清，新 session 待 agent 重 expose
     useGlobalStore.getState().clearPlanForApproval();  // 清 plan 卡（如果切 session 时还在等 approval）
+    useGlobalStore.getState().clearPlanModeRequest();  // 清 plan request banner（防跨 session 残留 → toggle 锁死）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, currentSessionId]);
 
@@ -504,6 +505,17 @@ export default function ProjectWorkspace() {
         setIsStreaming(true);
         setTodos([]);
         break;
+      case 'run.permission_mode_changed': {
+        // 后端 mode 切换（用户 toggle / plan-approve / plan-reject / turn 入口校正 /
+        // agent 进 plan mode 走 SDK setPermissionMode）→ 同步 PlanModeToggle 按钮 visual。
+        // 防"按钮显示状态跟 SDK 实际不一致"——agent 自主进入 plan mode 时 toggle 仍
+        // 显示"关闭"等 UX 错位。
+        // 单 sid 校验：跨 session 事件已被 ws/index.js sid 过滤掉，这里 isStale guard
+        // 兜底（多 tab / WS replay 可能误带）。
+        if (isStale) break;
+        useGlobalStore.getState().setPlanModeEnabled(evt.mode === 'plan');
+        break;
+      }
       case 'run.queue.depth':
         if (isStale) break;
         // streamInput 模式：inputQueue 积压数变化（push 后 / 处理完一条后）
@@ -595,6 +607,7 @@ export default function ProjectWorkspace() {
         setCurrentRunId(null);
         setActiveRun(null);
         useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
+        useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 done → toggle 锁死
         // 收尾：清 thinking 流式光标（run 结束后最后一条 thinking 不该一直闪）
         setMessages(prev => clearThinkingStreaming(prev));
         // 双保险：FileChanged hook（run.file_changed）应该已 bump 过 reloadToken
@@ -637,6 +650,7 @@ export default function ProjectWorkspace() {
         setCurrentRunId(null);
         setActiveRun(null);
         useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
+        useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 error → toggle 锁死
         setMessages(prev => [...clearThinkingStreaming(prev), {
           id: newId('msg'),
           role: 'assistant',
@@ -656,6 +670,7 @@ export default function ProjectWorkspace() {
         setCurrentRunId(null);
         setActiveRun(null);
         useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
+        useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就被 cancel → toggle 锁死
         setPromptSuggestion(null);
         setAgentProgress(null);
         setMessages(prev => clearThinkingStreaming(prev));
@@ -1176,6 +1191,7 @@ export default function ProjectWorkspace() {
         setCurrentRunId(null);
         setActiveRun(null);
         useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
+        useGlobalStore.getState().clearPlanModeRequest();  // 同上
         setIsStreaming(false);
       } else {
         showToast(`取消失败：${err.message}`, 'error');

@@ -43,6 +43,67 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import sharp from 'sharp';
+
+// 图片压缩配置（env 可调）。Gemini 3.1 Flash 默认输出 1080×1920+ PNG → 单图 6-8MB。
+// 不压缩的后果：① iframe 加载 canvas.html 引用的图慢 ② WS 推 base64 给 chat 缩略图
+// 单条消息 8MB+ ③ build-standalone 导出 deck inline 后 HTML 25MB 浏览器卡。
+// 长边 1920 对设计 deck 视口足够（桌面最多 1080p / 4K 物理像素 2160）；用户极端
+// 要求大图可 env 提到 3840。无 alpha PNG 自动转 JPEG 让单图小 5-10x。
+const IMAGE_MAX_DIM = Number(process.env.NODESIGN_IMAGE_MAX_DIM) || 1920;
+const JPEG_QUALITY = Number(process.env.NODESIGN_IMAGE_JPEG_QUALITY) || 85;
+
+/**
+ * 压缩 image buf：长边 ≤ IMAGE_MAX_DIM；JPEG/WebP 用 JPEG_QUALITY；PNG 检测 alpha
+ * 决定保留 PNG（有透明）还是转 JPEG（无透明，照片性质 5-10x 缩小）。fail-soft：
+ * sharp 抛错时返原 buf 不阻塞 generate_image。
+ *
+ * @param {Buffer} rawBuf
+ * @param {string} mimeType
+ * @returns {Promise<{ buf: Buffer, mimeType: string, ext: string|null }>}
+ *   ext 非 null 时表示真做了压缩（可能跟原 mime 不同，如 PNG→JPEG）；null 表示
+ *   未识别 mime 直接透传，调用方走原 fallback ext 逻辑。
+ */
+async function compressImageBuf(rawBuf, mimeType) {
+  try {
+    const meta = await sharp(rawBuf).metadata();
+    const longEdge = Math.max(meta.width || 0, meta.height || 0);
+    let pipeline = sharp(rawBuf);
+    if (longEdge > IMAGE_MAX_DIM) {
+      pipeline = pipeline.resize({
+        width: (meta.width || 0) >= (meta.height || 0) ? IMAGE_MAX_DIM : null,
+        height: (meta.height || 0) > (meta.width || 0) ? IMAGE_MAX_DIM : null,
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+    }
+    const lower = (mimeType || '').toLowerCase();
+    if (lower === 'image/png' && !meta.hasAlpha) {
+      // 无透明的 PNG（背景图 / 角色图照片）转 JPEG 大幅缩小
+      const buf = await pipeline.flatten({ background: '#ffffff' })
+        .jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+      return { buf, mimeType: 'image/jpeg', ext: '.jpg' };
+    }
+    if (lower === 'image/png') {
+      // 有透明保留 PNG（agent 通常出于裁切角色等需求）
+      const buf = await pipeline.png({ compressionLevel: 9 }).toBuffer();
+      return { buf, mimeType: 'image/png', ext: '.png' };
+    }
+    if (lower === 'image/jpeg' || lower === 'image/jpg') {
+      const buf = await pipeline.jpeg({ quality: JPEG_QUALITY, mozjpeg: true }).toBuffer();
+      return { buf, mimeType: 'image/jpeg', ext: '.jpg' };
+    }
+    if (lower === 'image/webp') {
+      const buf = await pipeline.webp({ quality: JPEG_QUALITY }).toBuffer();
+      return { buf, mimeType: 'image/webp', ext: '.webp' };
+    }
+    // 未识别 mime（gif / 其他）：原样透传
+    return { buf: rawBuf, mimeType, ext: null };
+  } catch (err) {
+    console.warn(`[generate-image] compress failed (${err.message}), keeping raw`);
+    return { buf: rawBuf, mimeType, ext: null };
+  }
+}
 
 const MODEL_ID = 'gemini-3.1-flash-image-preview';
 
@@ -427,7 +488,15 @@ become part of the spec.json design history.`,
       // Flash Image 经常返 image/jpeg 而不是 png，硬写 .png 会让文件名
       // 和真实编码不一致）。
       const finalName = buildOutputName(outputName, assetRole);
-      const ext = (() => {
+
+      // 写盘前用 sharp 压缩：长边 ≤ 1920，无 alpha PNG 自动转 JPEG。原始 6-8MB
+      // → ~500KB。CallToolResult / 写盘 / emit 都用压缩后的 buf 保持口径一致。
+      // ext 优先用 compress 后的（可能 PNG→JPEG），fallback 原 mime 推断。
+      const rawBuf = Buffer.from(extracted.base64, 'base64');
+      const compressed = await compressImageBuf(rawBuf, extracted.mimeType);
+      const imgBuf = compressed.buf;
+      const finalMime = compressed.mimeType;
+      const ext = compressed.ext || (() => {
         switch ((extracted.mimeType || '').toLowerCase()) {
           case 'image/jpeg': case 'image/jpg': return '.jpg';
           case 'image/webp': return '.webp';
@@ -447,8 +516,12 @@ become part of the spec.json design history.`,
       );
       await fs.mkdir(outDir, { recursive: true });
       const absOut = path.join(outDir, fileName);
-      const imgBuf = Buffer.from(extracted.base64, 'base64');
       await fs.writeFile(absOut, imgBuf);
+
+      if (rawBuf.length !== imgBuf.length) {
+        const ratio = (imgBuf.length / rawBuf.length * 100).toFixed(0);
+        console.log(`[generate-image] compressed ${fileName} ${rawBuf.length}B → ${imgBuf.length}B (${ratio}%)`);
+      }
 
       // Path the agent sees relative to its cwd (sessions/<sid>/) — when
       // sharedRoot is in play, sessions/<sid>/assets is a softlink to
@@ -489,8 +562,8 @@ become part of the spec.json design history.`,
       }
       content.push({
         type: 'image',
-        data: extracted.base64,
-        mimeType: extracted.mimeType,
+        data: imgBuf.toString('base64'),  // 压缩后的 base64，让 chat 缩略图也是小体积
+        mimeType: finalMime,
       });
       return { content };
     },
