@@ -54,6 +54,28 @@ const ASSET_MIME = {
   '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
 };
+/**
+ * thumbnail 路径模式：assets/generated/.thumbnails/<name>.thumb.jpg
+ * 文件不存在时尝试找原图 assets/generated/<name>.<ext>（任一支持后缀）作 fallback。
+ * 用途：① 老图（generate_image 加 thumbnail 流程之前生成的）没 thumb → 用原图
+ * ② thumbnail 生成失败 → 用原图。preview 体验降级而非破图。
+ *
+ * @returns {Promise<string|null>} 原图绝对路径，找不到时 null
+ */
+async function findOriginalForThumbnail(absThumbPath) {
+  const m = absThumbPath.match(/^(.*)\/\.thumbnails\/(.+)\.thumb\.jpg$/);
+  if (!m) return null;
+  const [, parentDir, baseName] = m;
+  for (const ext of ['.png', '.jpg', '.jpeg', '.webp', '.gif']) {
+    const candidate = path.join(parentDir, baseName + ext);
+    try {
+      const s = await fs.stat(candidate);
+      if (s.isFile()) return candidate;
+    } catch { /* try next ext */ }
+  }
+  return null;
+}
+
 router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
@@ -63,7 +85,7 @@ router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
     const subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
     if (!subPath) return res.status(400).json({ error: 'asset path required' });
 
-    const absPath = path.resolve(sessionRoot, 'assets', subPath);
+    let absPath = path.resolve(sessionRoot, 'assets', subPath);
     const assetsRoot = path.resolve(sessionRoot, 'assets');
     // 防 traversal：resolve 后必须在 sessions/<sid>/assets/ 下
     if (absPath !== assetsRoot && !absPath.startsWith(assetsRoot + path.sep)) {
@@ -74,8 +96,19 @@ router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
     try {
       stat = await fs.stat(absPath);
     } catch (err) {
-      if (err.code === 'ENOENT') return res.status(404).json({ error: 'asset not found' });
-      throw err;
+      if (err.code !== 'ENOENT') throw err;
+      // ENOENT 兜底：thumbnail 路径不存在 → fallback 到原图（老图 / 生成失败 case）
+      if (absPath.includes(`${path.sep}.thumbnails${path.sep}`) && absPath.endsWith('.thumb.jpg')) {
+        const original = await findOriginalForThumbnail(absPath);
+        if (original) {
+          absPath = original;
+          stat = await fs.stat(original);
+        } else {
+          return res.status(404).json({ error: 'thumbnail and original both missing' });
+        }
+      } else {
+        return res.status(404).json({ error: 'asset not found' });
+      }
     }
     if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
 
@@ -88,6 +121,30 @@ router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
     res.end(buf);
   } catch (err) { next(err); }
 });
+
+/**
+ * Preview-only：把 canvas.html 里 <img src="assets/generated/<name>.<ext>"> 透明
+ * 重写成 src="assets/generated/.thumbnails/<name>.thumb.jpg"。仅 GET /canvas serve
+ * 时改输出，**不动** agent 写的源文件。
+ *
+ * 理由：单图原始 6-8MB（Gemini 默认 1080×1920+ PNG），iframe 缩放（zoom=transform
+ * scale）+ 多图同时渲染让 GPU/RAM 暴涨，preview 体感卡。thumbnail 长边 512 / ~50KB
+ * 足够 preview 看清布局。导出走 build-standalone 仍 inline 原图，最终交付不损质量。
+ *
+ * 也覆盖 CSS 内 url(...) 引用的图片（agent 用 background-image 时常见）。
+ *
+ * thumbnail 不存在时 asset endpoint 会自动 fallback 到原图（见下方 ENOENT 分支），
+ * 老图（thumbnail 没生成的）/ 生成失败的都能正常显示。
+ */
+function rewriteImagesToThumbnails(html) {
+  const imgRe = /(<img\b[^>]*\bsrc\s*=\s*["'])assets\/generated\/(?!\.thumbnails\/)([^"']+?)\.(png|jpg|jpeg|webp|gif)(["'])/gi;
+  const cssUrlRe = /(url\(\s*["']?)assets\/generated\/(?!\.thumbnails\/)([^"')]+?)\.(png|jpg|jpeg|webp|gif)(["']?\s*\))/gi;
+  return html
+    .replace(imgRe, (_m, prefix, name, _ext, suffix) =>
+      `${prefix}assets/generated/.thumbnails/${name}.thumb.jpg${suffix}`)
+    .replace(cssUrlRe, (_m, prefix, name, _ext, suffix) =>
+      `${prefix}assets/generated/.thumbnails/${name}.thumb.jpg${suffix}`);
+}
 
 router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
   try {
@@ -103,6 +160,11 @@ router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
       if (!/<base\s+href=/i.test(content)) {
         const baseHref = `/api/projects/${encodeURIComponent(req.params.pid)}/sessions/${encodeURIComponent(req.params.sid)}/`;
         content = content.replace(/<head([^>]*)>/i, `<head$1>\n  <base href="${baseHref}">`);
+      }
+      // 透明替换 generated 图片为 thumbnail（preview 流畅；导出 / agent 看到的源
+      // 文件不动）。env NODESIGN_DISABLE_THUMBNAIL_REWRITE=1 关掉这行为（应急）。
+      if (process.env.NODESIGN_DISABLE_THUMBNAIL_REWRITE !== '1') {
+        content = rewriteImagesToThumbnails(content);
       }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
