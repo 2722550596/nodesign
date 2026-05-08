@@ -422,6 +422,31 @@ async function prepareExportPage(browser, filePath, opts = {}) {
     body.__nd-fit-active > .__nd-deck-wrap { transform: none !important; }
   ` });
 
+  // PPT / carousel 范式：section 默认 display:none / 横向 flex，PDF 打印 + PPTX
+  // boundingBox 都拿不到内容。导出时强制 normalize 成"垂直平铺、display:block"
+  // 让现有 PDF print stylesheet（page-break-after）+ section.screenshot 都能正常工作。
+  // stack 范式跳过这段，行为不变。
+  const deckMode = await page.evaluate(() => {
+    const wrap = document.querySelector('.__nd-deck-wrap');
+    return (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
+  });
+  if (deckMode === 'ppt' || deckMode === 'carousel') {
+    await page.addStyleTag({ content: `
+      .__nd-deck-wrap {
+        display: block !important;
+        flex-direction: initial !important;
+        overflow: visible !important;
+      }
+      section[data-page] {
+        display: block !important;
+        position: relative !important;
+        inset: auto !important;
+        opacity: 1 !important;
+        transform: none !important;
+      }
+    ` });
+  }
+
   const fallback = { w: DECK.width, h: DECK.height };
   const pageSize = await page.evaluate((fb) => {
     const first = document.querySelector('section[data-page]');

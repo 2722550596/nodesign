@@ -335,6 +335,12 @@ chat 直接问 1 题：
 
 **与 Stage 3 § 动效自检的衔接**：R2 锁了 motion-budget 后写每页按预算执行；某页确实需要打破预算（cover 必须 cinematic）回去问一句即可。
 
+**关键 anchor 图必跟反馈循环**：cover / 跨页 portrait / section-divider 这类 downstream 种子（会被当 referenceImages 跨页复用），生完图后**主动在自然回话里邀请用户反馈方向**——例：
+
+> "这个 cover 当全 deck 视觉锚 OK 吗？想换风格告诉我"
+
+用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到），不需要专门 AskUserQuestion 卡片。早定 anchor 早收益——cover 选错了一路，所有引它的页全漂。装饰图 / 单页内部用图不需要这步反馈。
+
 ### 0.3 三个信号源（按权重排）
 
 - **信号 1**：workspace 自动提示（pending changes / assets / spec.json decisions）
@@ -552,6 +558,28 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 - 每页装饰元素 ≤ 3 个是健康基线（cover 例外可以多到 5 个但要有理由）
 
 **写每页前 4 条对照一次（30 秒自检）**：核心句 ✓ → 视觉主角 ✓ → 跟上页节奏对比 ✓ → 装饰节制 ✓。任何一条不过关，停下来回去改。
+
+### Deck render mode（cp template 后立刻决定）
+
+`canvas.template.html` 的 `<div class="__nd-deck-wrap" data-deck-mode="stack">` 默认 stack（垂直平铺）。**cp 完模板后第一件事**就是按 deck 实际形态改 `data-deck-mode`——系统的 fit / screenshot / export / SlideNavigator 都按这个 attr 分流，**改错或漏改 = 系统按 stack 跑但你的 CSS 是别的范式 → 渲染破裂**。
+
+| mode | 适合什么场景 | section CSS 契约 | 切页机制 |
+|------|---------|------------------|---------|
+| **stack** | 长内容 deck / 文档型 / scrollytelling / 大多数 emotion / data / academic | `position: relative; width: 1920px; height: 1080px;`（template 默认） | scrollIntoView 自然滚动 |
+| **ppt** | 单屏切换 / 演讲型 / 每页一个 punch line / decision/sales/launch 的"逐张 reveal" | `position: absolute; inset: 0; display: none; opacity: 0;` + `.active { display: flex; opacity: 1; }`（必须配 `.active` rule） | template nav 脚本自动 toggle `.active` |
+| **carousel** | 移动端 demo / 走马灯 / 横向叙事 / 时间线 deck | wrap `display: flex; overflow-x: auto; scroll-snap-type: x mandatory;` + section `flex: 0 0 1920px; height: 1080px; scroll-snap-align: start;` | scrollIntoView({ inline: 'start' }) |
+| **custom** | 以上都不合适（map/zoom / magazine / 长滚动 narrative） | agent 自定 | agent 自实现 + 挂 `window.__nd_deck = { mode, pageCount, navigateTo, getCurrentPage, getDeckHeight }` |
+
+**步骤**：
+1. 改 `<div class="__nd-deck-wrap" data-deck-mode="...">` attr 到对应 mode
+2. 改 `<style id="base">` 里 `section[data-page]` 的 CSS 到对应契约（template 默认是 stack 契约）
+3. ppt mode：page-styles 必加 `.active` rule（否则全空白）；首屏 nav 脚本会自动给 page 1 加 active 兜底
+4. carousel mode：wrap 自身要加 `display:flex / overflow-x:auto / scroll-snap-type`
+5. custom mode：自写 fit + nav，并暴露 `window.__nd_deck` API；不挂 API → fit 兜底当 stack（最差降级）
+
+模板自带的 keyboard nav 脚本（标了 `data-nodesign-keep="navigation"`）已按 deck-mode 分流，stack/ppt/carousel 都开箱即用，不需要改它。export postprocess 不会动它。
+
+⚠️ **不要把 stack 错写成 ppt**：deck 内容很长（每页有大量信息）但选 ppt → 用户翻一页看到一屏，但内容被砍头不可滚 → 信息丢失。**ppt 的前提是每页内容能装在 1920×1080 单屏**，做不到就走 stack。
 
 ### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
 

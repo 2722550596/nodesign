@@ -448,19 +448,40 @@ export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss
 }
 
 /**
- * Heuristic：找所有包含 fit-related 标记的 inline `<script>` 段全部删除。
- * 标记：`__nd-deck-wrap` / `__nd-fit-active` / `transform: scale` + `innerWidth` / `DESIGN_W` 等。
+ * Heuristic：找真·fit/scale 脚本删除（避免跟服务端注入的 standard fit script 双 scale）。
+ *
+ * 旧版命中条件 `body.includes('__nd-deck-wrap')` 太松——所有合法的 keyboard nav /
+ * scroll-spy / page indicator 都 query wrap，会被误杀。改严：只删带"明确 scale 行为
+ * 信号"的脚本。识别信号要求**同时含 transform-style scale 写法 + 1920/DESIGN_W
+ * 这种 viewport 比值算式**，单一标识符（如纯 `__nd-deck-wrap`）不再触发。
+ *
+ * Escape：带 `data-nodesign-keep` attribute 的 script 永不删（agent 显式声明保留）。
  */
 function stripFitScripts(html) {
   // 只匹配 inline script（无 src 属性）；外联 fit script 在 NoDesign 范式里不存在
-  const scriptRe = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
-  return html.replace(scriptRe, (full, body) => {
-    const isFitScript =
-      body.includes('__nd-deck-wrap') ||
-      body.includes('__nd-fit-active') ||
-      (body.includes('DESIGN_W') && body.includes('scale')) ||
-      (/Math\.min\s*\(\s*\w+\s*\/\s*1920/i.test(body) && body.includes('scale')) ||
-      (body.includes('transform') && body.includes('window.innerWidth') && body.includes('1920'));
+  // attrs group 抓 <script ...> 里 attributes 字符串供 escape 检测
+  const scriptRe = /<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/gi;
+  return html.replace(scriptRe, (full, attrs, body) => {
+    // Escape：显式声明保留（带 data-nodesign-keep 的 nav 脚本永不删）
+    if (/\bdata-nodesign-keep\b/i.test(attrs)) return full;
+
+    // Heuristic 1：使用 NoDesign 私有 class `__nd-fit-active` 且带 classList 操作
+    // —— 这是 fit script 唯一的"添加 fit 状态" 写法，nav/scroll-spy 不会碰这个 class
+    const usesFitActiveClass =
+      body.includes('__nd-fit-active') && /\bclassList\.(add|remove|toggle)\b/.test(body);
+
+    // Heuristic 2：viewport 比值算式 + 任何 scale 写法（即使 transform 跟 scale 之间被
+    // 三元/quote 隔开）—— 模板原 fit 写法 `var s = vw / W;` + `... 'scale(' + s + ')'`
+    const hasViewportRatio =
+      /Math\.min\s*\(\s*\w+\s*\/\s*1920/i.test(body)
+      || (/DESIGN_W\b/.test(body) && /\bscale\b/.test(body))
+      || (/\bvw\s*\/\s*W\b/.test(body) && /['"`]scale\s*\(/.test(body))
+      || (/window\.innerWidth/.test(body) && /1920/.test(body) && /\bscale\b/.test(body));
+
+    // Heuristic 3：明示的 transform: scale 写法（CSS 风格连续）
+    const hasInlineScaleTransform = /transform\s*[:=]\s*['"]?\s*scale\s*\(/i.test(body);
+
+    const isFitScript = usesFitActiveClass || hasViewportRatio || hasInlineScaleTransform;
     return isFitScript ? '<!-- fit script removed by build-standalone (will inject standard) -->' : full;
   });
 }
@@ -471,10 +492,10 @@ function stripFitScripts(html) {
  */
 function injectStandardFitScript(html) {
   const STANDARD = `
-<script id="__nd-standard-fit">
+<script id="__nd-standard-fit" data-nodesign-keep="fit">
 (function(){
   if (window !== window.top) return;
-  var W = ${DECK_WIDTH}, body = document.body;
+  var W = ${DECK_WIDTH}, H_PAGE = ${DECK_HEIGHT}, body = document.body;
   var wrap = body.querySelector(':scope > .__nd-deck-wrap');
   if (!wrap) {
     wrap = document.createElement('div');
@@ -483,11 +504,35 @@ function injectStandardFitScript(html) {
     body.appendChild(wrap);
   }
   body.classList.add('__nd-fit-active');
+
+  // deck-mode 决定 body 高度算法。不声明 = stack 兜底（向后兼容）
+  var mode = wrap.getAttribute('data-deck-mode') || 'stack';
+
+  // PPT 兜底：如果 agent 漏写"首屏给 page 1 加 .active"，这里补一刀防全空白
+  if (mode === 'ppt' && wrap.querySelectorAll('section[data-page].active').length === 0) {
+    var firstPpt = wrap.querySelector('section[data-page]');
+    if (firstPpt) firstPpt.classList.add('active');
+  }
+
+  function deckHeight() {
+    if (mode === 'stack') return wrap.scrollHeight;
+    if (mode === 'ppt') return H_PAGE;
+    if (mode === 'carousel') return H_PAGE;
+    if (mode === 'custom') {
+      var api = window.__nd_deck;
+      if (api && typeof api.getDeckHeight === 'function') {
+        try { return api.getDeckHeight() || H_PAGE; } catch (_e) { return H_PAGE; }
+      }
+      return H_PAGE;
+    }
+    return wrap.scrollHeight; // 未知 mode 兜底 stack
+  }
+
   function fit() {
     var vw = Math.max(document.documentElement.clientWidth || 0, 320);
     var s = vw / W;
     wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
-    body.style.height = (wrap.scrollHeight * s) + 'px';
+    body.style.height = (deckHeight() * s) + 'px';
   }
   fit();
   window.addEventListener('resize', fit);
@@ -503,11 +548,17 @@ body.__nd-fit-active {
   align-items: center;
   background: var(--bg, #fff);
 }
+/* stack / ppt / 无 mode：wrap 宽 = 单页 1920。transform-origin 用 left 兼容
+   carousel（carousel wrap 宽 = N×1920，center origin 会让 scale 后向左溢出） */
 body.__nd-fit-active > .__nd-deck-wrap {
-  width: ${DECK_WIDTH}px;
-  transform-origin: top center;
+  transform-origin: top left;
   flex-shrink: 0;
 }
+body.__nd-fit-active > .__nd-deck-wrap:not([data-deck-mode="carousel"]) {
+  width: ${DECK_WIDTH}px;
+}
+/* carousel：wrap 宽由 agent 在 deck CSS 里设（N × 1920 或 flex 子撑开）；
+   fit script 不强加 width，仅做 scale */
 </style>`;
   if (html.includes('</body>')) {
     return html.split('</body>').join(STANDARD + '\n</body>');
@@ -516,6 +567,7 @@ body.__nd-fit-active > .__nd-deck-wrap {
 }
 
 const DECK_WIDTH = 1920;
+const DECK_HEIGHT = 1080;
 
 // ────────────────────────────────────────────────────────────────────
 // inlineLocalImages —— 自包含必需：把 <img src> + background:url() 里指

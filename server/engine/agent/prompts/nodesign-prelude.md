@@ -325,7 +325,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 - ⚠️ **Babel classic JSX runtime 需要 React 在 scope** —— `import React from 'react'`（hooks 一起 `import React, { useEffect } from 'react'`）
 - ⚠️ **JSX 里 placeholder 用纯文本不带花括号** —— `<h1>改我</h1>` 而不是 `<h1>{改我}</h1>`
-- ⚠️ **`position: absolute` 锚 section，不用 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效
+- ⚠️ **`position: absolute` 锚 section 内部元素，不用 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效。注意：这是说 section **内部** 元素的锚定方式；section 自身的 layout 由 deck-mode 决定（stack 默认 relative / ppt absolute / carousel flex item — 详见 SKILL § Deck render mode）
 - ⚠️ **flex 撑高度，避免 `h-[calc(100%-Npx)]`** —— hardcode N 在不同视口/字体下易溢出，用 `flex-1 min-h-0` 让 flex 自然撑
 
 ---

@@ -50,12 +50,38 @@ export default function SlideNavigator({ iframeDoc }) {
     return () => observer.disconnect();
   }, [iframeDoc]);
 
-  // IntersectionObserver 跟踪当前页
+  // 读 deck-mode（wrap 上的 data-deck-mode attr，未标 = stack 兜底）
+  // mode 决定切页机制 + 当前页跟踪机制：
+  //   stack/carousel: IntersectionObserver 跟踪滚动位置（IO 在视口内重叠最多的页 = active）
+  //   ppt: IO 不可用（section display:none），改读 .active class；切页时给 iframe 内 nav 脚本 postMessage 'canvas-go-page'
+  //   custom: 调 iframeWin.__nd_deck.navigateTo(idx) + 读 .getCurrentPage()
+  const deckMode = (() => {
+    if (!iframeDoc) return 'stack';
+    const wrap = iframeDoc.querySelector('.__nd-deck-wrap');
+    return (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
+  })();
+
+  // 当前页跟踪：stack/carousel 用 IO；ppt/custom 监听 canvas-page-change postMessage
   useEffect(() => {
     if (!iframeDoc || pages.length === 0) return;
     const win = iframeDoc.defaultView;
-    if (!win || !win.IntersectionObserver) return;
+    if (!win) return;
 
+    if (deckMode === 'ppt' || deckMode === 'custom') {
+      // canvas.template.html 的 nav 脚本 + custom mode 的 agent 实现都会在切页时
+      // postMessage canvas-page-change 到 parent。SlideNavigator 直接订阅这个事件
+      // 拿真当前页（IO 对 ppt 失效因为所有 section display:none）。
+      const onMsg = (ev) => {
+        const data = ev?.data;
+        if (data?.type === 'canvas-page-change' && Number.isFinite(data.page)) {
+          setActiveIndex(data.page);
+        }
+      };
+      window.addEventListener('message', onMsg);
+      return () => window.removeEventListener('message', onMsg);
+    }
+
+    if (!win.IntersectionObserver) return;
     const visibility = new Map();
     const observer = new win.IntersectionObserver((entries) => {
       entries.forEach(e => {
@@ -73,7 +99,7 @@ export default function SlideNavigator({ iframeDoc }) {
     pages.forEach(p => observer.observe(p.el));
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [iframeDoc, pages.length]);
+  }, [iframeDoc, pages.length, deckMode]);
 
   // 当前页变化时把 thumbnail 滚到可见区
   useEffect(() => {
@@ -84,7 +110,29 @@ export default function SlideNavigator({ iframeDoc }) {
 
   if (pages.length <= 1) return null;
 
+  // 切页按 deck-mode 分流。canvas.template.html 的 nav 脚本已订阅 'canvas-go-page'
+  // postMessage（stack 滚到 + ppt toggle active + carousel scrollIntoView inline）；
+  // custom mode 调 window.__nd_deck.navigateTo。
   const handleClick = (page) => {
+    if (!iframeDoc) return;
+    const win = iframeDoc.defaultView;
+    if (deckMode === 'custom') {
+      const api = win?.__nd_deck;
+      if (api && typeof api.navigateTo === 'function') {
+        try { api.navigateTo(page.index); } catch { /* fall through to scroll fallback */ }
+        return;
+      }
+      // custom 但没挂 API → 兜底 scrollIntoView（最差体验降级）
+    }
+    if (deckMode === 'ppt' || deckMode === 'carousel') {
+      // 走 iframe 内 nav 脚本的 'canvas-go-page' 协议：脚本会按 mode 自处理
+      // (ppt classList.toggle / carousel scrollIntoView inline)
+      try {
+        win?.postMessage({ type: 'canvas-go-page', page: page.index }, '*');
+        return;
+      } catch { /* fallback */ }
+    }
+    // stack 默认：直接 scrollIntoView
     page.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 

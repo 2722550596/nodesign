@@ -191,8 +191,23 @@
 
 <!-- ════════════════════════════════════════════════════════════ -->
 <!-- 所有 section 必须放在 .__nd-deck-wrap 里，让 fit script 接管缩放 -->
+<!--                                                                -->
+<!-- data-deck-mode 决定渲染范式（系统 fit/screenshot/export 按它分流）：-->
+<!--   "stack"    垂直平铺（默认）—— section position:relative，每页 1920×1080 堆叠，滚动浏览 -->
+<!--   "ppt"      单屏切换 —— section position:absolute + display:none，.active 切换 -->
+<!--                          必须在 page-styles 里加：                  -->
+<!--                            section[data-page] { position: absolute; inset: 0; display: none; opacity: 0; transition: opacity .4s; } -->
+<!--                            section[data-page].active { display: flex; opacity: 1; } -->
+<!--                          下面 keyboard nav 脚本按 deck-mode=ppt 自动 toggle .active -->
+<!--   "carousel" 横向翻页 —— wrap display:flex + scroll-snap，每页 flex:0 0 1920px -->
+<!--                          必须在 page-styles 里加：                  -->
+<!--                            .__nd-deck-wrap { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; } -->
+<!--                            section[data-page] { flex: 0 0 1920px; height: 1080px; scroll-snap-align: start; } -->
+<!--   "custom"   以上都不合适 —— agent 自实现 fit + nav，并挂 window.__nd_deck = { mode, pageCount, navigateTo, getCurrentPage, getDeckHeight } -->
+<!--                                                                -->
+<!-- 不声明 = stack。改 mode 后必须把 page-styles 里 section CSS 同步到对应契约，否则系统按 mode 行为但 CSS 不配合 → 渲染异常。 -->
 <!-- ════════════════════════════════════════════════════════════ -->
-<div class="__nd-deck-wrap">
+<div class="__nd-deck-wrap" data-deck-mode="stack">
 
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE 1 · COVER (text-led 范例)                              -->
@@ -588,13 +603,18 @@
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- Keyboard nav (Phase D, 2026-05-06)                              -->
+<!-- Keyboard nav (Phase D, 2026-05-06; deck-mode aware 2026-05-08)  -->
 <!-- ←/PgUp = prev, →/Space/PgDn = next, Home/End = first/last       -->
 <!-- iframe 模式下父窗口（CanvasFrame）通过 postMessage 同步 SlideNavigator -->
 <!-- 多页才装；单页（dashboard / landing）自动 noop                    -->
+<!-- 按 wrap.data-deck-mode 分流：stack scrollIntoView / ppt classList.toggle / carousel scrollIntoView inline -->
+<!-- data-nodesign-keep 让 build-standalone postprocess 永不删此脚本   -->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<script>
+<script data-nodesign-keep="navigation">
 (function(){
+  var wrap = document.querySelector('.__nd-deck-wrap');
+  var deckMode = (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
+
   var sections = Array.prototype.slice.call(
     document.querySelectorAll('section[data-page]')
   );
@@ -605,14 +625,31 @@
     return (parseInt(a.dataset.page, 10) || 0) - (parseInt(b.dataset.page, 10) || 0);
   });
 
+  // PPT 兜底：首屏给 page 1 加 .active（agent 漏写时也至少能见首页）
+  if (deckMode === 'ppt' && sections.filter(function(s){ return s.classList.contains('active'); }).length === 0) {
+    sections[0].classList.add('active');
+  }
+
   var current = 0;
+
+  function show(i){
+    if (deckMode === 'ppt') {
+      sections.forEach(function(s){ s.classList.remove('active'); });
+      sections[i].classList.add('active');
+    } else if (deckMode === 'carousel') {
+      sections[i].scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'start' });
+    } else {
+      // stack（默认）+ custom 兜底
+      sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
 
   function go(i){
     if (i < 0) i = 0;
     if (i >= sections.length) i = sections.length - 1;
     if (i === current) return;
     current = i;
-    sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    show(i);
     var page = parseInt(sections[i].dataset.page, 10) || (i + 1);
     try {
       window.parent.postMessage({ type: 'canvas-page-change', page: page }, '*');
@@ -639,8 +676,9 @@
     }
   });
 
-  // IntersectionObserver 跟踪用户手动滚动（鼠标滚轮 / 触控）时同步 current
-  if ('IntersectionObserver' in window) {
+  // IntersectionObserver 跟踪用户手动滚动（鼠标滚轮 / 触控）时同步 current。
+  // ppt 模式 section 都 display:none / 叠在同位置，IO 不可用；ppt 下当前页由 .active 直接读。
+  if (deckMode !== 'ppt' && 'IntersectionObserver' in window) {
     var io = new IntersectionObserver(function(entries){
       // 取与 viewport 重叠最多的那段当 current
       var best = null;

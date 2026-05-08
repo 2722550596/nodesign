@@ -125,9 +125,35 @@ Do NOT use this tool when:
         // selector / pageIndex 优先，命中则截元素 bbox（locator.screenshot），
         // 都不给走 fullPage / viewport。
         let buf;
-        let mode;
+        let captureMode;
         const targetSelector = selector
           || (pageIndex ? `section[data-page="${pageIndex}"]` : null);
+
+        // pageIndex 模式下：deck 是 ppt 范式时目标 section 默认 display:none，
+        // bbox 截不到内容；先操作 DOM 让目标页可见再截。stack 范式不需要任何
+        // 操作（默认平铺所有 section 都可见）。carousel 模式 scrollIntoView 让
+        // 目标 page 对齐到 viewport 再截。
+        if (pageIndex && !selector) {
+          const deckMode = await page.evaluate(() => {
+            const wrap = document.querySelector('.__nd-deck-wrap');
+            return (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
+          });
+          if (deckMode === 'ppt') {
+            await page.evaluate((idx) => {
+              document.querySelectorAll('section[data-page]').forEach(s => s.classList.remove('active'));
+              const target = document.querySelector(`section[data-page="${idx}"]`);
+              if (target) target.classList.add('active');
+            }, pageIndex);
+            await page.waitForTimeout(100); // 等 transition 跑完
+          } else if (deckMode === 'carousel') {
+            await page.evaluate((idx) => {
+              const target = document.querySelector(`section[data-page="${idx}"]`);
+              if (target) target.scrollIntoView({ inline: 'start', block: 'start', behavior: 'instant' });
+            }, pageIndex);
+            await page.waitForTimeout(50);
+          }
+        }
+
         if (targetSelector) {
           const locator = page.locator(targetSelector).first();
           const count = await locator.count();
@@ -141,10 +167,10 @@ Do NOT use this tool when:
             };
           }
           buf = await locator.screenshot({ type: 'png' });
-          mode = `selector="${targetSelector}"`;
+          captureMode = `selector="${targetSelector}"`;
         } else {
           buf = await page.screenshot({ fullPage: fp, type: 'png' });
-          mode = `fullPage=${fp}`;
+          captureMode = `fullPage=${fp}`;
         }
 
         // emit 让前端可见 agent 在自检
@@ -153,7 +179,7 @@ Do NOT use this tool when:
             type: 'run.screenshot_taken',
             sizeBytes: buf.length,
             viewport: vp,
-            mode,
+            mode: captureMode,
           });
         } catch { /* emit fail-safe */ }
 
@@ -161,7 +187,7 @@ Do NOT use this tool when:
           content: [
             {
               type: 'text',
-              text: `Screenshot of canvas.html (${vp.width}x${vp.height}, ${mode}, ${(buf.length / 1024).toFixed(1)} KB)`,
+              text: `Screenshot of canvas.html (${vp.width}x${vp.height}, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
             },
             {
               type: 'image',

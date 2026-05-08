@@ -22,22 +22,33 @@
 
 `design-plan.md` 通过 **ExitPlanMode 工具的 `plan` 参数** 提交（不是 Write）。
 
-## ⚠️ generate_image 在 plan mode 的时机规则
+## generate_image 在 plan mode — 看图说话是 default
 
-generate_image 在 plan 期间是**探索性候选样张**，不是 brainstorm 的第一步。
+**视觉问题用图样张比纯文字 brainstorm 快 5×** —— 用户脑里有画面但描述能力有限，文字
+往返几轮还在抽象层；先甩 1-2 张候选图，用户秒级反馈方向。这是 plan-mode 最高 ROI 的
+模式之一，**不要默认走"先 ask 几轮锁方向再生图"**。
+
 按这个节奏跑：
 
-1. **先 AskUserQuestion 锁方向** — reference 来源 / 调性 / 主体描述 / metaphor
-   落点。无方向就生图通常意味着用户还没给到足够信息，先对齐再画 ROI 更高
-2. **方向基本对齐**或**用户明显需要"看图说话"** → 这时才生 1-2 张候选
-3. **AskUserQuestion 带 preview** 把样张贴进 option preview 让用户视觉对比
-4. 用户反馈 → conversational editing 1-2 次微调 → 定下来 → 落 c_decisions
-5. 进下一页
+1. **brief 里有主体 / 隐喻 / 模仿对象**（哪怕模糊）→ **先出 1-2 张候选当对齐起点**
+   - 主体真实存在但模型不熟（最新产品 / 小众品牌 / 用户 IP）→ `web_search { include_images:true }` 拿 reference 后再生
+   - 主体抽象 / 模型脑里有 → 直接 `generate_image` 出 2 个变体
+   - 不要在这步等"reference / 调性 / 主体描述 / metaphor 全锁完"——图本身就是对齐工具
+2. **AskUserQuestion 带 preview** 把候选贴进 option，让用户视觉对比挑方向
+3. 用户反馈 → conversational editing 1-2 次微调 → 定下来 → 落 c_decisions
+4. 进下一页
 
-**plan 阶段生图的有效节奏**：
-- 先 1-2 轮 AskUserQuestion 锁方向（reference / 调性 / 主体）— 无方向的生图通常是 token 浪费
-- 用户给了充分反馈后再生 1-2 张候选样张 — 用户有具体视觉靶子来反馈
-- 同一思路的迭代收敛在 3 次内 — reroll 超过这个阈值，改 prompt 关键参数或问用户新方向通常更有效
+**真正先 ask 的场景**（很窄）：
+- brief 完全抽象到没主体（"做个 deck 吧"）→ 先 1 题 ask 拿主体再生
+- 用户明确要先纯文字对齐方向（少数）→ 尊重
+
+**搜 reference 的对齐**：
+- 关键页 reference（cover / 跨页 anchor / portrait）拿回 5+ 张图时，调
+  AskUserQuestion + image preview 让**用户挑**哪张当 referenceImages 种子——agent 默选错了一路全 deck 漂
+- 装饰 / 普通图 agent 自选即可（cookbook line 41 现状）
+
+**节奏护栏**：
+- 同一思路 reroll 收敛在 3 次内——超阈值改 prompt 关键参数或问用户新方向，比刷 token 有效
 - Plan 阶段的图是探索性候选，generate 阶段会重新对焦校准 — 这是分工，不是返工
 
 ## 这是什么模式
