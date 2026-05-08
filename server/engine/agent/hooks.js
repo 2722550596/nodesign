@@ -493,7 +493,7 @@ function makePostCompactHandler({ ctx, workspaceRoot }) {
 function makeSessionStartHandler({ ctx }) {
   return async (input, _toolUseId, _options) => {
     try {
-      ctx.emit(Events.sessionStart(input.source, input.agent_type, input.model));
+      ctx.emit(Events.sessionStart(input.source, input.agent_type, ctx.appModel || input.model));
     } catch (err) {
       console.warn(`[hooks/SessionStart] handler threw:`, err.message);
     }

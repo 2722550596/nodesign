@@ -207,11 +207,14 @@ function handleSystemMessage(ctx, msg) {
   switch (msg.subtype) {
     case 'init':
       // 初始化元信息：agents / tools / mcp_servers / model / permissionMode 等
+      // model：SDK 看到的是 spoofing alias（如 claude-opus-4-7[1m]，让 SDK 信
+      // rawMaxTokens=1M 解 Kimi 256k 卡顿，详见 model-context.js）。前端 InfoChips
+      // 显示 appModel（kimi-k2.6 真名）才不让用户困惑。
       ctx.emit(Events.systemInit({
         agents: msg.agents,
         tools: msg.tools,
         mcpServers: msg.mcp_servers,
-        model: msg.model,
+        model: ctx.appModel || msg.model,
         permissionMode: msg.permissionMode,
         skills: msg.skills,
         plugins: msg.plugins,
