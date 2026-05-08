@@ -371,22 +371,6 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
           const query = getQuery(ctx.runId);
           if (query?.getContextUsage) {
             const usage = await query.getContextUsage();
-
-            // 临时探针（2026-05-08）：确认 spoofing 后 SDK 真信窗口是 1M。
-            // 看到 rawMaxTokens=1000000 maxTokens=230400 = 成功；
-            // rawMaxTokens=200000 = spoofing 没生效，按"退路"降级。
-            // 验证完后删此 console.error。
-            if (usage) {
-              console.error('[ctx-debug]', JSON.stringify({
-                appModel: ctx.appModel,
-                sdkModel: usage.model,
-                totalTokens: usage.totalTokens,
-                maxTokens: usage.maxTokens,
-                rawMaxTokens: usage.rawMaxTokens,
-                autocompactSource: usage.autocompactSource,
-              }));
-            }
-
             if (usage && typeof usage.totalTokens === 'number') {
               const used = usage.totalTokens;
               // 真实容量按 appModel 查（kimi=256k）；SDK 给的 maxTokens 是 compact
