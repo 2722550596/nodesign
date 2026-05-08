@@ -27,17 +27,19 @@ import { COLOR, STAGE } from '../../lib/theme.js';
  *
  * A11y：toolbar ✓ A11y 按钮 → popover 显示 mock review 结果
  */
-// deck 尺寸跟随 canvas.html 里 wrap data-deck-aspect 决定（3 档预设）：
-//   "16:9"  1920×1080（默认）
-//   "9:16"  1080×1920（竖屏）
-//   "4:3"   1440×1080（老投影）
+// deck 尺寸跟随 canvas.html 里 wrap data-deck-aspect 决定（4 档预设）：
+//   "16:9"   1920×1080（默认）
+//   "16:10"  1920×1200（宽屏笔电 / Mac）
+//   "9:16"   1080×1920（竖屏）
+//   "4:3"    1440×1080（老投影）
 // fit = min(wrap.w/W, wrap.h/H) contain letterbox，保证整页可见不裁。
 // iframe logical viewport 固定 deck 比例尺寸，frame (100vw×100vh) 正好 =
 // 设计稿尺寸 → scroll-snap 一次切一整页，跟 standalone 行为一致。
 const ASPECT_DIMS = {
-  '16:9': { w: 1920, h: 1080 },
-  '9:16': { w: 1080, h: 1920 },
-  '4:3':  { w: 1440, h: 1080 },
+  '16:9':  { w: 1920, h: 1080 },
+  '16:10': { w: 1920, h: 1200 },
+  '9:16':  { w: 1080, h: 1920 },
+  '4:3':   { w: 1440, h: 1080 },
 };
 const DEFAULT_ASPECT = '16:9';
 
