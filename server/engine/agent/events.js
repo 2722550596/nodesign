@@ -130,7 +130,12 @@ export class EventBus {
     const restarted = since > this._seq;
     const gap = restarted || (needsReplay && (!buffered || this._buffer[0].seq > since + 1));
 
-    const replay = since > 0 ? this._buffer.filter(e => e.seq > since) : [];
+    // since=0 也 replay buffer 里 seq>0 的事件 —— ws/index.js 调用前先 await sendHydrate
+    // 是异步阻塞（拉 jsonl 100~数百 ms），期间若 agent emit 事件进 buffer 但 listener
+    // 还没 attach，老逻辑 `since > 0 ? ... : []` 让 since=0 时 replay=[] → 这些事件全丢，
+    // 用户报"发 chat 后 agent 不回应"。改成无条件 filter：since=0 + buffer 空（首连）→
+    // replay=[] 不变；since=0 + buffer 含 hydrate 期间事件 → 全 replay 推前端。
+    const replay = this._buffer.filter(e => e.seq > since);
     const replayedSeqs = new Set();
     for (const evt of replay) {
       replayedSeqs.add(evt.seq);

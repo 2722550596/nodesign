@@ -149,6 +149,7 @@ export function setupWS(httpServer) {
  */
 async function sendHydrate(ws, pid, sid, asOfSeq) {
   if (ws.readyState !== ws.OPEN) return;
+  const t0 = Date.now();
   try {
     const sessionRoot = getSessionWorkspace(pid, sid);
     const messages = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
@@ -156,6 +157,7 @@ async function sendHydrate(ws, pid, sid, asOfSeq) {
     );
     if (ws.readyState !== ws.OPEN) return;
     const total = messages.length;
+    console.info(`[ws] hydrate sid=${sid.slice(0, 8)} loaded ${total} messages in ${Date.now() - t0}ms`);
     ws.send(JSON.stringify({
       type: 'ws.hydrate.start',
       sessionId: sid,
