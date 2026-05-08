@@ -48,13 +48,23 @@ import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
+import { resolveModelContextWindow } from './model-context.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 /** 内部：UserPromptSubmit hook 读取 spec.json 时的最大字节数 */
 const SPEC_JSON_MAX_BYTES = 200 * 1024;
-/** Context usage 阈值：>=该百分比时注 systemMessage 提示 agent 注意 token 占用 */
-const CONTEXT_USAGE_WARN_PERCENT = 80;
+/**
+ * Context usage 警告分档（按真实容量算，kimi=256k）：
+ *   soft   70% — 提醒：还能再写一阵；下个段落收尾时落档
+ *   firm   85% — 加紧：开始整理结论 / 准备 spec.json
+ *   urgent 92% — 已过 SDK auto-compact 触发线（90%×真实=230k for 256k 容量），立即收尾
+ */
+const CONTEXT_USAGE_WARN_LEVELS = [
+  { percent: 70, tone: 'soft' },
+  { percent: 85, tone: 'firm' },
+  { percent: 92, tone: 'urgent' },
+];
 /** 内部：UserPromptSubmit hook 读 canvas.html 数页数时的最大字节数（防大文件吞内存） */
 const CANVAS_HTML_MAX_BYTES = 2 * 1024 * 1024;
 /** 内部：spec.json.decisions 注入摘要时取最近 N 条 */
@@ -332,7 +342,7 @@ function makeFileChangedHandler({ ctx }) {
  *
  * 两件事：
  * 1. emit run.stop_reflection（hasCanvas 信号给前端）
- * 2. SDK getContextUsage 拉上下文占用 → emit run.context_usage + ≥80% 注 systemMessage
+ * 2. SDK getContextUsage 拉上下文占用 → emit run.context_usage + 三档 70/85/92% 注 systemMessage
  *
  * input: StopHookInput (sdk.d.ts:5247)
  *   - stop_hook_active: boolean
@@ -353,29 +363,58 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
       });
 
       // SDK 0.2.86+ getContextUsage —— 每个 turn 收尾时拉一次上下文占用，
-      // emit 给前端做可视化条 + >= 80% 时注 systemMessage 提示 agent 注意
-      // （Kimi gateway 上限 256k，曾经爆过 418k）
+      // emit 给前端做可视化条 + 三档（70/85/92%）注 systemMessage 提示 agent 主动收尾
+      // （Kimi gateway 上限 256k，曾经爆过 418k；spoofing 后 SDK auto-compact
+      //  在 256k×0.9=230k 触发兜底）
       if (ctx.runId) {
         try {
           const query = getQuery(ctx.runId);
           if (query?.getContextUsage) {
             const usage = await query.getContextUsage();
+
+            // 临时探针（2026-05-08）：确认 spoofing 后 SDK 真信窗口是 1M。
+            // 看到 rawMaxTokens=1000000 maxTokens=230400 = 成功；
+            // rawMaxTokens=200000 = spoofing 没生效，按"退路"降级。
+            // 验证完后删此 console.error。
+            if (usage) {
+              console.error('[ctx-debug]', JSON.stringify({
+                appModel: ctx.appModel,
+                sdkModel: usage.model,
+                totalTokens: usage.totalTokens,
+                maxTokens: usage.maxTokens,
+                rawMaxTokens: usage.rawMaxTokens,
+                autocompactSource: usage.autocompactSource,
+              }));
+            }
+
             if (usage && typeof usage.totalTokens === 'number') {
               const used = usage.totalTokens;
-              const max = usage.maxTokens || usage.rawMaxTokens || 256000;
-              const percent = typeof usage.percentage === 'number'
-                ? usage.percentage
-                : (max > 0 ? Math.round((used / max) * 100) : 0);
+              // 真实容量按 appModel 查（kimi=256k）；SDK 给的 maxTokens 是 compact
+              // 触发线（autoCompactWindow=230400），不是 gateway 硬上限。
+              const realMax = resolveModelContextWindow(ctx.appModel) ?? usage.maxTokens ?? usage.rawMaxTokens ?? 256000;
+              const percent = realMax > 0 ? Math.round((used / realMax) * 100) : 0;
               ctx.emit({
                 type: 'run.context_usage',
                 runId: ctx.runId,
-                used, max, percent,
-                model: usage.model,
-                categories: usage.categories,  // 前端可后续做分类柱图
+                used, max: realMax, percent,
+                model: ctx.appModel || usage.model,
+                categories: usage.categories,
               });
-              if (percent >= CONTEXT_USAGE_WARN_PERCENT) {
-                const maxK = Math.round(max / 1000);
-                warnContextUsage = `<system-reminder>\n[context-usage] 当前对话上下文已用 ${percent}%（${used.toLocaleString()}/${max.toLocaleString()} tokens）。\n\n如果接近 ${maxK}k 上限可能触发自动 compact 中断当前思路；建议主动整理或在合适节点收尾，避免长对话累积。\n</system-reminder>`;
+
+              const hit = [...CONTEXT_USAGE_WARN_LEVELS].reverse().find((l) => percent >= l.percent);
+              if (hit) {
+                const usedStr = used.toLocaleString();
+                const maxStr = realMax.toLocaleString();
+                const remain = Math.max(0, realMax - used).toLocaleString();
+                let body;
+                if (hit.tone === 'soft') {
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr} tokens），还能再写一阵；下一个段落收尾时把当前进度落到 spec.json，避免后续 compact 丢上下文。`;
+                } else if (hit.tone === 'firm') {
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr}，剩 ~${remain}）。从下一轮开始整理结论 / 落档，避免被自动 compact 硬切。`;
+                } else {
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr}）。已逼近 SDK auto-compact 触发线（90%）；立即收尾或主动整理 spec.json，否则下一轮可能被压缩中断当前思路。`;
+                }
+                warnContextUsage = `<system-reminder>\n[context-usage] ${body}\n</system-reminder>`;
               }
             }
           }

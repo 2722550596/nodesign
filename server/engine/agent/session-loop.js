@@ -49,6 +49,7 @@ import { loadSkill, ensureSkillStarterFiles } from './skill.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
+import { resolveSdkSpoofModel } from './model-context.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
@@ -173,6 +174,9 @@ export async function runSession({
   // hooks / mcp 闭包持稳定引用即可。
   // sessionId 传入让 ctx.emit 自动 enrich event.sessionId，WS handler 按 sid 过滤
   // 防多 session / 多 tab 跨 session 串扰（project bus 共享）。
+  const model = modelOverride.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
+  const sdkModel = resolveSdkSpoofModel(model);
+
   const sharedCtx = new AgentContext({
     runId: '__session_pending__',
     skillId,
@@ -180,6 +184,7 @@ export async function runSession({
     abortController: sessionAbortController,
     workspaceRoot: cwdRoot,
     sessionId,
+    appModel: model,
   });
 
   const wsRoot = await sharedCtx.workspace.ensure();
@@ -196,8 +201,6 @@ export async function runSession({
   } catch (err) {
     console.warn(`[session-loop] ensureSkillStarterFiles failed:`, err.message);
   }
-
-  const model = modelOverride.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
 
   const realGatewayUrl = process.env.NODESIGN_GATEWAY_URL || process.env.ANTHROPIC_BASE_URL;
   let baseUrlForBinary = realGatewayUrl;
@@ -241,7 +244,10 @@ export async function runSession({
       ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
     },
 
-    model,
+    // sdkModel = appModel spoofing alias（kimi-k2.6 → claude-opus-4-7[1m]）。
+    // 让 SDK 内部 rawMaxTokens=1M，autoCompactWindow=230400 不再被卡 200k；
+    // proxy 出口把 alias 还原成真 appModel 给 gateway。详见 model-context.js。
+    model: sdkModel,
     tools: toolAllowlist,
     systemPrompt: {
       type: 'preset',
@@ -472,6 +478,9 @@ export async function runSession({
     // 透传成 ND-Trace-Id（NoDesk 后台按 trace 串单轮 LLM 调用链路）。SDK 串行
     // 处理 turn，全局变量在同一时刻只对应一个活动 turn，无 race。
     process.env.NODESIGN_CURRENT_TURN_ID = runId;
+    // appModel 给 binary-fixup-proxy 用（出口把 SDK 的 spoofing alias 还原成
+    // 真 model 给 gateway）。Node 进程级 env，SDK 串行 turn 内无 race。
+    process.env.NODESIGN_CURRENT_APP_MODEL = model;
     markRunStarted(runId);
     sharedCtx.emit(Events.start());
   };
@@ -504,6 +513,7 @@ export async function runSession({
     setCurrentTurnRunId(sessionId, null);
     // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
+    delete process.env.NODESIGN_CURRENT_APP_MODEL;
   };
 
   // ── idle timeout 兜底 ──
@@ -535,7 +545,7 @@ export async function runSession({
       if (usageInFlight) return;
       usageInFlight = true;
       stream.getContextUsage()
-        .then((usage) => { if (usage) sharedCtx.emit(Events.contextUsage(usage)); })
+        .then((usage) => { if (usage) sharedCtx.emit(Events.contextUsage(usage, sharedCtx.appModel)); })
         .catch(() => { /* fail-soft */ })
         .finally(() => { usageInFlight = false; });
     };

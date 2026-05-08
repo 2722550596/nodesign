@@ -130,7 +130,18 @@ The agent will see this verbatim. Keep it concise and actionable.
  *   request id 20260501104913995449543DV62Dl5F：requested 418547 tokens）。
  *   按 256k × 90% = 230400 tokens 触发自动 compact，SDK 用同模型压缩对话历史。
  *   PostCompact hook（hooks.js:84）已就位，compact 后摘要写 spec.json 长期记忆。
- *   1M context 模型（如 claude-opus-4-7[1m]）使用时建议手动调高这个值。
+ *
+ *   ⚠️ 历史坑（2026-05-08 修）：SDK binary 内部 model registry 不识别 kimi-*，
+ *   rawMaxTokens fallback 到 Anthropic 标准 200000，链式后果 maxTokens
+ *   = min(autoCompactWindow=230400, rawMaxTokens=200000) = 200000，
+ *   autoCompactWindow=230400 永远被卡 200k，浪费 60k+ Kimi gateway 真实容量。
+ *   修法：engine/agent/model-context.js 把 sdkOptions.model spoofing 成
+ *   `claude-opus-4-7[1m]`（SDK 认 1M context），rawMaxTokens=1M 不再卡 230400；
+ *   binary-fixup-proxy 在出口把 model 还原成真 kimi-k2.6 给 gateway。
+ *   现在 230400 真生效，SDK auto-compact 在 230k 触发，留 26k margin 防 400。
+ *
+ *   1M context 模型（如 claude-opus-4-7[1m]）走真名不 spoofing。如要拉满 1M
+ *   而不是 230400 触发，可以把这个值调高（SDK 接受 1e5 ~ 1e6 区间）。
  */
 const DEFAULT_NODESIGN_SETTINGS = {
   $schema: 'https://json.schemastore.org/claude-code-settings.json',

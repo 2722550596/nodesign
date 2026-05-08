@@ -255,6 +255,20 @@ async function maybeFixupMessagesBody(body) {
 
   if (!parsed || typeof parsed !== 'object') return body;
 
+  // ── Model spoofing reverse（2026-05-08）──
+  // session-loop.js 给 SDK options.model 喂 spoofing alias（如 kimi-k2.6 →
+  // claude-opus-4-7[1m]）让 SDK 内部 rawMaxTokens=1M，autoCompactWindow=230400
+  // 不再被卡 200k。但 outgoing body 的 model 仍是 alias，gateway 不认。
+  // 这里在 fixup 入口先把 alias 还原成真 appModel —— 后续 routing /
+  // vision lift / thinking fixup 全部按真 model（kimi-*）走，零变动。
+  // appModel 通过 session-loop startTurn 设的 process.env 拿（同 TURN_ID 模式）。
+  const appModel = process.env.NODESIGN_CURRENT_APP_MODEL;
+  let mutatedByReverse = false;
+  if (appModel && typeof parsed.model === 'string' && parsed.model !== appModel) {
+    parsed.model = appModel;
+    mutatedByReverse = true;
+  }
+
   // Vision 诊断（NODESIGN_DEBUG_VISION=1）
   if (process.env.NODESIGN_DEBUG_VISION === '1' && Array.isArray(parsed.messages)) {
     const stats = scanImageBlocks(parsed.messages);
@@ -279,10 +293,14 @@ async function maybeFixupMessagesBody(body) {
     }
   }
 
-  if (!parsed.model || typeof parsed.model !== 'string') return body;
-  if (!/^kimi/i.test(parsed.model)) return body;
+  // 非 Kimi 路径（含 Claude / haiku helper）跳过 vision lift / thinking fixup；
+  // 但 spoofing-reverse 已经改过 parsed.model 时仍要返回新 buffer 不能丢。
+  const finalize = (changed) =>
+    changed ? Buffer.from(JSON.stringify(parsed), 'utf8') : body;
+  if (!parsed.model || typeof parsed.model !== 'string') return finalize(mutatedByReverse);
+  if (!/^kimi/i.test(parsed.model)) return finalize(mutatedByReverse);
 
-  let mutated = false;
+  let mutated = mutatedByReverse;
 
   // Kimi vision lift（保留 — 主代理仍 kimi-k2.6）
   if (Array.isArray(parsed.messages) && liftImagesFromToolResult(parsed.messages)) {

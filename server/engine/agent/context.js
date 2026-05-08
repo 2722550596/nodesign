@@ -34,14 +34,19 @@ export class AgentContext {
    *                                          传了就走它，否则用 runId 推路径（旧 smoke 兼容）
    * @param {string} [opts.sessionId]       - 当前 SDK session id；emit 时自动 enrich 到事件，
    *                                          让 WS 端按 sid 过滤防跨 session 串扰
+   * @param {string} [opts.appModel]        - NoDesign 上层真实 model（如 kimi-k2.6）。
+   *                                          区别于 sdkOptions.model（spoofing alias，让 SDK
+   *                                          内部 rawMaxTokens 算对）。hooks/events 算真实
+   *                                          context window 时按 appModel 查映射表。
    */
-  constructor({ runId, skillId, eventBus, abortController, metadata = {}, workspaceRoot = null, sessionId = null }) {
+  constructor({ runId, skillId, eventBus, abortController, metadata = {}, workspaceRoot = null, sessionId = null, appModel = null }) {
     if (!runId) throw new Error('AgentContext: runId required');
     if (!skillId) throw new Error('AgentContext: skillId required');
 
     this.runId = runId;
     this.skillId = skillId;
     this.sessionId = sessionId;
+    this.appModel = appModel;
     this.eventBus = eventBus || new EventBus();
     this.abortController = abortController || new AbortController();
     this.metadata = metadata;

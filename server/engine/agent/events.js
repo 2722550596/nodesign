@@ -46,6 +46,8 @@
  *   - 内存测试：buffer.push(evt) 然后断言
  */
 
+import { resolveModelContextWindow } from './model-context.js';
+
 /**
  * Replay buffer 容量：单 project bus 保留最近 N 条事件供 WS 重连回放。
  * 一次 turn 可能 emit 上千条 delta（thinking / text / tool）；2000 够覆盖典型
@@ -400,14 +402,26 @@ export const Events = {
     ...(info.taskKind ? { taskKind: info.taskKind } : {}),
   }),
 
-  contextUsage: (usage) => ({
+  // appModel: NoDesign 上层真实 model（如 kimi-k2.6）。spoofing 后 SDK 的
+  // usage.model 是 alias（如 claude-opus-4-7[1m]）不可信；调用方需把真 appModel
+  // 传进来。给定 appModel 时按真实容量算 maxTokens / percentage，前端 ContextUsageBar
+  // 显的就是 gateway 真正能扛的容量（不是 SDK 内部 compact 触发线）。
+  contextUsage: (usage, appModel = null) => {
+    // 这里 import 在 file 顶（已加），避免循环依赖问题
+    const realMax = appModel
+      ? (resolveModelContextWindow(appModel) ?? usage.maxTokens)
+      : usage.maxTokens;
+    const totalTokens = usage.totalTokens;
+    const percentage = realMax > 0 ? Math.round((totalTokens / realMax) * 100) : (usage.percentage || 0);
+    return {
     type: 'run.context_usage',
-    totalTokens: usage.totalTokens,
-    maxTokens: usage.maxTokens,
-    percentage: usage.percentage,
+    totalTokens,
+    maxTokens: realMax,                  // 真实容量（kimi=256k）—— 前端进度条分母
+    sdkMaxTokens: usage.maxTokens,       // SDK 给的（compact 触发线 230k）—— debug
+    percentage,
     autoCompactThreshold: usage.autoCompactThreshold,
     isAutoCompactEnabled: usage.isAutoCompactEnabled,
-    model: usage.model,
+    model: appModel || usage.model,
     // 轻量化 breakdown — 前端 hover/expand 能看到细节，不渲细节时不占空间
     messageBreakdown: usage.messageBreakdown ? {
       toolCallTokens: usage.messageBreakdown.toolCallTokens,
@@ -423,5 +437,6 @@ export const Events = {
     memoryFilesTokens: (usage.memoryFiles || []).reduce((s, m) => s + (m.tokens || 0), 0),
     mcpToolsTokens: (usage.mcpTools || []).reduce((s, t) => s + (t.tokens || 0), 0),
     agentsTokens: (usage.agents || []).reduce((s, a) => s + (a.tokens || 0), 0),
-  }),
+    };
+  },
 };
