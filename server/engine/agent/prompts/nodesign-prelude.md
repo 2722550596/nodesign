@@ -234,9 +234,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ### Canvas 一致性自动校验（PostToolUse 反馈通道）
 
-每次 Edit/Write `canvas.html` 后，系统自动跑 5 项校验：mode-CSS 一致性 / carousel-ppt 必装 CSS / data-anchor 唯一性 / data-layout 推荐组件 reach-for / data-layout-role 必装。检出 issue 时下一轮 prompt 头会注 `<system-reminder>[canvas-validate]` 段——这是**系统通知**不是用户消息，看到酌情修；如确认是有意为之（custom mode / 故意命名重复等）忽略即可，反馈通道不阻塞流程。
-
-> ⚠️ **Carousel/PPT mode 时 wrap CSS 必匹配**（ppt 必装 `.active` 切换 rule；carousel 必装 wrap `display:flex / overflow-x:auto`）；漏写系统会自动检测 warn，导出/preview fallback 当 stack 渲染避免破到用户脸上，但不修 = 用户翻页失灵。模板 `<style id="page-styles">` 已预置 3 mode CSS slice 注释切片，改 `data-deck-mode` 时取消对应那段注释一步到位。
+每次 Edit/Write `canvas.html` 后，系统自动跑 3 项校验：data-anchor 唯一性 / data-layout 推荐组件 reach-for / data-layout-role 必装。检出 issue 时下一轮 prompt 头会注 `<system-reminder>[canvas-validate]` 段——这是**系统通知**不是用户消息，看到酌情修；如确认是有意为之（故意命名重复等）忽略即可，反馈通道不阻塞流程。
 
 ### React mount section 不做 contenteditable
 
@@ -337,9 +335,9 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 - ⚠️ **Babel classic JSX runtime 需要 React 在 scope** —— `import React from 'react'`（hooks 一起 `import React, { useEffect } from 'react'`）
 - ⚠️ **JSX 里 placeholder 用纯文本不带花括号** —— `<h1>改我</h1>` 而不是 `<h1>{改我}</h1>`
-- ⚠️ **`position: absolute` 锚 section 内部元素，不用 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效。注意：这是说 section **内部** 元素的锚定方式；section 自身的 layout 由 deck-mode 决定（stack 默认 relative / ppt absolute / carousel flex item — 详见 SKILL § Deck render mode）
+- ⚠️ **`position: absolute` 锚 section 内部元素，不用 `position: fixed`** —— section 自身有 transform: scale（系统注的），fixed 会锚 section 不锚 viewport，没意义还容易 confusion；absolute 即可
 - ⚠️ **flex 撑高度，避免 `h-[calc(100%-Npx)]`** —— hardcode N 在不同视口/字体下易溢出，用 `flex-1 min-h-0` 让 flex 自然撑
-- ⚠️ **改 `data-deck-mode` 时 CSS 必同步** —— ppt 漏 `.active` rule 全空白 / carousel 漏 wrap `flex+overflow-x:auto` 看似能滚但导出第一屏卡死。系统 PostToolUse 会自动检测错配 warn；模板 `<style id="page-styles">` 已预置 3 mode CSS slice 注释切片，取消对应注释即可
+- ⚠️ **每页内容必须装在 1920×1080 单屏内** —— 单页铺满屏幕是系统硬契约，section 内部不允许滚动；信息多就拆成多页，宁可 8 页空一点也比 6 页塞爆好
 
 ---
 

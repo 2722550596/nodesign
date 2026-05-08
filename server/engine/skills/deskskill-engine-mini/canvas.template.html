@@ -3,18 +3,22 @@
   ║  NoDesign · canvas.html starter template (Hybrid 范式 · 2026-05-08)  ║
   ╠══════════════════════════════════════════════════════════════════════╣
   ║                                                                      ║
-  ║  cp 这份做起点。下面 5 块预置好的，**别动结构**：                      ║
+  ║  cp 这份做起点。下面 4 块预置好的，**别动结构**：                      ║
   ║    1. <head> 里的 Tailwind / importmap / Babel + design-tokens       ║
-  ║    2. <head> 里 page-styles 预置 3 mode CSS slice 注释（按 mode 取消注释）║
-  ║    3. body 的 .__nd-deck-wrap[data-deck-mode] 包裹                    ║
+  ║    2. <head> base CSS 里 section[data-page] 1920×1080（设计稿坐标系） ║
+  ║    3. body 的 .__nd-deck-wrap 包裹 + <section data-page>              ║
   ║    4. <script id="__nd-shadcn-lite"> 里的 4 件 shadcn-lite 组件       ║
   ║       (Card/Button/Badge/Tabs)，直接 <Card> 用，不需要 import        ║
-  ║    5. body 末尾 keyboard nav + mode-detect 脚本（带 data-nodesign-keep）║
+  ║                                                                      ║
+  ║  渲染范式（系统统一处理，agent 不操心）：                                ║
+  ║    · 每个 <section data-page> 写 1920×1080 设计稿                     ║
+  ║    · 系统在 preview / 导出 / 离线打开时自动给每 section 包             ║
+  ║      100vw×100vh frame + scroll-snap → 单页铺满屏幕；                 ║
+  ║      滚轮 / 键盘 ↑↓ Space PgUp/PgDn 都按页切                          ║
+  ║    · 缩放纯 CSS min(100vw/1920, 100vh/1080) letterbox 居中            ║
   ║                                                                      ║
   ║  你要做的：                                                           ║
   ║    · 改 design-tokens（颜色 / 字号 / 字体）—— 按 deck 隐喻整组覆盖     ║
-  ║    · 决定 deck-mode（stack/ppt/carousel/custom）→ 取消 page-styles    ║
-  ║      里对应那段 CSS slice 注释                                        ║
   ║    · 在 .__nd-deck-wrap 里写 N 个 <section data-page="N">             ║
   ║    · **决定每页 layout-role 后**→ Read patterns/<role>.md 拿 reference║
   ║      (image-led-cover / section-divider / portrait / quote-backdrop  ║
@@ -29,8 +33,6 @@
   ║                                                                      ║
   ║  Anchor 单写：关键元素只写 data-anchor（deck 内唯一，重名加 -pN 后缀） ║
   ║              不再写 data-node-id（已废）                              ║
-  ║                                                                      ║
-  ║  fit script 由系统在导出 / 独立打开时自动注入（模板不带）              ║
   ║                                                                      ║
   ║  库速查见 prelude § Hybrid 全家桶库速查 + SKILL.md § Hybrid 选型表    ║
   ║                                                                      ║
@@ -194,43 +196,8 @@
     }
   </style>
 
-  <!-- ══════════════════════════════════════════════════════════════════════════════ -->
-  <!-- ══ 7. Page-styles —— 3 mode CSS slice 注释切片（取消对应注释一步到位） ══   -->
-  <!--                                                                                -->
-  <!-- 默认 stack（template wrap 的 data-deck-mode="stack"）—— section CSS 已在 base 设。-->
-  <!-- 改 wrap.data-deck-mode 时**必同步**取消下面对应那段注释，否则系统 PostToolUse 校验 -->
-  <!-- 报"声明 X mode 但 CSS 是 stack 风格"。                                          -->
-  <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+  <!-- ══ 7. Page-styles —— 页内细化样式（per-page 重写 token / 个别页 layout 微调） ══ -->
   <style id="page-styles">
-    /* ┄┄┄ stack 默认（不需要额外 CSS，base.css 已设 position: relative）┄┄┄ */
-
-    /* ┄┄┄ ppt mode（取消下方注释 + 改 wrap data-deck-mode="ppt"）┄┄┄
-    section[data-page] {
-      position: absolute;
-      inset: 0;
-      display: none;
-      opacity: 0;
-      transition: opacity .4s;
-    }
-    section[data-page].active {
-      display: flex;
-      opacity: 1;
-    }
-    ┄┄┄ */
-
-    /* ┄┄┄ carousel mode（取消下方注释 + 改 wrap data-deck-mode="carousel"）┄┄┄
-    .__nd-deck-wrap {
-      display: flex;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-    }
-    section[data-page] {
-      flex: 0 0 1920px;
-      height: 1080px;
-      scroll-snap-align: start;
-    }
-    ┄┄┄ */
-
     /* 例：page 3 数字超大字 */
     /* section[data-page="3"] .stat-num { font-family: var(--font-display); font-size: 200px; } */
   </style>
@@ -239,21 +206,18 @@
 <body>
 
 <!-- ════════════════════════════════════════════════════════════ -->
-<!-- 所有 section 必须放在 .__nd-deck-wrap 里，让系统 fit script 接管缩放。-->
+<!-- 所有 section 必须放在 .__nd-deck-wrap 里。                       -->
 <!--                                                                -->
-<!-- data-deck-mode 决定渲染范式（系统 fit/screenshot/export/SlideNavigator 按它分流）：-->
-<!--   "stack"    垂直平铺（默认）—— section position:relative，每页 1920×1080 堆叠，滚动浏览 -->
-<!--   "ppt"      单屏切换 —— section position:absolute + display:none，.active 切换 -->
-<!--                          必须取消 page-styles 里 ppt 注释切片                   -->
-<!--   "carousel" 横向翻页 —— wrap display:flex + scroll-snap，每页 flex:0 0 1920px -->
-<!--                          必须取消 page-styles 里 carousel 注释切片              -->
-<!--   "custom"   以上都不合适 —— agent 自实现 fit + nav，并挂                       -->
-<!--              window.__nd_deck = { mode, pageCount, navigateTo, getCurrentPage, getDeckHeight } -->
+<!-- 渲染范式（系统统一）：                                            -->
+<!--   · 每个 <section data-page="N"> 写 1920×1080 设计稿              -->
+<!--   · 系统在 preview / 导出 / 离线打开时自动给每 section 包         -->
+<!--     100vw×100vh frame + scroll-snap → 单页铺满屏幕                -->
+<!--     滚轮一次切一整页 / 键盘 ↑↓ Space PgUp/PgDn 也按页切            -->
+<!--   · 缩放 CSS min(100vw/1920, 100vh/1080) letterbox 居中           -->
 <!--                                                                -->
-<!-- 不声明 = stack。改 mode 后必须把 page-styles 对应注释切片取消，否则 PostToolUse  -->
-<!-- 校验报错配。                                                                    -->
+<!-- 不需要再声明 mode—agent 写 1920×1080 section，系统接管渲染就行。  -->
 <!-- ════════════════════════════════════════════════════════════ -->
-<div class="__nd-deck-wrap" data-deck-mode="stack">
+<div class="__nd-deck-wrap">
 
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE 1 · COVER (text-led 范例)                              -->
@@ -518,18 +482,14 @@
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- Keyboard nav (deck-mode aware)                                  -->
-<!-- ←/PgUp = prev, →/Space/PgDn = next, Home/End = first/last       -->
-<!-- iframe 模式下父窗口（CanvasFrame）通过 postMessage 同步 SlideNavigator -->
-<!-- 多页才装；单页（dashboard / landing）自动 noop                    -->
-<!-- 按 wrap.data-deck-mode 分流：stack scrollIntoView / ppt classList.toggle / carousel scrollIntoView inline -->
+<!-- Keyboard nav: ←↑/PgUp = prev, →↓/Space/PgDn = next, Home/End    -->
+<!-- 滚轮按页切由系统 fit script 注的 scroll-snap-y mandatory 自动处理 -->
+<!-- 这里只补键盘 + 父窗口 postMessage 同步当前页号                    -->
+<!-- 多页才装；单页 deck 自动 noop                                    -->
 <!-- data-nodesign-keep 让 build-standalone postprocess 永不删此脚本   -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <script data-nodesign-keep="navigation">
 (function(){
-  var wrap = document.querySelector('.__nd-deck-wrap');
-  var deckMode = (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
-
   var sections = Array.prototype.slice.call(
     document.querySelectorAll('section[data-page]')
   );
@@ -539,29 +499,14 @@
     return (parseInt(a.dataset.page, 10) || 0) - (parseInt(b.dataset.page, 10) || 0);
   });
 
-  if (deckMode === 'ppt' && sections.filter(function(s){ return s.classList.contains('active'); }).length === 0) {
-    sections[0].classList.add('active');
-  }
-
   var current = 0;
-
-  function show(i){
-    if (deckMode === 'ppt') {
-      sections.forEach(function(s){ s.classList.remove('active'); });
-      sections[i].classList.add('active');
-    } else if (deckMode === 'carousel') {
-      sections[i].scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'start' });
-    } else {
-      sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }
 
   function go(i){
     if (i < 0) i = 0;
     if (i >= sections.length) i = sections.length - 1;
     if (i === current) return;
     current = i;
-    show(i);
+    sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
     var page = parseInt(sections[i].dataset.page, 10) || (i + 1);
     try {
       window.parent.postMessage({ type: 'canvas-page-change', page: page }, '*');
@@ -573,9 +518,11 @@
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     switch (e.key) {
       case 'ArrowLeft':
+      case 'ArrowUp':
       case 'PageUp':
         e.preventDefault(); go(current - 1); break;
       case 'ArrowRight':
+      case 'ArrowDown':
       case 'PageDown':
       case ' ':
       case 'Spacebar':
@@ -587,7 +534,7 @@
     }
   });
 
-  if (deckMode !== 'ppt' && 'IntersectionObserver' in window) {
+  if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function(entries){
       var best = null;
       entries.forEach(function(en){
@@ -616,62 +563,6 @@
     });
     if (idx >= 0) go(idx);
   });
-})();
-</script>
-
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- Mode-CSS 错配检测（iframe 内跑，postMessage warn 给 parent）      -->
-<!-- 比对 wrap.dataset.deckMode vs 实际 computed style                -->
-<!-- 不一致 → postMessage type='deck-mode-mismatch' 给 parent CanvasFrame -->
-<!-- iframe 早退后只在 iframe 内有意义；独立打开（top window）也可跑    -->
-<!-- data-nodesign-keep 让 build-standalone postprocess 永不删此脚本   -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<script data-nodesign-keep="mode-detect">
-(function(){
-  function check() {
-    var wrap = document.querySelector('.__nd-deck-wrap');
-    if (!wrap) return;
-    var declared = wrap.getAttribute('data-deck-mode') || 'stack';
-    if (declared === 'custom') return; // custom 自由不检测
-
-    var cs = getComputedStyle(wrap);
-    var firstSection = wrap.querySelector('section[data-page]');
-    var sectionCs = firstSection ? getComputedStyle(firstSection) : null;
-
-    // 推断实际 CSS 范式
-    var observed;
-    if (cs.display === 'flex' && (cs.overflowX === 'auto' || cs.overflowX === 'scroll')) {
-      observed = 'carousel';
-    } else if (sectionCs && sectionCs.position === 'absolute') {
-      observed = 'ppt';
-    } else {
-      observed = 'stack';
-    }
-
-    if (declared !== observed) {
-      var payload = {
-        type: 'deck-mode-mismatch',
-        declared: declared,
-        observed: observed,
-        wrapDisplay: cs.display,
-        wrapOverflowX: cs.overflowX,
-        sectionPosition: sectionCs ? sectionCs.position : null
-      };
-      try {
-        if (window.top !== window) {
-          window.parent.postMessage(payload, '*');
-        } else {
-          console.warn('[nd-mode-mismatch]', payload);
-        }
-      } catch (_e) { /* ignore */ }
-    }
-  }
-
-  if (document.readyState === 'complete') {
-    check();
-  } else {
-    window.addEventListener('load', check);
-  }
 })();
 </script>
 

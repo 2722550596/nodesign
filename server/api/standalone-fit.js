@@ -1,19 +1,24 @@
 /**
  * server/api/standalone-fit.js — 唯一权威 fit script source
  *
+ * 范式（2026-05-08 简化）：
+ *   - 不再分 stack/ppt/carousel/custom 4 mode；统一一种渲染契约
+ *   - agent 写的 <section data-page> 仍是 1920×1080 设计稿坐标
+ *   - 系统 fit script 自动给每个 section 包一层 100vw×100vh `__nd-page-frame`
+ *   - 每个 frame scroll-snap-align: start，body scroll-snap-type: y mandatory
+ *     → 滚轮一次切一整页 / 键盘 ↑↓ Space PgUp/PgDn 也按页切
+ *   - section 在 frame 里 CSS scale `min(100vw/1920, 100vh/1080)` letterbox 居中
+ *     纯 CSS 自适应，无 resize listener
+ *
  * 三个调用方共享：
  *   - exports.js `injectViewportFit`（非 hybrid 导出薄包装）
  *   - exports/build-standalone.js `injectStandardFitScript`（hybrid 导出主路径）
- *   - 模板 canvas.template.html 不再自带 fit（导出 / 独立打开时由系统注入）
+ *   - 模板 canvas.template.html 不带 fit（导出 / 独立打开 / preview iframe 都由系统注入）
  *
- * 4 mode 感知：stack / ppt / carousel / custom
- *   - stack：deckHeight = wrap.scrollHeight（垂直平铺）
- *   - ppt：deckHeight = H_PAGE（单屏切换 .active）
- *   - carousel：deckHeight = H_PAGE（横向 flex+scroll-snap）
- *   - custom：查 window.__nd_deck.getDeckHeight() / fallback H_PAGE
- *
- * iframe 早退：window !== top 直接 return（前端 HtmlIframe.jsx 父窗口算 scale）
- * transform-origin 全场景统一 top left（兼容 carousel N×1920 wrap 不左溢）
+ * iframe + standalone 行为一致（不再 window!==top 早退）：
+ *   - frame 包装在 iframe 内也跑，让 preview 跟离线打开渲染一致
+ *   - parent CanvasFrame 把 iframe 元素本身固定 1920×1080 logical viewport，
+ *     再用 CSS transform 缩放 iframe 元素到 wrap 大小（外部 letterbox）
  */
 
 import { DECK } from '../shared/deck.js';
@@ -30,8 +35,9 @@ export function fitScriptCode(opts = {}) {
   const W = opts.width ?? DECK.width;
   const H = opts.height ?? DECK.height;
   return `(function(){
-  if (window !== window.top) return;
-  var W = ${W}, H_PAGE = ${H}, body = document.body;
+  var W = ${W}, H = ${H}, body = document.body;
+  if (!body) return;
+
   var wrap = body.querySelector(':scope > .__nd-deck-wrap');
   if (!wrap) {
     wrap = document.createElement('div');
@@ -41,67 +47,67 @@ export function fitScriptCode(opts = {}) {
   }
   body.classList.add('__nd-fit-active');
 
-  var mode = wrap.getAttribute('data-deck-mode') || 'stack';
-
-  // PPT 兜底：agent 漏写"首屏给 page 1 加 .active" 时补一刀
-  if (mode === 'ppt' && wrap.querySelectorAll('section[data-page].active').length === 0) {
-    var firstPpt = wrap.querySelector('section[data-page]');
-    if (firstPpt) firstPpt.classList.add('active');
+  // 给每个 section[data-page] 包 100vw × 100vh frame（idempotent）
+  // 滚轮 / 键盘按 frame 边界 snap 切页；CSS scale 单独处理 letterbox 居中
+  var sections = Array.prototype.slice.call(wrap.querySelectorAll(':scope > section[data-page]'));
+  for (var i = 0; i < sections.length; i++) {
+    var s = sections[i];
+    if (s.parentElement && s.parentElement.classList.contains('__nd-page-frame')) continue;
+    var frame = document.createElement('div');
+    frame.className = '__nd-page-frame';
+    s.parentNode.insertBefore(frame, s);
+    frame.appendChild(s);
   }
-
-  function deckHeight() {
-    if (mode === 'stack') return wrap.scrollHeight;
-    if (mode === 'ppt') return H_PAGE;
-    if (mode === 'carousel') return H_PAGE;
-    if (mode === 'custom') {
-      var api = window.__nd_deck;
-      if (api && typeof api.getDeckHeight === 'function') {
-        try { return api.getDeckHeight() || H_PAGE; } catch (_e) { return H_PAGE; }
-      }
-      return H_PAGE;
-    }
-    return wrap.scrollHeight; // 未知 mode 兜底 stack
-  }
-
-  function fit() {
-    var vw = Math.max(document.documentElement.clientWidth || 0, 320);
-    var s = vw / W;
-    wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
-    body.style.height = (deckHeight() * s) + 'px';
-  }
-  fit();
-  window.addEventListener('resize', fit);
-  if (document.fonts) document.fonts.ready.then(fit);
 })();`;
 }
 
 /**
  * 返回 fit 配套 <style> tag（含 wrapping tag），可直接拼到 HTML
  *
+ * page-scale 用纯 CSS calc(min()) 做，无需 JS resize handler 自动响应。
+ *
  * @param {number} [width=DECK.width]
+ * @param {number} [height=DECK.height]
  * @returns {string}
  */
-export function fitStyleTag(width = DECK.width) {
+export function fitStyleTag(width = DECK.width, height = DECK.height) {
+  // !important 用在 layout reset 三条上：兼容老 canvas.html 自带的 wrap-level fit CSS
+  // （body.__nd-fit-active flex+align-items:center / wrap width:1920px+transform 等），
+  // 否则老 deck 在新 frame 范式下会被偏左渲染。新 deck 模板已不含老 CSS，无害。
   return `<style id="__nd-standard-fit-style">
-body { margin: 0; }
+:root { --nd-page-scale: min(calc(100vw / ${width}px), calc(100vh / ${height}px)); }
+html, body { margin: 0; padding: 0; }
 body.__nd-fit-active {
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: block !important;
   background: var(--bg, #fff);
+  scroll-snap-type: y mandatory;
+  overflow-x: hidden;
 }
-/* transform-origin 统一 top left（兼容 carousel N×1920 wrap 不向左溢出）；
-   stack/ppt 视觉居中靠 align-items:center 实现，不靠 transform-origin */
 body.__nd-fit-active > .__nd-deck-wrap {
-  transform-origin: top left;
+  display: block !important;
+  width: auto !important;
+  margin: 0 !important;
+  transform: none !important;
+  transform-origin: 0 0 !important;
+}
+.__nd-page-frame {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  scroll-snap-align: start;
+  background: inherit;
+}
+.__nd-page-frame > section[data-page] {
   flex-shrink: 0;
-}
-body.__nd-fit-active > .__nd-deck-wrap:not([data-deck-mode="carousel"]) {
   width: ${width}px;
+  height: ${height}px;
+  transform-origin: center center;
+  transform: scale(var(--nd-page-scale));
+  position: relative;
 }
-/* carousel：wrap 宽由 agent 在 deck CSS 里设（N × 1920 或 flex 子撑开），
-   fit script 不强加 width，仅做 scale */
 </style>`;
 }
 
@@ -113,33 +119,9 @@ body.__nd-fit-active > .__nd-deck-wrap:not([data-deck-mode="carousel"]) {
  */
 export function fitInjectionBlock(opts = {}) {
   const W = opts.width ?? DECK.width;
+  const H = opts.height ?? DECK.height;
   return `<script id="__nd-standard-fit" data-nodesign-keep="fit">
 ${fitScriptCode(opts)}
 </script>
-${fitStyleTag(W)}`;
-}
-
-/**
- * normalizeModeCss(deckMode) — ppt/carousel mode fallback CSS string
- *
- * 给 build-standalone HTML 导出路径 + Playwright PDF/PPTX 路径共用。
- *
- * stack/custom 返空字符串（noop）；ppt/carousel 返强 normalize CSS（让 section
- * 平铺 display:block，确保 boundingBox / page-break / 离线打开第一屏都能见内容）。
- */
-export function normalizeModeCss(deckMode) {
-  if (deckMode !== 'ppt' && deckMode !== 'carousel') return '';
-  return `
-    .__nd-deck-wrap { display: block !important; flex-direction: initial !important; overflow: visible !important; }
-    section[data-page] { display: block !important; position: relative !important; inset: auto !important; opacity: 1 !important; transform: none !important; }
-  `;
-}
-
-/**
- * normalizeModeStyleTag(deckMode) — 返 <style> tag 字面（含 wrapping tag），
- * HTML 导出路径注 </head> 前用
- */
-export function normalizeModeStyleTag(deckMode) {
-  const css = normalizeModeCss(deckMode);
-  return css ? `<style id="__nd-mode-normalize" data-nodesign-keep="mode-normalize">${css}</style>` : '';
+${fitStyleTag(W, H)}`;
 }

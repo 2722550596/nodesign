@@ -27,11 +27,13 @@ import { COLOR, STAGE } from '../../lib/theme.js';
  *
  * A11y：toolbar ✓ A11y 按钮 → popover 显示 mock review 结果
  */
-// SKILL.md 约束 agent 写出来的 deck 单页 1920px 宽（固定，PPT 标准 16:9 1080p）。
-// fit = wrap.w / 1920 → iframe 整个铺满 canvas wrap（无外部 letterbox）。
-// 高度方向 iframe 补偿 wrap.h/zoom，内部 deck 自己滚（页 1080 高 + 余地由 deck CSS 处理）。
-// canvas.html 的 fit script 因 window!==top 在 iframe 内早退，scale 由 CanvasFrame 这边算。
+// SKILL.md 约束 agent 写出来的 deck 单页 1920×1080（PPT 标准 16:9）。
+// fit = min(wrap.w/1920, wrap.h/1080) → contain（letterbox），保证整页可见
+// 不裁。iframe 内 logical viewport 固定 1920×1080，让 fit script 注的
+// __nd-page-frame (100vw × 100vh) 正好 = section 设计稿尺寸，scroll-snap
+// 一次切一整页，跟 standalone 离线打开行为一致。
 const DECK_WIDTH = 1920;
+const DECK_HEIGHT = 1080;
 
 export default function CanvasFrame({
   htmlSrc, htmlContent,
@@ -114,10 +116,13 @@ export default function CanvasFrame({
     };
   }, [mode]);
 
-  // fit = wrap.w / DECK_WIDTH：宽度铺满 canvas（无外部 letterbox）；
-  // 高度方向 iframe 内部由 deck CSS 自处理（1080 一页 + 多页堆叠 + scroll）
+  // fit = contain min(wrap.w / 1920, wrap.h / 1080)：单页完整可见 + letterbox。
+  // iframe logical viewport 固定 1920×1080，内部 fit script 包 frame
+  // (100vw×100vh = 1920×1080 = section 设计稿尺寸) → scroll-snap 切页。
   const effectiveZoom = zoom === 'fit'
-    ? (wrapSize.width > 0 ? wrapSize.width / DECK_WIDTH : 1)
+    ? (wrapSize.width > 0 && wrapSize.height > 0
+        ? Math.min(wrapSize.width / DECK_WIDTH, wrapSize.height / DECK_HEIGHT)
+        : 1)
     : zoom;
 
   const showCandidateBar = candidates && candidates.length >= 1;
@@ -166,21 +171,6 @@ export default function CanvasFrame({
         try {
           window.dispatchEvent(new CustomEvent('nd-canvas-page-change', {
             detail: { page: data.page },
-          }));
-        } catch { /* ignore */ }
-      }
-      // 2026-05-08：deck-mode 错配检测（iframe 内 detection script emit）
-      // 仅 dispatch CustomEvent，关心的组件（dev tool / future toast）按需订阅
-      if (data.type === 'deck-mode-mismatch') {
-        try {
-          window.dispatchEvent(new CustomEvent('nd-canvas-mode-mismatch', {
-            detail: {
-              declared: data.declared,
-              observed: data.observed,
-              wrapDisplay: data.wrapDisplay,
-              wrapOverflowX: data.wrapOverflowX,
-              sectionPosition: data.sectionPosition,
-            },
           }));
         } catch { /* ignore */ }
       }

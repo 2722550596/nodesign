@@ -4,10 +4,10 @@ import { attachEditMode, detachAll } from './DirectEditBridge.js';
 /**
  * HtmlIframe — 加载 HTML 产物的核心 iframe
  *
- * iframe 视觉铺满 wrap 容器 — width + height 都按 100/zoom% 补偿，
- * scale(zoom) 后视觉刚好 = wrap 尺寸（无外部 letterbox / 黑边）。
- * iframe 内部视口 = wrap.size / zoom，deck CSS（一页 1920×1080）
- * 在 iframe 内部按自己的方式渲染 + 内部 scroll 翻页。
+ * iframe logical viewport 固定 1920×1080（设计稿坐标系），通过
+ * `transform: scale(zoom)` 缩放到 wrap 容器内（contain letterbox 居中）。
+ * 内部 fit script 注 100vw×100vh `__nd-page-frame` 包每个 section，
+ * scroll-snap-y mandatory → 滚轮 / 键盘按页切；跟 standalone 离线打开行为一致。
  *
  * 模式行为：
  *   - 'edit'    iframe 加载完成后挂 dblclick / click bridge（contenteditable + select）
@@ -16,6 +16,8 @@ import { attachEditMode, detachAll } from './DirectEditBridge.js';
  * P1：sandbox 暂时给 allow-scripts allow-same-origin（开发同源）；部署不同 origin 时
  *     退化成 postMessage 通信，bridge 文件预埋 listener。
  */
+const DECK_W = 1920;
+const DECK_H = 1080;
 export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTextEdit, onIframeReady, zoom = 1 }) {
   const ref = useRef(null);
   const loadedRef = useRef(false);
@@ -76,6 +78,10 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
       overflow: 'hidden',
       background: '#fff',
       position: 'relative',
+      // letterbox：iframe 1920×1080 缩放后居中放置；外侧空隙是白底 letterbox
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
     }}>
       <iframe
         ref={ref}
@@ -84,15 +90,15 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
         onLoad={handleLoad}
         sandbox="allow-scripts allow-same-origin"
         style={{
-          position: 'absolute',
-          top: 0, left: 0,
-          // width + height 都按 100/zoom% 补偿 → scale 后视觉刚好 = wrap 尺寸
-          width: zoom === 1 ? '100%' : `${100 / zoom}%`,
-          height: zoom === 1 ? '100%' : `${100 / zoom}%`,
+          // logical viewport 固定 1920×1080，让 iframe 内 fit script 的 100vw/100vh
+          // = 设计稿尺寸 = scroll-snap 切页边界 = 跟 standalone 离线打开行为一致
+          width: `${DECK_W}px`,
+          height: `${DECK_H}px`,
+          flexShrink: 0,
           border: 0,
           background: '#fff',
           transform: zoom === 1 ? 'none' : `scale(${zoom})`,
-          transformOrigin: 'top left',
+          transformOrigin: 'center center',
         }}
       />
     </div>

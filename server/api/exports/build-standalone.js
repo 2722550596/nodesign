@@ -27,7 +27,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { fitInjectionBlock, normalizeModeStyleTag } from '../standalone-fit.js';
+import { fitInjectionBlock } from '../standalone-fit.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -112,6 +112,10 @@ export async function buildStandaloneHtml(rawHtml, opts = {}) {
   if (opts.sessionRoot) {
     html = await inlineLocalImages(html, opts.sessionRoot);
   }
+
+  // 9. inline Google Fonts → @font-face data URL。
+  // 离线打开 / CDN 慢时字体不再 fallback 到系统字体；fail-soft（fetch 失败保留原 link）
+  html = await inlineGoogleFonts(html);
 
   return html;
 }
@@ -439,13 +443,11 @@ export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss
   }
 
   // 6. 去重 fit script —— agent 偶尔会自己写一个 fit script（譬如 letterbox 风格的
-  //    Math.min(vw/W, vh/H)），跟服务端注入的满铺-fit 叠加导致 scale 双重缩放（0.75 *
-  //    0.75 = 0.5625）。strategy：识别所有"看起来像 fit script"的 inline script 段全
-  //    删，再注入一个权威 standard fit script，保证只有一份在跑。
+  //    Math.min(vw/W, vh/H)），跟服务端注入的 frame-snap fit 叠加导致 scale 双重缩放或
+  //    DOM 层级冲突。strategy：识别所有"看起来像 fit script"的 inline script 段全删，
+  //    再注入一个权威 standard fit script，保证只有一份在跑。
   html = stripFitScripts(html);
-  // 7. mode normalize（ppt/carousel mode 漏写 CSS 时兜底当 stack 渲染防破到用户脸上）
-  html = injectModeNormalize(html);
-  // 8. 注入唯一权威 fit script（4 mode 感知 + transform-origin: top left）
+  // 7. 注入唯一权威 fit script（每 section 自动包 100vw×100vh frame + scroll-snap）
   html = injectStandardFitScript(html);
 
   return html;
@@ -493,9 +495,6 @@ function stripFitScripts(html) {
 /**
  * 注入唯一权威 standard fit script（调 standalone-fit 的 fitInjectionBlock）。
  * 放在 </body> 前；如无 </body> 末尾追加。
- *
- * 行为：跟 server/api/standalone-fit.js fitInjectionBlock() 完全一致——
- *   4 mode 感知 + transform-origin: top left + ppt 兜底（首屏给 page 1 加 .active）
  */
 function injectStandardFitScript(html) {
   const block = fitInjectionBlock();
@@ -503,24 +502,6 @@ function injectStandardFitScript(html) {
     return html.split('</body>').join(block + '\n</body>');
   }
   return html + block;
-}
-
-/**
- * 注入 mode normalize style tag（ppt/carousel mode 漏写 CSS 时兜底当 stack 渲染）。
- * 调用方：assembleStandaloneHtml HTML 离线导出 path（PDF/PPTX 走 prepareExportPage）。
- *
- * 检测 wrap data-deck-mode attr → 调 normalizeModeStyleTag → 注 </head> 前
- */
-function injectModeNormalize(html) {
-  const m = html.match(/<div\b[^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"][^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"]/i)
-        || html.match(/<div\b[^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"][^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"]/i);
-  const deckMode = m ? m[1] : 'stack';
-  const tag = normalizeModeStyleTag(deckMode);
-  if (!tag) return html;
-  if (html.includes('</head>')) {
-    return html.split('</head>').join(tag + '\n</head>');
-  }
-  return tag + '\n' + html;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -653,6 +634,131 @@ async function inlineLocalImages(html, sessionRoot) {
       out = out.split(v).join(replaceVariant);
     }
   }
+
+  return out;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// inlineGoogleFonts —— 把 Google Fonts CSS 链接转成 inline @font-face
+// + woff2 base64 data URL，让导出 HTML 离线打开字体仍正确。
+//
+// 流程：
+//   1. 找所有 <link href="https://fonts.googleapis.com/css2?..."> tag
+//   2. fetch 每个 CSS（带浏览器 UA 让 Google 返 woff2 而不是 truetype）
+//   3. CSS 里 `url(https://fonts.gstatic.com/...)` 全部 fetch + base64 替换
+//   4. 把原 link tag 替换为 inline <style>
+//   5. 顺手删 fonts.gstatic.com / fonts.googleapis.com 的 preconnect link
+//
+// 进程级 LRU cache：同一 deck reload 多次 / 多 deck 共字体免重 fetch
+// fail-soft：fetch 失败保留原 link tag，离线失败但不破坏导出
+// ────────────────────────────────────────────────────────────────────
+
+const FONT_CACHE_MAX = 200;  // 200 个字体文件够 50 个 deck 用
+const fontCache = new Map();
+
+function fontCacheGet(key) {
+  if (!fontCache.has(key)) return undefined;
+  const v = fontCache.get(key);
+  fontCache.delete(key);
+  fontCache.set(key, v);
+  return v;
+}
+
+function fontCacheSet(key, val) {
+  if (fontCache.size >= FONT_CACHE_MAX) {
+    const oldest = fontCache.keys().next().value;
+    fontCache.delete(oldest);
+  }
+  fontCache.set(key, val);
+}
+
+const FONT_EXT_MIME = {
+  '.woff2': 'font/woff2',
+  '.woff':  'font/woff',
+  '.ttf':   'font/ttf',
+  '.otf':   'font/otf',
+};
+
+// 模拟 Chrome UA 让 Google Fonts CSS 返 woff2 而不是 truetype
+const FONT_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+async function fetchAsBase64(url) {
+  const cached = fontCacheGet(url);
+  if (cached) return cached;
+  const res = await fetch(url, { headers: { 'User-Agent': FONT_UA } });
+  if (!res.ok) throw new Error(`font fetch ${res.status}`);
+  const ab = await res.arrayBuffer();
+  const ext = (url.match(/\.(woff2|woff|ttf|otf)(?:[?#]|$)/i) || [])[1];
+  const mime = ext ? FONT_EXT_MIME['.' + ext.toLowerCase()] : 'font/woff2';
+  const dataUrl = `data:${mime};base64,${Buffer.from(ab).toString('base64')}`;
+  fontCacheSet(url, dataUrl);
+  return dataUrl;
+}
+
+async function inlineGoogleFonts(html) {
+  // 找所有 Google Fonts CSS link
+  const linkRe = /<link\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi;
+  const matches = [];
+  let m;
+  while ((m = linkRe.exec(html)) !== null) {
+    const href = m[1] || m[2];
+    if (/^https?:\/\/fonts\.googleapis\.com\/css/i.test(href)) {
+      matches.push({ fullTag: m[0], href });
+    }
+  }
+
+  let out = html;
+
+  // 批量处理每个 link
+  for (const { fullTag, href } of matches) {
+    let cssText;
+    try {
+      const cached = fontCacheGet(href);
+      if (cached) {
+        cssText = cached;
+      } else {
+        const res = await fetch(href, { headers: { 'User-Agent': FONT_UA } });
+        if (!res.ok) throw new Error(`Google Fonts CSS ${res.status}`);
+        cssText = await res.text();
+        fontCacheSet(href, cssText);
+      }
+    } catch (err) {
+      console.warn(`[build-standalone] Google Fonts CSS fetch failed: ${href} (${err.message})`);
+      continue;  // fail-soft 保留原 link
+    }
+
+    // CSS 里 url(...woff2/woff/ttf/otf) → base64
+    const fontUrlRe = /url\(\s*(?:"([^"]+)"|'([^']+)'|([^)\s]+))\s*\)/g;
+    const fontUrls = [];
+    let fm;
+    while ((fm = fontUrlRe.exec(cssText)) !== null) {
+      const u = fm[1] || fm[2] || fm[3];
+      if (u && /^https?:\/\/.*\.(woff2|woff|ttf|otf)(?:[?#]|$)/i.test(u)) {
+        fontUrls.push(u);
+      }
+    }
+
+    const uniq = [...new Set(fontUrls)];
+    const results = await Promise.allSettled(uniq.map(u => fetchAsBase64(u)));
+    let processedCss = cssText;
+    for (let i = 0; i < uniq.length; i++) {
+      const r = results[i];
+      if (r.status === 'fulfilled') {
+        processedCss = processedCss.split(uniq[i]).join(r.value);
+      } else {
+        console.warn(`[build-standalone] font file fetch failed: ${uniq[i]} (${r.reason?.message})`);
+      }
+    }
+
+    const styleTag = `<style id="__nd-google-fonts-inlined">\n${processedCss}\n</style>`;
+    out = out.split(fullTag).join(styleTag);
+  }
+
+  // 顺手删 preconnect（已不需要联网）
+  out = out.replace(
+    /<link\b[^>]*\bhref\s*=\s*["'](?:https?:\/\/fonts\.(?:googleapis\.com|gstatic\.com))[^"']*["'][^>]*>\s*/gi,
+    '',
+  );
 
   return out;
 }

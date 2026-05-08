@@ -24,7 +24,7 @@ import {
   getSessionWorkspace, getSharedDir, validateSessionId,
 } from '../projects/workspace.js';
 import { DECK } from '../shared/deck.js';
-import { fitInjectionBlock, normalizeModeCss } from './standalone-fit.js';
+import { fitInjectionBlock } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml } from './exports/build-standalone.js';
 
 const router = express.Router();
@@ -414,26 +414,19 @@ async function prepareExportPage(browser, filePath, opts = {}) {
   await page.goto('file://' + filePath, { waitUntil: 'networkidle', timeout: 30_000 });
 
   await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(800);  // 字体 swap-in 兜底（CDN 慢时 200ms 不够稳）
 
-  // 抹掉 body margin + 把可能存在的 fit wrapper transform 还原为 1:1
-  // —— viewport 已经 = DECK.width，scale 没必要再做（PDF 渲染要原生坐标）
+  // 抹掉 body margin + 砍掉 fit-active 视觉缩放（如果 file:// 加载的 canvas.html
+  // 有 standalone-fit script，frame 包装 + section transform: scale 会让 boundingBox
+  // 拿到的不是设计稿原坐标）。Playwright viewport 已经 = DECK 1920×1080，原生渲染。
   await page.addStyleTag({ content: `
     body { margin: 0 !important; padding: 0 !important; }
-    body.__nd-fit-active > .__nd-deck-wrap { transform: none !important; }
+    body.__nd-fit-active > .__nd-deck-wrap > .__nd-page-frame {
+      width: ${DECK.width}px !important; height: ${DECK.height}px !important;
+      display: block !important; overflow: visible !important;
+    }
+    body.__nd-fit-active section[data-page] { transform: none !important; }
   ` });
-
-  // PPT / carousel 范式：section 默认 display:none / 横向 flex，PDF 打印 + PPTX
-  // boundingBox 都拿不到内容。导出时强制 normalize 成"垂直平铺、display:block"
-  // 让现有 PDF print stylesheet（page-break-after）+ section.screenshot 都能正常工作。
-  // stack 范式跳过这段，行为不变。
-  const deckMode = await page.evaluate(() => {
-    const wrap = document.querySelector('.__nd-deck-wrap');
-    return (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
-  });
-  if (deckMode === 'ppt' || deckMode === 'carousel') {
-    await page.addStyleTag({ content: normalizeModeCss(deckMode) });
-  }
 
   const fallback = { w: DECK.width, h: DECK.height };
   const pageSize = await page.evaluate((fb) => {

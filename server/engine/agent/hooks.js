@@ -1231,63 +1231,7 @@ const LAYOUT_COMPONENT_TRIGGERS = {
 };
 
 /**
- * 校验项 1：mode-CSS 一致性（mode attr 声明 vs 实际 CSS 风格）
- *
- * 启发式：grep `<style>` 块找关键 CSS 信号，跟 wrap.data-deck-mode 对比
- *   - declared=ppt 但找不到 `section[data-page].active` rule → mismatch
- *   - declared=carousel 但 wrap CSS 没 `display:flex` 或 `overflow-x:auto` → mismatch
- *   - declared=stack 但 section CSS 写了 `position:absolute` → mismatch
- *   - declared=custom → 不报（自由）
- */
-function validateModeCssCoherence(html) {
-  const mWrap = html.match(/<div\b[^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"][^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"]/i)
-             || html.match(/<div\b[^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"][^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"]/i);
-  const declared = mWrap ? mWrap[1] : 'stack';
-  if (declared === 'custom') return null;
-
-  const styleBlocks = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n');
-
-  if (declared === 'ppt') {
-    const hasActiveRule = /section\[data-page[^\]]*\][^{]*\.active|\.active[^{]*\{|section[^{]*\.active\s*\{/.test(styleBlocks);
-    if (!hasActiveRule) {
-      return {
-        title: 'deck-mode="ppt" 但 CSS 没找到 .active rule',
-        detail: 'PPT mode 必装：section[data-page] 默认 display:none，.active 切换 display:flex。漏写 = 全空白。模板 page-styles 块预置了 ppt CSS slice 注释切片，取消注释一步到位。',
-      };
-    }
-  }
-  if (declared === 'carousel') {
-    const hasWrapFlex = /\.__nd-deck-wrap\s*\{[^}]*display\s*:\s*flex/.test(styleBlocks);
-    const hasOverflowX = /\.__nd-deck-wrap\s*\{[^}]*overflow-x\s*:\s*(?:auto|scroll)/.test(styleBlocks);
-    if (!hasWrapFlex || !hasOverflowX) {
-      return {
-        title: 'deck-mode="carousel" 但 wrap CSS 没 flex+overflow-x',
-        detail: 'Carousel mode 必装：.__nd-deck-wrap { display:flex; overflow-x:auto; scroll-snap-type:x mandatory; } + section flex:0 0 1920px。漏写 = preview 看似能滚但 SlideNavigator 点页码不动 / 离线 HTML 第一屏截短。模板 page-styles 块预置了 carousel CSS slice 注释切片。',
-      };
-    }
-  }
-  if (declared === 'stack') {
-    const sectionAbs = /section\[data-page\]\s*\{[^}]*position\s*:\s*absolute/.test(styleBlocks);
-    if (sectionAbs) {
-      return {
-        title: 'deck-mode="stack" 但 section CSS position:absolute（应是 ppt）',
-        detail: 'Stack mode section 是 position:relative 平铺。如果你想要单屏切换效果，改 wrap data-deck-mode="ppt" 并取消 page-styles 里 ppt 注释切片。',
-      };
-    }
-  }
-  return null;
-}
-
-/**
- * 校验项 2：carousel/ppt 必装 CSS 关键 keyword（部分跟 1 重叠，但 message 更具体可独立成项）
- * 简化：跟 1 合并，单独跑一次没意义。返 null。
- */
-function validateModeRequiredCss(_html) {
-  return null;  // 校验项 1 已覆盖；保留 stub 供未来分离独立提示文案
-}
-
-/**
- * 校验项 3：data-anchor 唯一性
+ * 校验项 1：data-anchor 唯一性
  *
  * 全文 grep `data-anchor="X"`，按值分组，重名 → 报冲突 + 列页号
  */
@@ -1321,7 +1265,7 @@ function validateAnchorUniqueness(html) {
 }
 
 /**
- * 校验项 4：data-layout 推荐组件 reach for 检查（#6）
+ * 校验项 2：data-layout 推荐组件 reach for 检查（#6）
  *
  * data-layout ∈ LAYOUT_COMPONENT_TRIGGERS keys 且整文件 babel script 段所有
  * detect[i] regex 都不命中 → warn agent 用 inline 4 件
@@ -1357,7 +1301,7 @@ function validateLayoutComponents(html) {
 }
 
 /**
- * 校验项 5：data-layout-role 必装
+ * 校验项 3：data-layout-role 必装
  *
  * 每个 <section data-page> 必标 data-layout-role
  */
@@ -1382,7 +1326,7 @@ function validateLayoutRolePresence(html) {
  * Canvas validation 总入口（PostToolUse Edit|Write canvas.html 触发）
  *
  * matcher 第一行 path filter：仅对 canvas.html 跑校验，其他文件 noop。
- * 单 hook 内 5 项串行校验（in-memory，~ms），有 issue 拼 systemMessage 注下一轮。
+ * 单 hook 内 3 项串行校验（in-memory，~ms），有 issue 拼 systemMessage 注下一轮。
  *
  * 单 turn 反馈（不持久化）：agent 不修则下次 Edit 自然惩罚再报，跨 turn 持续
  * 延期下一轮（spec.json schema 扩展）。
@@ -1407,10 +1351,10 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
 
       // 预 strip 注释（HTML + CSS/JS block）防 false positive
       const cleaned = stripCommentsForValidate(html);
+      // hooks.js 文件内 helper 表达成 "校验项 N"，下面 issues 数组依序调对应 validator
+      // 旧版含 mode-CSS / 必装 CSS 两项已删（2026-05-08 范式简化：不再有 deck-mode）
 
       const issues = [
-        validateModeCssCoherence(cleaned),
-        validateModeRequiredCss(cleaned),
         validateAnchorUniqueness(cleaned),
         validateLayoutComponents(cleaned),
         validateLayoutRolePresence(cleaned),

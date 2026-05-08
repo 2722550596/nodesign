@@ -23,6 +23,7 @@ import {
   getSessionWorkspace, ensureSessionWorkspace, validateSessionId,
   commitWorkspace, listHistory, revertWorkspace,
 } from '../projects/workspace.js';
+import { fitInjectionBlock } from './standalone-fit.js';
 
 const router = express.Router();
 
@@ -136,6 +137,22 @@ router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
  * thumbnail 不存在时 asset endpoint 会自动 fallback 到原图（见下方 ENOENT 分支），
  * 老图（thumbnail 没生成的）/ 生成失败的都能正常显示。
  */
+/**
+ * 注入唯一权威 fit injection block（<script> + <style>）到 </body> 前。
+ *
+ * preview iframe 路径跟离线 / 导出 HTML 走同一份 standalone-fit，确保渲染一致：
+ * 每 section 包 100vw×100vh frame + scroll-snap + CSS min() 缩放。
+ *
+ * 已含 __nd-standard-fit script 的跳过（重启场景：HTML 已经 saved 了）。
+ */
+function injectFitBlock(html) {
+  if (/__nd-standard-fit\b/.test(html)) return html;
+  const block = fitInjectionBlock();
+  if (html.includes('</body>')) return html.replace('</body>', block + '\n</body>');
+  if (html.includes('</html>')) return html.replace('</html>', block + '\n</html>');
+  return html + block;
+}
+
 function rewriteImagesToThumbnails(html) {
   const imgRe = /(<img\b[^>]*\bsrc\s*=\s*["'])assets\/generated\/(?!\.thumbnails\/)([^"']+?)\.(png|jpg|jpeg|webp|gif)(["'])/gi;
   const cssUrlRe = /(url\(\s*["']?)assets\/generated\/(?!\.thumbnails\/)([^"')]+?)\.(png|jpg|jpeg|webp|gif)(["']?\s*\))/gi;
@@ -166,6 +183,9 @@ router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
       if (process.env.NODESIGN_DISABLE_THUMBNAIL_REWRITE !== '1') {
         content = rewriteImagesToThumbnails(content);
       }
+      // 注入唯一权威 fit script（每 section 自动包 100vw×100vh frame + scroll-snap）
+      // preview iframe 跟离线打开 / 导出 HTML 共享同一 fit 行为，渲染一致
+      content = injectFitBlock(content);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.send(content);
