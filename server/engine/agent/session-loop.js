@@ -142,7 +142,10 @@ export async function runSession({
   // 切 mode 时也会同步更新本字段。
   const initialModeNormalized =
     initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions';
-  const registered = registerQuerySession(sessionId, {
+  // sessionToken：身份证。closeQuerySession 已同步让出 sid 后用户立即重发起新
+  // runSession → 新 register 拿到新 token；旧 runSession finally 调 unregister 带
+  // 旧 token 比对不匹配 → noop 不误删新 entry。
+  const sessionToken = registerQuerySession(sessionId, {
     abortController: sessionAbortController,
     inputQueue,
     initialPermissionMode: initialModeNormalized,
@@ -151,7 +154,7 @@ export async function runSession({
   // runSession 是冗余调用（前端 race / 后端 fallback / resume race），直接 early
   // return 不 spawn 第二个 SDK binary。否则两个 binary 并行 Write 同 canvas.html
   // 就是用户报告的"独立 main 进程在 write"。
-  if (!registered) {
+  if (!sessionToken) {
     console.warn(
       `[session-loop] runSession sid=${sessionId.slice(0, 8)} skipped — already active. `
       + `Caller (turn.js) should have used pushUserMessage instead of startNewRunSession.`
@@ -596,7 +599,9 @@ export async function runSession({
     }
   } finally {
     clearInterval(idleScanTimer);
-    unregisterQuerySession(sessionId);
+    // 带 token 比对：sid 若已被新 register 占用（closeQuerySession 已同步让位 +
+    // 用户重发起新 runSession），unregister 看到 _token 不匹配 → noop 不误删新 entry
+    unregisterQuerySession(sessionId, sessionToken);
     // session-level end event（Phase 2）
     try {
       eventBus.publish({

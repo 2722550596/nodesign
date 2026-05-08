@@ -80,6 +80,9 @@ const activeRuns = new Map();
  * @property {number} startedAt
  * @property {number} lastActivityAt - 最近一次"活跃信号"时间戳（push message / turn 边界 /
  *   WS subscriber 连上）。session-loop.js 的 idle scan 据此判断是否超时关闭。
+ * @property {symbol} _token - register 时分配的唯一身份 token。closeQuerySession
+ *   立即 unregister 让出 sid 后，session-loop.js finally 的 unregister 调用必须带
+ *   token 比对——若 sid 已被新 register 占用，token 不匹配 → noop 防误删新 entry。
  */
 
 /** @type {Map<string, ActiveQuerySession>} */
@@ -585,6 +588,10 @@ export function listActiveRuns() {
  * @param {AbortController} deps.abortController
  * @param {import('../../lib/async-queue.js').AsyncQueue} deps.inputQueue
  * @param {string} [deps.initialPermissionMode='bypassPermissions']  - 初始 permission mode
+ * @returns {symbol|false} 注册成功返 token（Symbol，唯一身份）；同 sid 已活跃返 false。
+ *   caller 必须保留 token 在 unregister 时回传，让 active-runs 比对身份后再删，
+ *   防止"closeQuerySession 已让位 + 新 session register 后，旧 session-loop finally
+ *   误删新 entry"的 race（grace timer 关 session 后用户立即重发的真实场景）。
  */
 export function registerQuerySession(sessionId, { abortController, inputQueue, initialPermissionMode = 'bypassPermissions' } = {}) {
   if (!sessionId || !abortController || !inputQueue) return false;
@@ -599,6 +606,7 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     );
     return false;
   }
+  const token = Symbol('querySession');
   activeQuerySessions.set(sessionId, {
     abortController,
     ctx: null,
@@ -612,8 +620,9 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
     lastActivityAt: Date.now(),
+    _token: token,
   });
-  return true;
+  return token;
 }
 
 /**
@@ -773,10 +782,16 @@ export function setCurrentTurnRunId(sessionId, runId) {
 
 /**
  * 关闭 session 的 input queue → runSession 那头 for-await-of 自然结束 → query
- * 自动 unregister。
+ * 退出后 finally 调 unregisterQuerySession（带 token 比对）。
  *
  * 跟 cancelRun（per-turn interrupt）不同 —— close session 是终结整个 query，
  * 包括所有未处理消息，下次 turn 必须新建 session。
+ *
+ * 关键：**立即 unregister 让出 sid**（同步 delete entry + 清 pending），让用户在 SDK
+ * subprocess 完整退出之前重发新 chat 时，registerQuerySession 不被"同 sid 已活跃"
+ * 拒绝（grace timer 关 session 后用户立即重连重发的真实生产 race）。session-loop
+ * 的 finally 仍会 unregister，但带 token 比对——若 sid 已被新 register 占用，
+ * 旧 token 不匹配 → noop 不误删新 entry。
  *
  * @param {string} sessionId
  * @param {string} reason
@@ -787,21 +802,29 @@ export function closeQuerySession(sessionId, reason = 'user_close') {
   if (!rec) return false;
   try { rec.inputQueue.close(); } catch { /* */ }
   try { rec.abortController.abort(reason); } catch { /* */ }
+  // 同步 unregister：立刻让出 sid。abort() 已触发 pending 的 onAbort listener
+  // reject Promise；这里再清一次（pending Maps clear + delete entry）双保险幂等。
+  unregisterQuerySession(sessionId);
   return true;
 }
 
 /**
  * 注销 session — runSession 自然结束（inputQueue.close 后 for-await-of 退出）
- * 时 finally 里调。
+ * 时 finally 里调，或 closeQuerySession 同步调。
  *
  * 顺手 reject 所有 pending questions / elicitations 防止外部 await 永久挂。
  *
  * @param {string} sessionId
+ * @param {symbol} [expectedToken] - 可选身份 token（registerQuerySession 返回的）。
+ *   传了就比对：rec._token !== token → noop（说明 sid 已被新 register 占用，
+ *   不是我的 entry，不能动）。closeQuerySession 路径不传，无条件清当前 entry。
  */
-export function unregisterQuerySession(sessionId) {
+export function unregisterQuerySession(sessionId, expectedToken = null) {
   if (!sessionId) return;
   const rec = activeQuerySessions.get(sessionId);
   if (!rec) return;
+  // 身份比对：sid 已被新 register 占用时，旧 caller 不能误删新 entry
+  if (expectedToken != null && rec._token !== expectedToken) return;
   for (const [, p] of rec.pendingQuestions) {
     try { p.reject(new Error('session ended before user answered question')); } catch { /* */ }
   }
