@@ -23,7 +23,7 @@ import { validateProjectId, getProject, listRunsForProject } from '../projects/s
 import {
   getSessionWorkspace, getSharedDir, validateSessionId,
 } from '../projects/workspace.js';
-import { DECK } from '../shared/deck.js';
+import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml } from './exports/build-standalone.js';
 
@@ -402,12 +402,20 @@ Skill：${project.skillId}
 /**
  * 共用导出准备：启 Playwright page、等字体/图片就绪、注入基线 reset、探测实际 section 尺寸。
  * 返回 { page, ctx, pageSize: { w, h } }。
+ *
+ * 多比例支持：先读 canvas.html 抽 wrap data-deck-aspect → 设对应 viewport
+ * （16:9=1920×1080 / 9:16=1080×1920 / 4:3=1440×1080）。
  */
 async function prepareExportPage(browser, filePath, opts = {}) {
   const dpr = opts.dpr ?? 2;
 
+  // 读文件抽 deck 比例 → 决定 viewport
+  const html = await fs.readFile(filePath, 'utf8').catch(() => '');
+  const aspect = extractDeckAspect(html);
+  const dims = resolveDeckSize(aspect);
+
   const ctx = await browser.newContext({
-    viewport: { width: DECK.width, height: DECK.height },
+    viewport: { width: dims.width, height: dims.height },
     deviceScaleFactor: dpr,
   });
   const page = await ctx.newPage();
@@ -418,17 +426,17 @@ async function prepareExportPage(browser, filePath, opts = {}) {
 
   // 抹掉 body margin + 砍掉 fit-active 视觉缩放（如果 file:// 加载的 canvas.html
   // 有 standalone-fit script，frame 包装 + section transform: scale 会让 boundingBox
-  // 拿到的不是设计稿原坐标）。Playwright viewport 已经 = DECK 1920×1080，原生渲染。
+  // 拿到的不是设计稿原坐标）。Playwright viewport 已经 = deck 比例，原生渲染。
   await page.addStyleTag({ content: `
     body { margin: 0 !important; padding: 0 !important; }
     body.__nd-fit-active > .__nd-deck-wrap > .__nd-page-frame {
-      width: ${DECK.width}px !important; height: ${DECK.height}px !important;
+      width: ${dims.width}px !important; height: ${dims.height}px !important;
       display: block !important; overflow: visible !important;
     }
     body.__nd-fit-active section[data-page] { transform: none !important; }
   ` });
 
-  const fallback = { w: DECK.width, h: DECK.height };
+  const fallback = { w: dims.width, h: dims.height };
   const pageSize = await page.evaluate((fb) => {
     const first = document.querySelector('section[data-page]');
     if (!first) return fb;

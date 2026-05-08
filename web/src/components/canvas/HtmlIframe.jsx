@@ -16,9 +16,11 @@ import { attachEditMode, detachAll } from './DirectEditBridge.js';
  * P1：sandbox 暂时给 allow-scripts allow-same-origin（开发同源）；部署不同 origin 时
  *     退化成 postMessage 通信，bridge 文件预埋 listener。
  */
-const DECK_W = 1920;
-const DECK_H = 1080;
-export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTextEdit, onIframeReady, zoom = 1 }) {
+// deck 尺寸由 parent CanvasFrame 按 wrap data-deck-aspect 解析后传入；
+// 兼容旧调用方（无 prop）时 fallback 16:9
+const DEFAULT_DECK_W = 1920;
+const DEFAULT_DECK_H = 1080;
+export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTextEdit, onIframeReady, zoom = 1, deckW = DEFAULT_DECK_W, deckH = DEFAULT_DECK_H }) {
   const ref = useRef(null);
   const loadedRef = useRef(false);
 
@@ -90,10 +92,10 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
         onLoad={handleLoad}
         sandbox="allow-scripts allow-same-origin"
         style={{
-          // logical viewport 固定 1920×1080，让 iframe 内 fit script 的 100vw/100vh
+          // logical viewport 固定 deck 比例尺寸，让 iframe 内 fit script 的 100vw/100vh
           // = 设计稿尺寸 = scroll-snap 切页边界 = 跟 standalone 离线打开行为一致
-          width: `${DECK_W}px`,
-          height: `${DECK_H}px`,
+          width: `${deckW}px`,
+          height: `${deckH}px`,
           flexShrink: 0,
           border: 0,
           background: '#fff',

@@ -11,11 +11,16 @@
   ║       (Card/Button/Badge/Tabs)，直接 <Card> 用，不需要 import        ║
   ║                                                                      ║
   ║  渲染范式（系统统一处理，agent 不操心）：                                ║
-  ║    · 每个 <section data-page> 写 1920×1080 设计稿                     ║
-  ║    · 系统在 preview / 导出 / 离线打开时自动给每 section 包             ║
-  ║      100vw×100vh frame + scroll-snap → 单页铺满屏幕；                 ║
-  ║      滚轮 / 键盘 ↑↓ Space PgUp/PgDn 都按页切                          ║
-  ║    · 缩放纯 CSS min(100vw/1920, 100vh/1080) letterbox 居中            ║
+  ║    · 每个 <section data-page> 写设计稿原坐标                          ║
+  ║    · 系统给每 section 包 100vw×100vh frame + scroll-snap →            ║
+  ║      单页铺满屏幕；滚轮 / 键盘 ↑↓ Space PgUp/PgDn 都按页切             ║
+  ║    · 缩放纯 CSS min(100vw/W, 100vh/H) letterbox 居中                  ║
+  ║                                                                      ║
+  ║  Deck 比例（Stage 0 跟用户对齐 → 改 wrap data-deck-aspect 三选一）：    ║
+  ║    "16:9"  1920×1080  默认（PPT / 演讲 / 文档）                       ║
+  ║    "9:16"  1080×1920  竖屏（手机 / 短故事 / 直播 cover）               ║
+  ║    "4:3"   1440×1080  老投影 / 经典 PPT                              ║
+  ║    比例**只能创建时定**——版面写死针对某比例，切了版面错乱             ║
   ║                                                                      ║
   ║  你要做的：                                                           ║
   ║    · 改 design-tokens（颜色 / 字号 / 字体）—— 按 deck 隐喻整组覆盖     ║
@@ -188,8 +193,10 @@
       -webkit-font-smoothing: antialiased;
     }
 
+    /* section 尺寸跟随 wrap data-deck-aspect 派发的 CSS var；不声明 = 16:9 默认 */
     section[data-page] {
-      width: 1920px; height: 1080px;
+      width: var(--deck-w, 1920px);
+      height: var(--deck-h, 1080px);
       position: relative;
       overflow: hidden;
       page-break-after: always;
@@ -209,15 +216,21 @@
 <!-- 所有 section 必须放在 .__nd-deck-wrap 里。                       -->
 <!--                                                                -->
 <!-- 渲染范式（系统统一）：                                            -->
-<!--   · 每个 <section data-page="N"> 写 1920×1080 设计稿              -->
+<!--   · 每个 <section data-page="N"> 写设计稿原坐标                   -->
 <!--   · 系统在 preview / 导出 / 离线打开时自动给每 section 包         -->
 <!--     100vw×100vh frame + scroll-snap → 单页铺满屏幕                -->
 <!--     滚轮一次切一整页 / 键盘 ↑↓ Space PgUp/PgDn 也按页切            -->
-<!--   · 缩放 CSS min(100vw/1920, 100vh/1080) letterbox 居中           -->
+<!--   · 缩放 CSS min(100vw/W, 100vh/H) letterbox 居中                -->
 <!--                                                                -->
-<!-- 不需要再声明 mode—agent 写 1920×1080 section，系统接管渲染就行。  -->
+<!-- deck 比例 data-deck-aspect 三档（**Stage 0 必须按用户需求选**）：  -->
+<!--   "16:9"   1920×1080  默认（PPT / 演讲 / 文档 / scrollytelling）  -->
+<!--   "9:16"   1080×1920  竖屏（手机宣发 / 短故事 / 直播 cover）       -->
+<!--   "4:3"    1440×1080  老投影 / 经典 PPT 投影仪适配                -->
+<!--                                                                -->
+<!-- 漏写 = 默认 16:9。比例**只能在 deck 创建时定**，不能导出时切——      -->
+<!-- 因为 layout 写死针对某个比例，切了就版面错乱。                     -->
 <!-- ════════════════════════════════════════════════════════════ -->
-<div class="__nd-deck-wrap">
+<div class="__nd-deck-wrap" data-deck-aspect="16:9">
 
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE 1 · COVER (text-led 范例)                              -->

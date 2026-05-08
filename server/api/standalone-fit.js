@@ -1,41 +1,39 @@
 /**
  * server/api/standalone-fit.js — 唯一权威 fit script source
  *
- * 范式（2026-05-08 简化）：
- *   - 不再分 stack/ppt/carousel/custom 4 mode；统一一种渲染契约
- *   - agent 写的 <section data-page> 仍是 1920×1080 设计稿坐标
- *   - 系统 fit script 自动给每个 section 包一层 100vw×100vh `__nd-page-frame`
- *   - 每个 frame scroll-snap-align: start，body scroll-snap-type: y mandatory
- *     → 滚轮一次切一整页 / 键盘 ↑↓ Space PgUp/PgDn 也按页切
- *   - section 在 frame 里 CSS scale `min(100vw/1920, 100vh/1080)` letterbox 居中
- *     纯 CSS 自适应，无 resize listener
+ * 范式（2026-05-08）：每个 <section data-page> 写设计稿原坐标，系统自动给每
+ * section 包 100vw×100vh `__nd-page-frame` + scroll-snap-y mandatory，单页
+ * 铺满 viewport，滚轮 / 键盘按页切。CSS min(100vw/W, 100vh/H) 缩放 letterbox
+ * 居中，纯 CSS 自适应不用 JS resize handler。
+ *
+ * 多比例支持（2026-05-08 增）：deck 比例由 wrap data-deck-aspect 声明，3 档：
+ *   "16:9"  1920×1080（默认，PPT 标准）
+ *   "9:16"  1080×1920（竖屏 / 手机 / 短故事）
+ *   "4:3"   1440×1080（老投影 / 经典 PPT）
+ * CSS 通过 attribute selector 直接派发 --deck-w / --deck-h，无需 JS 设。
+ *
+ * iframe + standalone 行为一致（不再 window!==top 早退）：
+ *   - frame 包装在 iframe 内也跑，preview 跟离线打开渲染一致
+ *   - parent CanvasFrame 把 iframe 元素本身固定为 deck 比例 logical viewport，
+ *     再用 CSS transform 缩放 iframe 元素到 wrap 大小
  *
  * 三个调用方共享：
  *   - exports.js `injectViewportFit`（非 hybrid 导出薄包装）
- *   - exports/build-standalone.js `injectStandardFitScript`（hybrid 导出主路径）
- *   - 模板 canvas.template.html 不带 fit（导出 / 独立打开 / preview iframe 都由系统注入）
- *
- * iframe + standalone 行为一致（不再 window!==top 早退）：
- *   - frame 包装在 iframe 内也跑，让 preview 跟离线打开渲染一致
- *   - parent CanvasFrame 把 iframe 元素本身固定 1920×1080 logical viewport，
- *     再用 CSS transform 缩放 iframe 元素到 wrap 大小（外部 letterbox）
+ *   - exports/build-standalone.js（hybrid 导出主路径）
+ *   - canvas.js GET /canvas（preview iframe 路径）
  */
 
-import { DECK } from '../shared/deck.js';
+import { ASPECT_PRESETS, DEFAULT_ASPECT } from '../shared/deck.js';
 
 /**
- * 返回 fit script 内容（不含 <script> tag），调用方按需自加 wrap
+ * 返回 fit script 内容（不含 <script> tag）
+ * 只做 frame 包装，CSS var 派发由 fitStyleTag 的 attribute selector 直接处理
  *
- * @param {object} [opts]
- * @param {number} [opts.width]   设计坐标系宽（默认 DECK.width = 1920）
- * @param {number} [opts.height]  设计坐标系高（默认 DECK.height = 1080）
  * @returns {string}
  */
-export function fitScriptCode(opts = {}) {
-  const W = opts.width ?? DECK.width;
-  const H = opts.height ?? DECK.height;
+export function fitScriptCode() {
   return `(function(){
-  var W = ${W}, H = ${H}, body = document.body;
+  var body = document.body;
   if (!body) return;
 
   var wrap = body.querySelector(':scope > .__nd-deck-wrap');
@@ -62,20 +60,30 @@ export function fitScriptCode(opts = {}) {
 }
 
 /**
- * 返回 fit 配套 <style> tag（含 wrapping tag），可直接拼到 HTML
+ * 返回 fit 配套 <style> tag（含 wrapping tag）
  *
- * page-scale 用纯 CSS calc(min()) 做，无需 JS resize handler 自动响应。
+ * 多比例 attribute selectors：wrap data-deck-aspect 决定 --deck-w / --deck-h
+ * 不声明 = 默认 16:9 (1920×1080)
  *
- * @param {number} [width=DECK.width]
- * @param {number} [height=DECK.height]
+ * !important 用在 layout reset 三条上：兼容老 canvas.html 自带的 wrap-level fit
+ * CSS（body.__nd-fit-active flex+align-items:center / wrap width:1920px+transform 等），
+ * 否则老 deck 在新 frame 范式下会被偏左渲染。新 deck 模板已不含老 CSS，无害。
+ *
  * @returns {string}
  */
-export function fitStyleTag(width = DECK.width, height = DECK.height) {
-  // !important 用在 layout reset 三条上：兼容老 canvas.html 自带的 wrap-level fit CSS
-  // （body.__nd-fit-active flex+align-items:center / wrap width:1920px+transform 等），
-  // 否则老 deck 在新 frame 范式下会被偏左渲染。新 deck 模板已不含老 CSS，无害。
+export function fitStyleTag() {
+  // 把 ASPECT_PRESETS 编译成 attribute selector CSS（写死避免 JS 跑前 flash）
+  const aspectRules = Object.entries(ASPECT_PRESETS).map(([key, dims]) =>
+    `.__nd-deck-wrap[data-deck-aspect="${key}"] { --deck-w: ${dims.width}px; --deck-h: ${dims.height}px; }`
+  ).join('\n');
+  const def = ASPECT_PRESETS[DEFAULT_ASPECT];
   return `<style id="__nd-standard-fit-style">
-:root { --nd-page-scale: min(calc(100vw / ${width}px), calc(100vh / ${height}px)); }
+:root {
+  --deck-w: ${def.width}px;
+  --deck-h: ${def.height}px;
+  --nd-page-scale: min(calc(100vw / var(--deck-w)), calc(100vh / var(--deck-h)));
+}
+${aspectRules}
 html, body { margin: 0; padding: 0; }
 body.__nd-fit-active {
   display: block !important;
@@ -102,8 +110,8 @@ body.__nd-fit-active > .__nd-deck-wrap {
 }
 .__nd-page-frame > section[data-page] {
   flex-shrink: 0;
-  width: ${width}px;
-  height: ${height}px;
+  width: var(--deck-w);
+  height: var(--deck-h);
   transform-origin: center center;
   transform: scale(var(--nd-page-scale));
   position: relative;
@@ -114,14 +122,11 @@ body.__nd-fit-active > .__nd-deck-wrap {
 /**
  * 返回完整 <script>+<style> 注入块（最常用形态）
  *
- * @param {object} [opts] 同 fitScriptCode
  * @returns {string}
  */
-export function fitInjectionBlock(opts = {}) {
-  const W = opts.width ?? DECK.width;
-  const H = opts.height ?? DECK.height;
+export function fitInjectionBlock() {
   return `<script id="__nd-standard-fit" data-nodesign-keep="fit">
-${fitScriptCode(opts)}
+${fitScriptCode()}
 </script>
-${fitStyleTag(W, H)}`;
+${fitStyleTag()}`;
 }

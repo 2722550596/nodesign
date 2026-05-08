@@ -27,13 +27,26 @@ import { COLOR, STAGE } from '../../lib/theme.js';
  *
  * A11y：toolbar ✓ A11y 按钮 → popover 显示 mock review 结果
  */
-// SKILL.md 约束 agent 写出来的 deck 单页 1920×1080（PPT 标准 16:9）。
-// fit = min(wrap.w/1920, wrap.h/1080) → contain（letterbox），保证整页可见
-// 不裁。iframe 内 logical viewport 固定 1920×1080，让 fit script 注的
-// __nd-page-frame (100vw × 100vh) 正好 = section 设计稿尺寸，scroll-snap
-// 一次切一整页，跟 standalone 离线打开行为一致。
-const DECK_WIDTH = 1920;
-const DECK_HEIGHT = 1080;
+// deck 尺寸跟随 canvas.html 里 wrap data-deck-aspect 决定（3 档预设）：
+//   "16:9"  1920×1080（默认）
+//   "9:16"  1080×1920（竖屏）
+//   "4:3"   1440×1080（老投影）
+// fit = min(wrap.w/W, wrap.h/H) contain letterbox，保证整页可见不裁。
+// iframe logical viewport 固定 deck 比例尺寸，frame (100vw×100vh) 正好 =
+// 设计稿尺寸 → scroll-snap 一次切一整页，跟 standalone 行为一致。
+const ASPECT_DIMS = {
+  '16:9': { w: 1920, h: 1080 },
+  '9:16': { w: 1080, h: 1920 },
+  '4:3':  { w: 1440, h: 1080 },
+};
+const DEFAULT_ASPECT = '16:9';
+
+function extractAspect(html) {
+  if (!html || typeof html !== 'string') return DEFAULT_ASPECT;
+  const m = html.match(/<div\b[^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"][^>]*data-deck-aspect\s*=\s*['"]([^'"]+)['"]/i)
+        || html.match(/<div\b[^>]*data-deck-aspect\s*=\s*['"]([^'"]+)['"][^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"]/i);
+  return (m && ASPECT_DIMS[m[1]]) ? m[1] : DEFAULT_ASPECT;
+}
 
 export default function CanvasFrame({
   htmlSrc, htmlContent,
@@ -116,12 +129,16 @@ export default function CanvasFrame({
     };
   }, [mode]);
 
-  // fit = contain min(wrap.w / 1920, wrap.h / 1080)：单页完整可见 + letterbox。
-  // iframe logical viewport 固定 1920×1080，内部 fit script 包 frame
-  // (100vw×100vh = 1920×1080 = section 设计稿尺寸) → scroll-snap 切页。
+  // 从源码抽 deck 比例（默认 16:9）；sourceText 在下面 useEffect 里 fetch
+  const aspect = extractAspect(sourceText);
+  const deckDim = ASPECT_DIMS[aspect] || ASPECT_DIMS[DEFAULT_ASPECT];
+
+  // fit = contain min(wrap.w / W, wrap.h / H)：单页完整可见 + letterbox。
+  // iframe logical viewport 固定 deck 比例 (W×H)，内部 fit script 包 frame
+  // (100vw×100vh = W×H = section 设计稿尺寸) → scroll-snap 切页。
   const effectiveZoom = zoom === 'fit'
     ? (wrapSize.width > 0 && wrapSize.height > 0
-        ? Math.min(wrapSize.width / DECK_WIDTH, wrapSize.height / DECK_HEIGHT)
+        ? Math.min(wrapSize.width / deckDim.w, wrapSize.height / deckDim.h)
         : 1)
     : zoom;
 
@@ -280,6 +297,8 @@ export default function CanvasFrame({
             onTextEdit={handleTextEdit}
             onIframeReady={handleIframeReady}
             zoom={effectiveZoom}
+            deckW={deckDim.w}
+            deckH={deckDim.h}
           />
           {mode === 'edit' && selectedAnchor && (
             <EditOverlay

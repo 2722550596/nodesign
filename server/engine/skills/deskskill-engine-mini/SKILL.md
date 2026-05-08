@@ -37,7 +37,7 @@
 
 | 文件 | 用途 |
 |---|---|
-| `canvas.html` | **主产物**（Hybrid 范式默认：单文件 + importmap + Tailwind + Babel + React mount + fit script，1920×1080 设计坐标系，`<section data-page="N">` 分页） |
+| `canvas.html` | **主产物**（Hybrid 范式默认：单文件 + importmap + Tailwind + Babel + React mount，`<section data-page="N">` 分页；deck 比例三档可选 16:9/9:16/4:3，由 wrap `data-deck-aspect` 声明，**Stage 0 必须跟用户对齐**） |
 | `spec.json` | 跨 turn / 跨 session 的设计意图档案（系统自动注入最近 5 条 decisions 摘要） |
 | `agent-memory/memory.md` | 跨 session 长期记忆（你的通用工作笔记） |
 | `agent-memory/brand/memory.md` | 品牌档案（BrandCard 读这） |
@@ -148,13 +148,14 @@ senior 设计师跟客户访谈时不会怕"问太多"——客户嫌烦的是�
 
 > brief 里只要有可搜信源（品牌 / 产品 / 模仿对象 / 行业事件），先搜，搜到的事实跟 deck-kind 判断**一起回 chat 让用户纠偏**——一条消息搞定两件事，比"先 ask kind 后续再搜"少 1-2 轮。完全抽象描述确实没东西可搜时才走下面"第一句直接判断"路径。
 
-**复述测试加必述要素**：Stage 0 退出前能用一句话复述 5 项算对齐 ——
+**复述测试加必述要素**：Stage 0 退出前能用一句话复述 6 项算对齐 ——
 
-1. **deck-kind + 导演对象**（这一项是新加的，最关键）：例如"决策汇报型 deck，要让 CEO 批准 X 方案"
-2. 用户要什么（3-5 个具体取值：色号 / 字号方向 / 节奏倾向 / 案例参考）
-3. 用户不要什么（≥2 个反例："不要默认商务范" / "讨厌 PPT 模板感"）
-4. 视觉锚点（≥1 个具体画面：reference 图 / 引名作品 / 场景描述）
-5. 特效量预算（静态 / 微动效 / entry 动效 / 戏剧化）
+1. **deck-kind + 导演对象**（这一项最关键）：例如"决策汇报型 deck，要让 CEO 批准 X 方案"
+2. **deck 比例**（16:9 默认 / 9:16 竖屏 / 4:3 老投影）：分发场景明确就直接定（"投手机" → 9:16 / "投影 PPT" → 16:9 / "老式投影仪" → 4:3），分发场景模糊或默认场景就按 16:9 一句确认。比例锁死后切换 = 整套版面重排
+3. 用户要什么（3-5 个具体取值：色号 / 字号方向 / 节奏倾向 / 案例参考）
+4. 用户不要什么（≥2 个反例："不要默认商务范" / "讨厌 PPT 模板感"）
+5. 视觉锚点（≥1 个具体画面：reference 图 / 引名作品 / 场景描述）
+6. 特效量预算（静态 / 微动效 / entry 动效 / 戏剧化）
 
 **怎么自然嵌入对话（搜完一轮后再回，不强制弹 AskUserQuestion 卡片）**：
 
@@ -399,8 +400,8 @@ chat 直接问 1 题：
 ### 0.6 Stage 0 退出条件
 
 满足以下任一退出 Stage 0：
-1. 5 项复述测试全过 + 复杂度判断 Mode A → 直接进 generate
-2. 5 项复述测试全过 + 复杂度判断 Mode B → 调 `request_plan_mode` 进 plan 流程
+1. 6 项复述测试全过 + 复杂度判断 Mode A → 直接进 generate
+2. 6 项复述测试全过 + 复杂度判断 Mode B → 调 `request_plan_mode` 进 plan 流程
 3. 用户明说"够了直接做" → 信任用户进 generate（即便复述测试没全过）
 
 **Escape hatch（仅当用户明说才跳）**：
@@ -586,15 +587,30 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 
 ### Deck 渲染范式（系统统一处理）
 
-每个 `<section data-page="N">` 写 1920×1080 设计稿，**单页铺满屏幕**。系统在
-preview / 导出 / 离线打开时自动给每 section 包 100vw×100vh frame + scroll-snap：
+每个 `<section data-page="N">` 写 deck 比例对应的设计稿尺寸，**单页铺满屏幕**。
+系统在 preview / 导出 / 离线打开时自动给每 section 包 100vw×100vh frame + scroll-snap：
 - 滚轮一次切一整页
 - 键盘 ←↑/PgUp 上一页，→↓/Space/PgDn 下一页，Home/End 首/末页
-- 缩放纯 CSS `min(100vw/1920, 100vh/1080)` letterbox 居中
+- 缩放纯 CSS `min(100vw/W, 100vh/H)` letterbox 居中
 
-**agent 不操心 deck-mode / fit / nav 这层**——cp template 直接在 `.__nd-deck-wrap`
-里写 N 个 section 即可。每 section 是独立 1920×1080 设计稿，**每页内容必须装在
-1920×1080 单屏内**（信息多就拆成多页，不要让单页内部滚动）。
+### Deck 比例（Stage 0 必须跟用户对齐 → 三选一改 wrap data-deck-aspect）
+
+| aspect | 尺寸 | 适合 |
+|---|---|---|
+| `16:9` | 1920×1080 | **默认**：PPT / 演讲 / 文档 / scrollytelling / 大多数桌面场景 |
+| `9:16` | 1080×1920 | 竖屏：手机宣发 / 短故事 / 直播 cover / IG/小红书风 |
+| `4:3` | 1440×1080 | 老投影 / 经典 PPT 投影仪适配 / 学术答辩老设备 |
+
+**何时问用户**：brief 有明确分发场景信号（"做手机宣发"/"投影仪"/"小红书"）按
+信号挑；没信号但 brief 类型暗示（仪式型用 16:9 / 沉浸故事 9:16 也行）→ chat 里
+确认一句"我按 16:9 做对吧？还是手机竖屏 9:16？"再开工。**比例一旦写就锁死**，
+切换 = 整个 layout 重排（按新比例的设计稿重新构图）= 几乎重做。
+
+**agent 写法**：cp template 后改 `<div class="__nd-deck-wrap" data-deck-aspect="16:9">`
+为对应值即可。section 内 `width: var(--deck-w); height: var(--deck-h)`（base.css
+已设），系统按 wrap aspect 派发 var 值。
+
+**每页内容必须装在 W×H 单屏内**（信息多就拆成多页，不要让单页内部滚动）。
 
 ⚠️ **section 内部用 `position: absolute` 锚点元素，别用 `position: fixed`**——
 section 自身有 transform: scale，会让 fixed 锚到 section 而不是 viewport，
