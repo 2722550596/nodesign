@@ -24,6 +24,7 @@ import {
   commitWorkspace, listHistory, revertWorkspace,
 } from '../projects/workspace.js';
 import { fitInjectionBlock } from './standalone-fit.js';
+import { resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 
 const router = express.Router();
 
@@ -199,6 +200,32 @@ router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
         throw err;
       }
     }
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /:pid/sessions/:sid/canvas/deck-meta —— 返 deck 比例信息
+ *
+ * 读 canvas.html wrap data-deck-aspect 属性 → resolve 到 4 档预设
+ * （16:9 / 16:10 / 9:16 / 4:3），返 { aspect, width, height }。
+ *
+ * 用途：前端 Home 缩略图 / Workspace ThumbnailBox 需要在挂载前知道 deck
+ * 比例才能正确设容器 aspectRatio + iframe size。Canvas 主路径自己会读
+ * data-deck-aspect 不需要这个 endpoint。
+ *
+ * canvas.html 还没生成 → 返默认 16:9（让前端能用 fallback 占位）
+ */
+router.get('/:pid/sessions/:sid/canvas/deck-meta', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const file = path.join(sessionRoot, 'canvas.html');
+    let html = '';
+    try { html = await fs.readFile(file, 'utf8'); } catch { /* canvas 还没生成 → 默认 16:9 fallback */ }
+    const aspect = extractDeckAspect(html);
+    const { width, height } = resolveDeckSize(aspect);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ aspect, width, height });
   } catch (err) { next(err); }
 });
 

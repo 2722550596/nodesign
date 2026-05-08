@@ -635,9 +635,10 @@ function ProjectCard({ project }) {
 /**
  * 缩略图：iframe 加载最新 session canvas.html
  *
- * 自适应：容器 aspect-ratio 1920:1080（16:9，与 deck 设计坐标系一致），
- * ResizeObserver 监听卡片宽度，scale = width / 1920 实时刷新——网格列数变
- * （2/3/4 列响应式）时缩略图依然等比缩进容器，不会变扁或被裁。
+ * 自适应：容器 aspect-ratio 跟随 deck 比例（4 档可选 16:9 / 16:10 / 9:16 / 4:3），
+ * 启动后 fetch /canvas/deck-meta 拿真实 dim，ResizeObserver 监听卡片宽度，
+ * scale = width / dim.w 实时刷新——网格列数变（2/3/4 列响应式）时缩略图等
+ * 比缩进容器。fetch 没回来前默认 16:9 占位，回来后按真实比例 reflow。
  *
  * 注：iframe 内 canvas.html 的 fit script 因 window!==top 早退，
  * 这里手动 transform: scale 等比铺满 iframe 容器。
@@ -646,29 +647,45 @@ function ProjectCard({ project }) {
  * - pointerEvents:none：iframe 不截走点击，整张卡片仍是 Link
  * - loading="lazy"：视口外不加载
  */
-const DESIGN_W = 1920;
-const DESIGN_H = 1080;
+const DEFAULT_DIMS = { w: 1920, h: 1080 };
 
 function ThumbnailBox({ project, latestSid }) {
   const ref = useRef(null);
   const [scale, setScale] = useState(0.22);
+  const [dims, setDims] = useState(DEFAULT_DIMS);
+
+  // latestSid 变化时拉 deck-meta — cancel-safe（避免 race / 卸载后 setState）
+  useEffect(() => {
+    if (!latestSid) {
+      setDims(DEFAULT_DIMS);
+      return;
+    }
+    let cancelled = false;
+    Canvas.deckMeta(project.id, latestSid).then((meta) => {
+      if (cancelled) return;
+      if (meta && Number.isFinite(meta.width) && Number.isFinite(meta.height)) {
+        setDims({ w: meta.width, h: meta.height });
+      }
+    }).catch(() => { /* 静默 fallback 默认 16:9 */ });
+    return () => { cancelled = true; };
+  }, [project.id, latestSid]);
 
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const recalc = () => {
       const w = el.offsetWidth;
-      if (w > 0) setScale(w / DESIGN_W);
+      if (w > 0) setScale(w / dims.w);
     };
     recalc();
     const ro = new ResizeObserver(recalc);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [dims.w]);
 
   const wrap = {
     width: '100%',
-    aspectRatio: `${DESIGN_W} / ${DESIGN_H}`,
+    aspectRatio: `${dims.w} / ${dims.h}`,
     borderRadius: 8,
     marginBottom: GAP.lg,
     overflow: 'hidden',
@@ -696,8 +713,8 @@ function ThumbnailBox({ project, latestSid }) {
         loading="lazy"
         title={`${project.name} 预览`}
         style={{
-          width: DESIGN_W,
-          height: DESIGN_H,
+          width: dims.w,
+          height: dims.h,
           border: 0,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',

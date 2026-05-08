@@ -79,6 +79,9 @@ export const Canvas = {
   /** iframe src 用 — sid 必传 */
   artifactUrl: (pid, sid, version) =>
     `/api/projects/${pid}/sessions/${sid}/canvas${version ? `?v=${encodeURIComponent(version)}` : ''}`,
+  /** deck 比例信息（前端缩略图按比例设容器尺寸 + iframe size 用） */
+  deckMeta: (pid, sid) =>
+    jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/deck-meta`),
 };
 
 // ── Spec（设计意图档案，session-scoped）──
