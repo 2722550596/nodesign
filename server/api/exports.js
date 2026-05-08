@@ -18,6 +18,7 @@
 import express from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
+import os from 'os';
 import JSZip from 'jszip';
 import { validateProjectId, getProject, listRunsForProject } from '../projects/store.js';
 import {
@@ -165,8 +166,10 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
       });
     }
 
+    let prepCleanup = async () => {};
     try {
-      const { page, ctx, pageSize } = await prepareExportPage(browser, file);
+      const { page, ctx, pageSize, cleanup } = await prepareExportPage(browser, file, { sessionRoot });
+      prepCleanup = cleanup;
 
       await page.addStyleTag({ content: `
         @media print {
@@ -200,6 +203,7 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
       res.end(pdfBuffer);
     } finally {
       await browser.close().catch(() => { /* ignore */ });
+      await prepCleanup();
     }
   } catch (err) { next(err); }
 });
@@ -232,8 +236,10 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
       });
     }
 
+    let prepCleanup = async () => {};
     try {
-      const { page, ctx, pageSize } = await prepareExportPage(browser, file);
+      const { page, ctx, pageSize, cleanup } = await prepareExportPage(browser, file, { sessionRoot });
+      prepCleanup = cleanup;
 
       const sectionHandles = await page.$$('section[data-page]');
       if (sectionHandles.length === 0) {
@@ -281,6 +287,7 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
       res.end(pptxBuffer);
     } finally {
       await browser.close().catch(() => { /* ignore */ });
+      await prepCleanup();
     }
   } catch (err) { next(err); }
 });
@@ -414,12 +421,32 @@ async function prepareExportPage(browser, filePath, opts = {}) {
   const aspect = extractDeckAspect(html);
   const dims = resolveDeckSize(aspect);
 
+  // 跑跟 /exports/html 同款 standalone 管道——把 Google Fonts / 本地图片 / CDN
+  // 全 inline，写到 tmp 文件让 Playwright 从那加载。这样 PDF/PPT 用的字体跟
+  // HTML 下载产物 1:1，不再依赖 server 能否 reach fonts.googleapis.com（国内
+  // 网络 / firewall 直接封死的话原方案 PDF 字体会无声 fallback 到系统字体）。
+  // hybrid 检测失败或 build 失败 → fallback 到原 file://，至少导出能跑通。
+  let loadPath = filePath;
+  let cleanup = async () => {};
+  if (isHybridHtml(html)) {
+    try {
+      const baked = await buildStandaloneHtml(html, { sessionRoot: opts.sessionRoot });
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-export-'));
+      const tmpFile = path.join(tmpDir, 'baked.html');
+      await fs.writeFile(tmpFile, baked, 'utf8');
+      loadPath = tmpFile;
+      cleanup = async () => { await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {}); };
+    } catch (err) {
+      console.warn('[prepareExportPage] standalone bake failed, loading raw canvas.html:', err.message);
+    }
+  }
+
   const ctx = await browser.newContext({
     viewport: { width: dims.width, height: dims.height },
     deviceScaleFactor: dpr,
   });
   const page = await ctx.newPage();
-  await page.goto('file://' + filePath, { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.goto('file://' + loadPath, { waitUntil: 'networkidle', timeout: 30_000 });
 
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(800);  // 字体 swap-in 兜底（CDN 慢时 200ms 不够稳）
@@ -444,7 +471,7 @@ async function prepareExportPage(browser, filePath, opts = {}) {
     return { w: Math.round(rect.width), h: Math.round(rect.height) };
   }, fallback);
 
-  return { page, ctx, pageSize };
+  return { page, ctx, pageSize, cleanup };
 }
 
 /**
