@@ -1193,6 +1193,21 @@ function makePreToolUseTaskVisionCheckerDispatchInjector() {
 // ─────────────────────────────────────────────────────────────────────
 
 /**
+ * 校验前预处理：strip HTML 注释 + CSS/JS block 注释
+ *
+ * 防止 false positive：模板里的 `<!-- ┄┄┄ 骨架范例 ... data-anchor="cover" ┄┄┄ -->`
+ * HTML 注释 + page-styles 里"取消注释切到 ppt mode"的 CSS 注释切片，原始 grep
+ * 都会误匹配。预先 strip 后再校验。
+ *
+ * 仅用于 validator 内部 regex 扫描；agent 看到的源文件不受影响。
+ */
+function stripCommentsForValidate(html) {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, '')        // HTML 注释
+    .replace(/\/\*[\s\S]*?\*\//g, '');      // CSS / JS block 注释（含 babel script）
+}
+
+/**
  * LAYOUT_COMPONENT_TRIGGERS — data-layout 值 → 推荐组件 import / detect 列表
  *
  * 校验项 4（#6）消费：data-layout ∈ keys + babel script 段所有 detect 都不命中
@@ -1390,12 +1405,15 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
         throw err;
       }
 
+      // 预 strip 注释（HTML + CSS/JS block）防 false positive
+      const cleaned = stripCommentsForValidate(html);
+
       const issues = [
-        validateModeCssCoherence(html),
-        validateModeRequiredCss(html),
-        validateAnchorUniqueness(html),
-        validateLayoutComponents(html),
-        validateLayoutRolePresence(html),
+        validateModeCssCoherence(cleaned),
+        validateModeRequiredCss(cleaned),
+        validateAnchorUniqueness(cleaned),
+        validateLayoutComponents(cleaned),
+        validateLayoutRolePresence(cleaned),
       ].filter(Boolean);
 
       if (issues.length === 0) return {};

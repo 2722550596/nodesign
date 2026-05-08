@@ -482,7 +482,9 @@
   // 范例 mount：Recharts 折线图（按需改 / 删 / 加）
   import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 
-  const { Card, CardTitle } = window.__ndShadcn;
+  // 4 件 shadcn-lite 组件（上方 __nd-shadcn-lite 段定义并暴露 window.__ndShadcn）
+  // 这里全 destructure 一次让 agent 写新 mount 时直接 <Card> / <Tabs> 就能用，0 friction
+  const { Card, CardHeader, CardTitle, CardContent, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent } = window.__ndShadcn;
 
   function ExampleChart() {
     const data = [

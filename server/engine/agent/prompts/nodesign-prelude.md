@@ -151,8 +151,6 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `screenshot_canvas` | 截 canvas.html PNG（playwright 真渲染） | `viewport?` (默认 1920×1080) / `fullPage?` / `selector?` / `pageIndex?` |
 | `list_pages` | 扫所有 `<section data-page>` 返每页 1 行摘要 | 无参 |
 | `read_page` | 按 `pageIndex` 切片返该页 outerHTML（hybrid 文件还会附 React mount 源段） | `pageIndex` |
-
-> **Thumbnail 提示**：`list_pages` / `read_page` 返结果含 `assets/generated/<n>.<ext>` 引用时，preview iframe 加载的是 `.thumbnails/*.thumb.jpg` 快照（`/api/canvas` GET 透明改写），返回的 outerHTML 中 src 是真实路径（同 `Read canvas.html`）。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即可见最新。
 | `query_elements` | CSS selector 一次查全部匹配元素，返 anchor + bbox + text | `selector` / `pageIndex?` / `max?` |
 | `get_computed_styles` | `getComputedStyle()` 真值（不是 stylesheet 原声明） | `selector` / `props?` |
 | `navigate_to_page` | emit 事件让前端 canvas 切到 page N | `index` |
@@ -165,6 +163,8 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu；`include_images=true` 返结果含 N 个 image content block，turn 内直接 vision-check 不必再 Read | `query` / `provider?` / `include_images?` |
 | `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图（**首调时 hook 会注完整 cookbook**） | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
 | `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
+
+> **Thumbnail 提示**：`list_pages` / `read_page` 返结果含 `assets/generated/<n>.<ext>` 引用时，preview iframe 加载的是 `.thumbnails/*.thumb.jpg` 快照（`/api/canvas` GET 透明改写），返回的 outerHTML 中 src 是真实路径（同 `Read canvas.html`）。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即可见最新。
 
 **`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2、tavily ≤3、exa ≤2。Query 加年份词（2025/2026）。**英文 query 走 tavily 而非 baidu**（baidu 英文实测严重跑题）。
 
