@@ -16,7 +16,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { DECK } from '../../../shared/deck.js';
+import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 
 const DEFAULT_PROPS = [
   'color', 'backgroundColor',
@@ -71,14 +71,16 @@ Returns up to 30 elements.`,
         };
       }
       const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      let html;
       try {
-        await fs.access(canvasPath);
+        html = await fs.readFile(canvasPath, 'utf8');
       } catch {
         return {
           content: [{ type: 'text', text: 'canvas.html not found in workspace.' }],
           isError: true,
         };
       }
+      const dims = resolveDeckSize(extractDeckAspect(html));
 
       const finalSelector = pageIndex
         ? `section[data-page="${pageIndex}"] ${selector}`
@@ -89,7 +91,7 @@ Returns up to 30 elements.`,
       try {
         const { chromium } = await import('playwright');
         browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage({ viewport: { width: DECK.width, height: DECK.height } });
+        const page = await browser.newPage({ viewport: { width: dims.width, height: dims.height } });
         await page.goto(`file://${canvasPath}`, { waitUntil: 'networkidle', timeout: 15000 });
 
         const result = await page.evaluate(({ sel, p, max }) => {

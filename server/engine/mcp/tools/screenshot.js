@@ -6,7 +6,7 @@
  *
  * 调用约定（agent 端）：
  *   mcp__nodesign__screenshot_canvas
- *     viewport?: { width, height }   默认 DECK（1920x1080）
+ *     viewport?: { width, height }   默认按 wrap data-deck-aspect（4 档预设）
  *     fullPage?: boolean              默认 true（完整可滚动页面）
  *     selector?: string               若给则截匹配的第一个元素 bbox（覆盖 fullPage）
  *     pageIndex?: number              若给则截 section[data-page="N"] 整页（覆盖 fullPage）
@@ -31,9 +31,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { DECK } from '../../../shared/deck.js';
-
-const DEFAULT_VIEWPORT = { width: DECK.width, height: DECK.height };
+import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 
 /**
  * @param {object} deps
@@ -47,10 +45,11 @@ export function makeScreenshotCanvasTool({ workspaceRoot, ctx }) {
 as an image content block. Use this to visually inspect the design you wrote
 — check spacing, contrast, hierarchy, layout, alignment.
 
-The screenshot uses headless chromium at the given viewport (default
-1920x1080, the deck design coordinate system). Set fullPage=true (default)
-to capture the full scrollable page, or false to only capture the visible
-viewport. Output is rendered at deviceScaleFactor=2 → 4K-ready bitmap.
+The screenshot uses headless chromium at the given viewport (default = the
+deck-aspect declared on canvas wrap, i.e. 16:9 → 1920×1080, 9:16 → 1080×1920,
+16:10 → 1920×1200, 4:3 → 1440×1080). Set fullPage=true (default) to capture
+the full scrollable page, or false to only capture the visible viewport.
+Output is rendered at deviceScaleFactor=2 → 4K-ready bitmap.
 
 Targeted captures (overrides fullPage):
 - selector: capture only the first element matching this CSS selector
@@ -75,7 +74,7 @@ Do NOT use this tool when:
           height: z.number().int().min(240).max(2160),
         })
         .optional()
-        .describe('Browser viewport size; defaults to 1920x1080 (deck native)'),
+        .describe('Browser viewport size; defaults to the deck-aspect declared on canvas wrap (16:9=1920×1080, 9:16=1080×1920, 16:10=1920×1200, 4:3=1440×1080)'),
       fullPage: z
         .boolean()
         .optional()
@@ -93,8 +92,9 @@ Do NOT use this tool when:
     },
     async ({ viewport, fullPage, selector, pageIndex }) => {
       const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      let html;
       try {
-        await fs.access(canvasPath);
+        html = await fs.readFile(canvasPath, 'utf8');
       } catch {
         return {
           content: [{
@@ -105,7 +105,9 @@ Do NOT use this tool when:
         };
       }
 
-      const vp = viewport || DEFAULT_VIEWPORT;
+      // 默认 viewport = canvas wrap 声明的 deck 比例尺寸（4 档预设），caller 显式给则用 caller 的
+      const dims = resolveDeckSize(extractDeckAspect(html));
+      const vp = viewport || { width: dims.width, height: dims.height };
       const fp = fullPage !== false;
 
       let browser;
@@ -123,36 +125,13 @@ Do NOT use this tool when:
         });
 
         // selector / pageIndex 优先，命中则截元素 bbox（locator.screenshot），
-        // 都不给走 fullPage / viewport。
+        // 都不给走 fullPage / viewport。新范式所有 section 默认平铺可见
+        // （系统 fit script 包 frame + scroll-snap），locator.screenshot 自动
+        // 拿目标 section 的 bbox，不需要再操作 DOM。
         let buf;
         let captureMode;
         const targetSelector = selector
           || (pageIndex ? `section[data-page="${pageIndex}"]` : null);
-
-        // pageIndex 模式下：deck 是 ppt 范式时目标 section 默认 display:none，
-        // bbox 截不到内容；先操作 DOM 让目标页可见再截。stack 范式不需要任何
-        // 操作（默认平铺所有 section 都可见）。carousel 模式 scrollIntoView 让
-        // 目标 page 对齐到 viewport 再截。
-        if (pageIndex && !selector) {
-          const deckMode = await page.evaluate(() => {
-            const wrap = document.querySelector('.__nd-deck-wrap');
-            return (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
-          });
-          if (deckMode === 'ppt') {
-            await page.evaluate((idx) => {
-              document.querySelectorAll('section[data-page]').forEach(s => s.classList.remove('active'));
-              const target = document.querySelector(`section[data-page="${idx}"]`);
-              if (target) target.classList.add('active');
-            }, pageIndex);
-            await page.waitForTimeout(100); // 等 transition 跑完
-          } else if (deckMode === 'carousel') {
-            await page.evaluate((idx) => {
-              const target = document.querySelector(`section[data-page="${idx}"]`);
-              if (target) target.scrollIntoView({ inline: 'start', block: 'start', behavior: 'instant' });
-            }, pageIndex);
-            await page.waitForTimeout(50);
-          }
-        }
 
         if (targetSelector) {
           const locator = page.locator(targetSelector).first();
