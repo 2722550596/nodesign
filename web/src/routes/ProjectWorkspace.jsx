@@ -94,6 +94,9 @@ export default function ProjectWorkspace() {
   const [selectedAnchor, setSelectedAnchor] = useState(null);
   const [iframeDoc, setIframeDoc] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
+  // 稳定引用让 ChatPanel/MessageList 下游 React.memo 生效；之前 inline 箭头每次
+  // render 都 new function，子组件 props 浅比较永不命中。
+  const handleCanvasReload = useCallback(() => setReloadToken(t => t + 1), []);
 
   // ── P0+ s1 C17：SDK 高频事件提升的 state（被 C18/C19/C20 各组件消费）──
   // systemInfo: SDK 'system init' 事件（model / tools / mcp_servers / agents 元信息）
@@ -1557,7 +1560,7 @@ export default function ProjectWorkspace() {
             hasActiveSession={!!currentSessionId}
             projectId={id}
             sessionId={currentSessionId}
-            onCanvasReload={() => setReloadToken(t => t + 1)}
+            onCanvasReload={handleCanvasReload}
           />
         </aside>
 

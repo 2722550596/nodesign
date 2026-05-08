@@ -449,6 +449,9 @@ function makePostCompactHandler({ ctx, workspaceRoot }) {
       if (!summary || typeof summary !== 'string') return {};
 
       // 串行 read-modify-write 防 spec.json 三路并发覆盖（详见 workspace.js mutateSpecJson）
+      // historyCount 在回调内 capture 出去 —— 之前 emit 里直接引用 spec 是 ReferenceError，
+      // 整段被 try 静默吞，导致 run.compact_persisted 事件永远不发。
+      let historyCount = 0;
       await mutateSpecJson(workspaceRoot, (spec) => {
         if (!Array.isArray(spec.history)) spec.history = [];
         spec.history.push({
@@ -457,6 +460,7 @@ function makePostCompactHandler({ ctx, workspaceRoot }) {
           trigger: input.trigger || 'auto',
           summary,
         });
+        historyCount = spec.history.length;
       });
 
       try {
@@ -464,7 +468,7 @@ function makePostCompactHandler({ ctx, workspaceRoot }) {
           type: 'run.compact_persisted',
           trigger: input.trigger || 'auto',
           summaryLength: summary.length,
-          historyCount: spec.history.length,
+          historyCount,
         });
       } catch { /* emit fail-safe */ }
     } catch (err) {

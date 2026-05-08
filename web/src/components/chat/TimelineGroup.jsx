@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { ChevronDown, CheckCircle2 } from 'lucide-react';
 import Message from './Message.jsx';
 import TimelineNode from './TimelineNode.jsx';
@@ -43,7 +43,7 @@ function extractSummary(messages) {
     : firstPara;
 }
 
-export default function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload }) {
+function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload }) {
   const [open, setOpen] = useState(true);
 
   if (!messages || messages.length === 0) return null;
@@ -142,3 +142,24 @@ export default function TimelineGroup({ messages, closed, summary, projectId, se
     </div>
   );
 }
+
+// 自定义浅比较：MessageList 每次 setMessages 都重算 groupMessages，每个 group.items
+// 都是新数组引用 — 默认浅比较挡不住。改用"逐条 message 引用 + length + closed"
+// 比较：appendTextDelta 只 new 末尾那条 message，其他条引用稳定 → closed group 全部
+// 命中 skip 重渲；末尾 active group 因末条 message 引用变会正确重渲。
+function timelineGroupPropsEqual(prev, next) {
+  if (prev.closed !== next.closed) return false;
+  if (prev.summary !== next.summary) return false;
+  if (prev.projectId !== next.projectId) return false;
+  if (prev.sessionId !== next.sessionId) return false;
+  if (prev.onCanvasReload !== next.onCanvasReload) return false;
+  const a = prev.messages || [];
+  const b = next.messages || [];
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+export default memo(TimelineGroup, timelineGroupPropsEqual);

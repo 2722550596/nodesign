@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 import {
   Wrench, ChevronRight, ChevronLeft,
   FileText, Pencil, FilePlus, Search, Terminal,
@@ -27,7 +27,7 @@ import { useTimelinePosition } from './TimelineGroupContext.js';
  *   - thinking  折叠面板（"思考过程 ▼"）
  *   - tool      工具调用 + 状态（含 input/output 折叠 + elapsed time）
  */
-export default function Message({ message, projectId, sessionId, onCanvasReload }) {
+function Message({ message, projectId, sessionId, onCanvasReload }) {
   // V7：assistant 进 timeline group（V6 grouping 决定）但**不包 TimelineNode**——
   // 用户反馈：默认给个对话气泡 icon 不 OK，"实在不行也别给 icon，就放那"。
   // 所以 assistant 在 group 内 / group 外都走 bare 渲染，timeline 竖线在那段断开
@@ -1634,3 +1634,8 @@ function DiffView({ oldStr, newStr }) {
     </div>
   );
 }
+
+// React.memo + 默认浅比较：appendTextDelta 只 new 末尾那条 message，其他条引用稳定，
+// memo 让稳定 message 不重渲（搭配 ProjectWorkspace.handleCanvasReload 的 useCallback
+// 让函数 prop 也稳定）。streaming 时只有正在写入的那条会重渲。
+export default memo(Message);

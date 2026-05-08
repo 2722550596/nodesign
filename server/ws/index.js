@@ -88,7 +88,16 @@ function unrefSession(sid) {
 }
 
 export function setupWS(httpServer) {
-  const wss = new WebSocketServer({ noServer: true });
+  // perMessageDeflate：弱网下 hydrate chunk + ring-buffer replay 帧成本是 raw size
+  // 量级（>2MB session 一次首屏 hydrate 估 250KB+ raw）。permessage-deflate 让
+  // JSON 文本压到 5-10x。threshold 1KB 跳过小帧（控制帧无收益反增 CPU）。
+  // env NODESIGN_WS_DISABLE_DEFLATE=1 应急关闭（CPU 紧的部署环境）。
+  const wss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: process.env.NODESIGN_WS_DISABLE_DEFLATE === '1'
+      ? false
+      : { threshold: 1024 },
+  });
 
   httpServer.on('upgrade', (req, socket, head) => {
     let url;
