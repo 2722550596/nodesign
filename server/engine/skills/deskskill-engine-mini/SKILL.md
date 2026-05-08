@@ -341,6 +341,29 @@ chat 直接问 1 题：
 
 用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到），不需要专门 AskUserQuestion 卡片。早定 anchor 早收益——cover 选错了一路，所有引它的页全漂。装饰图 / 单页内部用图不需要这步反馈。
 
+### 0.2.6 看图说话是 brainstorm default（不分 mode）
+
+视觉问题用图样张比纯文字 brainstorm 快 5×。用户脑里有画面但描述能力有限，文字往返几轮还在抽象层；甩 1-2 张候选图，用户秒级反馈方向。这是 Stage 0 最高 ROI 的姿势之一——**不要默认走"先 ask 几轮锁方向再生图"**。
+
+按这个节奏跑：
+
+1. **brief 里有主体 / 隐喻 / 模仿对象**（哪怕模糊）→ **先出 1-2 张候选当对齐起点**
+   - 主体真实存在但模型不熟（最新产品 / 小众品牌 / 用户 IP）→ `web_search { include_images:true }` 拿 reference 后再 `generate_image`
+   - 主体抽象 / 模型脑里有 → 直接 `generate_image` 出 2 个变体
+   - 不要等"reference / 调性 / 主体描述 / metaphor 全锁完"——图本身就是对齐工具，比文字描述抗噪
+2. **AskUserQuestion 带 image preview** 把候选贴进 option 让用户视觉对比挑方向
+3. 用户反馈 → conversational editing 1-2 次微调 → 定下来
+
+**真正先 ask 的场景（很窄）**：
+- brief 完全抽象到没主体（"做个 deck 吧"）→ 先 1 题 ask 拿主体再生
+- 用户明确要先纯文字对齐方向（少数）→ 尊重
+
+**关键页 reference 选择主动让用户挑**：cover / 跨页 anchor / portrait 这些 downstream 种子，`web_search { include_images: true }` 拿回 5+ 张时**用 AskUserQuestion + image preview 让用户挑**哪张当 referenceImages 种子（不要 agent 默选——错一路全 deck 漂；详见 cookbook § Reference 来源策略）。装饰 / 普通页用图 agent 自选即可。
+
+**护栏**：同一思路 reroll 收敛 3 次内——超阈值改 prompt 关键参数或问用户新方向，比刷 token 有效。
+
+**Mode A vs Mode B 的差异**：节奏一致；区别只在落档——Mode A 用 `record_decision`，Mode B 落 `design-plan.md.pages[N].c_decisions.reference`。
+
 ### 0.3 三个信号源（按权重排）
 
 - **信号 1**：workspace 自动提示（pending changes / assets / spec.json decisions）
@@ -356,6 +379,8 @@ chat 直接问 1 题：
 | 多页 deck（>3 页）从零开始 | **Mode B** | Stage 0 对齐 → request_plan_mode → 逐页 brainstorm |
 | brand 重设 / palette 全换 / 跨页结构改 | **Mode B** | 同上 |
 | 用户已 toggle on plan | **Mode B**（用户已选） | 遵循即可 |
+
+**Mode A 边界 case 提醒（2-3 页 deck 不严格属于"单页"也不算"多页"）**：默认仍走 Mode A 直接 generate，但**关键页（cover / 数据页 / 收尾）下手前先按 § 0.2.6 出 1 张图样张 + AskUserQuestion 对齐再写**。不强制全 deck 逐页 brainstorm cycle（那是 plan-mode 的事），但关键页对齐能省"做完 3 页才发现方向偏要重写"的代价。如果对齐后发现关键页方向落差大（用户连续否 2 次或要换 metaphor），直接 `request_plan_mode` 升级到 Mode B 比硬扛更稳。
 
 ### 0.5 抽核心视觉隐喻（情绪型 / 销售型 / 仪式型必经；其他 kind 选做）
 

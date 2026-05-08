@@ -40,6 +40,8 @@ mcp__nodesign__web_search { query: "新能源汽车 充电桩 产品", include_i
 
 **vision-check → 选图 → 喂 generate_image**：拿到结果后扫一眼内嵌的 N 张图，按视觉切题度选 1-2 张最好的（光线/构图/主体清晰度），把对应 markdown 条目里的 `local_path` 字段塞进 `referenceImages[]`。靠 description 文字盲选会踩坑（描述准确度参差，特别是 baidu 用 parent title 兜底的条目）。
 
+**关键页例外 — 让用户挑而不是 agent 默选**：cover / 跨页 anchor / portrait 这种**会被当 referenceImages 跨页种子**复用的页型，agent 默选错一张全 deck 漂。这些页的 reference 选择**主动调 AskUserQuestion + image preview**：每个 option 贴一张候选图（用 `local_path` 转 base64 或用 markdown image url），让用户视觉对比挑哪张当种子。装饰 / 普通页 agent 自选即可不必问。
+
 **衔接 generate_image**：从 `local_path` 直接喂 `referenceImages[]`：
 ```
 mcp__nodesign__generate_image {

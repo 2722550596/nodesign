@@ -22,34 +22,17 @@
 
 `design-plan.md` 通过 **ExitPlanMode 工具的 `plan` 参数** 提交（不是 Write）。
 
-## generate_image 在 plan mode — 看图说话是 default
+## generate_image 在 plan mode
 
-**视觉问题用图样张比纯文字 brainstorm 快 5×** —— 用户脑里有画面但描述能力有限，文字
-往返几轮还在抽象层；先甩 1-2 张候选图，用户秒级反馈方向。这是 plan-mode 最高 ROI 的
-模式之一，**不要默认走"先 ask 几轮锁方向再生图"**。
+**核心原则参 SKILL § 0.2.6 看图说话是 brainstorm default**——不分 mode 都按那个节奏跑（主体明确就先出 1-2 张候选当对齐起点；关键页 reference 让用户挑；不要先 ask 几轮再生图）。
 
-按这个节奏跑：
+**plan-mode 特有补充**：
 
-1. **brief 里有主体 / 隐喻 / 模仿对象**（哪怕模糊）→ **先出 1-2 张候选当对齐起点**
-   - 主体真实存在但模型不熟（最新产品 / 小众品牌 / 用户 IP）→ `web_search { include_images:true }` 拿 reference 后再生
-   - 主体抽象 / 模型脑里有 → 直接 `generate_image` 出 2 个变体
-   - 不要在这步等"reference / 调性 / 主体描述 / metaphor 全锁完"——图本身就是对齐工具
-2. **AskUserQuestion 带 preview** 把候选贴进 option，让用户视觉对比挑方向
-3. 用户反馈 → conversational editing 1-2 次微调 → 定下来 → 落 c_decisions
-4. 进下一页
-
-**真正先 ask 的场景**（很窄）：
-- brief 完全抽象到没主体（"做个 deck 吧"）→ 先 1 题 ask 拿主体再生
-- 用户明确要先纯文字对齐方向（少数）→ 尊重
-
-**搜 reference 的对齐**：
-- 关键页 reference（cover / 跨页 anchor / portrait）拿回 5+ 张图时，调
-  AskUserQuestion + image preview 让**用户挑**哪张当 referenceImages 种子——agent 默选错了一路全 deck 漂
-- 装饰 / 普通图 agent 自选即可（cookbook line 41 现状）
-
-**节奏护栏**：
-- 同一思路 reroll 收敛在 3 次内——超阈值改 prompt 关键参数或问用户新方向，比刷 token 有效
-- Plan 阶段的图是探索性候选，generate 阶段会重新对焦校准 — 这是分工，不是返工
+1. **每页都跑这个节奏**：plan-mode 是逐页 brainstorm，所以每页有图需求时都按 § 0.2.6 走（Mode A 通常只在关键页跑）
+2. **每页对齐结果落 `design-plan.md.pages[N].c_decisions`**（schema 见下方）：
+   - `reference: <来源 + 具体——"用户上传 cover.png" / "web_search 第 2 张" / "模型脑里"〉`
+   - 如果生成了候选图，把最终选的图当 `referenceImages` 种子写进 c_decisions
+3. **Plan 阶段的图是探索性候选**——generate 阶段会重新对焦校准（这是分工，不是返工）；不要在 plan 期间过度精修单图，方向对了就进下一页
 
 ## 这是什么模式
 
