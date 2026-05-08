@@ -211,6 +211,14 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
         matcher: 'mcp__nodesign__generate_image',
         hooks: [makePostToolUseGenerateImageRegenWatchdog()],
       },
+      // 2026-05-08 canvas 范式重整 #1/#3/#5/#6 反馈通道 ——
+      // Edit/Write canvas.html 后跑一致性校验（mode-CSS / 必装 CSS / anchor 唯一 /
+      // layout 推荐组件 / role 必装），有 issue 注 systemMessage 单 turn 反馈。
+      // 跨 turn 持续延期下一轮（spec.json schema 扩展）。
+      {
+        matcher: 'Edit|Write',
+        hooks: [makePostToolUseCanvasValidationHandler({ ctx, workspaceRoot })],
+      },
       // record_decision 后**不再**注 additionalContext —— 之前注的"继续主任务"
       // 跟 SDK preset 'claude_code' 教的"工具调用不是任务结束"重复，agent 模型
       // 自己已经懂。删除让 agent 行为更接近 SDK 默认（不"被牵着走"）。
@@ -1177,5 +1185,232 @@ function makePreToolUseTaskVisionCheckerDispatchInjector() {
         + '</system-reminder>',
       },
     };
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Canvas 一致性校验（2026-05-08 范式重整 #1/#3/#5/#6 反馈通道）
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * LAYOUT_COMPONENT_TRIGGERS — data-layout 值 → 推荐组件 import / detect 列表
+ *
+ * 校验项 4（#6）消费：data-layout ∈ keys + babel script 段所有 detect 都不命中
+ * → warn agent reach for 推荐组件（模板自带 inline 4 件 / 或 import @radix-ui）
+ *
+ * 形态：{ [layoutName]: { recommend: string[], detect: string[] regex sources } }
+ */
+const LAYOUT_COMPONENT_TRIGGERS = {
+  'comparison-table':         { recommend: ['<Tabs>', '<Card>'], detect: ['\\bTabs\\s*[\\.<]', '<TabsList\\b', '<Card\\b', "import[^;]*['\"]@radix-ui/react-tabs['\"]"] },
+  'feature-cards':            { recommend: ['<Card> 阵列'], detect: ['<Card\\b', '<CardHeader\\b', '<CardContent\\b', '<CardTitle\\b'] },
+  'use-cases':                { recommend: ['<Tabs>', '<Card> 阵列'], detect: ['\\bTabs\\s*[\\.<]', '<Card\\b', "import[^;]*['\"]@radix-ui/react-tabs['\"]"] },
+  'core-products':            { recommend: ['<Card> 阵列', '<Tabs>'], detect: ['<Card\\b', '\\bTabs\\s*[\\.<]'] },
+  'tech-highlights':          { recommend: ['<Card> 阵列'], detect: ['<Card\\b', '<Badge\\b'] },
+  'feature-array':            { recommend: ['<Tabs>', '<Card>'], detect: ['\\bTabs\\s*[\\.<]', '<Card\\b'] },
+  'variant-showcase':         { recommend: ['<Tabs> (≤4) / embla-carousel-react (>4)'], detect: ['\\bTabs\\s*[\\.<]', 'embla-carousel-react', 'useEmblaCarousel'] },
+  'comparison':               { recommend: ['<Tabs>', '<Card> 对比阵列'], detect: ['\\bTabs\\s*[\\.<]', '<Card\\b'] },
+  'step-switcher':            { recommend: ['<Tabs>'], detect: ['\\bTabs\\s*[\\.<]', "import[^;]*['\"]@radix-ui/react-tabs['\"]"] },
+  'concept-vs-misconception': { recommend: ['<Tabs>', '<Card> 对照阵列'], detect: ['\\bTabs\\s*[\\.<]', '<Card\\b'] },
+  'config-switcher':          { recommend: ['<Tabs>'], detect: ['\\bTabs\\s*[\\.<]'] },
+  'quadrant':                 { recommend: ['<Card> 4 格阵列'], detect: ['<Card\\b', 'grid-cols-2'] },
+};
+
+/**
+ * 校验项 1：mode-CSS 一致性（mode attr 声明 vs 实际 CSS 风格）
+ *
+ * 启发式：grep `<style>` 块找关键 CSS 信号，跟 wrap.data-deck-mode 对比
+ *   - declared=ppt 但找不到 `section[data-page].active` rule → mismatch
+ *   - declared=carousel 但 wrap CSS 没 `display:flex` 或 `overflow-x:auto` → mismatch
+ *   - declared=stack 但 section CSS 写了 `position:absolute` → mismatch
+ *   - declared=custom → 不报（自由）
+ */
+function validateModeCssCoherence(html) {
+  const mWrap = html.match(/<div\b[^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"][^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"]/i)
+             || html.match(/<div\b[^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"][^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"]/i);
+  const declared = mWrap ? mWrap[1] : 'stack';
+  if (declared === 'custom') return null;
+
+  const styleBlocks = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n');
+
+  if (declared === 'ppt') {
+    const hasActiveRule = /section\[data-page[^\]]*\][^{]*\.active|\.active[^{]*\{|section[^{]*\.active\s*\{/.test(styleBlocks);
+    if (!hasActiveRule) {
+      return {
+        title: 'deck-mode="ppt" 但 CSS 没找到 .active rule',
+        detail: 'PPT mode 必装：section[data-page] 默认 display:none，.active 切换 display:flex。漏写 = 全空白。模板 page-styles 块预置了 ppt CSS slice 注释切片，取消注释一步到位。',
+      };
+    }
+  }
+  if (declared === 'carousel') {
+    const hasWrapFlex = /\.__nd-deck-wrap\s*\{[^}]*display\s*:\s*flex/.test(styleBlocks);
+    const hasOverflowX = /\.__nd-deck-wrap\s*\{[^}]*overflow-x\s*:\s*(?:auto|scroll)/.test(styleBlocks);
+    if (!hasWrapFlex || !hasOverflowX) {
+      return {
+        title: 'deck-mode="carousel" 但 wrap CSS 没 flex+overflow-x',
+        detail: 'Carousel mode 必装：.__nd-deck-wrap { display:flex; overflow-x:auto; scroll-snap-type:x mandatory; } + section flex:0 0 1920px。漏写 = preview 看似能滚但 SlideNavigator 点页码不动 / 离线 HTML 第一屏截短。模板 page-styles 块预置了 carousel CSS slice 注释切片。',
+      };
+    }
+  }
+  if (declared === 'stack') {
+    const sectionAbs = /section\[data-page\]\s*\{[^}]*position\s*:\s*absolute/.test(styleBlocks);
+    if (sectionAbs) {
+      return {
+        title: 'deck-mode="stack" 但 section CSS position:absolute（应是 ppt）',
+        detail: 'Stack mode section 是 position:relative 平铺。如果你想要单屏切换效果，改 wrap data-deck-mode="ppt" 并取消 page-styles 里 ppt 注释切片。',
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * 校验项 2：carousel/ppt 必装 CSS 关键 keyword（部分跟 1 重叠，但 message 更具体可独立成项）
+ * 简化：跟 1 合并，单独跑一次没意义。返 null。
+ */
+function validateModeRequiredCss(_html) {
+  return null;  // 校验项 1 已覆盖；保留 stub 供未来分离独立提示文案
+}
+
+/**
+ * 校验项 3：data-anchor 唯一性
+ *
+ * 全文 grep `data-anchor="X"`，按值分组，重名 → 报冲突 + 列页号
+ */
+function validateAnchorUniqueness(html) {
+  const matches = [...html.matchAll(/data-anchor\s*=\s*['"]([^'"]+)['"]/g)];
+  if (matches.length === 0) return null;
+
+  const groups = new Map();
+  for (const m of matches) {
+    const value = m[1];
+    const idx = m.index;
+    // 反推所在 page：往前找最近的 <section data-page="N">
+    const before = html.slice(0, idx);
+    const lastSection = [...before.matchAll(/<section\b[^>]*data-page\s*=\s*['"](\d+)['"]/g)].pop();
+    const page = lastSection ? lastSection[1] : '?';
+    if (!groups.has(value)) groups.set(value, []);
+    groups.get(value).push(page);
+  }
+
+  const conflicts = [];
+  for (const [value, pages] of groups) {
+    if (pages.length > 1) {
+      conflicts.push(`"${value}" → 出现在 page ${[...new Set(pages)].join(', ')} (${pages.length} 次)`);
+    }
+  }
+  if (conflicts.length === 0) return null;
+  return {
+    title: `data-anchor 重名 ${conflicts.length} 处`,
+    detail: conflicts.join('\n   ') + '\n   data-anchor 必须 deck 内唯一（重名加 -pN 页号或角色后缀，如 portrait-name-p3 / cover-sub-1）。findElementByAnchor 三层 fallback 第一层是按 data-anchor 查；重名时 querySelector 永远返第一个匹配，DirectEdit / 评论 pin 到错的元素。',
+  };
+}
+
+/**
+ * 校验项 4：data-layout 推荐组件 reach for 检查（#6）
+ *
+ * data-layout ∈ LAYOUT_COMPONENT_TRIGGERS keys 且整文件 babel script 段所有
+ * detect[i] regex 都不命中 → warn agent 用 inline 4 件
+ */
+function validateLayoutComponents(html) {
+  const layoutMatches = [...html.matchAll(/data-layout\s*=\s*['"]([^'"]+)['"]/g)];
+  if (layoutMatches.length === 0) return null;
+
+  // 抽 babel script 段（多个）拼一起
+  const babelBlocks = [...html.matchAll(/<script[^>]*type=["']text\/babel["'][^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(m => m[1]).join('\n');
+
+  const issues = [];
+  const seen = new Set();
+  for (const m of layoutMatches) {
+    const layoutName = m[1];
+    if (seen.has(layoutName)) continue;
+    seen.add(layoutName);
+    const trigger = LAYOUT_COMPONENT_TRIGGERS[layoutName];
+    if (!trigger) continue;
+    const anyHit = trigger.detect.some(src => {
+      try { return new RegExp(src).test(babelBlocks); } catch { return false; }
+    });
+    if (!anyHit) {
+      issues.push(`data-layout="${layoutName}" 适合 ${trigger.recommend.join(' / ')}，但 babel script 段没检测到对应组件`);
+    }
+  }
+  if (issues.length === 0) return null;
+  return {
+    title: `${issues.length} 处 data-layout 漏用推荐组件`,
+    detail: issues.join('\n   ') + '\n   模板 <script id="__nd-shadcn-lite"> 已自带 Card / Button / Badge / Tabs，0 import 直接 <Card> / <Tabs> 用即可。看 SKILL.md § Hybrid 选型表 + patterns/hybrid-grid.md。',
+  };
+}
+
+/**
+ * 校验项 5：data-layout-role 必装
+ *
+ * 每个 <section data-page> 必标 data-layout-role
+ */
+function validateLayoutRolePresence(html) {
+  const sections = [...html.matchAll(/<section\b[^>]*data-page\s*=\s*['"](\d+)['"][^>]*>/g)];
+  if (sections.length === 0) return null;
+  const missing = [];
+  for (const m of sections) {
+    const tag = m[0];
+    if (!/data-layout-role\s*=/.test(tag)) {
+      missing.push(m[1]);
+    }
+  }
+  if (missing.length === 0) return null;
+  return {
+    title: `${missing.length} 个 section 缺 data-layout-role`,
+    detail: `Page ${missing.join(', ')} 没标 data-layout-role（image-led / text-led / data-led / hybrid 必选其一）。这字段决定页型分布 + 视觉判断；缺它系统按"未知"处理，patterns/<role>.md 也无法对应。`,
+  };
+}
+
+/**
+ * Canvas validation 总入口（PostToolUse Edit|Write canvas.html 触发）
+ *
+ * matcher 第一行 path filter：仅对 canvas.html 跑校验，其他文件 noop。
+ * 单 hook 内 5 项串行校验（in-memory，~ms），有 issue 拼 systemMessage 注下一轮。
+ *
+ * 单 turn 反馈（不持久化）：agent 不修则下次 Edit 自然惩罚再报，跨 turn 持续
+ * 延期下一轮（spec.json schema 扩展）。
+ */
+function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
+  return async (input, _toolUseId, _options) => {
+    try {
+      const fp = input?.tool_input?.file_path;
+      if (!fp || !/(?:^|[/\\])canvas\.html$/i.test(fp)) return {};
+      if (!workspaceRoot) return {};
+
+      const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      let html;
+      try {
+        const stat = await fs.stat(canvasPath);
+        if (stat.size > CANVAS_HTML_MAX_BYTES) return {};  // 大文件 noop
+        html = await fs.readFile(canvasPath, 'utf8');
+      } catch (err) {
+        if (err.code === 'ENOENT') return {};
+        throw err;
+      }
+
+      const issues = [
+        validateModeCssCoherence(html),
+        validateModeRequiredCss(html),
+        validateAnchorUniqueness(html),
+        validateLayoutComponents(html),
+        validateLayoutRolePresence(html),
+      ].filter(Boolean);
+
+      if (issues.length === 0) return {};
+
+      const body = issues.map((i, idx) => `${idx + 1}. ${i.title}\n   ${i.detail}`).join('\n\n');
+      return {
+        systemMessage:
+          `<system-reminder>\n[canvas-validate] 你刚改完 canvas.html，系统检测到 ${issues.length} 项可疑：\n\n`
+        + body
+        + `\n\n如果有意为之（custom mode / 故意命名重复 等）忽略；否则在下一轮主动修。每次 Edit/Write 后都跑这套校验。\n`
+        + `</system-reminder>`,
+      };
+    } catch (err) {
+      console.warn('[hooks/canvas-validate] threw:', err.message);
+      return {};
+    }
   };
 }

@@ -27,6 +27,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { fitInjectionBlock, normalizeModeStyleTag } from '../standalone-fit.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -442,6 +443,9 @@ export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss
   //    0.75 = 0.5625）。strategy：识别所有"看起来像 fit script"的 inline script 段全
   //    删，再注入一个权威 standard fit script，保证只有一份在跑。
   html = stripFitScripts(html);
+  // 7. mode normalize（ppt/carousel mode 漏写 CSS 时兜底当 stack 渲染防破到用户脸上）
+  html = injectModeNormalize(html);
+  // 8. 注入唯一权威 fit script（4 mode 感知 + transform-origin: top left）
   html = injectStandardFitScript(html);
 
   return html;
@@ -487,87 +491,37 @@ function stripFitScripts(html) {
 }
 
 /**
- * 注入唯一权威 standard fit script（跟 SKILL.md template / injectViewportFit SNIPPET 共契约）。
+ * 注入唯一权威 standard fit script（调 standalone-fit 的 fitInjectionBlock）。
  * 放在 </body> 前；如无 </body> 末尾追加。
+ *
+ * 行为：跟 server/api/standalone-fit.js fitInjectionBlock() 完全一致——
+ *   4 mode 感知 + transform-origin: top left + ppt 兜底（首屏给 page 1 加 .active）
  */
 function injectStandardFitScript(html) {
-  const STANDARD = `
-<script id="__nd-standard-fit" data-nodesign-keep="fit">
-(function(){
-  if (window !== window.top) return;
-  var W = ${DECK_WIDTH}, H_PAGE = ${DECK_HEIGHT}, body = document.body;
-  var wrap = body.querySelector(':scope > .__nd-deck-wrap');
-  if (!wrap) {
-    wrap = document.createElement('div');
-    wrap.className = '__nd-deck-wrap';
-    while (body.firstChild && body.firstChild !== wrap) wrap.appendChild(body.firstChild);
-    body.appendChild(wrap);
-  }
-  body.classList.add('__nd-fit-active');
-
-  // deck-mode 决定 body 高度算法。不声明 = stack 兜底（向后兼容）
-  var mode = wrap.getAttribute('data-deck-mode') || 'stack';
-
-  // PPT 兜底：如果 agent 漏写"首屏给 page 1 加 .active"，这里补一刀防全空白
-  if (mode === 'ppt' && wrap.querySelectorAll('section[data-page].active').length === 0) {
-    var firstPpt = wrap.querySelector('section[data-page]');
-    if (firstPpt) firstPpt.classList.add('active');
-  }
-
-  function deckHeight() {
-    if (mode === 'stack') return wrap.scrollHeight;
-    if (mode === 'ppt') return H_PAGE;
-    if (mode === 'carousel') return H_PAGE;
-    if (mode === 'custom') {
-      var api = window.__nd_deck;
-      if (api && typeof api.getDeckHeight === 'function') {
-        try { return api.getDeckHeight() || H_PAGE; } catch (_e) { return H_PAGE; }
-      }
-      return H_PAGE;
-    }
-    return wrap.scrollHeight; // 未知 mode 兜底 stack
-  }
-
-  function fit() {
-    var vw = Math.max(document.documentElement.clientWidth || 0, 320);
-    var s = vw / W;
-    wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
-    body.style.height = (deckHeight() * s) + 'px';
-  }
-  fit();
-  window.addEventListener('resize', fit);
-  if (document.fonts) document.fonts.ready.then(fit);
-})();
-</script>
-<style id="__nd-standard-fit-style">
-body { margin: 0; }
-body.__nd-fit-active {
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: var(--bg, #fff);
-}
-/* stack / ppt / 无 mode：wrap 宽 = 单页 1920。transform-origin 用 left 兼容
-   carousel（carousel wrap 宽 = N×1920，center origin 会让 scale 后向左溢出） */
-body.__nd-fit-active > .__nd-deck-wrap {
-  transform-origin: top left;
-  flex-shrink: 0;
-}
-body.__nd-fit-active > .__nd-deck-wrap:not([data-deck-mode="carousel"]) {
-  width: ${DECK_WIDTH}px;
-}
-/* carousel：wrap 宽由 agent 在 deck CSS 里设（N × 1920 或 flex 子撑开）；
-   fit script 不强加 width，仅做 scale */
-</style>`;
+  const block = fitInjectionBlock();
   if (html.includes('</body>')) {
-    return html.split('</body>').join(STANDARD + '\n</body>');
+    return html.split('</body>').join(block + '\n</body>');
   }
-  return html + STANDARD;
+  return html + block;
 }
 
-const DECK_WIDTH = 1920;
-const DECK_HEIGHT = 1080;
+/**
+ * 注入 mode normalize style tag（ppt/carousel mode 漏写 CSS 时兜底当 stack 渲染）。
+ * 调用方：assembleStandaloneHtml HTML 离线导出 path（PDF/PPTX 走 prepareExportPage）。
+ *
+ * 检测 wrap data-deck-mode attr → 调 normalizeModeStyleTag → 注 </head> 前
+ */
+function injectModeNormalize(html) {
+  const m = html.match(/<div\b[^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"][^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"]/i)
+        || html.match(/<div\b[^>]*data-deck-mode\s*=\s*['"]([^'"]+)['"][^>]*class\s*=\s*['"][^'"]*__nd-deck-wrap[^'"]*['"]/i);
+  const deckMode = m ? m[1] : 'stack';
+  const tag = normalizeModeStyleTag(deckMode);
+  if (!tag) return html;
+  if (html.includes('</head>')) {
+    return html.split('</head>').join(tag + '\n</head>');
+  }
+  return tag + '\n' + html;
+}
 
 // ────────────────────────────────────────────────────────────────────
 // inlineLocalImages —— 自包含必需：把 <img src> + background:url() 里指

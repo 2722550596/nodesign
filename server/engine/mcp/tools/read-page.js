@@ -25,6 +25,26 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
 /**
+ * Thumbnail hint：检测 sectionHtml 是否含 `assets/generated/` 图 + thumbnails 目录存在
+ * 返 prepend hint 字符串（无需 hint 时返空）。
+ *
+ * 让 agent 知道：preview iframe 加载的 <img src> 是 thumbnail 快照（GET /canvas
+ * 路径透明改写），文件系统 / 这里返的 outerHTML 中 src 是真实 src，重生图后
+ * thumbnail 自动更新。
+ */
+async function detectThumbnailHint(workspaceRoot, sectionHtml) {
+  if (!workspaceRoot || !sectionHtml) return '';
+  if (!/assets\/generated\//.test(sectionHtml)) return '';
+  try {
+    await fs.access(path.join(workspaceRoot, 'assets', 'generated', '.thumbnails'));
+    return '[hint] preview iframe 加载的 <img src> 指向 thumbnail（assets/generated/.thumbnails/*.thumb.jpg）；'
+      + '下面 outerHTML 中的 src 是真实 src（同 Read canvas.html），重生原图 N 秒内 thumbnail 自动更新。';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Hybrid 范式：从 section html 抽 mount id（data-react-mount + id 双源），
  * 然后到 raw canvas.html 的 babel script 段里 grep `getElementById('<id>')` 上下文。
  *
@@ -194,7 +214,12 @@ When NOT to use:
         // 找到 mount id 后从 babel script 抓 ±20 行上下文返给 agent
         const hybridSegments = extractReactMountSources(raw, sectionHtml);
 
-        const parts = [`Page ${page} (${sectionHtml.length} chars):\n\n${sectionHtml}`];
+        // Thumbnail hint：section 含 assets/generated/ 图 + thumbnails 目录存在 → prepend hint
+        const thumbnailHint = await detectThumbnailHint(workspaceRoot, sectionHtml);
+
+        const parts = [];
+        if (thumbnailHint) parts.push(thumbnailHint + '\n\n');
+        parts.push(`Page ${page} (${sectionHtml.length} chars):\n\n${sectionHtml}`);
         if (hybridSegments.length > 0) {
           parts.push(
             `\n\n--- React mount sources for this page (${hybridSegments.length} mount${hybridSegments.length > 1 ? 's' : ''}) ---\n`

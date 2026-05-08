@@ -1,27 +1,38 @@
 <!--
   ╔══════════════════════════════════════════════════════════════════════╗
-  ║  NoDesign · canvas.html starter template (Hybrid 范式 · 2026-05-06)  ║
+  ║  NoDesign · canvas.html starter template (Hybrid 范式 · 2026-05-08)  ║
   ╠══════════════════════════════════════════════════════════════════════╣
   ║                                                                      ║
-  ║  cp 这份文件做你的起点。下面 4 块预置好的，**别动结构**：              ║
-  ║    1. <head> 里的 importmap / Tailwind / Babel / fit script CSS      ║
-  ║    2. body 的 .__nd-deck-wrap 包裹（fit script 缩这层）              ║
-  ║    3. <script type="text/babel"> 里的 4 个 shadcn 组件源（Card/Button║
-  ║       /Badge/Tabs，直接用，不需要 import）                            ║
-  ║    4. body 末尾的 fit script                                          ║
+  ║  cp 这份做起点。下面 5 块预置好的，**别动结构**：                      ║
+  ║    1. <head> 里的 Tailwind / importmap / Babel + design-tokens       ║
+  ║    2. <head> 里 page-styles 预置 3 mode CSS slice 注释（按 mode 取消注释）║
+  ║    3. body 的 .__nd-deck-wrap[data-deck-mode] 包裹                    ║
+  ║    4. <script id="__nd-shadcn-lite"> 里的 4 件 shadcn-lite 组件       ║
+  ║       (Card/Button/Badge/Tabs)，直接 <Card> 用，不需要 import        ║
+  ║    5. body 末尾 keyboard nav + mode-detect 脚本（带 data-nodesign-keep）║
   ║                                                                      ║
   ║  你要做的：                                                           ║
-  ║    · 改 design-tokens（颜色 / 字号 / 字体）                           ║
+  ║    · 改 design-tokens（颜色 / 字号 / 字体）—— 按 deck 隐喻整组覆盖     ║
+  ║    · 决定 deck-mode（stack/ppt/carousel/custom）→ 取消 page-styles    ║
+  ║      里对应那段 CSS slice 注释                                        ║
   ║    · 在 .__nd-deck-wrap 里写 N 个 <section data-page="N">             ║
+  ║    · **决定每页 layout-role 后**→ Read patterns/<role>.md 拿 reference║
+  ║      (image-led-cover / section-divider / portrait / quote-backdrop  ║
+  ║       / text-led / hybrid-grid)                                      ║
   ║    · 简单页：纯 HTML + Tailwind utility class                         ║
-  ║    · 复杂页（图表/动画/复杂组件）：放个 <div data-react-mount="...">  ║
-  ║      然后在底部 babel script 里 createRoot mount React 组件           ║
+  ║    · 复杂页（图表 / 动画 / Tabs/Card 阵列）：放 <div data-react-mount="..."> ║
+  ║      然后在底部 <script id="__nd-app"> 里 createRoot mount 组件      ║
   ║                                                                      ║
   ║  Tweaks 桥接：可调维度（颜色/字号）用 text-[var(--accent)] 写         ║
   ║              骨架（间距/flex/radius）用 Tailwind utility 写           ║
-  ║              expose_tweaks 工具改 CSS var → arbitrary value 实时响应  ║
+  ║              expose_tweaks 改 CSS var → arbitrary value 实时响应      ║
   ║                                                                      ║
-  ║  库速查见 prelude § 库速查表（全家桶 10 库 import 范例）。            ║
+  ║  Anchor 单写：关键元素只写 data-anchor（deck 内唯一，重名加 -pN 后缀） ║
+  ║              不再写 data-node-id（已废）                              ║
+  ║                                                                      ║
+  ║  fit script 由系统在导出 / 独立打开时自动注入（模板不带）              ║
+  ║                                                                      ║
+  ║  库速查见 prelude § Hybrid 全家桶库速查 + SKILL.md § Hybrid 选型表    ║
   ║                                                                      ║
   ╚══════════════════════════════════════════════════════════════════════╝
 -->
@@ -40,8 +51,6 @@
   <!-- ══ 2. Tailwind Play CDN（运行时编译，所有 utility class 立即可用） ══ -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    // Tailwind config —— 别在这里写颜色（颜色走 CSS var + arbitrary value）
-    // 这里只配 fontFamily 让 font-display / font-mono 等 utility 能用
     tailwind.config = {
       theme: {
         extend: {
@@ -55,7 +64,27 @@
     };
   </script>
 
-  <!-- ══ 3. importmap：全家桶 10 库 + React 全家。agent import 哪个浏览器才下哪个 ══ -->
+  <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+  <!-- ══ 3. importmap：21 库预置 + 按 deck-kind 分组（agent import 哪个浏览器才下哪个）══ -->
+  <!--                                                                                -->
+  <!-- 按 deck-kind 选型 → SKILL.md § Hybrid 选型按 deck-kind 分流                    -->
+  <!-- 按内容类型查（"我要画图表 → recharts"）→ prelude § Hybrid 全家桶库速查         -->
+  <!--                                                                                -->
+  <!-- 库分组（下方 JSON 按此顺序排列）：                                              -->
+  <!--   Core ............... react / react-dom（必装）                              -->
+  <!--   数据可视化 ......... recharts / echarts                                      -->
+  <!--                       适用：decision / sales / funding / data / academic       -->
+  <!--   动效装饰 ........... framer-motion / motion / gsap / lenis                   -->
+  <!--                       放开：emotion / launch / ceremony                       -->
+  <!--                       慎用：decision / academic / data 默认 0 motion           -->
+  <!--   流程公式代码 ....... mermaid / katex / react-katex / shiki                   -->
+  <!--                       适用：knowledge / academic                              -->
+  <!--   专业组件 ........... lucide-react (icon) / embla-carousel-react (轮播)       -->
+  <!--                       reactflow (节点图)                                       -->
+  <!--   Radix 组件 ......... 6 件 a11y 全功能 (要键盘导航时；inline 4 件已自带简化版) -->
+  <!--   3D ................. three / r3f / drei                                      -->
+  <!--                       launch 类产品 hero 偶用，体积大耗 GPU 慎用              -->
+  <!-- ══════════════════════════════════════════════════════════════════════════════ -->
   <script type="importmap">
   {
     "imports": {
@@ -71,15 +100,15 @@
       "framer-motion":      "https://esm.sh/framer-motion@11.15.0?deps=react@19.0.0,react-dom@19.0.0",
       "motion":             "https://esm.sh/motion@11.15.0?deps=react@19.0.0,react-dom@19.0.0",
       "gsap":               "https://esm.sh/gsap@3.12.5",
-
-      "lucide-react":       "https://esm.sh/lucide-react@0.460.0?deps=react@19.0.0",
+      "lenis":              "https://esm.sh/lenis@1.1.20",
 
       "mermaid":            "https://esm.sh/mermaid@11.4.1",
-      "shiki":              "https://esm.sh/shiki@1.24.4",
-
-      "embla-carousel-react": "https://esm.sh/embla-carousel-react@8.5.1?deps=react@19.0.0",
       "katex":              "https://esm.sh/katex@0.16.11",
       "react-katex":        "https://esm.sh/react-katex@3.0.1?deps=react@19.0.0,katex@0.16.11",
+      "shiki":              "https://esm.sh/shiki@1.24.4",
+
+      "lucide-react":       "https://esm.sh/lucide-react@0.460.0?deps=react@19.0.0",
+      "embla-carousel-react": "https://esm.sh/embla-carousel-react@8.5.1?deps=react@19.0.0",
       "reactflow":          "https://esm.sh/reactflow@11.11.4?deps=react@19.0.0,react-dom@19.0.0",
 
       "@radix-ui/react-dialog":     "https://esm.sh/@radix-ui/react-dialog@1.1.4?deps=react@19.0.0,react-dom@19.0.0",
@@ -91,9 +120,7 @@
 
       "three":                  "https://esm.sh/three@0.171.0",
       "@react-three/fiber":     "https://esm.sh/@react-three/fiber@8.17.10?deps=react@19.0.0,react-dom@19.0.0,three@0.171.0",
-      "@react-three/drei":      "https://esm.sh/@react-three/drei@9.121.4?deps=react@19.0.0,react-dom@19.0.0,three@0.171.0,@react-three/fiber@8.17.10",
-
-      "lenis":              "https://esm.sh/lenis@1.1.20"
+      "@react-three/drei":      "https://esm.sh/@react-three/drei@9.121.4?deps=react@19.0.0,react-dom@19.0.0,three@0.171.0,@react-three/fiber@8.17.10"
     }
   }
   </script>
@@ -111,13 +138,13 @@
   <style id="design-tokens">
     :root {
       /* === Color (fallback values — override per theme) === */
-      --bg:       #F9F8F6;   /* page bg */
-      --paper:    #F9F8F6;   /* page bg alias */
-      --surface:  #ffffff;   /* card bg */
-      --ink:      #1a120a;   /* body text */
-      --accent:   #2d2418;   /* primary accent */
-      --muted:    #6b5d4f;   /* secondary text */
-      --cream:    #efe8df;   /* alt bg */
+      --bg:       #F9F8F6;
+      --paper:    #F9F8F6;
+      --surface:  #ffffff;
+      --ink:      #1a120a;
+      --accent:   #2d2418;
+      --muted:    #6b5d4f;
+      --cream:    #efe8df;
 
       /* === Type scale === */
       --hero:     112px;
@@ -127,22 +154,21 @@
       --body:     18px;
       --caption:  13px;
 
-      /* === Spacing (8pt grid) —— 骨架用 Tailwind utility 即可，这里仅 fallback === */
+      /* === Spacing (8pt grid) === */
       --gap-xs:   8px;
       --gap-sm:   16px;
       --gap-md:   24px;
       --gap-lg:   48px;
       --gap-xl:   96px;
 
-      /* === Generated image slots（generate_image 的图建议落到这里方便 Tweaks 替换）=== */
-      /* 用法：style="background-image: var(--hero-image)"，或 <img src="assets/generated/x.png"> 直接引 */
-      --hero-image:        none;   /* 封面 / 大 hero */
-      --bg-image-1:        none;   /* section 1 背景 */
+      /* === Generated image slots === */
+      --hero-image:        none;
+      --bg-image-1:        none;
       --bg-image-2:        none;
       --bg-image-3:        none;
-      --decoration-1:      none;   /* 角落装饰 / spot illustration */
-      --frame-1:           none;   /* card 内嵌图 */
-      --pattern-tile:      none;   /* 纹理（配 background-repeat: repeat） */
+      --decoration-1:      none;
+      --frame-1:           none;
+      --pattern-tile:      none;
     }
 
     /* per-page / per-layout scoped overrides 跟 expose_tweaks(target_scope) 配对 */
@@ -150,7 +176,7 @@
     /* [data-layout="quote"] { --body: 24px; }     ← 引言页正文更大 */
   </style>
 
-  <!-- ══ 6. Base + fit wrapper —— **不要动**，跟服务端 SNIPPET / fit script 共契约 ══ -->
+  <!-- ══ 6. Base —— **不要动**，跟系统注入 fit script 共契约 className ══ -->
   <style id="base">
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -158,18 +184,6 @@
       color: var(--ink);
       background: var(--bg);
       -webkit-font-smoothing: antialiased;
-    }
-
-    body.__nd-fit-active {
-      overflow-x: hidden;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    body.__nd-fit-active > .__nd-deck-wrap {
-      width: 1920px;
-      transform-origin: top center;
-      flex-shrink: 0;
     }
 
     section[data-page] {
@@ -180,8 +194,43 @@
     }
   </style>
 
-  <!-- ══ 7. Page-specific styles（按需加，能用 Tailwind utility 解决就别加） ══ -->
+  <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+  <!-- ══ 7. Page-styles —— 3 mode CSS slice 注释切片（取消对应注释一步到位） ══   -->
+  <!--                                                                                -->
+  <!-- 默认 stack（template wrap 的 data-deck-mode="stack"）—— section CSS 已在 base 设。-->
+  <!-- 改 wrap.data-deck-mode 时**必同步**取消下面对应那段注释，否则系统 PostToolUse 校验 -->
+  <!-- 报"声明 X mode 但 CSS 是 stack 风格"。                                          -->
+  <!-- ══════════════════════════════════════════════════════════════════════════════ -->
   <style id="page-styles">
+    /* ┄┄┄ stack 默认（不需要额外 CSS，base.css 已设 position: relative）┄┄┄ */
+
+    /* ┄┄┄ ppt mode（取消下方注释 + 改 wrap data-deck-mode="ppt"）┄┄┄
+    section[data-page] {
+      position: absolute;
+      inset: 0;
+      display: none;
+      opacity: 0;
+      transition: opacity .4s;
+    }
+    section[data-page].active {
+      display: flex;
+      opacity: 1;
+    }
+    ┄┄┄ */
+
+    /* ┄┄┄ carousel mode（取消下方注释 + 改 wrap data-deck-mode="carousel"）┄┄┄
+    .__nd-deck-wrap {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+    }
+    section[data-page] {
+      flex: 0 0 1920px;
+      height: 1080px;
+      scroll-snap-align: start;
+    }
+    ┄┄┄ */
+
     /* 例：page 3 数字超大字 */
     /* section[data-page="3"] .stat-num { font-family: var(--font-display); font-size: 200px; } */
   </style>
@@ -190,30 +239,29 @@
 <body>
 
 <!-- ════════════════════════════════════════════════════════════ -->
-<!-- 所有 section 必须放在 .__nd-deck-wrap 里，让 fit script 接管缩放 -->
+<!-- 所有 section 必须放在 .__nd-deck-wrap 里，让系统 fit script 接管缩放。-->
 <!--                                                                -->
-<!-- data-deck-mode 决定渲染范式（系统 fit/screenshot/export 按它分流）：-->
+<!-- data-deck-mode 决定渲染范式（系统 fit/screenshot/export/SlideNavigator 按它分流）：-->
 <!--   "stack"    垂直平铺（默认）—— section position:relative，每页 1920×1080 堆叠，滚动浏览 -->
 <!--   "ppt"      单屏切换 —— section position:absolute + display:none，.active 切换 -->
-<!--                          必须在 page-styles 里加：                  -->
-<!--                            section[data-page] { position: absolute; inset: 0; display: none; opacity: 0; transition: opacity .4s; } -->
-<!--                            section[data-page].active { display: flex; opacity: 1; } -->
-<!--                          下面 keyboard nav 脚本按 deck-mode=ppt 自动 toggle .active -->
+<!--                          必须取消 page-styles 里 ppt 注释切片                   -->
 <!--   "carousel" 横向翻页 —— wrap display:flex + scroll-snap，每页 flex:0 0 1920px -->
-<!--                          必须在 page-styles 里加：                  -->
-<!--                            .__nd-deck-wrap { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; } -->
-<!--                            section[data-page] { flex: 0 0 1920px; height: 1080px; scroll-snap-align: start; } -->
-<!--   "custom"   以上都不合适 —— agent 自实现 fit + nav，并挂 window.__nd_deck = { mode, pageCount, navigateTo, getCurrentPage, getDeckHeight } -->
+<!--                          必须取消 page-styles 里 carousel 注释切片              -->
+<!--   "custom"   以上都不合适 —— agent 自实现 fit + nav，并挂                       -->
+<!--              window.__nd_deck = { mode, pageCount, navigateTo, getCurrentPage, getDeckHeight } -->
 <!--                                                                -->
-<!-- 不声明 = stack。改 mode 后必须把 page-styles 里 section CSS 同步到对应契约，否则系统按 mode 行为但 CSS 不配合 → 渲染异常。 -->
+<!-- 不声明 = stack。改 mode 后必须把 page-styles 对应注释切片取消，否则 PostToolUse  -->
+<!-- 校验报错配。                                                                    -->
 <!-- ════════════════════════════════════════════════════════════ -->
 <div class="__nd-deck-wrap" data-deck-mode="stack">
 
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE 1 · COVER (text-led 范例)                              -->
-  <!--   · data-layout-role 表达"这页谁是主角"：text-led|image-led|data-led|hybrid -->
+  <!--   · 这是最简 cover 起手骨架；image-led / 其他 layout-role    -->
+  <!--     **必 Read patterns/<role>.md** 拿专属 reference          -->
   <!--   · DirectEdit 双击文字可改                                   -->
   <!--   · 颜色用 text-[var(--xxx)]，骨架用 Tailwind utility         -->
+  <!--   · Anchor 单写：data-anchor 唯一，不写 data-node-id          -->
   <!-- ══════════════════════════════════════════════════════════ -->
   <section data-page="1" data-anchor="cover" data-layout="cover"
            data-layout-role="text-led" class="bg-[var(--paper)]">
@@ -223,12 +271,12 @@
       </div>
 
       <div class="flex flex-col gap-8">
-        <h1 data-anchor="cover-title" data-node-id="cover-title-1"
+        <h1 data-anchor="cover-title"
             class="font-display text-[var(--ink)] leading-[0.95]"
             style="font-size: var(--hero); letter-spacing: -0.04em;">
           {封面标题 · 改我}
         </h1>
-        <p data-anchor="cover-sub" data-node-id="cover-sub-1"
+        <p data-anchor="cover-sub"
            class="text-2xl text-[var(--muted)] max-w-3xl leading-relaxed"
            style="font-family: Instrument Serif, serif; font-style: italic;">
           {副标题 · 一句话讲清这个 deck 是什么 · 改我}
@@ -241,6 +289,20 @@
       </div>
     </div>
   </section>
+
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- 6 个 page-type 范例已搬到 patterns/ 目录（按需 Read）        -->
+  <!--                                                            -->
+  <!-- 决定每页 layout-role 后立即 Read 对应 patterns/*.md：        -->
+  <!--   image-led 封面 / 大 hero      → patterns/image-led-cover.md -->
+  <!--   image-led 章节扉页            → patterns/section-divider.md -->
+  <!--   image-led 人物 / quote        → patterns/portrait.md / quote-backdrop.md -->
+  <!--   text-led 文为主页              → patterns/text-led.md         -->
+  <!--   hybrid 图文 grid / Card 阵列   → patterns/hybrid-grid.md      -->
+  <!--                                                            -->
+  <!-- 每个 patterns/ 文件含：何时用 / 标记规约 / 写法铁律 / 最小代码片段 -->
+  <!-- 别照抄当 final layout —— patterns/ 是 reference，按你 deck 的隐喻填  -->
+  <!-- ══════════════════════════════════════════════════════════ -->
 
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- ⚡ 骨架范例（Phase A · ≤ 400 行起步用）                          -->
@@ -259,141 +321,15 @@
   </section>
   ┄┄┄ -->
 
-  <!-- ┄┄┄ React mount 占位（在 <script type="text/babel"> 里）┄┄┄
+  <!-- ┄┄┄ React mount 占位（在底部 <script id="__nd-app"> 里）┄┄┄
   // §mount:2  · data-led page 2 chart component 待填
-  ┄┄┄ -->
-
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- 下面 6 个范例是 **page type 占位骨架**，不是视觉范例。          -->
-  <!-- 例如同一个 image-led cover 在不同隐喻下视觉完全不同：           -->
-  <!--   · 暗童话 → 主图 + 翻页书脚注 + 装饰花纹                       -->
-  <!--   · 实验报告 → 标题 + 编号 + 实验日期 + 仪器侧栏                -->
-  <!--   · 占卜卡 → 中心塔罗图案 + 周边古文符 + 烛火光晕               -->
-  <!-- 别直接 cp 范例当 final layout — 把它当骨架空白，按你的隐喻填。  -->
-  <!-- 设计原则：image-led 文字 ≤ 5 行；图传达的别再用文字重述；       -->
-  <!-- overlay 用大字 + drop-shadow / backdrop-blur，别加纯黑半透明压亮度。 -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-
-  <!-- ┄┄┄ 范例 A · IMAGE-LED COVER（图占 100%，文字浮层）┄┄┄
-  <section data-page="N" data-layout-role="image-led" data-layout="cover"
-           data-anchor="cover" class="relative overflow-hidden">
-    <img class="absolute inset-0 w-full h-full object-cover"
-         src="assets/generated/cover.jpg"
-         data-asset-role="cover" data-asset-source="generated"
-         data-asset-prompt="<可选：短 prompt 摘要>"  alt="" />
-    <div class="absolute inset-0 flex items-end p-32"
-         style="background:linear-gradient(180deg,transparent 45%,rgba(0,0,0,0.55))">
-      <h1 data-anchor="cover-title"
-          class="text-white font-display leading-[0.95] drop-shadow-lg"
-          style="font-size: var(--hero); letter-spacing: -0.04em;">
-        {大字标题 · 一行}
-      </h1>
-    </div>
-  </section>
-  ┄┄┄ -->
-
-  <!-- ┄┄┄ 范例 B · SECTION-DIVIDER（章节扉页全屏图 + 章节号大字）┄┄┄
-  <section data-page="N" data-layout-role="image-led" data-layout="section-divider"
-           class="relative overflow-hidden">
-    <img class="absolute inset-0 w-full h-full object-cover"
-         src="assets/generated/section-2-bg.jpg"
-         data-asset-role="section-divider" data-asset-source="generated" alt="" />
-    <div class="absolute inset-0 flex flex-col justify-center items-center text-center p-32"
-         style="background:radial-gradient(circle at center,rgba(0,0,0,0.35),rgba(0,0,0,0.55))">
-      <div class="font-mono text-white/80 text-sm tracking-[0.4em] mb-6">CHAPTER 02</div>
-      <h2 class="text-white font-display text-[var(--hero)] leading-none">{章节标题}</h2>
-    </div>
-  </section>
-  ┄┄┄ -->
-
-  <!-- ┄┄┄ 范例 C · PORTRAIT（人物 / 演讲者卡片，4:5 居左）┄┄┄
-  <section data-page="N" data-layout-role="image-led" data-layout="portrait"
-           class="bg-[var(--paper)]">
-    <div class="h-full grid grid-cols-[480px_1fr] gap-24 p-24">
-      <img class="w-full h-full object-cover rounded-2xl"
-           src="assets/generated/portrait-maya.jpg"
-           data-asset-role="portrait" data-asset-source="generated" alt="Maya" />
-      <div class="flex flex-col justify-center gap-6">
-        <div class="font-mono text-sm tracking-widest uppercase text-[var(--muted)]">
-          {Speaker / 角色名}
-        </div>
-        <h2 class="font-display text-[var(--ink)] text-[var(--h1)] leading-none">{Maya Chen}</h2>
-        <p class="text-2xl text-[var(--muted)] italic" style="font-family:Instrument Serif,serif">
-          {一句 quote 或 tagline · 改我}
-        </p>
-      </div>
-    </div>
-  </section>
-  ┄┄┄ -->
-
-  <!-- ┄┄┄ 范例 D · QUOTE-BACKDROP（图弱化作衬底 + 大字引言）┄┄┄
-  <section data-page="N" data-layout-role="image-led" data-layout="quote"
-           class="relative overflow-hidden">
-    <img class="absolute inset-0 w-full h-full object-cover opacity-30"
-         src="assets/generated/quote-bg.jpg"
-         data-asset-role="quote-backdrop" data-asset-source="generated" alt="" />
-    <div class="relative h-full flex flex-col justify-center items-center text-center p-32 bg-[var(--paper)]/40">
-      <blockquote class="max-w-5xl font-display text-[var(--ink)]"
-                  style="font-size: var(--h1); line-height:1.15; font-style:italic">
-        {一句改变设计观的 quote · 改我}
-      </blockquote>
-      <div class="mt-8 font-mono text-sm tracking-widest text-[var(--muted)]">— {Source · 出处}</div>
-    </div>
-  </section>
-  ┄┄┄ -->
-
-  <!-- ┄┄┄ 范例 E · TEXT-LED CONTENT（文为主，图当 frame 配角 ≤ 30%）┄┄┄
-  <section data-page="N" data-layout-role="text-led" data-layout="content"
-           class="bg-[var(--paper)]">
-    <div class="h-full grid grid-cols-[1fr_400px] gap-16 p-24">
-      <div class="flex flex-col gap-6">
-        <h2 class="font-display text-[var(--ink)] text-[var(--h1)] leading-none">{页标题}</h2>
-        <p class="text-xl text-[var(--ink)]/80 leading-relaxed">{首段 · 主论点}</p>
-        <ul class="text-lg text-[var(--ink)]/70 space-y-3 list-disc pl-6">
-          <li>{要点 1}</li>
-          <li>{要点 2}</li>
-          <li>{要点 3}</li>
-        </ul>
-      </div>
-      <img class="w-full h-full object-cover rounded-xl"
-           src="assets/generated/frame-decor.jpg"
-           data-asset-role="frame" data-asset-source="generated" alt="" />
-    </div>
-  </section>
-  ┄┄┄ -->
-
-  <!-- ┄┄┄ 范例 F · HYBRID（图文 grid，3 图 + caption 网格） ┄┄┄
-  <section data-page="N" data-layout-role="hybrid" data-layout="grid"
-           class="bg-[var(--paper)] p-24">
-    <h2 class="font-display text-[var(--ink)] text-[var(--h2)] mb-8">{Grid 标题}</h2>
-    <div class="grid grid-cols-3 gap-6 h-[calc(100%-120px)]">
-      <div class="flex flex-col gap-2">
-        <img class="w-full aspect-[4/3] object-cover rounded-lg"
-             src="assets/generated/grid-1.jpg"
-             data-asset-role="illustration" data-asset-source="generated" alt="" />
-        <div class="text-sm text-[var(--muted)]">{caption 1}</div>
-      </div>
-      <div class="flex flex-col gap-2">
-        <img class="w-full aspect-[4/3] object-cover rounded-lg"
-             src="assets/generated/grid-2.jpg"
-             data-asset-role="illustration" data-asset-source="generated" alt="" />
-        <div class="text-sm text-[var(--muted)]">{caption 2}</div>
-      </div>
-      <div class="flex flex-col gap-2">
-        <img class="w-full aspect-[4/3] object-cover rounded-lg"
-             src="assets/generated/grid-3.jpg"
-             data-asset-role="illustration" data-asset-source="generated" alt="" />
-        <div class="text-sm text-[var(--muted)]">{caption 3}</div>
-      </div>
-    </div>
-  </section>
   ┄┄┄ -->
 
   <!-- ══════════════════════════════════════════════════════════ -->
   <!-- PAGE 2 · React mount section 范例                            -->
   <!--   · 复杂图表/动画/组件用 React mount                          -->
   <!--   · 必须 <div data-react-mount="..."> 包裹（DirectEdit guard）-->
-  <!--   · mount 实现写在底部 <script type="text/babel"> 里         -->
+  <!--   · mount 实现写在底部 <script id="__nd-app"> 里             -->
   <!-- ══════════════════════════════════════════════════════════ -->
   <section data-page="2" data-anchor="example-mount" data-layout="data"
            data-layout-role="data-led" class="bg-[var(--cream)]">
@@ -402,7 +338,8 @@
         <div class="font-mono text-xs uppercase tracking-[0.3em] text-[var(--muted)] mb-2">
           Section · React mount example
         </div>
-        <h2 class="font-display text-[var(--ink)]"
+        <h2 data-anchor="example-mount-title"
+            class="font-display text-[var(--ink)]"
             style="font-size: var(--h1); letter-spacing: -0.02em; line-height: 1;">
           {改成你的 page 标题}
         </h2>
@@ -422,7 +359,8 @@
       <div class="font-mono text-xs uppercase tracking-[0.4em] text-[var(--paper)]/50 mb-8">
         — Fin —
       </div>
-      <h2 class="font-display"
+      <h2 data-anchor="closing-title"
+          class="font-display"
           style="font-size: var(--h1); line-height: 0.95; letter-spacing: -0.04em; font-style: italic;">
         {收尾一句话 · 改我}
       </h2>
@@ -436,22 +374,14 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- React 入口 + 4 个 shadcn 组件（直接用，不需要 import）            -->
-<!-- 复杂页 React mount 的 createRoot 都写这里                       -->
+<!-- 4 件 inline shadcn-lite 组件 —— 直接 <Card> 用，不需要 import   -->
+<!-- 适用场景：comparison-table / feature-cards / use-cases /        -->
+<!--          variant-showcase / step-switcher / quadrant 等         -->
+<!-- 详见 SKILL.md § Hybrid 选型表（decision/sales/launch/knowledge）  -->
+<!-- 要 a11y / 全功能 → import @radix-ui/react-* 自己组（importmap 已就位）-->
 <!-- ══════════════════════════════════════════════════════════════ -->
-<script type="text/babel" data-type="module" data-presets="react,typescript">
-  // Babel classic JSX runtime 需要 React 在 scope，必须 import default
-  import React, { useState, useEffect } from 'react';
-  import { createRoot } from 'react-dom/client';
-
-  // === 范例 mount 用到的库（按需 import；template 默认仅示范 Recharts） ===
-  import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-
-  // ╔════════════════════════════════════════════════════════════╗
-  // ║  shadcn-inspired components (inline，简化版，0 依赖)          ║
-  // ║  agent 直接用 <Card> / <Button> / <Badge> / <Tabs>           ║
-  // ║  需要更全功能（a11y、键盘）→ import @radix-ui/react-* 自己组   ║
-  // ╚════════════════════════════════════════════════════════════╝
+<script type="text/babel" id="__nd-shadcn-lite" data-type="module" data-presets="react,typescript" data-nodesign-keep="components">
+  import React, { useState } from 'react';
 
   function Card({ children, className = '', ...rest }) {
     return (
@@ -537,10 +467,22 @@
     return <div className={className}>{children}</div>;
   }
 
-  // ╔════════════════════════════════════════════════════════════╗
-  // ║  Page 2 · 范例：Recharts 折线图                              ║
-  // ║  改这里展示你自己的数据；或换 ECharts / Mermaid / 等         ║
-  // ╚════════════════════════════════════════════════════════════╝
+  // 暴露到全局供下方 __nd-app 段使用
+  window.__ndShadcn = { Card, CardHeader, CardTitle, CardContent, Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent };
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- 应用入口 —— 复杂页 React mount 的 createRoot 都写这里             -->
+<!-- 上方 __nd-shadcn-lite 已暴露 window.__ndShadcn 供本段使用         -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<script type="text/babel" id="__nd-app" data-type="module" data-presets="react,typescript">
+  import React, { useState, useEffect } from 'react';
+  import { createRoot } from 'react-dom/client';
+
+  // 范例 mount：Recharts 折线图（按需改 / 删 / 加）
+  import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+
+  const { Card, CardTitle } = window.__ndShadcn;
 
   function ExampleChart() {
     const data = [
@@ -548,9 +490,7 @@
       { x: 'Thu', y: 62 }, { x: 'Fri', y: 78 }, { x: 'Sat', y: 95 }, { x: 'Sun', y: 110 },
     ];
     return (
-      // 用 flex 撑高度，避免 calc(100%-Npx) 这种 hardcode（不同视口下易溢出）
       <Card className="h-full p-8 flex flex-col">
-        {/* JSX 里 placeholder 用纯文本，别 {花括号}（{...} 在 JSX 里是表达式 slot） */}
         <CardTitle className="mb-6">改成你的图表标题</CardTitle>
         <div className="flex-1 min-h-0">
           <ResponsiveContainer width="100%" height="100%">
@@ -567,10 +507,6 @@
     );
   }
 
-  // ╔════════════════════════════════════════════════════════════╗
-  // ║  Mount —— 每个 React 页面一个 createRoot                     ║
-  // ╚════════════════════════════════════════════════════════════╝
-
   const exampleEl = document.getElementById('example-chart-mount');
   if (exampleEl) createRoot(exampleEl).render(<ExampleChart />);
 
@@ -580,30 +516,7 @@
 </script>
 
 <!-- ══════════════════════════════════════════════════════════════ -->
-<!-- Fit script —— 跟服务端 injectViewportFit 共契约 className，**不要动** -->
-<!-- iframe 内（CanvasFrame 预览）由 parent 自算 scale，window!==top 早退 -->
-<!-- ══════════════════════════════════════════════════════════════ -->
-<script>
-(function(){
-  if (window !== window.top) return;
-  var W = 1920, body = document.body;
-  var wrap = body.querySelector(':scope > .__nd-deck-wrap');
-  if (!wrap) return;
-  body.classList.add('__nd-fit-active');
-  function fit() {
-    var vw = Math.max(document.documentElement.clientWidth || 0, 320);
-    var s = vw / W;
-    wrap.style.transform = s !== 1 ? 'scale(' + s + ')' : '';
-    body.style.height = (wrap.scrollHeight * s) + 'px';
-  }
-  fit();
-  window.addEventListener('resize', fit);
-  if (document.fonts) document.fonts.ready.then(fit);
-})();
-</script>
-
-<!-- ══════════════════════════════════════════════════════════════ -->
-<!-- Keyboard nav (Phase D, 2026-05-06; deck-mode aware 2026-05-08)  -->
+<!-- Keyboard nav (deck-mode aware)                                  -->
 <!-- ←/PgUp = prev, →/Space/PgDn = next, Home/End = first/last       -->
 <!-- iframe 模式下父窗口（CanvasFrame）通过 postMessage 同步 SlideNavigator -->
 <!-- 多页才装；单页（dashboard / landing）自动 noop                    -->
@@ -618,14 +531,12 @@
   var sections = Array.prototype.slice.call(
     document.querySelectorAll('section[data-page]')
   );
-  if (sections.length < 2) return;  // 单页不需要翻页
+  if (sections.length < 2) return;
 
-  // 按 data-page 数值排序（支持非顺序写）
   sections.sort(function(a, b){
     return (parseInt(a.dataset.page, 10) || 0) - (parseInt(b.dataset.page, 10) || 0);
   });
 
-  // PPT 兜底：首屏给 page 1 加 .active（agent 漏写时也至少能见首页）
   if (deckMode === 'ppt' && sections.filter(function(s){ return s.classList.contains('active'); }).length === 0) {
     sections[0].classList.add('active');
   }
@@ -639,7 +550,6 @@
     } else if (deckMode === 'carousel') {
       sections[i].scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'start' });
     } else {
-      // stack（默认）+ custom 兜底
       sections[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
@@ -657,7 +567,6 @@
   }
 
   document.addEventListener('keydown', function(e){
-    // 编辑态（contenteditable / input / textarea）让位
     var t = e.target;
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     switch (e.key) {
@@ -676,11 +585,8 @@
     }
   });
 
-  // IntersectionObserver 跟踪用户手动滚动（鼠标滚轮 / 触控）时同步 current。
-  // ppt 模式 section 都 display:none / 叠在同位置，IO 不可用；ppt 下当前页由 .active 直接读。
   if (deckMode !== 'ppt' && 'IntersectionObserver' in window) {
     var io = new IntersectionObserver(function(entries){
-      // 取与 viewport 重叠最多的那段当 current
       var best = null;
       entries.forEach(function(en){
         if (!best || en.intersectionRatio > best.intersectionRatio) best = en;
@@ -699,7 +605,6 @@
     sections.forEach(function(s){ io.observe(s); });
   }
 
-  // 父窗口主动跳页（前端 SlideNavigator 点页码 / agent navigate_to_page）
   window.addEventListener('message', function(ev){
     if (!ev.data || ev.data.type !== 'canvas-go-page') return;
     var target = parseInt(ev.data.page, 10);
@@ -709,6 +614,62 @@
     });
     if (idx >= 0) go(idx);
   });
+})();
+</script>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- Mode-CSS 错配检测（iframe 内跑，postMessage warn 给 parent）      -->
+<!-- 比对 wrap.dataset.deckMode vs 实际 computed style                -->
+<!-- 不一致 → postMessage type='deck-mode-mismatch' 给 parent CanvasFrame -->
+<!-- iframe 早退后只在 iframe 内有意义；独立打开（top window）也可跑    -->
+<!-- data-nodesign-keep 让 build-standalone postprocess 永不删此脚本   -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<script data-nodesign-keep="mode-detect">
+(function(){
+  function check() {
+    var wrap = document.querySelector('.__nd-deck-wrap');
+    if (!wrap) return;
+    var declared = wrap.getAttribute('data-deck-mode') || 'stack';
+    if (declared === 'custom') return; // custom 自由不检测
+
+    var cs = getComputedStyle(wrap);
+    var firstSection = wrap.querySelector('section[data-page]');
+    var sectionCs = firstSection ? getComputedStyle(firstSection) : null;
+
+    // 推断实际 CSS 范式
+    var observed;
+    if (cs.display === 'flex' && (cs.overflowX === 'auto' || cs.overflowX === 'scroll')) {
+      observed = 'carousel';
+    } else if (sectionCs && sectionCs.position === 'absolute') {
+      observed = 'ppt';
+    } else {
+      observed = 'stack';
+    }
+
+    if (declared !== observed) {
+      var payload = {
+        type: 'deck-mode-mismatch',
+        declared: declared,
+        observed: observed,
+        wrapDisplay: cs.display,
+        wrapOverflowX: cs.overflowX,
+        sectionPosition: sectionCs ? sectionCs.position : null
+      };
+      try {
+        if (window.top !== window) {
+          window.parent.postMessage(payload, '*');
+        } else {
+          console.warn('[nd-mode-mismatch]', payload);
+        }
+      } catch (_e) { /* ignore */ }
+    }
+  }
+
+  if (document.readyState === 'complete') {
+    check();
+  } else {
+    window.addEventListener('load', check);
+  }
 })();
 </script>
 

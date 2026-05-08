@@ -24,6 +24,7 @@ import {
   getSessionWorkspace, getSharedDir, validateSessionId,
 } from '../projects/workspace.js';
 import { DECK } from '../shared/deck.js';
+import { fitInjectionBlock, normalizeModeCss } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml } from './exports/build-standalone.js';
 
 const router = express.Router();
@@ -431,20 +432,7 @@ async function prepareExportPage(browser, filePath, opts = {}) {
     return (wrap && wrap.getAttribute('data-deck-mode')) || 'stack';
   });
   if (deckMode === 'ppt' || deckMode === 'carousel') {
-    await page.addStyleTag({ content: `
-      .__nd-deck-wrap {
-        display: block !important;
-        flex-direction: initial !important;
-        overflow: visible !important;
-      }
-      section[data-page] {
-        display: block !important;
-        position: relative !important;
-        inset: auto !important;
-        opacity: 1 !important;
-        transform: none !important;
-      }
-    ` });
+    await page.addStyleTag({ content: normalizeModeCss(deckMode) });
   }
 
   const fallback = { w: DECK.width, h: DECK.height };
@@ -464,39 +452,10 @@ async function prepareExportPage(browser, filePath, opts = {}) {
  * 逻辑：scale(viewportWidth / DECK.width) 让任意视口宽都满铺 + 完整。
  * 仅在独立打开时生效（iframe 内 window!==top 早退，前端 CanvasFrame 自算 scale）。
  *
- * 兼容 agent 模板：agent 写的 wrapper 用同一个 className `.__nd-deck-wrap`，
- * 这里 querySelector 检测到已存在就复用，避免双层 wrap。
- *
- * className 选 `.__nd-deck-wrap` + classList `.__nd-fit-active` 跟 SKILL.md
- * 模板共享 —— 这是契约，改名要两端一起改。
+ * 行为升级（2026-05-08）：内部改调 server/api/standalone-fit.js 的 fitInjectionBlock()，
+ * 升级到 4 mode 感知（stack/ppt/carousel/custom）+ transform-origin: top left。
+ * 调用方零改动，老 deck（无 data-deck-mode attr）自动按 stack 兜底。
  */
-const VIEWPORT_FIT_SNIPPET = `
-<style id="__nd-fit-style">
-body{margin:0}
-body.__nd-fit-active{overflow-x:hidden;display:flex;flex-direction:column;align-items:center;background:var(--bg,#fff)}
-body.__nd-fit-active>.__nd-deck-wrap{width:${DECK.width}px;transform-origin:top center;flex-shrink:0}
-</style>
-<script>(function(){
-if(window!==window.top)return;
-var W=${DECK.width},body=document.body;
-var wrap=body.querySelector(':scope > .__nd-deck-wrap');
-if(!wrap){
-wrap=document.createElement('div');
-wrap.className='__nd-deck-wrap';
-while(body.firstChild&&body.firstChild!==wrap)wrap.appendChild(body.firstChild);
-body.appendChild(wrap);
-}
-body.classList.add('__nd-fit-active');
-function fit(){
-var vw=Math.max(document.documentElement.clientWidth||0,320);
-var s=vw/W;
-wrap.style.transform=s!==1?'scale('+s+')':'';
-body.style.height=(wrap.scrollHeight*s)+'px';
-}
-fit();window.addEventListener('resize',fit);
-if(document.fonts)document.fonts.ready.then(fit);
-})()</script>`;
-
 function injectViewportFit(html) {
   // 1. 替换 agent 写的固定 viewport meta → 响应式 viewport（让 fit script 控）
   if (/<meta\s+name=["']viewport["'][^>]*>/i.test(html)) {
@@ -511,14 +470,15 @@ function injectViewportFit(html) {
     );
   }
 
-  // 2. 插入自适应脚本到 </body> 或 </html> 之前；都没有就追加到末尾
+  // 2. 调 standalone-fit 拼完整 fit injection block 注入
+  const block = fitInjectionBlock();
   if (html.includes('</body>')) {
-    return html.replace('</body>', VIEWPORT_FIT_SNIPPET + '\n</body>');
+    return html.replace('</body>', block + '\n</body>');
   }
   if (html.includes('</html>')) {
-    return html.replace('</html>', VIEWPORT_FIT_SNIPPET + '\n</html>');
+    return html.replace('</html>', block + '\n</html>');
   }
-  return html + VIEWPORT_FIT_SNIPPET;
+  return html + block;
 }
 
 export default router;

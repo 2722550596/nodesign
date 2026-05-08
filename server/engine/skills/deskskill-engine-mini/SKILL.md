@@ -606,13 +606,15 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 
 ⚠️ **不要把 stack 错写成 ppt**：deck 内容很长（每页有大量信息）但选 ppt → 用户翻一页看到一屏，但内容被砍头不可滚 → 信息丢失。**ppt 的前提是每页内容能装在 1920×1080 单屏**，做不到就走 stack。
 
+⚠️ **常见漏点（系统 PostToolUse 自动检测）**：模板 `<style id="page-styles">` 已预置 3 个 mode（stack/ppt/carousel）的 CSS slice 注释切片，改 `data-deck-mode` 时取消对应那段注释即可。两个高发错：**ppt 漏 `.active` rule = 全空白**（fit script 兜底只补 `.active` class，不补 CSS rule），**carousel 漏 wrap `flex+overflow-x:auto` = preview 看似能滚但 SlideNavigator 点页码不动 / 离线 HTML 第一屏截短**。
+
 ### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
 
 预估这次产出 > 400 行（多页 deck / 复杂单页）就走"骨架优先"——单次 Write 短而稳定 / 单次 Edit 锚点小而唯一 / 失败只丢一页。预估 < 400 行（改字 / 单元素调整 / 加一页）直接 Edit 局部即可。
 
 **骨架优先 5 步**：
 
-1. Write canvas.html（≤ 400 行）— 基础设施一字不动 cp，design-tokens 按 plan palette 一次写完，body 里每页只放空骨架 section（含 `data-skeleton="<slug>"` 复合锚保唯一）
+1. Write canvas.html（≤ 400 行）— 基础设施一字不动 cp，design-tokens 按 plan palette 一次写完，body 里每页只放空骨架 section（含 `data-skeleton="<slug>"` 占位锚）。**关键元素的稳定锚走 `data-anchor`，不再写 `data-node-id`**（已废）—— anchor 是单写源，跨 turn 引用 / DirectEdit / 评论 pin 都从它取。骨架填完 Edit 时把 `data-skeleton="<slug>"` 替换成 `data-anchor="<slug>"`，**deck 内唯一**（重名加 `-pN` 页号后缀）
 2. expose_tweaks 一次（accent / hero / 排版密度）— 骨架 tokens 已稳定，用户可以一边调色一边等 agent 填页（首调 hook 注入 tweaks 完整语法）
 3. 逐页 Edit 填充 — 一次 Edit = 一页 = 替换整个空 section
 4. 涉及 React mount 的页填完后立即 Edit 把 `// §mount:N` 替换为组件实现
@@ -634,16 +636,16 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 
 ### Hybrid 选型按 deck-kind 分流（首选库组合）
 
-不同 deck-kind 的视觉与叙事重心不同，库的选择跟着分流。下表是各 kind 的**首选组合 + 反例**，第一次起手选库可以照表参考；具体页型决策仍按 § 页型决策表走。
+不同 deck-kind 的视觉与叙事重心不同，库的选择跟着分流。**库的选择跟着 deck-kind 分流**：importmap 已在模板预置 21 库（按 Core / 数据可视化 / 动效装饰 / 流程公式代码 / 专业组件 / Radix / 3D 七组分类），具体分组见 canvas.template.html 顶部 importmap 注释。下表是各 kind 的**首选组合 + 反例 + specific 场景指引**，第一次起手选库照表参考；具体页型决策仍按 § 页型决策表走。
 
 | deck-kind | 首选库组合 | 反例（用了通常不合身） |
 |---|---|---|
 | **emotion / ceremony** | `framer-motion` + `gsap` (scroll-trigger) + `generate_image` (cover/portrait/section-divider，referenceImages 跨页固定角色) + `lenis` (戏剧化 deck) | recharts 用不上；mermaid 不需要；shiki 不需要 |
-| **decision / academic** | `recharts` / `echarts` + `Card` + `Tabs` + `lucide-react` + 静态布局 | 不要堆 framer-motion 装饰；gsap 复杂动画在严肃场景显轻浮；3D 场景违和 |
-| **sales** | `recharts` (ROI / 增长曲线) + `Card` + `Tabs` (feature 阵列) + `framer-motion` (轻量 stagger) + `generate_image` (cover) | 不要 cinematic gsap timeline；3D 场景显花哨 |
+| **decision / academic** | `recharts` / `echarts` + `Card` + `Tabs` + `lucide-react` + 静态布局<br>—— **comparison-table / feature-cards / use-cases / 多 quadrant 对比时直接用模板自带 `<Card>` / `<Tabs>`**（不要堆 Tailwind grid 替代） | 不要堆 framer-motion 装饰；gsap 复杂动画在严肃场景显轻浮；3D 场景违和 |
+| **sales** | `recharts` (ROI / 增长曲线) + `Card` + `Tabs` (feature 阵列) + `framer-motion` (轻量 stagger) + `generate_image` (cover)<br>—— **feature 阵列 / variant 展示首选 `<Tabs>`**（visitors 一次扫一个 feature；> 4 件用 grid 或 embla） | 不要 cinematic gsap timeline；3D 场景显花哨 |
 | **funding** | `recharts` / `echarts` (市场规模 / 增长 / 财务) + `Card` (团队卡) + `framer-motion` (entry 动效适度) + `generate_image` (cover) | 装饰动画过重 = 不像专业 BP；mermaid 太工程感 |
-| **launch** (Apple Keynote 风) | `gsap` timeline (登场页 cinematic) + `generate_image` (产品 hero / 场景) + `framer-motion` (功能页 reveal) + `embla-carousel-react` (变体展示) + `three` + `r3f` (3D 产品旋转，确认要 3D 才用) | recharts 罕用；mermaid 不需要 |
-| **knowledge** (培训/教程) | `mermaid` (流程图 / 架构图 / 时序图) + `shiki` (代码块) + `react-katex` (公式) + `Card` (步骤) + `Tabs` (对比) | gsap 复杂动画分散学习注意力；3D 场景违和 |
+| **launch** (Apple Keynote 风) | `gsap` timeline (登场页 cinematic) + `generate_image` (产品 hero / 场景) + `framer-motion` (功能页 reveal) + `embla-carousel-react` (变体展示) + `three` + `r3f` (3D 产品旋转，确认要 3D 才用)<br>—— **variant 展示 / 产品配置切换用 `<Tabs>` (≤ 4) 或 `embla-carousel-react` (> 4)** | recharts 罕用；mermaid 不需要 |
+| **knowledge** (培训/教程) | `mermaid` (流程图 / 架构图 / 时序图) + `shiki` (代码块) + `react-katex` (公式) + `Card` (步骤) + `Tabs` (对比)<br>—— **对比 / 步骤切换 / 概念 vs 误区用 `<Tabs>`，多步骤平铺用 `<Card>` 阵列** | gsap 复杂动画分散学习注意力；3D 场景违和 |
 | **data** (报告 / 复盘) | `echarts` + `Card` + `Tabs` (drill-down) + 静态 hero（generate_image role='hero'） | 不要 r3f / lenis；framer-motion 限于数字 count-up |
 | **作品集**（决策汇报子场景）| `embla-carousel-react` (案例轮播) + `Card` (项目卡) + `framer-motion` (hover 反馈) + `generate_image` (cover / 项目 hero) | gsap 复杂 timeline 喧宾夺主 |
 
@@ -688,6 +690,8 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 - "这页核心是数字 / 图表 / 流程？" 是 → data-led
 - "图和文等量重要，且各占 40-50%？" 是 → hybrid
 - 都不是 → text-led（默认）
+
+⚠️ **决定 layout-role 后立即** `Read patterns/<role>.md`（image-led-cover / section-divider / portrait / quote-backdrop / text-led / hybrid-grid）拿到对应骨架 + 写法铁律 + 标记规约。模板已不带 6 个范例（避免心智被默认视觉锚定），patterns/ 是按需读的真实 reference。
 
 **3 条铁律**（写 image-led 必看）：
 1. 图传达的别再用文字重述

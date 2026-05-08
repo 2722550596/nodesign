@@ -151,6 +151,8 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `screenshot_canvas` | 截 canvas.html PNG（playwright 真渲染） | `viewport?` (默认 1920×1080) / `fullPage?` / `selector?` / `pageIndex?` |
 | `list_pages` | 扫所有 `<section data-page>` 返每页 1 行摘要 | 无参 |
 | `read_page` | 按 `pageIndex` 切片返该页 outerHTML（hybrid 文件还会附 React mount 源段） | `pageIndex` |
+
+> **Thumbnail 提示**：`list_pages` / `read_page` 返结果含 `assets/generated/<n>.<ext>` 引用时，preview iframe 加载的是 `.thumbnails/*.thumb.jpg` 快照（`/api/canvas` GET 透明改写），返回的 outerHTML 中 src 是真实路径（同 `Read canvas.html`）。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即可见最新。
 | `query_elements` | CSS selector 一次查全部匹配元素，返 anchor + bbox + text | `selector` / `pageIndex?` / `max?` |
 | `get_computed_styles` | `getComputedStyle()` 真值（不是 stylesheet 原声明） | `selector` / `props?` |
 | `navigate_to_page` | emit 事件让前端 canvas 切到 page N | `index` |
@@ -177,22 +179,22 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 > 在 deck 关键元素上加稳定锚点，让 agent 跨 turn 引用 / 用户评论 pin /
 > 前端 InspectFloatingCard 找元素都有靠。
 
-### 6 个标记 — 2 必装 + 2 关键 + 1 hybrid 专用 + 1 临时
+### 5 个标记 — 2 必装 + 1 关键 + 1 hybrid 专用 + 1 临时
+
+> `data-anchor` 是 NoDesign 跨 turn 引用 / DirectEdit / 用户评论 pin / findElementByAnchor 三层 fallback（anchor → path → textHint）的**唯一锚源**。**deck 内唯一**——重名加角色 / 页号后缀（`portrait-name-p3` / `cover-sub-1`）。2026-05-08 起 `data-node-id` 已废，不再写。
 
 | 属性 | 装在哪 | 用途 |
 |---|---|---|
 | `data-page="N"` | section 必装 | 分页（前端 SlideNavigator / list_pages 全靠它） |
 | `data-layout-role="<text-led \| image-led \| data-led \| hybrid>"` | section 必装 | 页型角色，跟 SKILL § 页型决策表联动 + 决定每页内容承载方式 |
-| `data-anchor="kebab-name"` | 每页 2-4 个关键元素 | agent 跨 turn 引用 + 用户评论 pin（**全文件唯一**） |
-| `data-node-id="<page>-<role>-<n>"` | 同上 | 前端找元素的稳定 id（findElementByAnchor 第一层） |
+| `data-anchor="kebab-name"` | 每页 2-4 个关键元素 | agent 跨 turn 引用 + 用户评论 pin + findElementByAnchor 锚源（**deck 内唯一**） |
 | `data-react-mount="<id>"` | **React mount 容器 div 必装** | DirectEdit guard 识别——不挂 contenteditable，防止 React re-render 覆盖用户改的字 |
 | `data-layout="<自由词>"` | section 选填 | layout 名 hint，list_pages 给你做总览；按隐喻自由命名 |
 | `data-skeleton="<slug>"` | section 临时（骨架优先模式）| 骨架先行写法的占位锚——空 section 等待逐页 Edit 填充时用，填完应替换成 `data-anchor`（slug 保留作为 vision-checker 反查锚）。详见 SKILL § 起手式骨架优先 5 步 |
 
 ### 命名规范
 
-- `data-anchor` 用 kebab-case：`cover-title` / `page-2-section-title` / `closing-thanks`
-- `data-node-id` 用 `<page-context>-<role>-<n>`：`cover-title-1`
+- `data-anchor` 用 kebab-case；deck 内唯一；冲突时加 `-pN` 页号后缀（`portrait-name-p3`）或角色后缀（`cover-sub-detail`）
 - `data-react-mount` 用语义 id，跟 `<div id="xxx-mount">` 一致：`chart-mount` / `gallery-mount`
 
 ### 给标记加多少 / 何时加
@@ -230,6 +232,12 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 4. 处理完所有 items 后**必调** `mcp__nodesign__clear_pending_changes`（无参，全清）
 5. **收尾时**：在最终回复里**总结处理了哪些 pending changes**
 
+### Canvas 一致性自动校验（PostToolUse 反馈通道）
+
+每次 Edit/Write `canvas.html` 后，系统自动跑 5 项校验：mode-CSS 一致性 / carousel-ppt 必装 CSS / data-anchor 唯一性 / data-layout 推荐组件 reach-for / data-layout-role 必装。检出 issue 时下一轮 prompt 头会注 `<system-reminder>[canvas-validate]` 段——这是**系统通知**不是用户消息，看到酌情修；如确认是有意为之（custom mode / 故意命名重复等）忽略即可，反馈通道不阻塞流程。
+
+> ⚠️ **Carousel/PPT mode 时 wrap CSS 必匹配**（ppt 必装 `.active` 切换 rule；carousel 必装 wrap `display:flex / overflow-x:auto`）；漏写系统会自动检测 warn，导出/preview fallback 当 stack 渲染避免破到用户脸上，但不修 = 用户翻页失灵。模板 `<style id="page-styles">` 已预置 3 mode CSS slice 注释切片，改 `data-deck-mode` 时取消对应那段注释一步到位。
+
 ### React mount section 不做 contenteditable
 
 **重要（hybrid 范式）**：用户双击 React mount 容器内的文字，前端 DirectEditBridge **自动跳过**——因为 React re-render 会覆盖用户改的字。
@@ -263,8 +271,10 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 ## Hybrid 范式骨架（2026-05-06 起所有 deck 默认）
 
-> 起手 cp `canvas.template.html` 改写——session 创建时系统已把模板拷到 cwd，预置全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件 / 键盘翻页 / image CSS vars。
+> 起手 cp `canvas.template.html` 改写——session 创建时系统已把模板拷到 cwd，预置全家桶 importmap（21 库 + deck-kind 分组注释）/ Babel / Tailwind / 4 个 shadcn 组件（`__nd-shadcn-lite`）/ 键盘翻页 / mode-detect / image CSS vars。fit script 由系统在导出 / 独立打开时注入（模板不带）。
 > 详细选型决策表（什么时候 React mount / 什么时候纯静态）见 SKILL.md § Stage 3。
+
+> **决定每页 layout-role 后** → 主动 `Read server/engine/skills/deskskill-engine-mini/patterns/<role>.md` 拿对应骨架 reference（标记规约 / 铁律 / 最小代码片段）—— 6 个 role：image-led-cover / section-divider / portrait / quote-backdrop / text-led / hybrid-grid。**不读 patterns 直接照搬模板范例 = 心智被锚定到 default 视觉**（模板已只留 PAGE 1 cover + PAGE 2 React mount + PAGE 3 closing 真实 section）。
 
 ### 1 文件 4 类内容
 
@@ -302,6 +312,8 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 ### 全家桶库速查（importmap 已声明，agent `import` 即用）
 
+> **按 deck-kind 快速选型**见 SKILL.md § Hybrid 选型按 deck-kind 分流；**按 importmap 分组**速览见 canvas.template.html 顶部 importmap 注释。本表是按"内容类型"微观查（"我要画图表→recharts"），跨表 lookup 互补。
+
 | 库 | 用在 |
 |---|---|
 | `recharts` / `echarts` + `echarts-for-react` | 数据图表（recharts 西式简洁 / echarts 中文 a11y 全） |
@@ -319,7 +331,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 ### 4 个 inline shadcn 组件（template 自带，直接用不需 import）
 
-`<Card>` `<Button>` `<Badge>` `<Tabs>`（详见 canvas.template.html 内置注释）。需要更全 a11y 自己 `import * as Tabs from '@radix-ui/react-tabs'`。
+`<Card>` `<Button>` `<Badge>` `<Tabs>`（详见 canvas.template.html `<script id="__nd-shadcn-lite">` 段）。**comparison-table / feature-cards / use-cases / variant-showcase 等场景直接 reach for**。需要更全 a11y / 键盘 → `import * as Tabs from '@radix-ui/react-tabs'`（importmap 已就位）。
 
 ### Hybrid 几个常坑
 
@@ -327,6 +339,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 - ⚠️ **JSX 里 placeholder 用纯文本不带花括号** —— `<h1>改我</h1>` 而不是 `<h1>{改我}</h1>`
 - ⚠️ **`position: absolute` 锚 section 内部元素，不用 `position: fixed`** —— transform: scale 后 fixed 锚 wrap 不锚 viewport，会失效。注意：这是说 section **内部** 元素的锚定方式；section 自身的 layout 由 deck-mode 决定（stack 默认 relative / ppt absolute / carousel flex item — 详见 SKILL § Deck render mode）
 - ⚠️ **flex 撑高度，避免 `h-[calc(100%-Npx)]`** —— hardcode N 在不同视口/字体下易溢出，用 `flex-1 min-h-0` 让 flex 自然撑
+- ⚠️ **改 `data-deck-mode` 时 CSS 必同步** —— ppt 漏 `.active` rule 全空白 / carousel 漏 wrap `flex+overflow-x:auto` 看似能滚但导出第一屏卡死。系统 PostToolUse 会自动检测错配 warn；模板 `<style id="page-styles">` 已预置 3 mode CSS slice 注释切片，取消对应注释即可
 
 ---
 

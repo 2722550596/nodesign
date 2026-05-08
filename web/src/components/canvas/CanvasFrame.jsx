@@ -169,6 +169,21 @@ export default function CanvasFrame({
           }));
         } catch { /* ignore */ }
       }
+      // 2026-05-08：deck-mode 错配检测（iframe 内 detection script emit）
+      // 仅 dispatch CustomEvent，关心的组件（dev tool / future toast）按需订阅
+      if (data.type === 'deck-mode-mismatch') {
+        try {
+          window.dispatchEvent(new CustomEvent('nd-canvas-mode-mismatch', {
+            detail: {
+              declared: data.declared,
+              observed: data.observed,
+              wrapDisplay: data.wrapDisplay,
+              wrapOverflowX: data.wrapOverflowX,
+              sectionPosition: data.sectionPosition,
+            },
+          }));
+        } catch { /* ignore */ }
+      }
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);

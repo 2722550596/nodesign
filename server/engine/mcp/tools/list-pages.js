@@ -82,10 +82,18 @@ Lighter than read_page (which returns full outerHTML of one page).`,
           };
         }
 
+        // Thumbnail hint：thumbnails 目录存在时 prepend 让 agent 知道 preview vs 真实 src 差别
+        let thumbnailHint = '';
+        try {
+          await fs.access(path.join(workspaceRoot, 'assets', 'generated', '.thumbnails'));
+          thumbnailHint = '[hint] N 页摘要中若含 image url，preview iframe 加载的是 thumbnail 快照；'
+            + 'HTML 文件中的 src 是真实路径（同 Read canvas.html）。\n\n';
+        } catch { /* no thumbnails dir */ }
+
         return {
           content: [{
             type: 'text',
-            text: `${pages.length} page(s):\n\n${JSON.stringify(pages, null, 2)}`,
+            text: `${thumbnailHint}${pages.length} page(s):\n\n${JSON.stringify(pages, null, 2)}`,
           }],
         };
       } catch (err) {

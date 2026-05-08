@@ -105,7 +105,8 @@ Returns up to 50 matches; further results truncated with a hint.`,
 
           const items = slice.map((el) => {
             const r = el.getBoundingClientRect();
-            const dataId = el.getAttribute('data-node-id') || null;
+            // anchor 单写：dataId 字段值改读 data-anchor（跟前端 serializeAnchor 一致）
+            const dataId = el.getAttribute('data-anchor') || null;
             const text = (el.textContent || '').trim();
             const dataAttrs = {};
             for (const a of Array.from(el.attributes)) {
