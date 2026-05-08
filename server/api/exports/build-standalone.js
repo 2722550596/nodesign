@@ -695,6 +695,43 @@ async function fetchAsBase64(url) {
   return dataUrl;
 }
 
+/**
+ * 解析 unicode-range 字符串为 [start, end] 数组。
+ * 支持：U+0041 / U+0041-005A / U+30?? (wildcards 替换为 0/F)
+ *
+ * @param {string} rangeStr "U+0000-00FF, U+0131, ..."
+ * @returns {Array<[number, number]>}
+ */
+function parseUnicodeRange(rangeStr) {
+  return rangeStr.split(',').map(r => r.trim()).map(r => {
+    const m = r.match(/^U\+([0-9A-Fa-f?]+)(?:-([0-9A-Fa-f]+))?$/);
+    if (!m) return null;
+    const startHex = m[1].replace(/\?/g, '0');
+    const endHex = m[2] || m[1].replace(/\?/g, 'F');
+    const start = parseInt(startHex, 16);
+    const end = parseInt(endHex, 16);
+    if (Number.isNaN(start) || Number.isNaN(end)) return null;
+    return [start, end];
+  }).filter(Boolean);
+}
+
+/**
+ * 检查 @font-face 块的 unicode-range 是否跟 deck 用到的字符有交集。
+ * 没声明 unicode-range 的块认为匹配（无范围限制即覆盖全字符）。
+ */
+function fontFaceBlockNeeded(block, usedCharCodes) {
+  const m = block.match(/unicode-range\s*:\s*([^;}]+)/i);
+  if (!m) return true;
+  const ranges = parseUnicodeRange(m[1]);
+  if (ranges.length === 0) return true;
+  for (const cp of usedCharCodes) {
+    for (const [s, e] of ranges) {
+      if (cp >= s && cp <= e) return true;
+    }
+  }
+  return false;
+}
+
 async function inlineGoogleFonts(html) {
   // 找所有 Google Fonts CSS link
   const linkRe = /<link\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi;
@@ -707,9 +744,17 @@ async function inlineGoogleFonts(html) {
     }
   }
 
+  if (matches.length === 0) return html;
+
+  // 一次性扫描整个 HTML 提取所有 codepoint（粗扫，包括 script/style/comment 内容也算。
+  // 安全过头比漏字符强 —— 漏字符 = 用户看到 □ tofu 灾难性，过头只是多 inline 一两个块）
+  const usedCharCodes = new Set();
+  for (const c of html) {
+    usedCharCodes.add(c.codePointAt(0));
+  }
+
   let out = html;
 
-  // 批量处理每个 link
   for (const { fullTag, href } of matches) {
     let cssText;
     try {
@@ -727,30 +772,49 @@ async function inlineGoogleFonts(html) {
       continue;  // fail-soft 保留原 link
     }
 
-    // CSS 里 url(...woff2/woff/ttf/otf) → base64
+    // 拆 @font-face 块按 unicode-range 子集匹配 ——
+    // CJK 字体 (Noto Sans SC) 1 个 weight 能拆 7 个 range × 多 weight = 几十个 woff2，
+    // 全 inline 文件能上百 MB。按用到的字符过滤 unicode-range 后 latin-only deck 通常
+    // 只剩 1-2 个块、~50KB；CJK deck 也只 inline 实际用到的 range（也可能 5-10MB 但
+    // 不再是百 MB 灾难）
+    const blockRe = /@font-face\s*\{[^}]*\}/g;
+    const allBlocks = [...cssText.matchAll(blockRe)].map(x => x[0]);
+    const keptBlocks = allBlocks.filter(b => fontFaceBlockNeeded(b, usedCharCodes));
+
+    // 不在 @font-face 块里的 CSS 内容（注释 / 其他 rule）保留
+    const nonBlockCss = cssText.replace(blockRe, '').trim();
+    let assembledCss = (nonBlockCss ? nonBlockCss + '\n' : '') + keptBlocks.join('\n');
+
+    if (allBlocks.length > 0) {
+      console.log(`[build-standalone] fonts inline: ${keptBlocks.length}/${allBlocks.length} @font-face kept (${href})`);
+    }
+
+    // 收集 keptBlocks 内的 woff2 url，base64 fetch（别的 url 不动）
     const fontUrlRe = /url\(\s*(?:"([^"]+)"|'([^']+)'|([^)\s]+))\s*\)/g;
-    const fontUrls = [];
-    let fm;
-    while ((fm = fontUrlRe.exec(cssText)) !== null) {
-      const u = fm[1] || fm[2] || fm[3];
-      if (u && /^https?:\/\/.*\.(woff2|woff|ttf|otf)(?:[?#]|$)/i.test(u)) {
-        fontUrls.push(u);
+    const fontUrls = new Set();
+    for (const block of keptBlocks) {
+      let fm;
+      const localRe = new RegExp(fontUrlRe.source, 'g');
+      while ((fm = localRe.exec(block)) !== null) {
+        const u = fm[1] || fm[2] || fm[3];
+        if (u && /^https?:\/\/.*\.(woff2|woff|ttf|otf)(?:[?#]|$)/i.test(u)) {
+          fontUrls.add(u);
+        }
       }
     }
 
-    const uniq = [...new Set(fontUrls)];
+    const uniq = [...fontUrls];
     const results = await Promise.allSettled(uniq.map(u => fetchAsBase64(u)));
-    let processedCss = cssText;
     for (let i = 0; i < uniq.length; i++) {
       const r = results[i];
       if (r.status === 'fulfilled') {
-        processedCss = processedCss.split(uniq[i]).join(r.value);
+        assembledCss = assembledCss.split(uniq[i]).join(r.value);
       } else {
         console.warn(`[build-standalone] font file fetch failed: ${uniq[i]} (${r.reason?.message})`);
       }
     }
 
-    const styleTag = `<style id="__nd-google-fonts-inlined">\n${processedCss}\n</style>`;
+    const styleTag = `<style id="__nd-google-fonts-inlined">\n${assembledCss}\n</style>`;
     out = out.split(fullTag).join(styleTag);
   }
 
