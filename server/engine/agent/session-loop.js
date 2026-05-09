@@ -75,8 +75,9 @@ import {
  * 但 SKILL.md prompt 软约束规定"方向对齐了再生图"，避免一上来就画的浪费。
  */
 const PLAN_MODE_DENY = new Set([
-  // 写入主产物（canvas.html 等）
-  'Write', 'Edit', 'MultiEdit',
+  // 写入主产物（canvas.html 等）—— MultiEdit 是 Code CLI 工具不在 SDK 里，
+  // DEFAULT_TOOL_ALLOWLIST 也不含；这里 deny 只是冗余防御，删了
+  'Write', 'Edit',
   // shell 任意命令（plan 期间不允许 git/playwright/zip/...）
   'Bash',
   // NoDesign MCP 工具：动 canvas 渲染状态 / 决策档案 / 成品打包
@@ -284,7 +285,7 @@ export async function runSession({
     // brainstorm + 探索 + 候选样张，但**不能动主产物 / 跑 shell / 落决策档案**。
     // - 允许：Read/Grep/Glob/WebFetch/Task/AskUserQuestion，以及
     //   mcp__nodesign__web_search / mcp__nodesign__generate_image（探索性候选样张）
-    // - 拒绝：Write/Edit/MultiEdit/Bash + screenshot_canvas / expose_tweaks /
+    // - 拒绝：Write/Edit/Bash + screenshot_canvas / expose_tweaks /
     //   record_decision / export_handoff / navigate_to_page / highlight 等动状态工具
     // 拒绝时 message 解释让 agent 改流程（先 ExitPlanMode 提交 plan 让用户批）。
     canUseTool: async (toolName, input, options) => {

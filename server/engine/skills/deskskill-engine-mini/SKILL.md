@@ -754,19 +754,24 @@ theme: { extend: { fontFamily: {
 / Ma Shan Zheng（马善政）/ Liu Jian Mao Cao（刘建毛草）/ Zhi Mang Xing（志愿行）
 / Smiley Sans（得意黑，开源社区版）。用之前同样要在 Google Fonts link 里 import。
 
-### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
+### 起手式：cp canvas.template.html → Edit 改差异 → 逐页 Edit 填充
 
-预估这次产出 > 400 行（多页 deck / 复杂单页）就走"骨架优先"——单次 Write 短而稳定 / 单次 Edit 锚点小而唯一 / 失败只丢一页。预估 < 400 行（改字 / 单元素调整 / 加一页）直接 Edit 局部即可。
+工作区开盘自带 `canvas.template.html`（667 行 / 38KB——21 库 importmap / Tailwind config / Babel / shadcn-lite 4 件 / 字体 4 段 chain，全是不动的 boilerplate）。Write 复述等于把它再敲一次 8k+ tokens，且 fontFamily / importmap key 一个字符漏写就崩 —— 近期修过 3 次复述漏字符的 Tailwind config bug。`cp` 一行解决，每次 Edit 只发 oldString/newString diff，让改动集中在真正差异化的部分。
 
-**骨架优先 5 步**：
+**5 步流程**：
 
-1. Write canvas.html（≤ 400 行）— 基础设施一字不动 cp，design-tokens 按 plan palette 一次写完，body 里每页只放空骨架 section（含 `data-skeleton="<slug>"` 占位锚）。**关键元素的稳定锚走 `data-anchor`，不再写 `data-node-id`**（已废）—— anchor 是单写源，跨 turn 引用 / DirectEdit / 评论 pin 都从它取。骨架填完 Edit 时把 `data-skeleton="<slug>"` 替换成 `data-anchor="<slug>"`，**deck 内唯一**（重名加 `-pN` 页号后缀）
-2. expose_tweaks 一次（accent / hero / 排版密度）— 骨架 tokens 已稳定，用户可以一边调色一边等 agent 填页（首调 hook 注入 tweaks 完整语法）
-3. 逐页 Edit 填充 — 一次 Edit = 一页 = 替换整个空 section
-4. 涉及 React mount 的页填完后立即 Edit 把 `// §mount:N` 替换为组件实现
+1. `Bash cp canvas.template.html canvas.html`
+2. **依次 Edit 4 处差异化部分**：`<title>` / `<style id="design-tokens">` 里 `:root {}` 整组（按 plan palette 覆盖 --bg / --ink / --accent / --muted，整段 oldString → newString 一次替换）/ `<div class="__nd-deck-wrap" data-deck-aspect="...">` 比例（Stage 0 跟用户对齐过的那个）/ 删 PAGE 2/3 范例 section + 替换为 plan 的 N 页空骨架（每页 `data-anchor="<slug>"` deck 内唯一，重名加 `-pN` 页号后缀）。每次 Edit 只发 diff 不发整文件，比 Write 复述模板省 90%+ output tokens；同字符串多处批量改用 `replace_all: true`（详见 prelude § 看到错直面根因）。PAGE 1 cover 可改字保留也可一并替换
+3. expose_tweaks 一次（accent / hero / 排版密度）—— 骨架 tokens 已稳定，用户可一边调色一边等 agent 填页
+4. 逐页 Edit 填充 —— 一次 Edit = 一页 = 替换整个空 section；React mount 实现写在底部 `<script id="__nd-app">`
 5. 关键页（封面 / 数据页 / 章节扉页）填完立即 screenshot_canvas 自检
 
 **Edit 前顺手核对锚点**：从第 2 页开始 / 跨 turn / vision-checker 跑过之后再改，先 `mcp__nodesign__read_page N` 切片读单页或 `grep -n` 确认锚还在，硬猜 oldString 第二次容易变成重写整段。
+
+**边界场景**：
+
+- canvas.html 已存在 → 直接 Edit（resume / Tweaks Apply / 改字 / 单页极简改动），不重 cp 覆盖
+- 用户明示"完全自己写 / 不用 hybrid 全家桶" → Write 起手（template 不合身才放弃 cp 路径）
 
 ### Hybrid 决策：什么时候用 React mount，什么时候纯静态
 

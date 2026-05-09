@@ -15,7 +15,7 @@
 - TodoWrite
 
 ⛔ **canUseTool 会拒**（动主产物 / 决策档案 / 打包是 generate 阶段的活，plan 期间被 deny）：
-- Write / Edit / MultiEdit（含 canvas.html）
+- Write / Edit（含 canvas.html）
 - Bash（任何 shell 命令）
 - mcp__nodesign__screenshot_canvas / expose_tweaks / record_decision /
   export_handoff / navigate_to_page / highlight / clear_pending_changes
