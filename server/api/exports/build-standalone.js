@@ -433,6 +433,17 @@ export async function extractTailwindCss(rawHtml, agentFontFamily = null) {
     for (const [key, list] of Object.entries(agentFontFamily)) {
       if (!Array.isArray(list) || list.length === 0) continue;
       finalFontFamily[key] = list;  // 原样覆盖
+
+      // dev warn: agent chain 短于 4 段时给开发者排查信号（不改 merge 行为，trust 设计保留）
+      // 4 段铁律：latin → 苹果 CJK（PingFang/Songti）→ Noto CJK（inline 兜底）→ generic
+      // 不足 4 段在 Linux/Windows 没装 latin family 时 fallback 链断，跨平台字体效果可能跟设计意图差很远
+      if (list.length < 4) {
+        console.warn(
+          `[build-standalone] agent fontFamily.${key} 只有 ${list.length} 段 chain，` +
+          `跨平台可能 fallback 不全（建议 4 段：latin → 苹果 CJK → Noto CJK → generic）。` +
+          `当前 chain: ${JSON.stringify(list)}`
+        );
+      }
     }
   }
 
