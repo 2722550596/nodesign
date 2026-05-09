@@ -27,6 +27,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import { fitInjectionBlock } from '../standalone-fit.js';
 
 const execFileAsync = promisify(execFile);
@@ -96,7 +97,11 @@ export async function buildStandaloneHtml(rawHtml, opts = {}) {
   const bundledJs = await bundleBabelScripts(parsed.babelScripts, parsed.importmap);
 
   // 3. extract Tailwind used CSS（tailwindcss CLI on stdin）—— commit 2 填实现
-  const tailwindCss = await extractTailwindCss(rawHtml);
+  // 把 agent 解析出的 fontFamily 传进去 merge superset，否则 agent 选的 latin
+  // family（Manrope / Playfair / Geist / Lyon 等）在 build 时会被 hardcoded
+  // superset 的 'Inter' / 'Instrument Serif' 覆盖，导出 PDF/PPT 英文字体跟
+  // preview 不一致（preview 走运行时 Tailwind config 看着对、导出错的根因）。
+  const tailwindCss = await extractTailwindCss(rawHtml, parsed.agentFontFamily);
 
   // 4-7. 重写 HTML —— inline 所有外部 CDN
   let html = assembleStandaloneHtml({
@@ -167,11 +172,63 @@ export function parseHybridDoc(html) {
   const tailwindConfigMatch = scan.match(/<script>[\s\S]*?tailwind\.config[\s\S]*?<\/script>/i);
   const tailwindConfigTag = tailwindConfigMatch ? tailwindConfigMatch[0] : null;
 
+  // 解析 tailwind.config 里 agent 写的 fontFamily（agent 选的 latin family——
+  // Manrope / Playfair Display / Geist / Lyon 等）。提取出来后 build 阶段 merge
+  // 到 superset，否则 build-standalone 编译 Tailwind class 用硬编码 superset，
+  // agent 选的 latin family 在 PDF/PPT 导出里会被 override 成 Inter / Instrument
+  // Serif（preview 看着对、导出看着错的根因）。fail-soft：解析失败不抛错。
+  let agentFontFamily = null;
+  if (tailwindConfigTag) {
+    agentFontFamily = extractAgentFontFamily(tailwindConfigTag);
+  }
+
   // Babel standalone tag —— 删除（已 esbuild 预编译）
   const babelCdnMatch = scan.match(/<script[^>]*src=["'][^"']*@babel\/standalone[^"']*["'][^>]*><\/script>/i);
   const babelCdnTag = babelCdnMatch ? babelCdnMatch[0] : null;
 
-  return { importmap, importmapTagFull, babelScripts, tailwindCdnTag, babelCdnTag, tailwindConfigTag };
+  return { importmap, importmapTagFull, babelScripts, tailwindCdnTag, babelCdnTag, tailwindConfigTag, agentFontFamily };
+}
+
+/**
+ * 从 `<script>tailwind.config = {...}</script>` tag 内容里提取 fontFamily 对象。
+ *
+ * agent 写法多样（单引号 / 双引号 / 多种 indent），用 vm 沙箱跑代码 + 拿
+ * fontFamily —— 比正则鲁棒，比 acorn AST 解析轻量。沙箱 context 只暴露空对象，
+ * 跑出问题（语法错 / 引用未定义符号）也只影响该函数返 null，不阻塞导出。
+ *
+ * @param {string} tagText `<script>...</script>` 完整 tag
+ * @returns {Record<string, string[]> | null} fontFamily 对象 或 null
+ */
+function extractAgentFontFamily(tagText) {
+  try {
+    // 抽 <script> 标签里的代码
+    const codeMatch = tagText.match(/<script>([\s\S]*?)<\/script>/i);
+    if (!codeMatch) return null;
+    const code = codeMatch[1];
+
+    // 用 Node vm 沙箱跑：模拟 tailwind 全局对象，让 `tailwind.config = {...}` 赋值
+    // 后能从沙箱拿到 config.theme.extend.fontFamily
+    // 不用 eval/new Function 避免污染主进程作用域
+    const sandbox = { tailwind: { config: null } };
+    runInNewContext(code, sandbox, { timeout: 200 });
+    const ff = sandbox?.tailwind?.config?.theme?.extend?.fontFamily;
+    if (!ff || typeof ff !== 'object') return null;
+
+    // 校验每个 key 的 value 是 string[]（agent 偶尔会写 string，规范化）
+    const out = {};
+    for (const [key, val] of Object.entries(ff)) {
+      if (Array.isArray(val) && val.every(s => typeof s === 'string')) {
+        out[key] = val;
+      } else if (typeof val === 'string') {
+        out[key] = [val];
+      }
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  } catch (err) {
+    // sandbox 跑挂（agent 引用了未定义的全局符号 / 语法错）—— 静默返 null，
+    // build 阶段会用 superset
+    return null;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -322,6 +379,7 @@ function esmShHttpPlugin(importmapImports) {
 // Step 3 · extractTailwindCss (commit 2 实现)
 // ──────────────────────────────────────────────────────────────────
 
+
 /**
  * 跑 tailwindcss CLI 提取该 HTML 实际用到的 utility class 对应的 CSS。
  *
@@ -331,39 +389,60 @@ function esmShHttpPlugin(importmapImports) {
  *   - cleanup tmp file
  *
  * @param {string} rawHtml
+ * @param {Record<string, string[]> | null} [agentFontFamily] — agent 在原 HTML
+ *   tailwind.config 里写的 fontFamily（parseHybridDoc 解析），merge 优先级最高。
+ *   不给 / null 时只用 superset 默认。
  * @returns {Promise<string>} minified CSS（含 base reset + agent 用到的所有 utility）
  */
-export async function extractTailwindCss(rawHtml) {
+export async function extractTailwindCss(rawHtml, agentFontFamily = null) {
   // 写 raw html 到 tmpfile，tailwindcss CLI 扫描它的 class
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-tw-'));
   const htmlPath = path.join(tmpDir, 'src.html');
   const cfgPath = path.join(tmpDir, 'tailwind.config.js');
   const inputCssPath = path.join(tmpDir, 'in.css');
 
-  // minimal tailwind.config —— 不重要的 fontFamily 也加，让 font-display 等不被 purge
-  // 注：raw HTML 里的 inline `tailwind.config = {...}` 在运行时设过，这里 build 阶段
-  // 我们走 tailwindcss CLI 不再读 inline config。我们给一个 superset config 保证不缺。
+  // ── superset fontFamily（兜底）──
+  // 当 agent 没在 inline tailwind.config 里 extend fontFamily 时，用这份 superset。
   //
-  // ⚠️ 字体 chain 4 段式（必须跟 SKILL.md 字体 chain 铁律 + canvas.template.html 一致）：
-  //   latin → 苹果 CJK（PingFang/Songti，server 装了苹果字体）→ Noto CJK（inline 兜底）→ generic
+  // ⚠️ 字体 chain 4 段式（跟 SKILL.md 铁律 + canvas.template.html 一致）：
+  //   latin → 苹果 CJK（PingFang/Songti）→ Noto CJK（inline 兜底）→ generic
   //
-  // 历史教训：之前 sans 是 ['Inter', 'system-ui', 'sans-serif']、display 是 ['Instrument
-  // Serif', 'serif']，没有 PingFang/Noto SC——导致 agent 即使在原 HTML 里写了 4 段
-  // chain，server bake 时 tailwindcss CLI 用这份硬编码 superset 重新跑，把 font-sans
-  // / font-serif 等 Tailwind class 编译成老 chain（不含 CJK）。font-serif 更夸张：
-  // 没 extend 直接用 Tailwind 默认 [ui-serif, Georgia, ...]，CJK 走 generic 全错。
-  //
-  // serif 也补一份 extend，不然 class="font-serif" 编译出 Tailwind 默认无 CJK chain。
+  // 历史教训：
+  //   1. 之前没 PingFang/Noto SC——导致 agent 即使在原 HTML 写了 4 段 chain，
+  //      build 时 tailwindcss CLI 用 superset 编译，font-sans / font-serif 等
+  //      Tailwind class 全是老 chain（无 CJK）。font-serif 更夸张：没 extend
+  //      直接用 Tailwind 默认 [ui-serif, Georgia, ...]，CJK 走 generic 全错。
+  //   2. agent 选 Manrope / Playfair / Geist 等 latin family，但 build superset
+  //      硬编码 sans=Inter / display=Instrument Serif —— agent 选的 latin family
+  //      在导出 PDF/PPT 里被 override 成 Inter，preview 看着对、导出英文错。
+  //      为修第 2 条：parseHybridDoc 解析 agent inline config 提取 fontFamily，
+  //      在这里 merge 进 superset，agent 选的 family 优先（见 finalFontFamily）。
+  const supersetFontFamily = {
+    sans:    ['Inter', 'PingFang SC', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+    serif:   ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
+    mono:    ['JetBrains Mono', 'monospace'],
+    display: ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
+  };
+
+  // ── merge：agent 写什么 build 就用什么 ──
+  // agent 是 senior，css 字体 chain 是设计意图——不要 second-guess、不要"贴心"
+  // 自动补 CJK / generic。SKILL.md 已经教 agent 写 4 段 chain，agent 自己负责
+  // 完整性。agent 没写的 key 才用 superset 兜底。
+  const finalFontFamily = { ...supersetFontFamily };
+  if (agentFontFamily && typeof agentFontFamily === 'object') {
+    for (const [key, list] of Object.entries(agentFontFamily)) {
+      if (!Array.isArray(list) || list.length === 0) continue;
+      finalFontFamily[key] = list;  // 原样覆盖
+    }
+  }
+
+  const fontFamilyJson = JSON.stringify(finalFontFamily, null, 6).replace(/^/gm, '      ').trim();
+
   const config = `module.exports = {
   content: ['${htmlPath}'],
   theme: {
     extend: {
-      fontFamily: {
-        sans:    ['Inter', 'PingFang SC', 'Noto Sans SC', 'system-ui', 'sans-serif'],
-        serif:   ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
-        mono:    ['JetBrains Mono', 'monospace'],
-        display: ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
-      },
+      fontFamily: ${fontFamilyJson},
     },
   },
   // 不开 corePlugins.preflight=false：保留 Tailwind base reset（tile 默认含 box-sizing 等基础）
