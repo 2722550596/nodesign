@@ -38,6 +38,90 @@ sudo apt install -y bubblewrap socat
 
 ---
 
+## 1.5. macOS 字体（PDF/PPT 字体跟 Mac preview 对齐 — 内部用）
+
+**为什么必装**：agent 写的 css 通常是 `font-family: 'Playfair', serif` /
+`'Inter', system-ui, sans-serif` 这种 generic fallback。Mac 浏览器看到 generic
+`serif` 命中 Songti SC（系统宋体），`system-ui` 命中 PingFang SC——所以 preview
+看着对。Linux server 端 Chromium 默认 generic 命中 Liberation Serif / DejaVu Sans
+（都是 latin only），CJK 字符进一步 fallback 到 Noto Sans 之类——跟 preview 完全
+不一样。
+
+装上 macOS 字体 + fontconfig alias 后，Linux server 的 generic family 也命中
+PingFang/Songti，PDF/PPT 跟 preview 1:1。
+
+**⚠️ 法律边界**：苹果字体（PingFang / Songti / SF Pro）是 Apple 商业授权字体，
+**仅限内部用**。这套配置只让 server 端渲染 PDF/PPT 时本地用，不内联到 baked HTML
+里外传给最终用户（baked HTML 仍用 Google Fonts inline 的 Noto SC/Serif SC）。
+不能用于商业化对外产品/SaaS 公开提供给非内部用户的场景。
+
+### 步骤
+
+**A. 在 Mac 上拷字体（在你本地 Mac 跑）**
+
+```bash
+# 列出可用字体
+ls /System/Library/Fonts/ | grep -iE "pingfang|songti|stheiti|helvetica"
+
+# scp 上传到 server（替换 user@server）
+scp /System/Library/Fonts/PingFang.ttc \
+    /System/Library/Fonts/Songti.ttc \
+    "/System/Library/Fonts/STHeiti Light.ttc" \
+    "/System/Library/Fonts/STHeiti Medium.ttc" \
+    /System/Library/Fonts/Helvetica.ttc \
+    user@server:~/macos-fonts/
+```
+
+**B. SF Pro / SF Mono（可选但推荐）**
+
+Apple 公开发布过 SF Pro，从 [developer.apple.com/fonts/](https://developer.apple.com/fonts/)
+下载 SF-Pro-Mac.dmg / SF-Mono-Mac.dmg，挂载后里面是 .otf 文件。同样 scp 到 server。
+
+**C. 在 server 上跑 install 脚本**
+
+```bash
+# 默认从 ~/macos-fonts/ 读字体；如放别处用 MACOS_FONT_SRC=... 环境变量
+sudo bash /opt/nodesign/server/ops/install-macos-fonts.sh
+
+# 或显式指定源
+sudo MACOS_FONT_SRC=/tmp/fonts bash server/ops/install-macos-fonts.sh
+```
+
+脚本会：
+1. 拷字体到 `/usr/share/fonts/macos/`
+2. 拷 `server/ops/macos-fonts.conf` 到 `/etc/fonts/conf.d/99-macos.conf`
+3. `fc-cache -fv` 刷缓存
+4. 跑 `fc-match` 验证 generic 命中正确字体
+
+**D. 重启 NoDesign let Chromium 重新读 fontconfig**
+
+```bash
+pm2 restart nodesign
+```
+
+### 验证点
+
+```bash
+# 1. fontconfig 命中检查
+fc-match serif        # 应该是 Songti SC 或 STSong
+fc-match sans-serif   # 应该是 PingFang SC
+fc-match "PingFang SC"  # 应该返回 PingFang.ttc
+
+# 2. 跑一份新中文 deck 导 PDF + PPT，跟 Mac preview 对比字体应一致
+#    如果不一致，看 fc-match 是不是命中了苹果字体；不命中说明字体没装到位
+```
+
+### 卸载（如果出问题要回退）
+
+```bash
+sudo rm /etc/fonts/conf.d/99-macos.conf
+sudo rm -rf /usr/share/fonts/macos
+sudo fc-cache -fv
+pm2 restart nodesign
+```
+
+---
+
 ## 2. 拉代码 + 装依赖
 
 ```bash
