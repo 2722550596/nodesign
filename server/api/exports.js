@@ -137,8 +137,11 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
     }
 
     const filename = `${safeFilename(project.name)}.html`;
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // application/octet-stream 绕过 Cloudflare HTML 处理（Auto Minify / Rocket Loader）
+    // 否则 19MB base64 HTML 会被 CF 尝试 parse/minify → 吞吐降到 7KB/s
+    res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader('Cache-Control', 'no-store, no-transform');
     res.send(html);
   } catch (err) { next(err); }
 });

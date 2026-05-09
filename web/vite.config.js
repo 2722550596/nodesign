@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5174,
+    host: true,
     strictPort: false,
     // dev 时把 /api 和 /ws 都代理到后端 :4001
     proxy: {

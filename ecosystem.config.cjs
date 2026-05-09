@@ -31,11 +31,9 @@ module.exports = {
       autorestart: true,
       // 生产不 watch（开发用 npm run dev）
       watch: false,
-      // 内存超 1G 自动重启 —— playwright headless chromium 偶发膨胀时兜底
-      max_memory_restart: '1G',
-      // node 跑 server/index.js 时载 .env（npm start 已经 --env-file-if-exists=.env）
-      // pm2 直接 script 启动时需要在 node_args 里加上
-      node_args: '--env-file-if-exists=.env --max-old-space-size=512',
+      // 16G 服务器，给 Node 充足空间；超 4G 才自动重启兜底
+      max_memory_restart: '4G',
+      node_args: '--env-file-if-exists=.env --max-old-space-size=4096',
       env: {
         NODE_ENV: 'production',
         HOME: '/home/nodesign',
