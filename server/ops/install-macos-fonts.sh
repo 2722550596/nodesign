@@ -34,7 +34,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FONT_SRC_DIR="${MACOS_FONT_SRC:-$HOME/macos-fonts}"
 FONT_DST_DIR="/usr/share/fonts/macos"
-FONTCONFIG_DST="/etc/fonts/conf.d/99-macos.conf"
+FONTCONFIG_DST="/etc/fonts/conf.d/65-macos.conf"
+FONTCONFIG_DST_LEGACY="/etc/fonts/conf.d/99-macos.conf"  # 老位置，install 时清掉
 
 # ── 0. 必须 root 跑 ──
 if [ "$EUID" -ne 0 ]; then
@@ -73,6 +74,12 @@ chmod 644 "$FONT_DST_DIR"/*
 # ── 3. 应用 fontconfig ──
 echo
 echo "⚙️  应用 fontconfig：$FONTCONFIG_DST"
+# 清理老位置（早期版本装到 99-，后来发现 69-language-selector-zh-cn.conf 反 override，
+# 改装到 65-）
+if [ -f "$FONTCONFIG_DST_LEGACY" ]; then
+  echo "🧹 清理老位置 $FONTCONFIG_DST_LEGACY"
+  rm -f "$FONTCONFIG_DST_LEGACY"
+fi
 cp -v "$SCRIPT_DIR/macos-fonts.conf" "$FONTCONFIG_DST"
 chmod 644 "$FONTCONFIG_DST"
 
