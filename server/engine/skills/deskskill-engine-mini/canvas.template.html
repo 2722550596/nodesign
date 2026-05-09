@@ -53,13 +53,21 @@
   <title>{Deck 标题 · 改我}</title>
 
   <!-- ══ 1. Google Fonts（按需改） ══ -->
-  <!-- ⚠️ 字体 chain 铁律：每个 latin family 后面**必须**跟显式的 CJK family。 -->
-  <!--    - sans 类（Inter / Manrope / Geist）→ 配 Noto Sans SC                  -->
-  <!--    - serif 类（Instrument Serif / Playfair / Lyon）→ 配 Noto Serif SC      -->
-  <!--    - mono 类（JetBrains Mono / Geist Mono）→ 不需要配 CJK（mono 极少含中文）-->
-  <!--    禁止只写 generic `serif` / `sans-serif` / `system-ui` 当 CJK fallback：  -->
-  <!--    那是 OS 系统字体，preview（macOS）走 PingFang/Songti，导出（Linux       -->
-  <!--    server）走 Liberation/默认，三处字体永远不一致。                        -->
+  <!-- ⚠️ 字体 chain 铁律：每个 latin family 后面**必须**跟显式的 CJK family。     -->
+  <!--    标准 chain 4 段：latin → 苹果 CJK → Noto CJK 兜底 → generic              -->
+  <!--    - sans 类  → 'Inter', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif -->
+  <!--    - serif 类 → 'Playfair Display', 'Songti SC', 'Noto Serif SC', serif      -->
+  <!--    - mono 类  → 'JetBrains Mono', monospace（mono 极少含中文，不配 CJK）     -->
+  <!--                                                                              -->
+  <!-- 为什么 4 段而不是 3 段：                                                     -->
+  <!--   PingFang/Songti 是苹果字体，preview（macOS）和 server 渲染都装了，命中     -->
+  <!--   它们后字体效果"原汁原味"（设计师爱的 PingFang Light 骨感）。               -->
+  <!--   Noto SC 是 Google Fonts inline 的兜底——用户下载 baked HTML 在 Windows/    -->
+  <!--   Linux 双击打开时（没装苹果字体）能命中 inline 的 Noto SC，不掉链。         -->
+  <!--                                                                              -->
+  <!-- ❌ 反例：                                                                    -->
+  <!--   font-family: 'Playfair', serif        ← 缺 CJK，跨 OS 命中不一致           -->
+  <!--   font-family: 'Inter', system-ui       ← system-ui 跨 OS 命中不一致         -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600&family=Instrument+Serif:ital@0;1&family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
@@ -70,11 +78,11 @@
     tailwind.config = {
       theme: {
         extend: {
-          // ⚠️ CJK family 必须紧跟在 latin family 之后、generic 之前
+          // ⚠️ 4 段 chain：latin → 苹果 CJK（preview/server 命中）→ Noto CJK 兜底 → generic
           fontFamily: {
-            sans:    ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+            sans:    ['Inter', 'PingFang SC', 'Noto Sans SC', 'system-ui', 'sans-serif'],
             mono:    ['JetBrains Mono', 'monospace'],
-            display: ['Instrument Serif', 'Noto Serif SC', 'serif'],
+            display: ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
           },
         },
       },
@@ -197,7 +205,7 @@
   <style id="base">
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: Inter, 'Noto Sans SC', system-ui, sans-serif;
+      font-family: Inter, 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
       color: var(--ink);
       background: var(--bg);
       -webkit-font-smoothing: antialiased;
@@ -266,7 +274,7 @@
         </h1>
         <p data-anchor="cover-sub"
            class="text-2xl text-[var(--muted)] max-w-3xl leading-relaxed"
-           style="font-family: 'Instrument Serif', 'Noto Serif SC', serif; font-style: italic;">
+           style="font-family: 'Instrument Serif', 'Songti SC', 'Noto Serif SC', serif; font-style: italic;">
           {副标题 · 一句话讲清这个 deck 是什么 · 改我}
         </p>
       </div>
@@ -353,7 +361,7 @@
         {收尾一句话 · 改我}
       </h2>
       <p class="mt-8 text-xl text-[var(--paper)]/70 max-w-3xl"
-         style="font-family: 'Instrument Serif', 'Noto Serif SC', serif;">
+         style="font-family: 'Instrument Serif', 'Songti SC', 'Noto Serif SC', serif;">
         {补充信息 · 改我}
       </p>
     </div>

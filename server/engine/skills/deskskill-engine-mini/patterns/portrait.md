@@ -53,7 +53,7 @@
         {Maya Chen}
       </h2>
       <p class="text-2xl text-[var(--muted)] italic"
-         style="font-family: 'Instrument Serif', 'Noto Serif SC', serif;">
+         style="font-family: 'Instrument Serif', 'Songti SC', 'Noto Serif SC', serif;">
         {一句 quote 或 tagline · 改我}
       </p>
     </div>

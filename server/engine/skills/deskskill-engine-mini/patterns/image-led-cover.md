@@ -59,7 +59,7 @@
       </h1>
       <p data-anchor="cover-sub"
          class="text-white/80 text-2xl max-w-3xl"
-         style="font-family: 'Instrument Serif', 'Noto Serif SC', serif; font-style: italic;">
+         style="font-family: 'Instrument Serif', 'Songti SC', 'Noto Serif SC', serif; font-style: italic;">
         {可选副标 · 改我或删}
       </p>
     </div>

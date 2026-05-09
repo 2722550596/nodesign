@@ -649,43 +649,59 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 section 自身有 transform: scale，会让 fixed 锚到 section 而不是 viewport，
 但语义上 absolute 已经够，fixed 没意义还容易 confusion。
 
-### 字体 chain 铁律 — 中文必命中 inline CJK 字体
+### 字体 chain 铁律 — 4 段式 latin → 苹果 CJK → Noto 兜底 → generic
 
-**写任何 `font-family` 都必须 latin family + CJK family + generic 三段式**——
-缺了 CJK family，preview（macOS Chrome 走 PingFang/Songti）跟导出（Linux server
-Chromium 走 Liberation/默认）会落到完全不同的字体。同一份 deck 三处看着都不一样，
-是用户最常报的"PDF/PPT 字体不对"根因。
+**写任何 `font-family` 都必须 4 段式：latin family + 苹果 CJK family + Noto CJK
+family + generic**——少一段 preview / 导出 / 最终用户三处的字体都对不齐。
 
-**配对表**：
+**配对表（必背）**：
 
-| latin family 风格 | 配的 CJK family | 示例完整 chain |
-|---|---|---|
-| sans（Inter / Manrope / Geist） | `'Noto Sans SC'` | `font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif` |
-| serif（Instrument Serif / Playfair Display / Lyon） | `'Noto Serif SC'` | `font-family: 'Playfair Display', 'Noto Serif SC', serif` |
-| mono（JetBrains Mono / Geist Mono） | **不需要** | `font-family: 'JetBrains Mono', monospace`（mono 极少含中文，让中文走 sans 也 OK） |
+| latin family 风格 | 完整 chain 必须长这样 |
+|---|---|
+| sans（Inter / Manrope / Geist） | `font-family: 'Inter', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif` |
+| serif（Playfair Display / Instrument Serif / Lyon） | `font-family: 'Playfair Display', 'Songti SC', 'Noto Serif SC', serif` |
+| mono（JetBrains Mono / Geist Mono / SF Mono） | `font-family: 'JetBrains Mono', monospace`（mono 极少含中文，不配 CJK） |
 
-**link 同步规则**：用了 `'Noto Sans SC'` 或 `'Noto Serif SC'` 必须在 `<head>` 的
-Google Fonts `<link>` 里 `import` 对应 family（带 weight 列表）。canvas.template.html
-默认已 import 这俩 family 的常用 weight，按需 cp 即可。
+**为什么 4 段（每段都不可省）**：
 
-**示例 link**（默认模板已有，按需扩展 weight）：
+1. **latin family**（Inter / Playfair 等）—— 设计意图，latin 字符走它
+2. **苹果 CJK**（PingFang SC / Songti SC）—— preview（macOS）和 server 端导出
+   都装了苹果字体，命中后字体效果"原汁原味"（设计师爱的 PingFang Light 骨感、
+   Songti SC 的标志性宋体笔画）。**这是字体表达力的核心**
+3. **Noto CJK**（Noto Sans SC / Noto Serif SC）—— Google Fonts inline 的兜底，
+   用户下载 baked HTML 在 Windows/Linux 双击打开时（没装苹果字体）能命中 inline
+   的 Noto SC，不掉链
+4. **generic**（sans-serif / serif）—— 极端 fallback
+
+**link 同步规则**：
+
+- 用了 `'Noto Sans SC'` / `'Noto Serif SC'` 必须在 `<head>` 的 Google Fonts
+  `<link>` 里 import 对应 family（带 weight 列表）。canvas.template.html 默认已 import
+- 用了 `'PingFang SC'` / `'Songti SC'` **不需要** import（不是 Google Fonts
+  字体；preview 和 server 系统层会自动加载）
+
+**默认 link**（template 自带）：
+
 ```
 &family=Noto+Sans+SC:wght@300;400;500;700
 &family=Noto+Serif+SC:wght@400;600;700
 ```
 
-**❌ 反例 — 这些写法在导出时必坏**：
-- `font-family: 'Playfair Display', serif`（generic serif 跨 OS 落点完全不同）
-- `font-family: 'Inter', system-ui, sans-serif`（缺 Noto Sans SC，中文走 system-ui）
+**❌ 反例 — 这些写法会让 preview / 导出 / 用户端字体不一致**：
+
+- `font-family: 'Playfair Display', serif`（缺 CJK，generic serif 跨 OS 命中不同）
+- `font-family: 'Inter', system-ui, sans-serif`（缺 CJK，system-ui 跨 OS 命中不同）
+- `font-family: 'Inter', 'Noto Sans SC', sans-serif`（缺苹果 CJK，preview 走系统
+  PingFang，server 走 inline Noto Sans SC——字体效果不同）
 - `font-family: serif`（裸 generic）
-- 在 link 里没 import Noto Sans/Serif SC 但 css chain 写了它（会被忽略，silently 走 fallback）
+- 在 link 里没 import Noto Sans/Serif SC 但 chain 写了它（silently fallback）
 
 **✅ 正例**：
 
 ```html
 <style>
-  body { font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif; }
-  h1.font-display { font-family: 'Playfair Display', 'Noto Serif SC', serif; }
+  body { font-family: 'Inter', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif; }
+  h1.font-display { font-family: 'Playfair Display', 'Songti SC', 'Noto Serif SC', serif; }
   code { font-family: 'JetBrains Mono', monospace; }
 </style>
 ```
@@ -694,17 +710,22 @@ Google Fonts `<link>` 里 `import` 对应 family（带 weight 列表）。canvas
 
 ```js
 theme: { extend: { fontFamily: {
-  sans:    ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
-  display: ['Instrument Serif', 'Noto Serif SC', 'serif'],
+  sans:    ['Inter', 'PingFang SC', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+  display: ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
   mono:    ['JetBrains Mono', 'monospace'],
 } } }
 ```
 
-**为什么不能依赖 system 字体回退**：preview 跑在用户 Mac 浏览器 → `serif` 命中
-Songti SC（系统宋体）；导出 PDF/PPT 跑在 server 端 Linux Chromium → `serif` 命中
-Liberation Serif（latin only） → CJK 字符进一步 fallback → 落到 inline 的 Noto
-Sans SC（不是 Serif，所以"业务介绍"在 PPT 里就成了无衬线 Bold）。把 CJK family 写
-进 chain 让 preview / PPT / PDF 都命中同一个 inline 字体，三处一致。
+**特殊场景 — agent 想要装饰中文字体**（古风 / 手写 / 艺术封面）：
+
+把装饰中文 family 放在苹果 CJK 之前，作为首选；苹果 + Noto 仍做兜底。
+- 古风：`font-family: 'Playfair Display', 'Long Cang', 'Songti SC', 'Noto Serif SC', serif`
+- 手写：`font-family: 'Inter', 'Liu Jian Mao Cao', 'PingFang SC', 'Noto Sans SC', sans-serif`
+- 活泼：`font-family: 'Inter', 'ZCOOL KuaiLe', 'PingFang SC', 'Noto Sans SC', sans-serif`
+
+可选 Google Fonts 中文装饰字体：ZCOOL XiaoWei / ZCOOL KuaiLe / Long Cang（龙藏）
+/ Ma Shan Zheng（马善政）/ Liu Jian Mao Cao（刘建毛草）/ Zhi Mang Xing（志愿行）
+/ Smiley Sans（得意黑，开源社区版）。用之前同样要在 Google Fonts link 里 import。
 
 ### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
 
