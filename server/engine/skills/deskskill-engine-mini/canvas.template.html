@@ -598,5 +598,70 @@
 })();
 </script>
 
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- 演讲模式（presenter mode）                                       -->
+<!--                                                                 -->
+<!-- 默认已经有的（别重写、别移除 data-nodesign-keep）：              -->
+<!--   • 键盘翻页 ←↑/PgUp / →↓/Space/PgDn / Home/End（上面那段）     -->
+<!--   • F 键 fullscreen 切换（系统 fit script 注入，自带 ESC 退出）   -->
+<!--   • 滚动条隐藏（系统 fit style 注入）                            -->
+<!--                                                                 -->
+<!-- letterbox 边框填充色（画布比例 ≠ 屏幕比例时两侧 / 上下的填色）：  -->
+<!--   默认继承 deck 主背景 var(--bg)，无 --bg 时兜底黑色。           -->
+<!--   想定制就在你的 :root / theme CSS 里加：                         -->
+<!--     --nd-letterbox-bg: #000;        /* 投影标准黑边 */            -->
+<!--     --nd-letterbox-bg: transparent; /* 透明（让父级容器透出）*/   -->
+<!--     --nd-letterbox-bg: var(--brand-dark);  /* 品牌色 */           -->
+<!--   按 deck 主调选——暗色 deck 用黑边沉浸，浅色 deck 用白/品牌色。  -->
+<!--                                                                 -->
+<!-- 下面是可选增强 snippet。觉得演讲场景需要就把对应 <script>        -->
+<!-- 解开注释；不需要就保留为注释（HTML 注释不执行也不污染）。         -->
+<!-- 不强求都加。一般 16:9 投影 + 默认能力已经够用。                  -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+
+<!-- 可选 1: 页码角标（"03 / 08" 右下角，跟随当前页号自动更新）
+<script data-nodesign-keep="page-indicator">
+(function(){
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[data-page]'));
+  if (sections.length < 2) return;
+  var total = sections.length;
+  var el = document.createElement('div');
+  el.id = '__nd-page-indicator';
+  el.style.cssText = 'position:fixed;right:24px;bottom:20px;z-index:9999;'
+    + 'font:500 13px/1 ui-monospace,Menlo,monospace;letter-spacing:0.08em;'
+    + 'color:rgba(255,255,255,0.6);mix-blend-mode:difference;'
+    + 'padding:6px 10px;pointer-events:none;user-select:none;';
+  el.textContent = '01 / ' + String(total).padStart(2, '0');
+  document.body.appendChild(el);
+  function pad(n){ return String(n).padStart(2, '0'); }
+  window.addEventListener('message', function(ev){
+    if (ev.data && ev.data.type === 'canvas-page-change') {
+      el.textContent = pad(ev.data.page) + ' / ' + pad(total);
+    }
+  });
+})();
+</script>
+-->
+
+<!-- 可选 2: idle 隐藏鼠标（3s 不动鼠标自动消失，移动 / 翻页恢复）
+<script data-nodesign-keep="idle-cursor">
+(function(){
+  var timer = null;
+  var hidden = false;
+  function show(){
+    if (hidden) { document.body.style.cursor = ''; hidden = false; }
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function(){
+      document.body.style.cursor = 'none';
+      hidden = true;
+    }, 3000);
+  }
+  document.addEventListener('mousemove', show, { passive: true });
+  document.addEventListener('keydown', show);
+  show();
+})();
+</script>
+-->
+
 </body>
 </html>

@@ -56,6 +56,23 @@ export function fitScriptCode() {
     s.parentNode.insertBefore(frame, s);
     frame.appendChild(s);
   }
+
+  // 演讲模式 — F 键切换浏览器 fullscreen
+  // 16:9 显示器进 fullscreen 后浏览器 chrome 退场，可视区 = 物理屏 = 画布比例 → 黑边消失
+  // ESC 退出由 Fullscreen API 自带，不重复绑（避免干扰其他用 ESC 的内容）
+  // input guard 跟 navigation script 一致，防输入框冲突
+  document.addEventListener('keydown', function(e){
+    var t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (e.key === 'f' || e.key === 'F') {
+      e.preventDefault();
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else if (document.documentElement.requestFullscreen) {
+        document.documentElement.requestFullscreen();
+      }
+    }
+  });
 })();`;
 }
 
@@ -87,7 +104,9 @@ ${aspectRules}
 html, body { margin: 0; padding: 0; }
 body.__nd-fit-active {
   display: block !important;
-  background: var(--bg, #fff);
+  /* letterbox 填充色：agent 可在 deck CSS 里覆盖 --nd-letterbox-bg
+     默认继承 deck 主背景 var(--bg)，无 --bg 时兜底黑色（演讲投影标准） */
+  background: var(--nd-letterbox-bg, var(--bg, #000));
   scroll-snap-type: y mandatory;
   overflow-x: hidden;
 }
@@ -106,7 +125,8 @@ body.__nd-fit-active > .__nd-deck-wrap {
   justify-content: center;
   overflow: hidden;
   scroll-snap-align: start;
-  background: inherit;
+  /* 跟 body 同源 letterbox 色（inherit 在 background 上不会跨级，必须显式重写） */
+  background: var(--nd-letterbox-bg, var(--bg, #000));
 }
 .__nd-page-frame > section[data-page] {
   flex-shrink: 0;
@@ -115,6 +135,22 @@ body.__nd-fit-active > .__nd-deck-wrap {
   transform-origin: center center;
   transform: scale(var(--nd-page-scale));
   position: relative;
+}
+
+/* 演讲模式 — 隐藏视口滚动条（root + body 双挂以覆盖渲染差异）
+   N×100vh 的 page frame 总高度让 root element 自然出滚动条；
+   :has() 把规则挂到 <html> 是关键（滚动条真正所在的元素）。
+   兼容：Chrome 105+ / Safari 15.4+ / Firefox 121+，零 fallback 代价。 */
+html:has(body.__nd-fit-active),
+body.__nd-fit-active {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html:has(body.__nd-fit-active)::-webkit-scrollbar,
+body.__nd-fit-active::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 </style>`;
 }

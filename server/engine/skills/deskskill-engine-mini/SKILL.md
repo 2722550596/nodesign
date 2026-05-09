@@ -74,6 +74,33 @@ section 内 `width: var(--deck-w); height: var(--deck-h)` 自动跟随。
 
 **起手式（强约束）**：写 canvas.html 之前先 `Read canvas.template.html`——session 创建时已自动拷到你的 cwd，预置好的全家桶 importmap / Babel / Tailwind / fit script / 4 个 shadcn 组件 / 键盘翻页脚本。**cp 改写比从 0 拼快 10×，且不会漏关键 boilerplate**。
 
+### Deck 默认能力（系统注入，不用你写）
+
+每个 deck 自动带这些演讲场景能力，**不要自己重复实现**：
+
+- **键盘翻页** ←↑/PgUp / →↓/Space/PgDn / Home/End（canvas.template.html 内置，`data-nodesign-keep="navigation"` 保护）
+- **F 键 fullscreen 切换**（系统 fit script 注入，自带 ESC 退出）—— 16:9 显示器进 fullscreen 后画面比例匹配，letterbox 自动消失
+- **滚动条隐藏**（系统 fit style 注入）—— 视口纯净，不出现右侧灰白滑条
+- **scroll-snap 自动按页吸附** + **CSS contain 缩放**
+
+### Letterbox 边框填充色 — agent 自由控制
+
+画布比例 ≠ 屏幕比例时（例如 16:9 deck 在 16:10 MacBook 屏），上下或左右会留 letterbox 区域。系统已暴露 CSS var 钩子让你按 deck 主调选色：
+
+```css
+:root {
+  --nd-letterbox-bg: #000;              /* 投影标准黑边（暗色 deck 推荐） */
+  /* --nd-letterbox-bg: transparent;    透明（让父级容器透出） */
+  /* --nd-letterbox-bg: var(--brand);   品牌色（特殊场合） */
+}
+```
+
+不写 = 默认继承 `var(--bg)`（deck 主背景），无 `--bg` 时兜底 `#000`。**多数情况不用动**——deck 主背景跟整体 theme 一致时 letterbox 自然融合。
+
+### 可选演讲增强 snippet
+
+canvas.template.html 末尾注释段有两个可选 snippet（解开注释即启用）：**页码角标**（右下 "03 / 08"）+ **idle 隐藏鼠标**（3s 不动消失）。需要演讲质感的 deck 可加；常规预览/导出 deck 不必。
+
 ---
 
 ## 5-stage paradigm 总览
