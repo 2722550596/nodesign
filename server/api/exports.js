@@ -146,6 +146,15 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// PDF：跟 PPTX 同款位图方案——截每页 PNG → 拼成 HTML → page.pdf 输出。
+//
+// 为什么不直接 page.pdf 渲染原 deck？Chromium PDF 后端对 Google Fonts 拆 80+
+// 个 unicode-range subset + data URL inline 的 web font 无法做正常字体子集化
+// 嵌入，全部退回 Type 3（路径填充）渲染——CJK 字体严重失真，跟 HTML/preview
+// 对不上。截图方案把字体烤成像素，绕开 PDF 字体嵌入管道，视觉跟 HTML 1:1。
+//
+// 代价：PDF 文字不可选/不可搜索（位图）；文件略大（每页一张 PNG）。
+// 跟 PPTX 已有方案对齐——用户工作流"看完发邮件/打印"为主，可接受。
 router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
   try {
     const project = guard(req, res);
@@ -174,27 +183,66 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
       const { page, ctx, pageSize, cleanup } = await prepareExportPage(browser, file, { sessionRoot });
       prepCleanup = cleanup;
 
-      await page.addStyleTag({ content: `
-        @media print {
-          body { margin: 0 !important; padding: 0 !important; background: transparent !important; }
-          section[data-page] {
-            page-break-after: always !important;
-            page-break-inside: avoid !important;
-            break-after: page !important;
-            break-inside: avoid !important;
-          }
-          section[data-page]:last-child {
-            page-break-after: auto !important;
-            break-after: auto !important;
-          }
-        }
-      ` });
+      const sectionHandles = await page.$$('section[data-page]');
+      if (sectionHandles.length === 0) {
+        await ctx.close();
+        return res.status(400).json({
+          error: 'canvas.html 没有 <section data-page="N"> 分页结构 — 无法转 PDF',
+        });
+      }
+
+      // 拿排好序的 section + bbox（跟 PPTX 路径完全一致）
+      const pageInfos = [];
+      for (const handle of sectionHandles) {
+        const pageNum = await handle.getAttribute('data-page');
+        const bbox = await handle.boundingBox();
+        pageInfos.push({ handle, pageNum: parseInt(pageNum, 10) || 0, bbox });
+      }
+      pageInfos.sort((a, b) => a.pageNum - b.pageNum);
+
+      // 每页截 PNG（pageSize 已被 prepareExportPage 中和掉 fit transform，原坐标）
+      const pngs = [];
+      for (const { handle, bbox } of pageInfos) {
+        const clipOpts = bbox
+          ? { clip: { x: bbox.x, y: bbox.y, width: pageSize.w, height: pageSize.h } }
+          : {};
+        const buf = await handle.screenshot({ type: 'png', ...clipOpts });
+        pngs.push(buf);
+      }
+
+      // 拼成多页 HTML：每页一个 .slide 容器 + img 满铺，page-break 控制分页
+      const slidesHtml = pngs.map((buf) =>
+        `<div class="slide"><img src="data:image/png;base64,${buf.toString('base64')}"/></div>`,
+      ).join('\n');
+
+      const composeHtml = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  @page { size: ${pageSize.w}px ${pageSize.h}px; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  .slide {
+    width: ${pageSize.w}px;
+    height: ${pageSize.h}px;
+    page-break-after: always;
+    page-break-inside: avoid;
+    break-after: page;
+    break-inside: avoid;
+    overflow: hidden;
+  }
+  .slide:last-child { page-break-after: auto; break-after: auto; }
+  img { display: block; width: 100%; height: 100%; }
+</style></head><body>
+${slidesHtml}
+</body></html>`;
+
+      // 复用同 page setContent —— 不需要新开 page，省一次 launch 开销
+      await page.setContent(composeHtml, { waitUntil: 'load' });
 
       const pdfBuffer = await page.pdf({
         width: `${pageSize.w}px`,
         height: `${pageSize.h}px`,
         printBackground: true,
-        preferCSSPageSize: false,
+        preferCSSPageSize: true,
         margin: { top: 0, right: 0, bottom: 0, left: 0 },
       });
       await ctx.close();
@@ -451,8 +499,30 @@ async function prepareExportPage(browser, filePath, opts = {}) {
   const page = await ctx.newPage();
   await page.goto('file://' + loadPath, { waitUntil: 'networkidle', timeout: 30_000 });
 
-  await page.evaluate(() => document.fonts.ready);
-  await page.waitForTimeout(800);  // 字体 swap-in 兜底（CDN 慢时 200ms 不够稳）
+  // 字体强等待——比 await document.fonts.ready 严格得多。
+  //
+  // 背景：Google Fonts 把 CJK 字体（Noto Sans SC）拆成 80+ 个 unicode-range
+  // 子集，每个子集 + 每个 weight 是独立 @font-face。HTML 用 font-display: swap
+  // 的话浏览器先用 fallback 字体绘制，字体异步加载完后 swap。
+  //
+  // document.fonts.ready 只等"已经 pending 的"face——CSS 引用了但还没被使用
+  // 过的 face 不算 pending（lazy load 机制）。截图时若某个 weight × range
+  // 子集还没被触发，PDF/PPT 就截到 swap 前的 fallback 字体（preview 走 macOS
+  // 系统字体看着对，PPT/PDF 走 Linux Chromium 默认字体看着错）。
+  //
+  // 4 步保 ready：
+  //   1. 强制 layout（让所有字体使用注册到 FontFaceSet）
+  //   2. 显式 .load() 所有声明的 face（含未被使用的 weight × range 子集）
+  //   3. await document.fonts.ready（兜底等剩余 pending）
+  //   4. 双 rAF 等 paint 真正应用 swap
+  await page.evaluate(async () => {
+    document.body.offsetHeight;  // force layout
+    const faces = Array.from(document.fonts);
+    await Promise.all(faces.map((f) => f.load().catch(() => {})));
+    await document.fonts.ready;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+  await page.waitForTimeout(200);  // 短兜底（rAF 后再给 paint 一帧时间）
 
   // 抹掉 body margin + 砍掉 fit-active 视觉缩放（如果 file:// 加载的 canvas.html
   // 有 standalone-fit script，frame 包装 + section transform: scale 会让 boundingBox
