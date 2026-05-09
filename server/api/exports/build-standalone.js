@@ -343,14 +343,26 @@ export async function extractTailwindCss(rawHtml) {
   // minimal tailwind.config —— 不重要的 fontFamily 也加，让 font-display 等不被 purge
   // 注：raw HTML 里的 inline `tailwind.config = {...}` 在运行时设过，这里 build 阶段
   // 我们走 tailwindcss CLI 不再读 inline config。我们给一个 superset config 保证不缺。
+  //
+  // ⚠️ 字体 chain 4 段式（必须跟 SKILL.md 字体 chain 铁律 + canvas.template.html 一致）：
+  //   latin → 苹果 CJK（PingFang/Songti，server 装了苹果字体）→ Noto CJK（inline 兜底）→ generic
+  //
+  // 历史教训：之前 sans 是 ['Inter', 'system-ui', 'sans-serif']、display 是 ['Instrument
+  // Serif', 'serif']，没有 PingFang/Noto SC——导致 agent 即使在原 HTML 里写了 4 段
+  // chain，server bake 时 tailwindcss CLI 用这份硬编码 superset 重新跑，把 font-sans
+  // / font-serif 等 Tailwind class 编译成老 chain（不含 CJK）。font-serif 更夸张：
+  // 没 extend 直接用 Tailwind 默认 [ui-serif, Georgia, ...]，CJK 走 generic 全错。
+  //
+  // serif 也补一份 extend，不然 class="font-serif" 编译出 Tailwind 默认无 CJK chain。
   const config = `module.exports = {
   content: ['${htmlPath}'],
   theme: {
     extend: {
       fontFamily: {
-        sans:    ['Inter', 'system-ui', 'sans-serif'],
+        sans:    ['Inter', 'PingFang SC', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+        serif:   ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
         mono:    ['JetBrains Mono', 'monospace'],
-        display: ['Instrument Serif', 'serif'],
+        display: ['Instrument Serif', 'Songti SC', 'Noto Serif SC', 'serif'],
       },
     },
   },
