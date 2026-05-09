@@ -139,7 +139,8 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ```html
 <style>
-  body { margin: 0; padding: 12px; background: #f9f8f6; font-family: 'Lyon Display', serif; color: #2d2418; }
+  /* 字体 chain 4 段式：latin → 苹果 CJK → Noto CJK → generic（跟真 deck 同款规则） */
+  body { margin: 0; padding: 12px; background: #f9f8f6; font-family: 'Lyon Display', 'Songti SC', 'Noto Serif SC', serif; color: #2d2418; }
   h1 { font-size: 28px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.02em; }
   p { font-size: 11px; color: #c45c3f; margin: 0; }
 </style>
