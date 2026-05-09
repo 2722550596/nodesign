@@ -649,6 +649,63 @@ Layout 应该被主题穿透。如果换主题不影响 layout，说明 layout �
 section 自身有 transform: scale，会让 fixed 锚到 section 而不是 viewport，
 但语义上 absolute 已经够，fixed 没意义还容易 confusion。
 
+### 字体 chain 铁律 — 中文必命中 inline CJK 字体
+
+**写任何 `font-family` 都必须 latin family + CJK family + generic 三段式**——
+缺了 CJK family，preview（macOS Chrome 走 PingFang/Songti）跟导出（Linux server
+Chromium 走 Liberation/默认）会落到完全不同的字体。同一份 deck 三处看着都不一样，
+是用户最常报的"PDF/PPT 字体不对"根因。
+
+**配对表**：
+
+| latin family 风格 | 配的 CJK family | 示例完整 chain |
+|---|---|---|
+| sans（Inter / Manrope / Geist） | `'Noto Sans SC'` | `font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif` |
+| serif（Instrument Serif / Playfair Display / Lyon） | `'Noto Serif SC'` | `font-family: 'Playfair Display', 'Noto Serif SC', serif` |
+| mono（JetBrains Mono / Geist Mono） | **不需要** | `font-family: 'JetBrains Mono', monospace`（mono 极少含中文，让中文走 sans 也 OK） |
+
+**link 同步规则**：用了 `'Noto Sans SC'` 或 `'Noto Serif SC'` 必须在 `<head>` 的
+Google Fonts `<link>` 里 `import` 对应 family（带 weight 列表）。canvas.template.html
+默认已 import 这俩 family 的常用 weight，按需 cp 即可。
+
+**示例 link**（默认模板已有，按需扩展 weight）：
+```
+&family=Noto+Sans+SC:wght@300;400;500;700
+&family=Noto+Serif+SC:wght@400;600;700
+```
+
+**❌ 反例 — 这些写法在导出时必坏**：
+- `font-family: 'Playfair Display', serif`（generic serif 跨 OS 落点完全不同）
+- `font-family: 'Inter', system-ui, sans-serif`（缺 Noto Sans SC，中文走 system-ui）
+- `font-family: serif`（裸 generic）
+- 在 link 里没 import Noto Sans/Serif SC 但 css chain 写了它（会被忽略，silently 走 fallback）
+
+**✅ 正例**：
+
+```html
+<style>
+  body { font-family: 'Inter', 'Noto Sans SC', system-ui, sans-serif; }
+  h1.font-display { font-family: 'Playfair Display', 'Noto Serif SC', serif; }
+  code { font-family: 'JetBrains Mono', monospace; }
+</style>
+```
+
+**Tailwind config 同样规则**（template 默认已配好）：
+
+```js
+theme: { extend: { fontFamily: {
+  sans:    ['Inter', 'Noto Sans SC', 'system-ui', 'sans-serif'],
+  display: ['Instrument Serif', 'Noto Serif SC', 'serif'],
+  mono:    ['JetBrains Mono', 'monospace'],
+} } }
+```
+
+**为什么不能依赖 system 字体回退**：preview 跑在用户 Mac 浏览器 → `serif` 命中
+Songti SC（系统宋体）；导出 PDF/PPT 跑在 server 端 Linux Chromium → `serif` 命中
+Liberation Serif（latin only） → CJK 字符进一步 fallback → 落到 inline 的 Noto
+Sans SC（不是 Serif，所以"业务介绍"在 PPT 里就成了无衬线 Bold）。把 CJK family 写
+进 chain 让 preview / PPT / PDF 都命中同一个 inline 字体，三处一致。
+
 ### 起手式：cp canvas.template.html → 骨架优先 → 逐页填
 
 预估这次产出 > 400 行（多页 deck / 复杂单页）就走"骨架优先"——单次 Write 短而稳定 / 单次 Edit 锚点小而唯一 / 失败只丢一页。预估 < 400 行（改字 / 单元素调整 / 加一页）直接 Edit 局部即可。
