@@ -219,16 +219,16 @@ Returns: text caption with output path + image content block (preview the result
         `(RGBA PNG, ${(rgba.length / 1024).toFixed(1)} KB, ${elapsed}ms)`,
       ].join(' ');
 
+      // MCP image content block 格式：顶层 data + mimeType（不是 Anthropic API 的
+      // { source: { type:'base64', media_type, data } } 形式）。SDK validator 用
+      // MCP schema 校验，错误格式会让 tool call result 整个被拒。
       return {
         content: [
           { type: 'text', text: caption },
           {
             type: 'image',
-            source: {
-              type: 'base64',
-              media_type: 'image/png',
-              data: rgba.toString('base64'),
-            },
+            data: rgba.toString('base64'),
+            mimeType: 'image/png',
           },
         ],
       };
