@@ -53,6 +53,19 @@ const VISION_MAX_DIM = (() => {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1568;
 })();
 
+// 已知 spoofing alias 集合（SDK 视角 model 名）。proxy 只把这些 alias 反向回真
+// appModel；其他 model 名（haiku-cc / 真 claude / 真 sonnet 等）原样保留以走
+// 各自的下游路由。
+//
+// 来源：model-context.js 的 SPOOF_MAP value 集合 ∪ SDK 序列化时剥后缀的形态
+// （SDK 把 `claude-opus-4-7[1m]` 序列化为 `claude-opus-4-7` 发出去）。
+//
+// 加新 spoof alias 时这里也要加，否则新加的 alias 不会被 reverse → 路由错。
+const REVERSE_SPOOF_TARGETS = new Set([
+  'claude-opus-4-7[1m]',
+  'claude-opus-4-7',
+]);
+
 /**
  * 启动 fixup proxy（幂等：第一次调启动，后续复用同一个 instance）。
  *
@@ -255,18 +268,59 @@ async function maybeFixupMessagesBody(body) {
 
   if (!parsed || typeof parsed !== 'object') return body;
 
-  // ── Model spoofing reverse（2026-05-08）──
+  // ── Model spoofing reverse（2026-05-08；2026-05-10 收窄）──
   // session-loop.js 给 SDK options.model 喂 spoofing alias（如 kimi-k2.6 →
   // claude-opus-4-7[1m]）让 SDK 内部 rawMaxTokens=1M，autoCompactWindow=230400
   // 不再被卡 200k。但 outgoing body 的 model 仍是 alias，gateway 不认。
-  // 这里在 fixup 入口先把 alias 还原成真 appModel —— 后续 routing /
-  // vision lift / thinking fixup 全部按真 model（kimi-*）走，零变动。
+  // 这里在 fixup 入口把 **已知 spoofing alias** 还原成真 appModel ——
+  // 后续 routing / vision lift / thinking fixup 全部按真 model（kimi-*）走。
+  //
+  // 2026-05-10 修：原版无条件 `if (parsed.model !== appModel)` 会把所有非
+  // appModel（包括 subagent 走的 haiku-cc / SDK helper 调用的 haiku 默认）
+  // 一并改成 appModel，导致正确配 haiku 的子代理被误路由到 Moonshot。
+  // 收窄到只识别 SDK 序列化出去可能的 alias 形态（`[1m]` 后缀 SDK 会剥）。
+  //
   // appModel 通过 session-loop startTurn 设的 process.env 拿（同 TURN_ID 模式）。
   const appModel = process.env.NODESIGN_CURRENT_APP_MODEL;
+  const originalModel = parsed.model;  // [TEMP DIAG] 预存以便日志比对
   let mutatedByReverse = false;
-  if (appModel && typeof parsed.model === 'string' && parsed.model !== appModel) {
+  if (appModel && typeof parsed.model === 'string' && REVERSE_SPOOF_TARGETS.has(parsed.model)) {
     parsed.model = appModel;
     mutatedByReverse = true;
+  }
+
+  // [TEMP DIAG 2026-05-10] 验证 reverse 收窄修复 —— 跑一次 vision-checker
+  // + explorer 后确认主/子代理路由都对就删。always-on 不靠 env；同时写 /tmp
+  // 文件方便程序读（server stdout 走 TTY 时无法 tail）。
+  // 加 hint 字段（messages.length / system.length / stop_seq 等）和 leak dump
+  // 帮定位 post-turn opus-4-7 leak 的 caller。
+  if (typeof originalModel === 'string') {
+    const msgCount = Array.isArray(parsed.messages) ? parsed.messages.length : '?';
+    const sysLen = typeof parsed.system === 'string'
+      ? parsed.system.length
+      : (Array.isArray(parsed.system) ? parsed.system.length : 0);
+    const maxTok = parsed.max_tokens || '?';
+    const isLeak = appModel === undefined && originalModel !== 'kimi-k2.6';
+    const line = `[${new Date().toISOString()}] [reverse-diag] in=${originalModel} `
+      + `out=${parsed.model} appModel=${appModel || '<unset>'} `
+      + `mutated=${mutatedByReverse} `
+      + `msgs=${msgCount} sys_len=${sysLen} max_tokens=${maxTok}`
+      + (isLeak ? ' ⚠️LEAK' : '');
+    console.info(line);
+    try { fs.appendFileSync('/tmp/nodesign-reverse-diag.log', line + '\n'); }
+    catch { /* fail-soft */ }
+
+    // Leak case：dump 完整 body 让人工分析这是什么 SDK 调用
+    if (isLeak) {
+      try {
+        const tag = `${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+        fs.writeFileSync(
+          `/tmp/nodesign-leak-${tag}.json`,
+          JSON.stringify(parsed, null, 2)
+        );
+        console.info(`[reverse-diag] leak body dumped: /tmp/nodesign-leak-${tag}.json`);
+      } catch { /* fail-soft */ }
+    }
   }
 
   // Vision 诊断（NODESIGN_DEBUG_VISION=1）
