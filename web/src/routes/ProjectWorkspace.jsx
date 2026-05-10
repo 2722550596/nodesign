@@ -89,8 +89,7 @@ export default function ProjectWorkspace() {
   const [queueDepth, setQueueDepth] = useState(0);  // streamInput 模式下 inputQueue 积压数（"已排队 N 条"）
   const [isTweaksExposed, setIsTweaksExposed] = useState(false);  // agent 调过 expose_tweaks 才在 ChatPanel 显示打开按钮
   const [wsStatus, setWsStatus] = useState('connecting');     // 'connecting' | 'open' | 'reconnecting' | 'closed'
-  const [lastEventAt, setLastEventAt] = useState(Date.now()); // 用来检测"isStreaming 但长时间无事件"
-  const [stuckSeconds, setStuckSeconds] = useState(0);        // 0=正常；>=30=显示"agent 还在思考"
+  const [lastEventAt, setLastEventAt] = useState(Date.now()); // 给 ChatPanel header dot 判断"在动 vs 静默"
   const [selectedAnchor, setSelectedAnchor] = useState(null);
   const [iframeDoc, setIframeDoc] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -261,25 +260,6 @@ export default function ProjectWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, currentSessionId]);
 
-  // 检测"isStreaming 但长时间无新事件" —— agent 长 thinking 期间 SDK 可能不
-  // emit stream_event（取决于模型 / gateway 行为），用户体感是"前端卡死"。
-  // 每 5s tick：如 isStreaming + 距上次事件 > 30s → 显示 stuck 警告 chip
-  // 让用户知道 agent 仍在跑（vs WS 真断 → wsStatus='reconnecting' 单独显示）
-  useEffect(() => {
-    if (!isStreaming) {
-      if (stuckSeconds !== 0) setStuckSeconds(0);
-      return undefined;
-    }
-    const tick = () => {
-      const elapsed = Math.floor((Date.now() - lastEventAt) / 1000);
-      setStuckSeconds(elapsed >= 30 ? elapsed : 0);
-    };
-    tick();
-    const id = setInterval(tick, 5000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStreaming, lastEventAt]);
-
   // session/project 切换时重置 per-session UI state，防止跨 session/project 串话：
   // - comments：纯前端 state（D 流接通前没持久化），切 session 旧 session 评论
   //   仍残留在数组里，用户在新 session 看到错的评论
@@ -294,8 +274,7 @@ export default function ProjectWorkspace() {
     setPromptSuggestion(null);        // 清掉上 session 残留 SuggestionChip
     setAgentProgress(null);           // 清 subagent progress
     setQueueDepth(0);                 // 清 queue depth（切 session 跨 query 不延续）
-    setStuckSeconds(0);               // 清 stuck 计时
-    setLastEventAt(Date.now());       // 重置事件时间避免切 session 时误报"卡住"
+    setLastEventAt(Date.now());       // 重置事件时间避免切 session 时 header dot 误判"静默"
     setIsTweaksExposed(false);        // 切 session 时清，新 session 待 agent 重 expose
     useGlobalStore.getState().clearPlanForApproval();  // 清 plan 卡（如果切 session 时还在等 approval）
     useGlobalStore.getState().clearPlanModeRequest();  // 清 plan request banner（防跨 session 残留 → toggle 锁死）
@@ -1534,7 +1513,7 @@ export default function ProjectWorkspace() {
             isStreaming={isStreaming}
             queueDepth={queueDepth}
             wsStatus={wsStatus}
-            stuckSeconds={stuckSeconds}
+            lastEventAt={lastEventAt}
             trayItems={inputs}
             onRemoveTrayItem={handleRemoveInput}
             onPickFile={handleAddInput}

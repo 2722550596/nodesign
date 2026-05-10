@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { ChevronDown, XCircle } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
@@ -16,7 +17,7 @@ export default function ChatPanel({
   messages = [], onSend, isStreaming = false,
   queueDepth = 0,
   wsStatus = 'open',          // 'connecting' | 'open' | 'reconnecting' | 'closed'
-  stuckSeconds = 0,           // isStreaming 期间长时间无事件的秒数（>=30 才显示警告）
+  lastEventAt = 0,            // 最近一次 WS 事件时间戳——header dot 据此判断"在动 vs 静默"
   trayItems, onRemoveTrayItem, onPickFile,
   promptSuggestion, onDismissSuggestion,
   agentProgress,
@@ -33,6 +34,19 @@ export default function ChatPanel({
   // V2：streaming 状态从 header 移到 Send 按钮，header 不再显示文字。
   // agentProgress 还保留——后续如果想加进度气泡（hover Send 看 last tool）可用。
   void agentProgress;
+
+  // Header liveness dot：
+  //   isStreaming + 距上次事件 < 2s → 绿色 pulse（agent 在产 output）
+  //   isStreaming + ≥ 2s 无事件   → 灰色 static（在 turn 内但静默：深度思考 / 长工具调用）
+  //   !isStreaming                 → 不渲染
+  // 替换老的"已 30s 无输出"chip——liveness 范式：图标在动 = OK, 不动 = 待审视。
+  const [iconActive, setIconActive] = useState(false);
+  useEffect(() => {
+    if (!isStreaming) { setIconActive(false); return undefined; }
+    setIconActive(true);
+    const timer = setTimeout(() => setIconActive(false), 2000);
+    return () => clearTimeout(timer);
+  }, [isStreaming, lastEventAt]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
@@ -76,6 +90,20 @@ export default function ChatPanel({
           <ChevronDown size={12} strokeWidth={1.75} color={COLOR.sub} style={{ flexShrink: 0 }} />
         </button>
 
+        {/* Liveness dot — isStreaming 期间常驻，event 进来时 pulse，2s 静默后转灰静态 */}
+        {isStreaming && (
+          <span
+            title={iconActive ? 'Agent 正在输出' : 'Agent 在 turn 内但暂无输出（深度思考 / 长工具 / 外部资源）'}
+            style={{
+              width: 7, height: 7, borderRadius: '50%',
+              flexShrink: 0,
+              background: iconActive ? COLOR.success : COLOR.sub,
+              animation: iconActive ? 'pulse 1.2s ease-in-out infinite' : 'none',
+              transition: 'background 0.3s ease',
+            }}
+          />
+        )}
+
         {/* 结束本会话：streamInput query 终结 + URL 跳回 /work（前端 state 由 effect reset）
             仅当有 active session 时显示，避免 /work 路径误触 */}
         {hasActiveSession && onCloseSession && (
@@ -115,8 +143,8 @@ export default function ChatPanel({
         onCanvasReload={onCanvasReload}
       />
 
-      {/* WS 连接异常 / agent 长时间无事件 — 让用户知道情况，避免误以为前端卡死 */}
-      {(wsStatus === 'reconnecting' || wsStatus === 'closed' || stuckSeconds >= 30) && (
+      {/* WS 连接异常 — 真错误才弹（agent 静默走 header dot 显示，不再发文字 chip） */}
+      {(wsStatus === 'reconnecting' || wsStatus === 'closed') && (
         <div style={{
           padding: `${GAP.xs}px ${GAP.lg}px`,
           fontFamily: FONT_MONO,
@@ -130,13 +158,11 @@ export default function ChatPanel({
           <span style={{
             width: 6, height: 6, borderRadius: '50%',
             background: wsStatus === 'closed' ? COLOR.error : COLOR.warn,
-            animation: wsStatus === 'reconnecting' || stuckSeconds >= 30 ? 'pulse 1.5s ease-in-out infinite' : 'none',
+            animation: wsStatus === 'reconnecting' ? 'pulse 1.5s ease-in-out infinite' : 'none',
           }} />
           {wsStatus === 'closed'
             ? '连接已关闭 · 请刷新页面'
-            : wsStatus === 'reconnecting'
-              ? '正在重连服务器…（已收到的事件不会丢，重连后会补 replay）'
-              : `Agent 已 ${stuckSeconds}s 无新输出 · 仍在深度思考（后端通常正常运行，可等或先做别的）`}
+            : '正在重连服务器…（已收到的事件不会丢，重连后会补 replay）'}
         </div>
       )}
 
