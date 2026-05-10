@@ -187,7 +187,7 @@ export default function InspectFloatingCard({
           flex: 1, minWidth: 0,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
-          {page?.index !== undefined && page.index !== null && `第 ${page.index + 1} 页 · `}{role}
+          {page?.index !== undefined && page.index !== null && `第 ${page.index} 页 · `}{role}
         </span>
         {offScreen && (
           <button

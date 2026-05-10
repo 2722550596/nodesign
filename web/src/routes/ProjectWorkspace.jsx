@@ -1360,7 +1360,7 @@ export default function ProjectWorkspace() {
     const ai = ctx.aiContext;
     const tag = ai?.tag || 'element';
     const pageInfo = ai?.pageInfo;
-    const pagePart = pageInfo?.index != null ? `第 ${pageInfo.index + 1} 页` : '';
+    const pagePart = pageInfo?.index != null ? `第 ${pageInfo.index} 页` : '';
     const draft = `针对 ${pagePart}的 <${tag}>：\n\n…`;
     setChatDraft(draft);
     showToast('已填回对话框，编辑后发送', 'info');

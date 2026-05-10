@@ -182,10 +182,10 @@ export default function SlideNavigator({ iframeDoc }) {
               transition: 'all 0.15s',
               display: 'flex', flexDirection: 'column', gap: 1,
             }}
-            title={p.title || `第 ${p.index + 1} 页`}
+            title={p.title || `第 ${p.index} 页`}
           >
             <span style={{ fontWeight: 500, lineHeight: 1.2 }}>
-              {String(p.index + 1).padStart(2, '0')} · {LAYOUT_LABEL[p.layout] || p.layout}
+              {String(p.index).padStart(2, '0')} · {LAYOUT_LABEL[p.layout] || p.layout}
             </span>
             {p.title && (
               <span style={{

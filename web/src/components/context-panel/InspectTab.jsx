@@ -70,7 +70,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 500,
               color: COLOR.text, marginBottom: GAP.xs,
             }}>
-              {page && page.index !== null && `第 ${page.index + 1} 页 · `}{role}
+              {page && page.index !== null && `第 ${page.index} 页 · `}{role}
               {pos && <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginLeft: GAP.sm, fontWeight: 400 }}>
                 （同页第 {pos.index} / {pos.total}）
               </span>}
