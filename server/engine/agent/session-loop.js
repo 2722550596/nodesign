@@ -533,13 +533,23 @@ export async function runSession({
     promptSuggestions: true,
     forwardSubagentText: true,
 
-    // streamInput 模式 budget 也是全局累计 —— 长 session 1$ 极易触顶。改默
-    // 认 10$（env override 仍生效）。原 default 5$ 实测让 agent 后期偏保守
-    // （少调工具 / 少派子代理 / 收尾仓促）。10$ 给充裕迭代空间，K2.6 价位下
-    // 也极少真烧到上限；Claude/Opus 长 session 可以再 env 提到 20。
+    // ⚠️ maxBudgetUsd 是给 SDK 内部"USD budget: $X/$N; remaining: $Y" system
+    // reminder 用的——**软约束**（agent 看到自己自觉收敛），SDK 不做硬截断。
+    //
+    // 价目陷阱：SDK 用硬编码价目表按 sdkOptions.model 查（claude-opus-4-7 →
+    // Opus 价 $15/$75 per Mtok）；NoDesign sdkModel 是 spoofing alias（让 SDK
+    // 内部 rawMaxTokens 走 1M），实际请求被 binary-fixup-proxy 反向 spoof 出去
+    // 到 Kimi 网关按 Kimi 价（~$0.6/$2.5）扣费。两边差 ~30×。
+    //
+    // 结果：SDK 算给 agent 看的"used"是按 Opus 虚高的，10$ default 让普通 session
+    // 早早就被 system reminder 报"$80/$10; -$70 remaining"——agent 行为被错
+    // 误紧迫感带偏（少派子代理 / 少自检 / 收尾仓促）。但 gateway 实付才 $2-3。
+    //
+    // 修法：拉到 150$ 让 Opus 虚高的"used"也在常规 session 内不超阈。env
+    // override 仍生效，想真精确算成本另写独立 metric 按 Kimi 价 × counters 算。
     maxBudgetUsd: (() => {
       const v = Number(process.env.NODESIGN_MAX_BUDGET_USD);
-      return Number.isFinite(v) && v > 0 ? v : 10;
+      return Number.isFinite(v) && v > 0 ? v : 150;
     })(),
 
     // Sandbox 开/关来自 runtime/platform.js（NODESIGN_SANDBOX=on 显式打开）
