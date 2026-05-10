@@ -273,13 +273,54 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 工具失败时第一反应不该是"换个工具试试"——多数工具失败是有具体根因的，瞎换工具浪费 turn 且容易陷入循环：
 
-- **Edit 失败 oldString mismatch** → 先 `Read` / `read_page` 看现在文件长什么样再精确改。盲目重试同样的 oldString 99% 还是 mismatch；盲目改用 Write 整文件覆盖会让 git diff 脏到看不出你改了哪儿
+- **Edit 失败 oldString mismatch** → 先 `Read` / `read_page` 看现在文件长什么样再精确改。盲目重试同样的 oldString 99% 还是 mismatch。**改幅本来就大、或多行 verbatim 已挂一次 → 升档 Write 全量覆写**（详见 § 文件改动工作流），别在 verbatim Edit 里反复硬钻
 - **Edit 改多处同一字符串** → 用 `replace_all: true`（重命名变量 / 统一改色号 / 批量改 anchor 名）。比循环单次 Edit 省 token + 不会半路状态不一致
 - **Bash sandbox 拦截** → 想想为什么用 Bash。`ls` / `find` / `cat` / `grep -r` 都该换 Glob / Grep；只有真需要 shell 的事（git status / 跑 python 脚本 / 网络 curl）才用 Bash
 - **screenshot / 业务 MCP 工具失败** → 看 PostToolUseFailure hook 注入的恢复建议（hook 会在 tool result 里带常见原因 + 应对），按它做。比"再试一次同样调用"准很多
 - **generate_image 输出不理想** → 不要重 reroll 同一 prompt 第 3 次。改 prompt 关键参数（5 元素公式 / 风格锚词 / 文字带引号）或问用户新方向，比刷 token 有效
 
 **Hook 注入的诊断信息也要看**：PostToolUseFailure 经常会告诉你"这个错的常见原因是 X，建议 Y"——这是工作台经验积累，不是无意义的提示文字。
+
+---
+
+## 文件改动工作流（Edit / Write 选档）
+
+**默认 Edit**——便宜、不覆盖用户在 canvas 上 DirectEdit 的并发改动、git diff 干净。Write 是逃生口（Edit 真碎了才用），不是省事工具。错档常见后果两种：①Write 滥用 → 每个 turn 几 K 输出 token 浪费 + 用户改动被覆盖；②长 verbatim Edit 反复挂 → 退化到 `head + cat << HEREDOC + tail + mv` 重组（line 飘就崩，HEREDOC 嵌 HTML 转义雷区）。
+
+### 三档判断
+
+| 改动尺度 | 例子 | 用什么 |
+|---|---|---|
+| **小**（1-3 token / 1 class / 1 段属性） | 改 title / 改色值 / 加一个 class / design-tokens 单项 | Edit，old_string 仅覆盖目标 ± 上下文 1-2 行 |
+| **中**（1-2 sections 内重写 / 加一段新章节 / 替换一段示例） | 重写一页 section 文字 / 把 cover 占位换成实内容 / 加一个 React mount | Edit，锚定独一无二的边界（HTML 注释 / unique class / data-anchor）。**100+ 行 verbatim 仍在 Edit 范围**——边界锚定好就稳 |
+| **大**（删 3+ 段 + 加 3+ 段 / 重组 200+ 行 / 整 sections 区换个底朝天） | cp 模板后整 sections 区换 9 页自定 / 全文 layout 重新组织 | Write 全量覆写——verbatim 真的碎才用 |
+
+### Edit 失败的对的反应（**别一挂就跑 Write**）
+
+- **第一次 oldString mismatch** → Read 一次目标区块刷新真实字节 → 再 Edit。**多数能救活**——失败常因记忆里的 old_string 跟实际差一两个空格 / class 顺序 / 注释字符，Read 后 verbatim 粘就过。
+- **Read 完再 Edit 又挂** = old_string 真的太复杂（含装饰字符 / 嵌套注释 / 跨多 section）→ **这才升档 Write**。不是失败一次就跑路。
+- **多处同串改** → `replace_all: true`（重命名 / 统一改色号 / 批量改 anchor），不是反复单 Edit 也不是 Write。
+
+### Write 的代价（默认避免它的三个理由）
+
+1. **token 贵** —— canvas.html 600-900 行 Write 一次 7-10K 输出 token；Edit 一次 ~200，差 30-50 倍。每个 turn 都 Write = 流速明显变慢、context 烧得快。
+2. **覆写并发改动** —— 用户在画布上 DirectEdit 双击改字 / 加 comment 是异步进 pending-changes buffer 的；Write 整文件会**覆盖用户没合的改动**。Edit 只动指定区段，用户其他改动自然保留。
+3. **diff 不可读** —— Write 等于全行变更，用户审"你这一刀改了哪儿"得逐行对比；Edit 的 diff 只有真改的 ±3 行，一眼能看完。
+
+### Bash 文件操作的副作用
+
+Bash `cp` / `mv` / `sed -i` / `> file` 改了文件后，下次 Edit 之前**先 Read 一次刷 cache**——SDK Edit 通过 Read tool 跟踪文件 freshness，绕开 Read 的修改让下次 Edit 报"File modified since read"。
+
+`head -n N + cat << HEREDOC + tail + mv` 这种 line-number 切片重组比 Write 还脆（line 飘移 + HEREDOC 嵌 HTML 转义雷区），任何场景都别走。
+
+### cp + 改 canvas.html 起手式
+
+1. `Bash: cp canvas.template.html canvas.html`
+2. **小改 Edit 起手** — title / design-tokens（颜色/字号/字体）/ data-deck-aspect，5-8 个 Edit，飞快、不会挂。
+3. **section 区按你 deck 跟模板范例的关系分流**：
+   - 跟范例风格接近 / 1-3 页 → cp 范例 section 改文字 + Edit 加新 page，**全程 Edit**
+   - 整套 redesign / 多页 / 自定 layout → Read 一次 sections 区 → Write 整文件（head/script verbatim 带过，sections 区换成你的）
+4. `mcp__nodesign__screenshot_canvas` 自查再迭代。
 
 ---
 
@@ -402,7 +443,7 @@ curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
 
 **经验最佳实践**（建议遵循，效率显著更高）：
 - Bash 的 ls / find / cat / grep -r 改用 Glob / Grep 工具 — 速度快且结果格式更易处理
-- Edit 失败时先 Read 确认文件现状再精确改 — 盲目重试 oldString 容易循环；盲目 Write 整文件会让 git diff 脏乱
+- Edit / Write 选档按 § 文件改动工作流的尺度判断 — 小改 Edit、大改 Write，verbatim 挂一次直接升档别钻牛角尖
 - 看到 system 提示有 pending changes → 调 get_pending_changes 看一眼再回复，处理完 clear buffer
 
 ---

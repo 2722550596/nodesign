@@ -618,20 +618,16 @@ export default function ProjectWorkspace() {
         setReloadToken(t => t + 1);
         // Phase B 批次 5：SDK 用 haiku helper incrementally 更新 session summary
         // 落 JSONL，run.done 后 refetch 让 chat 头部 / 面包屑 title 反映最新总结。
-        // 已有 sid 的场景立即刷；新建场景下面 navigate 完会触发 useEffect 重 fetch。
+        // 已有 sid 的场景立即刷；新建场景 handleSend 已即时 navigate 到 /sessions/<sid>。
         if (currentSessionId) {
           refreshSessionTitle();
         }
-        // H1：从"新会话"（/work 路径）刚跑完 → SDK 已建新 sid → navigate
-        // replace 到 /sessions/<sid>，让 URL 反映真实 sid（刷新可恢复，
-        // SessionListModal 现在能高亮当前 session）
-        if (!currentSessionId) {
-          Sessions.list(id, { limit: 1 }).then(({ sessions = [] }) => {
-            if (sessions.length > 0) {
-              navigate(`/projects/${id}/sessions/${sessions[0].sessionId}`, { replace: true });
-            }
-          }).catch(() => { /* ignore */ });
-        }
+        // 注意：之前这里有"!currentSessionId 时 Sessions.list({limit:1}) → navigate
+        // 到最近 session"的兜底，意图是新会话首跑完后同步 URL。但 handleSend /
+        // handleSendInitialMessage 拿到 returnedSid 已即时 navigate，这里冗余；
+        // 而当用户在旧 session 还在跑时主动切到 /work（"+ 新会话"），这段会用
+        // Sessions.list 拿到的"最近 session"把用户弹回老 sid → 用户感知"新 session
+        // 跳回旧会话 + 上下文串味"。删除让用户的 /work 选择生效。
         break;
       }
       case 'run.file_changed':
@@ -679,15 +675,8 @@ export default function ProjectWorkspace() {
         setMessages(prev => clearThinkingStreaming(prev));
         showToast('已取消', 'info');
         // streamInput 模式：cancel 只是 interrupt 当前 turn，query 仍活着接下条 message。
-        // 跟 run.done 同步：从"新会话"（/work）路径 cancel 时也要 navigate 到 /sessions/<sid>，
-        // 否则 URL 还是 /work，下次发 chat sessionId=null 会起新 session 跟原 session 脱钩
-        if (!currentSessionId) {
-          Sessions.list(id, { limit: 1 }).then(({ sessions = [] }) => {
-            if (sessions.length > 0) {
-              navigate(`/projects/${id}/sessions/${sessions[0].sessionId}`, { replace: true });
-            }
-          }).catch(() => { /* ignore */ });
-        }
+        // 跟 run.done 同款删除：见 run.done case 注释——Sessions.list({limit:1})
+        // 兜底会把主动切到 /work 的用户弹回最近 session（老会话还在跑时尤甚）。
         break;
       }
 

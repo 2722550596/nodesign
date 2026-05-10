@@ -392,13 +392,19 @@ export async function readAssetsSummary(sessionRoot) {
       parts.push(`${others.length} 个其他文件`);
     }
 
+    // 完整文件清单（按路径列）—— 让 agent 不用再 Glob/LS 探。assets/ 是 symlink
+    // → shared/assets/，SDK Glob 走 ripgrep 默认不跟 symlink，agent 调
+    // `Glob("assets/*")` 会拿 "No files found" 误判工作区为空（plan mode 还没 Bash
+    // 兜底）。把全名列在这条 system 里，agent 直接 Read assets/<name> 即可。
+    const allNames = [...images, ...textDocs, ...binaryDocs, ...others];
     return {
       count: files.length,
       summary: `workspace 里已有 ${files.length} 个参考素材：${parts.join('、')}`,
       hasBinaryDocs: binaryDocs.length > 0,
+      paths: allNames.map((n) => `assets/${n}`),
     };
   } catch {
-    return { count: 0, summary: '', hasBinaryDocs: false };
+    return { count: 0, summary: '', hasBinaryDocs: false, paths: [] };
   }
 }
 
