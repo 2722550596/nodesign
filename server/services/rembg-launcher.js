@@ -14,7 +14,7 @@
  *   NODESIGN_REMBG_PRELOAD    逗号分隔预加载模型列表（默认 isnet-general-use,birefnet-general-lite）
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
@@ -31,6 +31,55 @@ let serviceProc = null;
 let started = false;
 
 /**
+ * 杀掉所有 stale rembg-service.py 进程（不属于本 launcher 的）。
+ * 防止 node --watch reload / pm2 restart / 上次 SIGKILL 没清干净时
+ * 多个 service 实例累积——每个加载一份模型 = 重复 200-400MB 内存浪费 +
+ * 同一个 socket 文件 bind 冲突。
+ *
+ * 用 pgrep -f 找匹配 rembg-service.py 的进程，全 kill。同步执行——
+ * 启动时一次性清干净，spawn 新 service 之前。
+ */
+function killStaleServices() {
+  try {
+    // pgrep -f 匹配完整 cmdline，-d ' ' 用空格分隔多 PID。
+    // pattern "python.*rembg-service\\.py" 收紧只匹配 python 解释器执行
+    // rembg-service.py 的进程（避免误杀含字符串的 node test / 编辑器等）。
+    const out = execSync('pgrep -fd " " "python.*rembg-service\\.py"', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim();
+    if (!out) return;
+    // 排除自己当前进程（防自杀的边角）
+    const myPid = process.pid;
+    const pids = out.split(/\s+/).filter(Boolean).filter((p) => Number(p) !== myPid);
+    if (pids.length === 0) return;
+    console.log(`[rembg-service] killing ${pids.length} stale service process(es): ${pids.join(', ')}`);
+    for (const pid of pids) {
+      try { process.kill(Number(pid), 'SIGTERM'); } catch { /* already dead */ }
+    }
+    // 给 1s 让 SIGTERM 走 atexit 清 socket；之后 SIGKILL 兜底
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      try {
+        execSync('pgrep -f "python.*rembg-service\\.py"', { stdio: 'ignore' });
+        // 还活着，继续 wait
+      } catch {
+        // pgrep exit 1 = 没找到 = 全死了
+        return;
+      }
+    }
+    // SIGTERM 1s 还没死 → SIGKILL
+    for (const pid of pids) {
+      try { process.kill(Number(pid), 'SIGKILL'); } catch { /* ignore */ }
+    }
+  } catch (err) {
+    // pgrep exit 1 = 没匹配进程，正常路径，不报错
+    if (err.status !== 1) {
+      console.warn(`[rembg-service] killStaleServices error: ${err.message}`);
+    }
+  }
+}
+
+/**
  * 启动 rembg-service。幂等：重复调用 noop。
  * 返回 boolean —— 是否启动成功（venv 不存在 / spawn 错时返 false，server 继续）。
  */
@@ -41,6 +90,10 @@ export async function startRembgService() {
   const py = process.env.NODESIGN_REMBG_PYTHON || DEFAULT_PYTHON;
   const script = process.env.NODESIGN_REMBG_SERVICE || DEFAULT_SERVICE;
   const preload = process.env.NODESIGN_REMBG_PRELOAD || DEFAULT_PRELOAD;
+
+  // 先杀掉所有 stale rembg-service 进程（node --watch reload / SIGKILL 没清等
+  // 路径会让多个 service 累积，每个吃 200-400MB 内存）
+  killStaleServices();
 
   // venv 不存在直接 noop（首次部署 / dev 没装 rembg 的环境）
   try {
