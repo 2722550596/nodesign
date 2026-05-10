@@ -178,6 +178,8 @@ export async function runSession({
   const model = modelOverride.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
   const sdkModel = resolveSdkSpoofModel(model);
 
+  // appModel env：session-level，由 try 块内 + finally 配对管理。详见 line 558 注释。
+
   const sharedCtx = new AgentContext({
     runId: '__session_pending__',
     skillId,
@@ -482,8 +484,8 @@ export async function runSession({
     // 透传成 ND-Trace-Id（NoDesk 后台按 trace 串单轮 LLM 调用链路）。SDK 串行
     // 处理 turn，全局变量在同一时刻只对应一个活动 turn，无 race。
     process.env.NODESIGN_CURRENT_TURN_ID = runId;
-    // appModel 给 binary-fixup-proxy 用（出口把 SDK 的 spoofing alias 还原成
-    // 真 model 给 gateway）。Node 进程级 env，SDK 串行 turn 内无 race。
+    // appModel 重设：cross-session 同进程多 session 时另一 session 可能覆盖了，
+    // 这里防御性还原。session-level 主设在下方 try 块入口；finally 配对清。
     process.env.NODESIGN_CURRENT_APP_MODEL = model;
     markRunStarted(runId);
     sharedCtx.emit(Events.start());
@@ -517,7 +519,10 @@ export async function runSession({
     setCurrentTurnRunId(sessionId, null);
     // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
-    delete process.env.NODESIGN_CURRENT_APP_MODEL;
+    // 注意：NODESIGN_CURRENT_APP_MODEL 不在这里删（session-level 而非 turn-level）。
+    // 否则 SDK 的 promptSuggestions / 其他 helper 在 end_turn 之后立即发起的请求
+    // 会拿不到 appModel → reverse 不触发 → 真打 DMX Opus 4.7 烧钱。
+    // 在 runSession 的 finally 条件清（只清自己设的值）。
   };
 
   // ── idle timeout 兜底 ──
@@ -540,6 +545,23 @@ export async function runSession({
 
   let stream;
   try {
+    // appModel 给 binary-fixup-proxy 用（出口把 SDK spoofing alias 还原成真 model 给 gateway）。
+    //
+    // 2026-05-10 修：原版只在 startTurn 设、finishTurn 删 —— 但 SDK 的 promptSuggestions
+    // helper 在每次 end_turn 之后立刻发请求（复用主 agent 的整套 model + tools + system
+    // prompt），那时 env 已被 finishTurn 删 → proxy reverse 不触发 → 真打到 DMX 的
+    // Claude Opus 4.7 = 烧钱 leak。
+    //
+    // 修法：env 改为 session-level —— session 起始（在 try 块内、紧贴 stream 起）设，
+    // 整个 session 保持，finally 配对条件清。
+    // 放 try 内的关键：万一 try 之前 init 抛错（workspace.ensure / loadSkill /
+    // ensureSkillStarterFiles / proxy start / buildSdkOptions 等都可能），env 还没
+    // 被设，无 leak 风险。配对的 finally 只清自己设的值（防 cross-session 互写误清）。
+    //
+    // startTurn 内仍重设（防 cross-session 同进程多 session 互写覆盖；真要严格隔离
+    // 需 AsyncLocalStorage，但 NoDesign 默认配置全 session 同 model 无害）。
+    process.env.NODESIGN_CURRENT_APP_MODEL = model;
+
     stream = query({ prompt: inputQueue, options: sdkOptions });
     attachSessionQuery(sessionId, stream);
 
@@ -633,6 +655,11 @@ export async function runSession({
     }
   } finally {
     clearInterval(idleScanTimer);
+    // session-level appModel env 条件清：只清自己刚才设的值；若 cross-session
+    // 互写时另一 session 已覆盖，留给那个 session 自己的 finally 清。防误清。
+    if (process.env.NODESIGN_CURRENT_APP_MODEL === model) {
+      delete process.env.NODESIGN_CURRENT_APP_MODEL;
+    }
     // 带 token 比对：sid 若已被新 register 占用（closeQuerySession 已同步让位 +
     // 用户重发起新 runSession），unregister 看到 _token 不匹配 → noop 不误删新 entry
     unregisterQuerySession(sessionId, sessionToken);
