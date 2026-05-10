@@ -328,6 +328,13 @@ REFERENCES (max 14 per Gemini 3.1 Flash docs, ≤4 character / ≤10 object):
   - Inpainting: pass the canvas screenshot, describe what to change
   - Document → infographic: pass a PDF, describe the target visualization
 
+GROUNDING (useGrounding: true, opt-in):
+  Lets NB2 invoke Google Image Search during generation for real-world
+  visual fidelity. Best for landmarks / cities / real products / nature /
+  specific brand contexts. Adds ~60-90s latency. Auto-skipped by model
+  for people/character queries (Google guardrail) — those return same as
+  vanilla generation. See cookbook § L Image Search Grounding.
+
 WHEN TO USE:
   - You're building a deck / landing / report and want real imagery
   - You need a backdrop that pure CSS gradient can't achieve
@@ -383,6 +390,10 @@ become part of the spec.json design history.`,
         .enum(['flash', 'pro'])
         .optional()
         .describe('NB2 model tier; "flash" (default, gemini-3.1-flash-image-preview) for most images. "pro" (gemini-3-pro-image-preview, ~2-3× slower & costlier) only for anchor shots that become referenceImages seeds for downstream pages — cover hero / character bible identity sheet / brand mockup hero. See cookbook § H model routing.'),
+      useGrounding: z
+        .boolean()
+        .optional()
+        .describe('Enable Google Image Search grounding for real-world subjects (landmarks / cities / products / nature / specific brands). Default false. When true, model can pull real images from web during generation to anchor visual fidelity. Adds ~60-90s latency. Model auto-skips for people/character queries (Google guardrail). Sources saved to <name>.grounding.json sidecar. See cookbook § L.'),
     },
     async ({
       prompt,
@@ -394,6 +405,7 @@ become part of the spec.json design history.`,
       thinkingLevel = 'minimal',
       responseModalities = ['IMAGE'],
       model = DEFAULT_MODEL,
+      useGrounding = false,
     }) => {
       const modelId = MODELS[model];
       if (!modelId) {
@@ -462,6 +474,9 @@ become part of the spec.json design history.`,
             includeThoughts: false,
           },
         },
+        // Image Search Grounding：opt-in。NB2 自决要不要真用（人物 query
+        // 模型自动跳过，Google guardrail；地标/产品/真实场景才会触发）。
+        ...(useGrounding ? { tools: [{ googleSearch: {} }] } : {}),
       };
 
       // 4. 调网关
@@ -551,6 +566,33 @@ become part of the spec.json design history.`,
       // shared/assets, so relative path is the same either way.
       const agentRelPath = path.posix.join('assets', 'generated', fileName);
 
+      // 6.5 提 grounding metadata（仅 useGrounding=true 且 model 真触发了搜索时存在）
+      // 落 sidecar `<name>.grounding.json` 给前端 attribution UI / spec.json 审计用。
+      // 模型对人物 query 自动跳过 grounding，那时这块为空——不落 sidecar，行为同普通生图。
+      const candidate = response?.candidates?.[0] || {};
+      const groundingMetadata = candidate.groundingMetadata || candidate.grounding_metadata;
+      let groundingPath = null;
+      let groundingSourceCount = 0;
+      let groundingQueries = [];
+      let groundingTopSources = [];
+      if (groundingMetadata) {
+        const sidecarName = `${finalName}.grounding.json`;
+        const absSidecar = path.join(outDir, sidecarName);
+        try {
+          await fs.writeFile(absSidecar, JSON.stringify(groundingMetadata, null, 2));
+          groundingPath = path.posix.join('assets', 'generated', sidecarName);
+        } catch (err) {
+          console.warn(`[generate-image] grounding sidecar write failed: ${err.message}`);
+        }
+        const chunks = groundingMetadata.groundingChunks || [];
+        groundingSourceCount = chunks.length;
+        groundingQueries = (groundingMetadata.webSearchQueries || []).slice(0, 5);
+        groundingTopSources = chunks.slice(0, 5).map((c) => ({
+          title: c.web?.title || null,
+          uri: c.web?.uri || null,
+        }));
+      }
+
       // 7. emit run.image_generated（前端可显 thumbnail / 加 timeline 节点）
       try {
         ctx?.emit?.({
@@ -567,6 +609,9 @@ become part of the spec.json design history.`,
           model,            // 'flash' | 'pro'，区分前端 badge 显示 + spec.json 审计
           referenceImageCount: inlineImageParts.length,
           accompanyText: extracted.accompanyText || null,
+          groundingUsed: groundingPath !== null,           // model 真触发了搜索
+          groundingSourceCount,
+          groundingPath,                                    // sidecar 相对路径，前端读 attribution HTML
         });
       } catch { /* fail-safe */ }
 
@@ -580,11 +625,33 @@ become part of the spec.json design history.`,
       if (inlineImageParts.length > 0) {
         captionParts.push(`with ${inlineImageParts.length} reference image${inlineImageParts.length > 1 ? 's' : ''}`);
       }
+      if (groundingPath) {
+        captionParts.push(`grounded with ${groundingSourceCount} source${groundingSourceCount > 1 ? 's' : ''}`);
+      } else if (useGrounding) {
+        captionParts.push('(grounding requested but model didn\'t fire — likely person/character query, see cookbook § L)');
+      }
       const caption = captionParts.join(' ');
 
       const content = [{ type: 'text', text: caption }];
       if (extracted.accompanyText) {
         content.push({ type: 'text', text: `Model commentary: ${extracted.accompanyText}` });
+      }
+      if (groundingPath) {
+        // 给 agent 看到本次 grounding 用的搜索 + top sources，方便它在回话里
+        // 简短报给用户（"grounded with 5 sources from <queries>"）；完整 attribution
+        // HTML 在 sidecar 里供前端 chip UI 读。
+        const sourceLines = groundingTopSources
+          .filter((s) => s.title || s.uri)
+          .map((s, i) => `  [${i + 1}] ${s.title || ''} ${s.uri || ''}`.trim())
+          .join('\n');
+        content.push({
+          type: 'text',
+          text:
+            `Image Search Grounding active.\n`
+            + `Queries: ${groundingQueries.join(' | ') || '(none)'}\n`
+            + `Top sources (${groundingSourceCount} total):\n${sourceLines || '  (none)'}\n`
+            + `Full attribution metadata: ${groundingPath}`,
+        });
       }
       // image content block 用 thumbnail base64（原图通过 HTTP 按需加载，不走 WS）：
       // 原图 base64 化后单条 WS message 8MB+ 让浏览器 parse 卡 / nginx upstream 也痛苦。

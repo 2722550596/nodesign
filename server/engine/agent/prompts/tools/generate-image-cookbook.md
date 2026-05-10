@@ -271,6 +271,7 @@ mcp__nodesign__generate_image({
     // 也可以是 .pdf —— 见 § K Document-to-visual
   ],
   thinkingLevel: "minimal",  // 'minimal'(default) | 'high'；预算不是开关，永远在跑且永远计费
+  useGrounding: false,        // opt-in；真实地标/产品/场景开 ✅，人物/装饰/抽象不开 ❌（详见 § L）
 })
 ```
 
@@ -411,3 +412,53 @@ mcp__nodesign__generate_image({
 - **PDF 只读文本 + 表格** —— PDF 里的图片、复杂图表、扫描页 NB2 不一定准确还原；纯图片 PDF 应当成 image reference 处理
 - **PDF 算 reference budget** —— 1 个 PDF = 占 1 个 reference 槽位（共 14 槽）
 - **PDF 不能做 character ref** —— PDF 算 object，不占 4 char ref 槽位
+
+## L. Image Search Grounding（NB2 调 Google Image Search 锚真实场景）
+
+NB2 独有能力：传 `useGrounding: true`，模型在生图前可调 Google Image Search 拿真实参考，渲染出来的视觉**锚到现实实体**——不是模型脑里"通用印象"。
+
+spike 实测：地标场景（Cape Coast Castle）开 grounding 出来的图能看到加纳国旗 + 真实建筑细节；不开 grounding 是模型脑里"通用非洲殖民堡垒"。
+
+### 用 vs 不用决策表
+
+| 场景 | 用 grounding？ | 理由 |
+|---|:---:|---|
+| 真实地标 / 建筑 / 城市风貌 | ✅ | 模型对最近发布 / 小众建筑不熟，grounding 救场 |
+| 真实产品 / 设备（特别是新发布）| ✅ | knowledge cutoff 之后的产品脑里没参考 |
+| 自然风光 / 特定地理位置 | ✅ | 季节 / 气候 / 时段细节模型容易脑补错 |
+| 特定品牌门店 / 工厂 / 办公场景 | ✅ | 品牌识别度强的场景 |
+| 历史事件场景 / 新闻图风格 | ⚠️ 慎用 | 新闻图敏感，attribution 必须显，cookbook agent 不直接做 |
+| **真实人物 / 名人 / 角色 / 二次元 IP** | ❌ 没用 | model 自己拒触发（Google guardrail "no Image Search for people"），传了也是 vanilla 行为 |
+| 抽象 / 装饰 / 纹样 / 图标 | ❌ 没用 | 没有"真实参考"语义，浪费 60-90s |
+| 概念图 / 隐喻 / 象征 | ❌ 没用 | 同上 |
+| 草稿 / 探索阶段 | ❌ 别用 | 慢 + 后期不一定用，纯浪费 |
+
+### 调用
+
+```js
+mcp__nodesign__generate_image({
+  prompt: "A photorealistic image of Cape Coast Castle in Ghana as it looks today, midday tropical sun, aerial shot showing the white fortress walls and Atlantic Ocean.",
+  useGrounding: true,    // ← opt-in
+  aspectRatio: "16:9",
+  imageSize: "2K",
+  assetRole: "section-divider",
+})
+```
+
+### 工作流约束
+
+| 项 | 说明 |
+|---|---|
+| **Latency** | 真触发 grounding 时 ~60-90s（vs 普通生图 ~15-30s）。draft 阶段别开 |
+| **成本** | gateway 可能按 search query 额外计费，但单图溢价不大；锚点图值得 |
+| **人物自动跳** | 模型对 portrait / character / "specific person" 类 prompt 不会真触发 grounding，wrapper 返回 caption 会带上 "(grounding requested but model didn't fire — likely person/character query)" 让你知道 |
+| **Attribution** | wrapper 把完整 attribution metadata 落到 `assets/generated/<name>.grounding.json` sidecar；CallToolResult 里第二个 text block 显示 queries + top sources URL 让你简短报给用户（"已用 Google Image Search 锚 5 个 source"）|
+| **Reference 互补** | 跟 `referenceImages` 不冲突——grounding 是模型动态拉，referenceImages 是你显式喂；同时用得到，模型会综合两边 |
+
+### 反例：别凡事都开
+
+错误用法 → 浪费 60-90s + 出图也没区别：
+- ❌ 装饰背景 / pattern / 抽象艺术 → 不开 grounding
+- ❌ 角色 / portrait → 不开（模型自己拒）
+- ❌ 多变体探索 → 用 vanilla 出 3 个候选选一个，**只对最终选中的那张** rerun + grounding
+- ❌ 同 prompt 反复 reroll —— grounding 不是质量万能药，prompt 不准 grounding 也救不回
