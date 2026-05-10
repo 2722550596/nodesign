@@ -350,3 +350,42 @@ NB2 不是万能的——以下是 final 接受前**必扫**的 checklist：
 1. **`record_decision`** —— 把 prompt + role + path + 用户评价记 spec.json，重生时能查回
 2. **关键节点的反馈循环**：cover / 第一个 portrait / logo 嵌入这种页面级 anchor（会被当 referenceImages 种子用于 downstream），生完图后在自然回话里邀请用户反馈一下方向（例如："这个 cover 当全 deck 视觉锚 OK 吗？想换风格告诉我"）。这些是 downstream 的种子，早定早收益；用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到）。
 3. **落档后 read_page / list_pages 看到的是 thumbnail 快照**（`/api/canvas` GET 时把 `assets/generated/<n>.<ext>` 透明重写到 `.thumbnails/<n>.thumb.jpg`），真实 HTML / 文件系统中的 `<img src>` 不变。如果你 Read canvas.html 想确认 src 已写进去——直接看 Read 结果（不经 thumbnail 重写）；如果想知道 preview iframe 加载哪张图——查 `.thumbnails/` 目录。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即见最新。
+
+## K. Document-to-visual（PDF 输入 → 信息可视化）
+
+NB2 把 `.pdf` 当 reference 喂进去会**真读 PDF 文本 + 表格**，然后按你的 prompt 生成 accurate 信息可视化。spike 实测一份 745 字节的 Q3 sales report PDF，模型把 "$4.2M / +18% / APAC / 42% / 8,500 / +25% YoY" 全部精准还原进 4 stat card 信息图。
+
+**用法**：直接把 PDF 路径放 `referenceImages`，跟 image reference 同接口：
+
+```js
+mcp__nodesign__generate_image({
+  prompt: "<想要的可视化 — 见下方 4 类场景>",
+  aspectRatio: "16:9",
+  imageSize: "2K",
+  assetRole: "infographic",
+  referenceImages: ["assets/uploads/q3-sales-report.pdf"],
+})
+```
+
+### 4 类高 ROI 场景
+
+| 场景 | 用户行为 | prompt 模板 |
+|---|---|---|
+| **研究报告 → infographic** | 用户上传白皮书 / 行业报告 PDF | `"Use the provided PDF as the factual source. Extract the [N] most important [data points / findings / metrics] for [audience]. Create a [aspect] [infographic / dashboard / chart] with [N zones / cards / sections]. Use [visual style: minimal / corporate / editorial]. Do not invent facts not present in the PDF."` |
+| **brand guideline → 风格锚** | 用户上传 brand book / VI 手册 PDF | `"Use the provided brand guideline PDF as the visual reference. Generate a [hero / cover / mood board] that strictly follows the brand's primary palette, typography spirit, and tonal system from the PDF. Apply to a [deck cover / product mockup / scene]."` —— 后续每张图都引同一个 PDF 让整 deck 锁品牌 |
+| **outline / meeting notes → deck 视觉骨架** | 用户上传 outline / 纪要 PDF | `"Read the document outline in the PDF. For each section, generate a thumbnail-style visual representing its core idea. Layout as a [N×M grid] storyboard for a [deck] structure."` |
+| **竞品 deck → 模仿+创新** | 用户上传竞品 deck PDF | `"Reference the layout, color, and visual hierarchy of the provided competitor deck PDF. Create a similar visual style for [your topic]. Adapt their best layout patterns but use [your brand palette]."` |
+
+### Prompt 写作要点
+
+- **明确"用 PDF 作为 factual source"** —— 防止 NB2 把 PDF 当装饰参考随便发挥；要它**真读内容**
+- **明确"don't invent facts not in the PDF"** —— 信息可视化场景幻觉成本极高（编一个数字 = 整张图作废）
+- **指定数据维度** —— "extract the 5 most important metrics" 比 "summarize the report" 准
+- **指定视觉风格** —— editorial / corporate / minimal / dashboard 等具体词，别留 "good design"
+
+### 已知限制
+
+- **PDF 单文件 ≤ 50MB**（gateway 限制）；超大 PDF 拆成多个分别喂
+- **PDF 只读文本 + 表格** —— PDF 里的图片、复杂图表、扫描页 NB2 不一定准确还原；纯图片 PDF 应当成 image reference 处理
+- **PDF 算 reference budget** —— 1 个 PDF = 占 1 个 reference 槽位（共 14 槽）
+- **PDF 不能做 character ref** —— PDF 算 object，不占 4 char ref 槽位

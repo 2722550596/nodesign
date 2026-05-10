@@ -110,6 +110,11 @@ const MIME_BY_EXT = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  // PDF：NB2 支持文档输入（generateContent inline_data application/pdf）。
+  // spike 实测 NoDesk + DMXAPI 透传通，且 NB2 真读 PDF 文本生成准确数据
+  // 可视化（Q3 sales report PDF → 4 stat card 信息图，数字一一对上）。
+  // 用例详见 cookbook § K Document-to-visual。
+  '.pdf': 'application/pdf',
 };
 
 const DEFAULT_NODESK_URL = 'https://llm-gateway-api.nodesk.tech';
@@ -162,7 +167,7 @@ async function resolveReferenceImage(relPath, workspaceRoot, sharedRoot) {
   const mimeType = MIME_BY_EXT[ext];
   if (!mimeType) {
     throw new Error(
-      `Unsupported image format ${ext} (allowed: png/jpg/jpeg/webp/gif): ${relPath}`,
+      `Unsupported reference format ${ext} (allowed: png/jpg/jpeg/webp/gif/pdf): ${relPath}`,
     );
   }
   return { abs: absResolved, mimeType, baseUsed };
@@ -300,13 +305,18 @@ IMAGE SIZE pricing (tokens scale with size):
   - 2K:   1680t (hero, cover, full-bleed bg)
   - 4K:   2520t (use sparingly — only when print-grade detail matters)
 
-REFERENCE IMAGES (max 14 per Gemini 3.1 Flash docs, ≤4 humans / ≤10 objects):
+REFERENCES (max 14 per Gemini 3.1 Flash docs, ≤4 character / ≤10 object):
   Pass workspace-relative paths (e.g., 'assets/photo.jpg' or
-  'assets/generated/prev.png'). Use cases:
+  'assets/generated/prev.png'). Image formats: png/jpg/jpeg/webp/gif.
+  PDF documents (.pdf) also accepted — NB2 reads PDF text + tables and can
+  generate accurate visualizations from them (research reports, brand
+  guidelines, outlines). See cookbook § K Document-to-visual.
+  Use cases:
   - Style transfer: pass an image, describe the new style
   - Character consistency: pass 1-2 portraits across multi-page deck
   - Composition / mockup: pass logo + model image, describe how they combine
   - Inpainting: pass the canvas screenshot, describe what to change
+  - Document → infographic: pass a PDF, describe the target visualization
 
 WHEN TO USE:
   - You're building a deck / landing / report and want real imagery
@@ -339,7 +349,7 @@ become part of the spec.json design history.`,
         .array(z.string().min(1))
         .max(14)
         .optional()
-        .describe('Workspace-relative paths to reference images. Max 14. Use for style transfer / character consistency / inpainting.'),
+        .describe('Workspace-relative paths to references (png/jpg/webp/gif image OR .pdf document). Max 14 (≤4 character + ≤10 object). Use for style transfer / character consistency / inpainting / document-to-visual (cookbook § E + § K).'),
       assetRole: z
         .enum(ASSET_ROLES)
         .optional()
