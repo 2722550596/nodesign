@@ -153,7 +153,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ---
 
-## NoDesign 业务 MCP 工具速查（16 个）
+## NoDesign 业务 MCP 工具速查（17 个）
 
 > 调用名一律 `mcp__nodesign__<tool>`。SDK 已经把完整 schema 注入到 system
 > prompt 顶层（alwaysLoad: true），**第一 turn 就能直接调**，无需 ToolSearch。
@@ -175,6 +175,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `export_handoff` | 打 zip（canvas + spec + assets + chat history + README）到 `./exports/` | 无参 |
 | `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu；`include_images=true` 返结果含 N 个 image content block，turn 内直接 vision-check 不必再 Read | `query` / `provider?` / `include_images?` |
 | `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图（**首调时 hook 会注完整 cookbook**） | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
+| `remove_background` | rembg U²-Net 抠掉任意 workspace 图片的背景，输出 RGBA PNG。NB2 模型本身不支持透明，主题色跟 NB2 默底冲突 / 想叠合时按需调；用户上传的产品照、之前生过的图、截图都能抠 | `inputPath` / `outputName?` / `overwrite?` |
 | `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
 
 > **Thumbnail 提示**：`list_pages` / `read_page` 返结果含 `assets/generated/<n>.<ext>` 引用时，preview iframe 加载的是 `.thumbnails/*.thumb.jpg` 快照（`/api/canvas` GET 透明改写），返回的 outerHTML 中 src 是真实路径（同 `Read canvas.html`）。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即可见最新。

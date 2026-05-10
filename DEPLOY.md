@@ -145,11 +145,31 @@ npx playwright install chromium
 npx playwright install-deps chromium
 # 如果上面这条因 sudo 提示，跑：
 # sudo npx playwright install-deps chromium
+
+# rembg python venv（mcp__nodesign__remove_background 工具用，
+# server 端 spawn python subprocess 抠图出 RGBA PNG）
+cd server
+python3 -m venv .venv-rembg
+.venv-rembg/bin/python3 -m pip install --upgrade pip
+.venv-rembg/bin/python3 -m pip install rembg onnxruntime
+cd ..
+
+# u2net 模型 ~176MB 首次抠图自动下载到 ~/.u2net/u2net.onnx
+# 想避免首次用户等 cold-download，先 warm 一次（也验证安装）：
+server/.venv-rembg/bin/python3 -c "from rembg import new_session; new_session('u2net'); print('rembg ready')"
 ```
 
 **验证点**：
 - `ls node_modules/.bin/playwright` 文件存在
 - `npx playwright --version` 能输出版本号
+- `server/.venv-rembg/bin/python3 -m rembg --help` 不报错
+- `ls -la ~/.u2net/u2net.onnx` 显示 ~176MB（warm 完成）
+
+**rembg 跨平台备注**：
+- Linux 服务器跟 Mac dev 步骤完全一致，pip 自动选合适 wheel（manylinux x86_64 / arm64 都有）
+- 模型缓存默认 `~/.u2net/`（service 用户家），想统一到 `/var/cache/u2net` 等共享位置：env `U2NET_HOME=/var/cache/u2net` 即可（Linux service 多用户共享时省盘）
+- 若服务器内存紧张：u2net.onnx 推理峰值 ~250MB resident，pm2 `max_memory_restart` 留够
+- 卸载：`rm -rf server/.venv-rembg ~/.u2net`
 
 ---
 
