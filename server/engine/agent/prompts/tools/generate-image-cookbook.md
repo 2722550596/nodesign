@@ -365,7 +365,7 @@ NB2 不是万能的——以下是 final 接受前**必扫**的 checklist：
 | **Mask / sketch 残墨** | reference 是带涂鸦/标注的截图时 NB2 偶尔把标注当主体复制 | 截图前清干净 reference 上的标注 / 红框 / 箭头 |
 | **Paste-artifact** | 多 reference 合成时偶尔把 reference 的局部 1:1 paste 进来 | 检查输出图有没有突兀的"贴片"边缘；有就改 prompt 强调 "naturally blend" / "reinterpret" |
 | **factuality** | reference 没给的信息 NB2 可能编（datestamp / sources / 数字）| 数据 / 事实类内容用 HTML 渲，别让 NB2 自己写 |
-| **transparent bg** | 不支持真透明，永远填某色背景 | 让 NB2 出"white background"，HTML 用 `mix-blend-mode` 或 CSS mask 处理；图标想要透明用 SVG 或专门工具，别强求 NB2 |
+| **transparent bg** | NB2 模型本身不支持，永远填某色背景 | **现在有 server 端兜底**：`generate_image({ ..., removeBackground: true })` 触发 rembg (U²-Net ML 抠图)，输出 RGBA PNG。+5-10s 首次 / +1-2s 后续。复杂主体 / 清晰边界场景效果好；薄透元素（玻璃 / 烟雾 / 飘发）边缘可能软。SVG 图标仍优先 lucide-react。详见 § M |
 | **SynthID watermark** | 所有 NB2 生图自带不可见 watermark | 知道即可；商用素材用户该知情 |
 
 ## J. 调完必做
@@ -462,3 +462,49 @@ mcp__nodesign__generate_image({
 - ❌ 角色 / portrait → 不开（模型自己拒）
 - ❌ 多变体探索 → 用 vanilla 出 3 个候选选一个，**只对最终选中的那张** rerun + grounding
 - ❌ 同 prompt 反复 reroll —— grounding 不是质量万能药，prompt 不准 grounding 也救不回
+
+## M. removeBackground —— 透明背景 RGBA PNG 兜底
+
+NB2 模型本身不支持 transparent bg（永远填某色背景），canvas bg 跟 NB2 默认色冲突时（agent 写黄底 deck，NB2 出灰底图直接糊）。`removeBackground:true` 触发 server 端 rembg (U²-Net ML segmentation) 抠掉背景，输出 RGBA PNG 给你叠在任何 canvas 上。
+
+### 何时开
+
+| 场景 | 用 removeBackground? |
+|---|---|
+| 角色 / portrait 叠到自定 bg 上（lifestyle photo + 品牌色背景） | ✅ |
+| 产品 / 物体（咖啡杯 / 鞋 / 瓶子）做 hero 主图 | ✅ |
+| 复杂带形状的 logo / 徽章 NB2 出底色冲突 | ✅ |
+| 装饰性 pattern / texture / gradient 背景 | ❌（这些就是要带 bg） |
+| 整页 cover / hero（背景就是整页主调） | ❌ |
+| 简单线性图标（孤立图形，无渐变 / 阴影） | ❌——直接 `import { Heart } from 'lucide-react'` 走 SVG，免成本天然透明 |
+
+### 调用
+
+```js
+mcp__nodesign__generate_image({
+  prompt: "A glossy ceramic coffee mug with a steaming hot drink, photorealistic, top-down view, 85mm macro, soft natural light",
+  aspectRatio: "1:1",
+  imageSize: "1K",
+  assetRole: "decoration",
+  removeBackground: true,    // ← 触发 rembg 抠图
+})
+```
+
+agent 拿到的 caption 带 `with transparent background (rembg U²-Net)` 标记，文件落 `assets/generated/<name>.png` (RGBA)。HTML 直接 `<img src="assets/generated/<name>.png" style="...">` 叠在任何 bg 色上。
+
+### 工作流约束
+
+| 项 | 说明 |
+|---|---|
+| **Latency** | 首次抠图 +5-10s（onnxruntime cold start + u2net 模型加载）；后续同 server 实例 +1-2s |
+| **输出格式** | 强制 .png（RGBA 必须 PNG），不管 Gemini 返回的 mime 是 jpeg 还是 webp |
+| **边缘质量** | 主体边界清晰时干净；薄透元素（玻璃 / 烟雾 / 飘发 / 半透明披纱）边缘可能软或抠不全。SVG 抠不出来的 alpha gradient 看不见 |
+| **fail-soft** | rembg subprocess 失败（依赖缺 / 超时 / 进程崩）→ 落原图 + caption 带 warning，不抛错。你看 caption 里有 `removeBackground requested but...` 说明降级了，决定要不要重生 / 接受原图 |
+| **依赖前提** | server 端 `.venv-rembg/` 装了 rembg + onnxruntime（部署一次），跨 session 共享 |
+
+### 反例
+
+- ❌ 给所有 NB2 调用都加 `removeBackground:true` —— 5-10s × N 累计很快；只对**真要叠合**的图开
+- ❌ 在 cover / 整页主图开 —— cover 本身的 bg 就是设计的一部分，抠掉等于自废武功
+- ❌ 期望 SVG 级精度抠图 —— ML 抠图永远是 raster + 边缘软化，要硬边走 SVG / Figma 切图
+- ❌ 复杂遮挡（人在树后） —— 模型可能抠掉树或抠掉手，预期管理

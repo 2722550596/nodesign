@@ -44,6 +44,7 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import sharp from 'sharp';
+import { removeBackground as rembgRemove, isAvailable as rembgIsAvailable } from './helpers/rembg.js';
 
 // Thumbnail 配置（env 可调）。**原图不动**——保留 Gemini 输出的全分辨率（通常
 // 1080×1920+ PNG，6-8MB）让用户最终交付不损失质量。仅生成低清 thumbnail 给
@@ -394,6 +395,10 @@ become part of the spec.json design history.`,
         .boolean()
         .optional()
         .describe('Enable Google Image Search grounding for real-world subjects (landmarks / cities / products / nature / specific brands). Default false. When true, model can pull real images from web during generation to anchor visual fidelity. Adds ~60-90s latency. Model auto-skips for people/character queries (Google guardrail). Sources saved to <name>.grounding.json sidecar. See cookbook § L.'),
+      removeBackground: z
+        .boolean()
+        .optional()
+        .describe('Auto-remove background after generation, output transparent RGBA PNG. Uses rembg (U²-Net ML segmentation, server-side). Adds ~5-10s on first call (onnxruntime cold start) + ~1-2s subsequent. Output forced to .png regardless of Gemini-returned mime. Use for icons / characters / objects / logos / products to overlay onto existing canvas content (esp. when canvas bg color clashes with NB2 default fill). Limitations: heuristic segmentation — clean cuts on subjects with clear visual boundaries; subjects with thin transparent elements (glass / smoke / wispy hair) may have soft / inaccurate edges.'),
     },
     async ({
       prompt,
@@ -406,6 +411,7 @@ become part of the spec.json design history.`,
       responseModalities = ['IMAGE'],
       model = DEFAULT_MODEL,
       useGrounding = false,
+      removeBackground = false,
     }) => {
       const modelId = MODELS[model];
       if (!modelId) {
@@ -519,9 +525,9 @@ become part of the spec.json design history.`,
 
       // 6. 落地 —— 扩展名跟 Gemini 返回的 mimeType 走（实测 Gemini 3.1
       // Flash Image 经常返 image/jpeg 而不是 png，硬写 .png 会让文件名
-      // 和真实编码不一致）。
+      // 和真实编码不一致）。removeBackground=true 时强制 .png（RGBA 必须 PNG）。
       const finalName = buildOutputName(outputName, assetRole);
-      const ext = (() => {
+      const geminiExt = (() => {
         switch ((extracted.mimeType || '').toLowerCase()) {
           case 'image/jpeg': case 'image/jpg': return '.jpg';
           case 'image/webp': return '.webp';
@@ -530,6 +536,31 @@ become part of the spec.json design history.`,
           default:           return '.png';
         }
       })();
+
+      // 6a. 抠背景（可选）——rembg U²-Net 跑在 server/.venv-rembg/，spawn python
+      // subprocess。fail-soft：rembg 失败 / 不可用 → 落原图，warning 注 text 让
+      // agent 知道走了降级（决定要不要重生 / 改 prompt / 接受原图）。
+      let imgBuf = Buffer.from(extracted.base64, 'base64');
+      let ext = geminiExt;
+      let rembgWarning = '';
+      if (removeBackground) {
+        const rembgCheck = await rembgIsAvailable();
+        if (!rembgCheck.available) {
+          rembgWarning = ` (removeBackground requested but rembg unavailable: ${rembgCheck.reason}; saved original with bg)`;
+          console.warn(`[generate-image] rembg skipped: ${rembgCheck.reason}`);
+        } else {
+          const t0 = Date.now();
+          const rgba = await rembgRemove(imgBuf);
+          const elapsed = Date.now() - t0;
+          if (rgba) {
+            imgBuf = rgba;
+            ext = '.png';  // RGBA 必须 PNG
+            console.log(`[generate-image] rembg removed bg in ${elapsed}ms (${rgba.length}B)`);
+          } else {
+            rembgWarning = ' (removeBackground failed in subprocess; saved original with bg — see server logs)';
+          }
+        }
+      }
       const fileName = `${finalName}${ext}`;
 
       // Pick base: sharedRoot/assets/generated/ if available, else workspaceRoot/assets/generated/
@@ -541,7 +572,6 @@ become part of the spec.json design history.`,
       );
       await fs.mkdir(outDir, { recursive: true });
       const absOut = path.join(outDir, fileName);
-      const imgBuf = Buffer.from(extracted.base64, 'base64');
       // 原图不压缩——保留 Gemini 输出的全分辨率给最终交付（导出 / iframe 引用）
       await fs.writeFile(absOut, imgBuf);
 
@@ -629,6 +659,11 @@ become part of the spec.json design history.`,
         captionParts.push(`grounded with ${groundingSourceCount} source${groundingSourceCount > 1 ? 's' : ''}`);
       } else if (useGrounding) {
         captionParts.push('(grounding requested but model didn\'t fire — likely person/character query, see cookbook § L)');
+      }
+      if (removeBackground && !rembgWarning) {
+        captionParts.push('with transparent background (rembg U²-Net)');
+      } else if (rembgWarning) {
+        captionParts.push(rembgWarning.trim());
       }
       const caption = captionParts.join(' ');
 

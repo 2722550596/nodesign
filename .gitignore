@@ -49,3 +49,8 @@ web/coverage/
 .claude/settings.json
 .claude/settings.local
 .claude/settings.local.json
+
+# rembg python venv（一次性 setup：cd server && python3 -m venv .venv-rembg
+# && .venv-rembg/bin/python3 -m pip install rembg onnxruntime；u2net.onnx
+# 模型缓存到 ~/.u2net/ 全局，不在 repo 里）
+server/.venv-rembg/
