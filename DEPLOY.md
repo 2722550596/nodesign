@@ -154,16 +154,33 @@ python3 -m venv .venv-rembg
 .venv-rembg/bin/python3 -m pip install rembg onnxruntime
 cd ..
 
-# u2net 模型 ~176MB 首次抠图自动下载到 ~/.u2net/u2net.onnx
-# 想避免首次用户等 cold-download，先 warm 一次（也验证安装）：
-server/.venv-rembg/bin/python3 -c "from rembg import new_session; new_session('u2net'); print('rembg ready')"
+# server 启动时会自动 spawn server/services/rembg-service.py 常驻进程
+# （server/services/rembg-launcher.js 在 index.js 里 wire 进 lifecycle hook），
+# 默认预热 fast (isnet-general-use, 170MB) + balanced (birefnet-general-lite, 214MB)
+# 两档；best (birefnet-general, 880MB) 按需懒加载（agent 第一次调 quality:'best'
+# 触发下载 + load）。模型缓存到 ~/.u2net/，跨 server 重启复用。
+#
+# 不需要手动 warm——server 起来就 ready。下面这条只是首次部署"先下载 onnx 模型
+# 文件减少首位用户等待"的可选 warm（也能作为安装验证）：
+server/.venv-rembg/bin/python3 << 'PYEOF'
+from rembg import new_session
+import warnings; warnings.filterwarnings('ignore')
+for m in ['birefnet-general-lite', 'isnet-general-use']:
+    new_session(m)
+    print(f'  ✓ {m}')
+print('rembg ready (balanced + fast model files cached)')
+PYEOF
+# 想连 best 档也预下载（额外 ~3-5min 880MB）：
+# server/.venv-rembg/bin/python3 -c "from rembg import new_session; new_session('birefnet-general'); print('best cached')"
 ```
 
 **验证点**：
 - `ls node_modules/.bin/playwright` 文件存在
 - `npx playwright --version` 能输出版本号
 - `server/.venv-rembg/bin/python3 -m rembg --help` 不报错
-- `ls -la ~/.u2net/u2net.onnx` 显示 ~176MB（warm 完成）
+- `ls -lah ~/.u2net/` 显示 birefnet-general-lite.onnx (~214MB) + isnet-general-use.onnx (~170MB) 两档模型文件已下载
+- server 启动后看 stdout 有 `[rembg-service] spawned PID ...` + `[rembg-service]   ✓ <model> ready`（每个 preload model 一行）+ `[rembg-service] listening on /tmp/nodesign-rembg.sock`
+- `curl --unix-socket /tmp/nodesign-rembg.sock http://localhost/health` 应返 `{"ok":true,"loaded_models":[...]}`
 
 **rembg 跨平台备注**：
 - Linux 服务器跟 Mac dev 步骤完全一致，pip 自动选合适 wheel（manylinux x86_64 / arm64 都有）

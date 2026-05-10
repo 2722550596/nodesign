@@ -465,9 +465,23 @@ mcp__nodesign__generate_image({
 
 ## M. remove_background —— 独立 MCP 工具抠透明背景
 
-NB2 模型本身不支持 transparent bg（永远填某色背景），canvas bg 跟 NB2 默认色冲突时（agent 写黄底 deck，NB2 出灰底图直接糊）。**独立工具** `mcp__nodesign__remove_background({ inputPath })` 调 server 端 rembg (U²-Net ML segmentation) 抠掉背景，输出 RGBA PNG 给你叠在任何 canvas 上。
+NB2 模型本身不支持 transparent bg（永远填某色背景），canvas bg 跟 NB2 默认色冲突时（agent 写黄底 deck，NB2 出灰底图直接糊）。**独立工具** `mcp__nodesign__remove_background({ inputPath })` 调 server 端 rembg 抠掉背景，输出 RGBA PNG 给你叠在任何 canvas 上。
+
+**默认 model = birefnet-general-lite + alpha matting** —— 2024 SOTA-tier 边缘质量，比老 u2net 显著少 halo / 色边伪影。warm 推理 ~3-5s。
 
 **为什么独立工具不绑 generate_image flag**：实际场景比"刚生的图想透明"更广——用户上传的产品照、之前生过的图、截图都该能抠。生图后想抠就再调一次本工具，0 重复 token。
+
+### quality 三档（全开 alpha matting）
+
+| quality | 模型 | warm 时间 | 适用 |
+|---|---|---|---|
+| `fast` | isnet-general-use (170MB) + AM | ~5-10s | 批量 / 非关键 / 边缘要求中等 |
+| `balanced` (default) | birefnet-general-lite (214MB) + AM | ~10-20s | **绝大多数场景**——hero / portrait / product，边缘干净 |
+| `best` | birefnet-general (880MB) + AM | ~20-40s | 关键 hero shot / 边缘极挑剔（首次额外下 880MB ~3-5min） |
+
+**warm vs cold**：server 启动时已 spawn 常驻 `rembg-service` python 进程（onnxruntime session 在内存），一般情况都走这条 warm 路径。service 不可用时 fallback 到 per-call cold spawn（30-180s），caption 不变但慢。
+
+deck 里要抠 N 张串行调即可；service 路径多张并行也 OK（单 python 进程 thread 安全）。
 
 ### 何时调
 
@@ -510,17 +524,30 @@ mcp__nodesign__remove_background({
   outputName: "photo-clean",
   overwrite: true,
 });
+
+// Case 4: 关键 hero shot 要 SOTA 边缘 → quality:'best'
+mcp__nodesign__remove_background({
+  inputPath: "assets/generated/cover-portrait.png",
+  outputName: "cover-portrait-clean",
+  quality: "best",   // 首次会下 880MB birefnet-general 模型，~3-5min
+});
+
+// Case 5: 批量抠 N 张装饰图 → quality:'fast' 省时间
+for (const img of decorations) {
+  mcp__nodesign__remove_background({ inputPath: img, quality: "fast" });
+}
 ```
 
-agent 拿到的 caption 形如 `Removed background from assets/photo.png → assets/generated/photo-nobg.png (RGBA PNG, 245.3 KB, 1240ms)` + image content block 直接 vision 看到效果。HTML 直接 `<img src="assets/generated/photo-nobg.png" style="...">` 叠在任何 bg 色上。
+agent 拿到的 caption 形如 `Removed background from assets/photo.png → assets/generated/photo-nobg.png (RGBA PNG, 245.3 KB, 3120ms, quality=balanced)` + image content block 直接 vision 看到效果。HTML 直接 `<img src="assets/generated/photo-nobg.png" style="...">` 叠在任何 bg 色上。
 
 ### 工作流约束
 
 | 项 | 说明 |
 |---|---|
-| **Latency** | 首次抠图 +5-10s（onnxruntime cold start + u2net 模型加载）；后续同 server 实例 +1-2s |
+| **Latency** | server 常驻 service 路径（warm）：fast ~5-10s / balanced ~10-20s / best ~20-40s。service down 时 fallback per-call spawn（cold）：fast ~30-60s / balanced ~60-180s / best ~120-300s |
+| **首次模型下载** | balanced（birefnet-general-lite）214MB；best（birefnet-general）880MB——首次调用会现场下载到 `~/.u2net/`，下完缓存跨 session 复用 |
 | **输出格式** | 强制 .png（RGBA 必须 PNG）。input 支持 png/jpg/jpeg/webp/gif/bmp/tiff |
-| **边缘质量** | 主体边界清晰时干净；薄透元素（玻璃 / 烟雾 / 飘发 / 半透明披纱）边缘可能软或抠不全 |
+| **边缘质量** | balanced + alpha matting 已能消除大部分 halo / 色边伪影；薄透元素（玻璃 / 烟雾 / 飘发 / 半透明披纱）即便 best 也可能边缘软或抠不全 |
 | **依赖前提** | server 端 `.venv-rembg/` 装了 rembg + onnxruntime（部署一次），跨 session 共享。不可用时工具返 isError + 提示 setup 命令 |
 | **路径安全** | inputPath 必须 workspace-relative，不允许绝对路径 / .. traversal。候选路径解析顺序：cwd → sharedRoot |
 

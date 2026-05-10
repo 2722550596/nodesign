@@ -18,6 +18,7 @@ import cors from 'cors';
 
 import { setupWS } from './ws/index.js';
 import { stopProxy } from './lib/binary-fixup-proxy.js';
+import { startRembgService, stopRembgService } from './services/rembg-launcher.js';
 import projectsRouter from './api/projects.js';
 import canvasRouter from './api/canvas.js';
 import skillsRouter from './api/skills.js';
@@ -87,6 +88,15 @@ httpServer.listen(PORT, () => {
   console.log(`[server] health: http://localhost:${PORT}/api/health`);
 });
 
+// 起 rembg-service 常驻 python 进程：onnxruntime session 在内存里 warm 缓存，
+// 让 mcp__nodesign__remove_background 调用走 Unix socket（warm ~5-15s/张），
+// 比 per-call cold spawn（~30-180s/张）快 10×。venv 不存在 / spawn 失败时
+// noop 不阻塞 server，remove_background 走 fallback spawn-bridge 兼容路径。
+// 详见 server/services/rembg-launcher.js + rembg-service.py。
+startRembgService().catch((err) => {
+  console.warn('[server] rembg-service start error (non-fatal):', err.message);
+});
+
 // 守护进程级兜底：SDK binary 子进程偶发 stdio 异常（write EPIPE 之类）会
 // emit unhandled 'error' on Socket，nodejs 默认把整个 process 拉下水（之前
 // 实测 "Session ID already in use" 错让 server crash 用户连不上）。
@@ -112,6 +122,8 @@ function shutdown(signal) {
   // 关闭 binary-fixup-proxy（agent 跑 Kimi 时会启的本地转发）。
   // 不阻塞 httpServer close —— proxy close fail 也不影响主流程。
   stopProxy().catch((err) => console.error('[server] proxy close error:', err.message));
+  // 关闭 rembg-service 常驻 python 进程（SIGTERM；兜底 3s 后 SIGKILL）。
+  stopRembgService();
   httpServer.close((err) => {
     if (err) console.error('[server] close error:', err);
     process.exit(err ? 1 : 0);
