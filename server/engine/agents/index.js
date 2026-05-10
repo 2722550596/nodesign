@@ -78,19 +78,47 @@ export function resolveDefaultFastModel(mainModel) {
 }
 
 /**
+ * 按 role 决定子代理 model。
+ *
+ * - **structural / search 类**（explorer / ds-extractor / tweak-proposer）→ subModel
+ *   功能是搜外链 / 抽 token / 推 slider，capability 不需跟主同级，走 fast model 省成本。
+ *
+ * - **judgment 类**（vision-checker）→ sdkSpoofMain
+ *   视觉评审要看出 plan compliance / palette match / 反 AI 套路这些细节，
+ *   capability 必须跟主 agent 同级——直接喂主 agent **SDK 视角的 model**
+ *   （Kimi 主时是 spoofing alias `claude-opus-4-7[1m]`，SDK 信 1M context；
+ *   binary-fixup-proxy 出口反向还原成真 `kimi-k2.6` 给 gateway）。
+ *
+ *   绕开两个坑：
+ *   1. memory part4 — 喂 SDK 真 `kimi-k2.6` → SDK 不识别 → rawMaxTokens
+ *      fallback 200k → 子代理 context window 被腰斩
+ *   2. memory feedback_kimi_split_messages — `'inherit'` 字面虽被 retract 为非
+ *      root cause，但从未独立验证过；走"具体 sdkModel id 直传"绕开字面解析路径
+ */
+function pickAgentModel(role, { sdkSpoofMain, subModel }) {
+  if (role === 'vision-checker') return sdkSpoofMain || subModel;
+  return subModel;
+}
+
+/**
  * 创建 agents 配置 —— 喂给 query options.agents 字段。
  *
  * @param {object} [opts]
- * @param {string} [opts.mainModel]   主 agent model（用于推断 fast model 默认值）
- * @param {string} [opts.fastModel]   显式覆盖；优先级：fastModel > NODESIGN_FAST_MODEL > resolveDefaultFastModel(mainModel)
+ * @param {string} [opts.mainModel]    主 agent appModel（如 'kimi-k2.6'）
+ * @param {string} [opts.sdkModel]     主 agent SDK 视角 model（spoofing 后的 alias，如 'claude-opus-4-7[1m]'）。
+ *                                     缺省 = mainModel（非 Kimi 主时两者本就相等）。vision-checker 用这个。
+ * @param {string} [opts.fastModel]    显式覆盖 fast model；优先级：fastModel > NODESIGN_FAST_MODEL > resolveDefaultFastModel(mainModel)
  * @returns {Record<string, AgentDefinition>}
  */
-export function createAgents({ mainModel, fastModel } = {}) {
+export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
   const subModel = fastModel
     || process.env.NODESIGN_FAST_MODEL
     || resolveDefaultFastModel(mainModel)
     || mainModel
     || 'claude-haiku-4-5-20251001-cc';
+  // sdkSpoofMain：vision-checker 用的"主 agent SDK 视角 model"。
+  // 调用方未传 sdkModel 时 fallback 到 mainModel（非 Kimi 主时两者相等无害）。
+  const sdkSpoofMain = sdkModel || mainModel;
   return {
     // explorer —— 研究员子代理。主 agent 在做 deck/产物时遇到"需要外部素材
     // / 参考 / 事实验证" 就 Task 派给它。它去搜 + 读 + 总结，给主 agent 一份
@@ -115,9 +143,8 @@ export function createAgents({ mainModel, fastModel } = {}) {
         + 'and findings — no code, no design judgment, just facts. '
         + 'Saves the main agent\'s context window by offloading research turns.',
       prompt: loadPrompt('explorer'),
-      // 子代理走快速 model（参数化，2026-05-06 NoDesk 网关切换后默认
-      // claude-haiku-4-5-20251001-cc）。env NODESIGN_FAST_MODEL 可覆盖。
-      model: subModel,
+      // structural 类，走 fast model（kimi 主时默认 claude-haiku-4-5-20251001-cc）
+      model: pickAgentModel('explorer', { sdkSpoofMain, subModel }),
       tools: [
         'mcp__nodesign__web_search',
         'WebFetch',
@@ -136,12 +163,15 @@ export function createAgents({ mainModel, fastModel } = {}) {
         + 'whether the design looks right — alignment, contrast, hierarchy, spacing, '
         + 'a11y readability. Returns a structured critique with concrete fix suggestions.',
       prompt: loadPrompt('vision-checker'),
+      // judgment 类——视觉评审 capability 必须跟主 agent 同级，走 sdkSpoofMain
+      // （Kimi 主时是 'claude-opus-4-7[1m]' alias，SDK 信 1M context；proxy 出口
+      // 反向还原成真 'kimi-k2.6' 给 gateway）。详见 pickAgentModel 注释。
+      model: pickAgentModel('vision-checker', { sdkSpoofMain, subModel }),
       // 显式列 tools：read-only 视觉评审需要的最小集合。
       // SDK doc 说"omit tools 继承父" 但跨 mcp 工具的继承行为不确定（explorer 也
       // 显式列 mcp__nodesign__web_search 是同样的稳妥做法）。Phase 1.1 audit 后
       // 改成显式声明，保证 vision-checker.md 里写的 mcp__nodesign__screenshot_canvas
       // 真实可调。
-      model: subModel,
       tools: [
         'mcp__nodesign__screenshot_canvas',
         'Read', 'Glob',
@@ -159,7 +189,8 @@ export function createAgents({ mainModel, fastModel } = {}) {
       // SDK AgentDefinition 没有 outputFormat 字段（query options 级别才有）。
       // 子代理走 prompt 内嵌 JSON Schema 引导输出，main agent 收到后 JSON.parse。
       // schema 文件在 agents/schemas/design-system.json，prompt 里有完整摘录。
-      model: subModel,
+      // structural 类（结构化抽 token），走 fast model
+      model: pickAgentModel('ds-extractor', { sdkSpoofMain, subModel }),
       tools: [
         'Read', 'Glob', 'Grep',
         'mcp__nodesign__list_pages',
@@ -177,7 +208,8 @@ export function createAgents({ mainModel, fastModel } = {}) {
         + 'user wants to fine-tune without rewriting.',
       prompt: loadPrompt('tweak-proposer'),
       // 同 ds-extractor：SDK 不支持 per-agent outputFormat，schema 内嵌 prompt
-      model: subModel,
+      // structural 类（schema 推导），走 fast model
+      model: pickAgentModel('tweak-proposer', { sdkSpoofMain, subModel }),
       tools: [
         'Read', 'Glob',
         'mcp__nodesign__list_pages',

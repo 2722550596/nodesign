@@ -450,7 +450,10 @@ export async function runSession({
       nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sessionId, ctx: sharedCtx }),
     },
 
-    agents: createAgents({ mainModel: model, fastModel }),
+    // mainModel = appModel ('kimi-k2.6')，sdkModel = SDK 视角 alias ('claude-opus-4-7[1m]')。
+    // vision-checker 用 sdkModel 让 SDK 信 1M context（绕开"喂真 kimi → SDK 不认 →
+    // rawMaxTokens fallback 200k"）；其余子代理走 fastModel，跟以前一致。
+    agents: createAgents({ mainModel: model, sdkModel, fastModel }),
 
     stderr: (data) => {
       console.error(`[session ${sessionId.slice(0, 8)}/claude.stderr]`, data.trim());
