@@ -63,17 +63,33 @@ mcp__nodesign__generate_image {
 | 事实 | 你能利用什么 |
 |---|---|
 | **knowledge cutoff 2025-01** | brand / 名人 / 地标 / 艺术家 / 流派 / 影视 / 摄影器材 / film stock 全在脑里 |
-| **131K input token + 最多 14 reference images** | 跨页讲故事 + 多 reference 拼合不会爆 |
+| **131K input token** | 跨页讲故事 + 多 reference 拼合不会爆 |
+| **reference cap：4 character + 10 object（共 14）** | 超过 4 char ref 模型会 blur 角色 identity；按角色/物体细分预算更稳 |
 | **听得懂 conversational editing** | "Keep composition, change lighting to golden hour" 比重生整张准 |
 | **多变体单 prompt** | "Create THREE distinct variations" 一次出 3 张，省 60% token |
 | **角色命名锚定** | 给角色起名（"Maya"），下个 turn 它脑里就锚定了 |
 | **不擅长 negation** | "no cars" 改写成 "empty pedestrianized street" |
-| **多语言文字渲染** | 用一种语言写 prompt + 指定输出语言 |
+| **多语言文字渲染 + in-image localization** | 不止翻文字，还能换 props / 文化语境（详见 § D）|
+| **Thinking 永远在跑** | `thinkingLevel: minimal\|high` 是预算不是开关；thinking tokens 永远计费即便不返回 |
+| **Aspect ratio 严格遵守（NB2 改进）** | 传啥比例就出啥，prompt 里不必再"in 16:9 widescreen format"重复 |
 
 **直接点名**——别犹豫：
 - ✅ "Wong Kar-wai cinematography"  ✅ "Apple Park building"  ✅ "Van Gogh-style oil painting"
 - ✅ "Beatles' Abbey Road photo composition"  ✅ "Fujifilm color science"  ✅ "Bauhaus poster aesthetic"
 - ✅ "Saul Bass minimalist title sequence"  ✅ "ukiyo-e woodblock print style"  ✅ "1980s VHS aesthetic"
+
+**别让 NB2 干这些（不是它的活）**：
+
+| 想做的事 | 别叫 NB2 干，改叫 |
+|---|---|
+| 调工具 / function calling | 主 agent 自己（NB2 不支持 tool use）|
+| 返结构化 JSON | 主 agent + AskUserQuestion 或自己解析 |
+| 执行代码 / 算公式 | 主 agent 用 Bash 跑 Python |
+| 抓 URL / 浏览网页 | `mcp__nodesign__web_search` |
+| 用 file search / 读文档 | 主 agent Read，重要文档用 `referenceImages` 喂 PDF（见 § K）|
+| Maps grounding | 不支持 |
+| 持久 context caching | 不支持，每次请求自带需要的 reference |
+| 语音 / 视频输入输出 | NB2 仅吃 text + image + PDF，输出仅 image + text |
 
 ## B. 5 元素叙述公式（强约束 prompt 结构）
 
@@ -111,7 +127,18 @@ mcp__nodesign__generate_image {
 **进阶玩法 — typographic poster**（cover / section-divider 必看）：
 > "A typographic poster with a solid black background, bold letters spell 'NEW YORK', filling the center of the frame. The text acts as a cut-out window. A photograph of New York skyline is visible ONLY inside the letterforms."
 
-## E. Reference image 4 大模式（max 14 张：≤4 人物 + ≤10 物体）
+### In-image localization（已有图本地化，不只是翻文字）
+
+NB2 会本地化**整个视觉文化语境**——文字翻译只是其中一项，还能换 props / 货币 / 着装 / 食物 / 场景文化语境。规则：保留品牌身份 + 主体构图，调整其他即可：
+
+> "Localize this ad for the Japanese market.
+>  Translate the headline exactly to Japanese: '〜こだわりの一杯〜'.
+>  Adapt background props, packaging context, and lifestyle cues for Tokyo consumers.
+>  Keep the product, logo, composition, and brand colors unchanged."
+
+适合：跨地区营销素材 / 多语言 deck 版本 / 品牌 global → local 适配。
+
+## E. Reference image 4 大模式（max 14 张：≤4 character ref + ≤10 object ref）
 
 **multi-modal formula**：
 
@@ -129,8 +156,62 @@ mcp__nodesign__generate_image {
 | **风格一致（cross-page anchor）** | 第 1 张 cover 当 referenceImages 种子，所有后续 hero/section-divider 都引它 → 整 deck 像同一张片子 |
 | **角色一致（多页叙事）** | portrait 跨页引 + 给角色起名（"Maya, the woman in Reference 1"）→ 同一个角色穿越不同场景 |
 | **logo / brand 嵌入** | 用户上传 logo 进 `assets/`，每张 product mockup 把 logo 当 reference + prompt"Place the logo from Reference 1 etched into the bottle in Reference 2" → 真实嵌融 |
-| **In-painting（精修而非重画）** | 调 `screenshot_canvas` 截当前页 → 把截图当 reference + 用 conversational editing 语言 |
+| **In-painting（精修而非重画）** | 调 `screenshot_canvas` 截当前页 → 把截图当 reference + 用 conversational editing 语言（详见 § G semantic masking）|
 | **真实主体锚定（web 搜来的 reference）** | 模型不熟的产品/品牌/最新事件 → 先 `web_search { include_images: true }` 拿真实图，再把 `assets/references/ref-xxx.<ext>` 喂 `referenceImages` + prompt"Use the product in Reference 1 as the subject; render it in [your scene]" |
+
+### 进阶 edit modes（reference 工作流的高级用法）
+
+#### Multi-image composition（product-on-model / element-transfer）
+
+NB2 高保真合成的官方杀手能力。模板：
+
+```
+Image 1 = [object/product/garment/logo]
+Image 2 = [person/environment/surface]
+Instruction: "Take [element from Image 1] and place it on/with [element from Image 2].
+              Preserve [protected details] exactly.
+              Adjust lighting, shadows, perspective, and material interaction naturally."
+```
+
+具体例：
+> "Take the blue floral dress from Image 1 and put it on the woman in Image 2.
+>  Preserve her face, hair, pose, and the cafe background exactly.
+>  Match lighting and shadow direction to the cafe scene; render fabric drape naturally."
+
+适合：服装上身 mockup / 产品上场景 / logo 烙印物体 / 标牌嵌建筑。
+
+#### Style transfer（保构图，只换 style）
+
+不只是"梵高风"——关键是 **preserve composition / placement / silhouette**，只换 rendering style：
+
+> "Transform this product photo into a Bauhaus poster illustration.
+>  Preserve the product shape, orientation, and composition.
+>  Change only the rendering style: flat geometric forms, primary color blocks,
+>  clean vector edges, 1920s Bauhaus poster design."
+
+#### Sketch-to-final（线稿/wireframe → polished）
+
+用户给草图 / 线稿 / wireframe → 你输出 polished 视觉，**保留几何结构**：
+
+> "Turn this rough wireframe into a polished 16:9 SaaS product hero visual.
+>  Keep the layout, card hierarchy, and main dashboard geometry from Reference 1.
+>  Add premium glassmorphism UI, soft blue studio lighting, and realistic depth.
+>  Leave top-right negative space for HTML title overlay."
+
+适合：用户上传草图想要 hero / 产品 mockup / 概念图。
+
+#### Character bible（多视角 + 跨页一致）
+
+对于跨多页出现的角色 / mascot / 关键产品，先建 identity sheet：
+
+```
+Step 1: 生成"identity sheet"（front view + 关键服装/装备特写）
+Step 2: 后续每个角度（3/4 / profile / back / action pose）都把 identity sheet 当 reference
+Step 3: 给角色起名锚定（"Maya, character from Reference 1"）
+        outfit / hairstyle / silhouette / 关键材质锚点 不允许跨页变
+```
+
+适合：deck 主角跨多页出现 / 品牌 mascot / 产品多视图说明。
 
 ## F. 多变体单 prompt（省 token 大杀器）
 
@@ -146,34 +227,93 @@ mcp__nodesign__generate_image {
 
 适用场景：cover 候选 / portrait 朝向候选 / palette 候选 / 标题排版候选。
 
-## G. Conversational in-painting 语言（精修 ≫ 重画）
+## G. Semantic masking & Conversational editing（精修 ≫ 重画）
 
-| 想做的 | ❌ 重生整张（浪费） | ✅ 用 conversational editing |
+NB2 不需要用户画 mask——你用**自然语言定义编辑区域**，模型自己分割（semantic masking）。万能模板：
+
+```
+"Change only [semantic target].
+ Keep [everything else: subject / composition / lighting / palette] unchanged."
+```
+
+具体例：
+> "Change only the blue sofa to a vintage brown leather chesterfield sofa.
+>  Keep the pillows, lighting, floor, wall art, and camera angle unchanged."
+
+这是 regenerate / tweak 的**默认模板**——比"重画一张差不多的"准 10×。
+
+| 想做的 | ❌ 重生整张（浪费） | ✅ semantic masking |
 |---|---|---|
-| 改光线 | 重生整张 | "Keep composition, change lighting to golden hour" |
-| 换背景 | 重生整张 | "Replace the background with a neon-lit city street" |
-| 删元素 | 重生整张 | "Remove the person on the left and extend the sidewalk" |
-| 换字体 | 重生整张 | "Keep the layout but change the headline font to a bold serif" |
-| 局部精修 | 重生整张 | screenshot_canvas + "Soften the headline color in the top-left corner; everything else identical" |
+| 改光线 | 重生整张 | "Keep composition, change only lighting to golden hour" |
+| 换背景 | 重生整张 | "Replace only the background with a neon-lit city street; keep subject and pose" |
+| 删元素 | 重生整张 | "Remove only the person on the left, extend the sidewalk; keep everything else" |
+| 换字体 | 重生整张 | "Keep layout, change only headline font to a bold serif; body text unchanged" |
+| 局部精修 | 重生整张 | screenshot_canvas + "Soften only the headline color in top-left corner; everything else identical" |
+| 换主体材质 | 重生整张 | "Change only the table material from wood to brushed steel; keep shape, position, scene" |
 
-配合 `screenshot_canvas` 截当前页当 reference → 上面这种 prompt = 精修而非重画。
+配合 `screenshot_canvas` 截当前页当 reference → 上面这种 prompt = 精修而非重画，token / latency / 一致性全赢。
 
-## H. 工具签名 + 默认值
+## H. 工具签名 + Aspect ratio / image size 详解
+
+### 工具签名
 
 ```js
 mcp__nodesign__generate_image({
   prompt: "<3-5 句自然段，5 元素公式>",
-  aspectRatio: "16:9",   // cover/hero=16:9 or 21:9; portrait=4:5 or 2:3; icon/pattern=1:1; vertical=9:16
-  imageSize: "2K",       // hero/cover='2K'; icon/decoration='1K'; '4K' 慎用（token 翻倍）
+  aspectRatio: "16:9",   // 14 种官方比例，见下表
+  imageSize: "1K",       // '512' | '1K' | '2K' | '4K'
   assetRole: "cover",    // 必传 — emit + record_decision 都靠它定位
   outputName: "deck-cover-v1",
-  referenceImages: [     // 可选, max 14
+  referenceImages: [     // 可选, max 14（≤4 character + ≤10 object）
     "assets/user-uploaded-logo.png",
     "assets/generated/cover-anchor.jpg",  // 用作 cross-page 风格种子
+    // 也可以是 .pdf —— 见 § K Document-to-visual
   ],
-  thinkingLevel: "minimal",  // default; 复杂 composition + 文字嵌图升 'high'
+  thinkingLevel: "minimal",  // 'minimal'(default) | 'high'；预算不是开关，永远在跑且永远计费
 })
 ```
+
+### Aspect ratio × imageSize 映射（14 比例 + 4 size）
+
+NB2 不出"标准 1920×1080"——实际像素见下表（部分常用组合）：
+
+| 比例 | 用例 | 1K 实际像素 | 2K | 4K |
+|---|---|---:|---:|---:|
+| 16:9 | deck cover / hero / 视频缩略图 | 1376×768 | 2752×1536 | 5504×3072 |
+| 9:16 | mobile story / 竖屏宣传 | 768×1376 | 1536×2752 | 3072×5504 |
+| 21:9 | 网站超宽 hero / 影院遮幅 | 1584×672 | 3168×1344 | 6336×2688 |
+| 4:5 / 5:4 | portrait / Instagram 图 | ~1144×1432 | ~2288×2864 | ~4576×5728 |
+| 3:2 / 2:3 | 横/竖摄影标准 | 1248×832 | 2496×1664 | 4992×3328 |
+| 4:3 / 3:4 | 老 deck / 印刷 | 1184×888 | 2368×1776 | 4736×3552 |
+| 1:1 | icon / pattern / 头像 | 1024×1024 | 2048×2048 | 4096×4096 |
+| **8:1 / 1:8** | 顶部公告条 / 侧边装饰带 | 3072×384 / 384×3072 | 6144×768 | 12288×1536 |
+| **4:1 / 1:4** | hero strip / 长卷海报 | ~2192×548 | ~4384×1096 | ~8768×2192 |
+
+**512 (0.5K) tier**：长边 ~512px。专给 icon / sticker / decoration / UI 元素用——latency 和成本各降 ~50%，对小尺寸用例效果跟 1K 看不出差。**别用 1K 出 32px icon**。
+
+### Size 决策表
+
+| 用例 | 推荐 size | 理由 |
+|---|---|---|
+| icon / sticker / 装饰 / UI 元素 | **512** | 渲染目标本来就小，更高分辨率纯浪费 |
+| draft / 候选 / approval gate 预览 | 1K | default，approval 通过再升档 |
+| deck cover / hero / 关键页 final | 2K | 渲染清晰、token 还可控 |
+| 印刷 / 大屏展示 / 商用素材 | 4K | token 翻倍，approval 后再升 |
+
+### 反规则：尺寸/比例只走 API 参数
+
+❌ 别在 prompt 里写 "in 4K resolution" / "16:9 widescreen format" / "high resolution image" —— NB2 看 API 参数（`aspectRatio` / `imageSize`），prompt 里写这些是噪音
+✅ prompt 只描述场景内容，size/ratio 全靠工具参数控制
+
+### Thinking 透明度
+
+| 字段 | 值 | 含义 |
+|---|---|---|
+| `thinkingLevel` | `minimal` (default) | NB2 用最少 thinking budget 出图，latency 优先 |
+| `thinkingLevel` | `high` | 复杂 composition / 多 reference / 嵌大段文字 / 关键 final 时升 |
+| 内部 `includeThoughts` | wrapper 默认 `false` | 不返回 interim thought images（只返 final 那张）|
+
+**注意**：thinking tokens 永远计费——不是"关 thinking 省钱"的开关，而是"用多少 thinking 思考"的预算。`high` 比 `minimal` 慢 + 贵，但对 plan compliance / 文字精度 / 多 reference 一致性的提升常常值得。
 
 ## I. Prompt 质量自检 6 维度（输出不理想时对照看）
 
@@ -185,8 +325,25 @@ mcp__nodesign__generate_image({
 - **跨页一致** — 多页角色故事缺 referenceImages anchor → 每页独立生成时角色 / 调性容易漂；第 1 张定好后用 referenceImages 跨页复用
 
 **额外注意**：
-- icon / sticker 默认会出灰底（Nano Banana 不支持 transparent）— 明确 `"white background"` 可消除
+- icon / sticker 默认会出灰底（NB2 不支持 transparent）— 明确 `"white background"` 可消除
 - 同 outputName 反复 reroll（≥3 次同 prompt）收益递减；改 prompt 关键参数或询问用户新方向通常更有效
+
+### NB2 已知失败模式（model card 列出的常见坑）
+
+NB2 不是万能的——以下是 final 接受前**必扫**的 checklist：
+
+| 维度 | 坑 | 检查 |
+|---|---|---|
+| **小字** | 1K 下 < 12px 等效字号容易模糊 | 关键文字单独大字 + 升 2K，或用 HTML overlay 覆盖文字别让 NB2 渲 |
+| **长段落 / page-length text** | 模型在 > 1 段正文时容易跑样 | > 3 行字 / 整段 paragraph 让 HTML 渲，NB2 只渲 headline / 标语 |
+| **角色漂** | 跨页生成同角色容易微变（脸型 / 发色 / 服装细节）| 跨页用 § E character bible 工作流（identity sheet + reference 链）|
+| **左右 / 空间定位** | "left of"/"right of"/"behind" 偶尔反 | 关键定位用绝对短语（"in the foreground"/"in the bottom-right corner"）|
+| **数量** | "exactly 5 cards" 不一定真出 5 张 | 数字关键时让 HTML 复制 N 份，NB2 只出 1 张 template |
+| **Mask / sketch 残墨** | reference 是带涂鸦/标注的截图时 NB2 偶尔把标注当主体复制 | 截图前清干净 reference 上的标注 / 红框 / 箭头 |
+| **Paste-artifact** | 多 reference 合成时偶尔把 reference 的局部 1:1 paste 进来 | 检查输出图有没有突兀的"贴片"边缘；有就改 prompt 强调 "naturally blend" / "reinterpret" |
+| **factuality** | reference 没给的信息 NB2 可能编（datestamp / sources / 数字）| 数据 / 事实类内容用 HTML 渲，别让 NB2 自己写 |
+| **transparent bg** | 不支持真透明，永远填某色背景 | 让 NB2 出"white background"，HTML 用 `mix-blend-mode` 或 CSS mask 处理；图标想要透明用 SVG 或专门工具，别强求 NB2 |
+| **SynthID watermark** | 所有 NB2 生图自带不可见 watermark | 知道即可；商用素材用户该知情 |
 
 ## J. 调完必做
 
