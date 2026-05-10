@@ -260,6 +260,7 @@ NB2 不需要用户画 mask——你用**自然语言定义编辑区域**，模�
 ```js
 mcp__nodesign__generate_image({
   prompt: "<3-5 句自然段，5 元素公式>",
+  model: "flash",        // 'flash'(default NB2) | 'pro'(锚点图升档，见下方 model 路由)
   aspectRatio: "16:9",   // 14 种官方比例，见下表
   imageSize: "1K",       // '512' | '1K' | '2K' | '4K'
   assetRole: "cover",    // 必传 — emit + record_decision 都靠它定位
@@ -314,6 +315,27 @@ NB2 不出"标准 1920×1080"——实际像素见下表（部分常用组合）
 | 内部 `includeThoughts` | wrapper 默认 `false` | 不返回 interim thought images（只返 final 那张）|
 
 **注意**：thinking tokens 永远计费——不是"关 thinking 省钱"的开关，而是"用多少 thinking 思考"的预算。`high` 比 `minimal` 慢 + 贵，但对 plan compliance / 文字精度 / 多 reference 一致性的提升常常值得。
+
+### Model 路由：flash (default) vs pro
+
+NB2 有两档：
+
+| `model` | id | 用 | 不用 |
+|---|---|---|---|
+| `'flash'` (default) | gemini-3.1-flash-image-preview | 几乎所有图——装饰 / 场景 / portrait / icon / 单页用 hero / 多变体探索 / 草稿 | — |
+| `'pro'` | gemini-3-pro-image-preview | **会成为 referenceImages 种子的 anchor 图**：cover hero / character bible identity sheet / brand mockup hero / 标志性数据可视化 final | 装饰 / 单页用图 / 草稿 / 探索阶段 / 多变体候选 |
+
+**判断规则**（一句话）：**这张图会被后续 ≥3 张图引用为 reference？** 是 → `pro`，否 → `flash`。
+
+**为啥锚点图升 pro 值得**：
+- pro 比 flash 慢 ~2-3× + 贵 ~2-3×（单图成本几分钱差距）
+- 但锚点图错了，downstream 引它的所有图全漂、整个 deck 视觉散——返工成本远超 pro 单图溢价
+- 锚点图通常 1 个 deck 只有 2-5 张（cover / 主角 portrait / brand mockup），总额外成本可控
+
+**反例**（这些场景**别**升 pro，纯浪费）：
+- 多变体单 prompt（`"Create THREE distinct variations"` 出 3 张候选选哪张当锚）—— 探索阶段用 flash 出候选，**只对最终选中的那张** rerun 一次 pro
+- 装饰元素 / 单页用图 / icon / sticker —— 用不上的优化
+- 草稿 / approval gate 之前的预览 —— 用 flash + 1K 看方向，approval 后再决定 pro 升档
 
 ## I. Prompt 质量自检 6 维度（输出不理想时对照看）
 

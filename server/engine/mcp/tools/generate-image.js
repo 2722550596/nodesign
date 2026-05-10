@@ -87,7 +87,16 @@ async function makeThumbnail(rawBuf) {
   }
 }
 
-const MODEL_ID = 'gemini-3.1-flash-image-preview';
+// Model 路由：默认 flash (NB2)；anchor 类关键图（cover / character bible
+// identity sheet / brand mockup hero）可升 pro 拿 commercial-grade 质量。
+// Pro 比 Flash 慢 + 贵 ~2-3×，但质量提升对"会被复用为 referenceImages 种子"
+// 的图值得——种子错了下游全漂、整个 deck 返工成本更高。
+// spike 实测 NoDesk + DMXAPI 两个 model id 都通。
+const MODELS = {
+  flash: 'gemini-3.1-flash-image-preview',
+  pro: 'gemini-3-pro-image-preview',
+};
+const DEFAULT_MODEL = 'flash';
 
 // 14 种官方比例（Gemini 3.1 Flash Image Preview 文档）
 const ASPECT_RATIOS = [
@@ -122,7 +131,8 @@ const DEFAULT_DMXAPI_BASE = 'https://www.dmxapi.cn';
 const DEFAULT_CHANNEL = 'DMX';
 
 const PASSTHROUGH_PATH = '/default/passthrough';
-const GENERATE_CONTENT_PATH = `/v1beta/models/${MODEL_ID}:generateContent`;
+// model id 在 callGateway 时动态拼，因为支持 flash / pro 路由
+const generateContentPathFor = (modelId) => `/v1beta/models/${modelId}:generateContent`;
 
 /**
  * 把 referenceImages 路径解析到 sharedRoot/workspaceRoot 之一。防止 traversal。
@@ -179,9 +189,9 @@ async function resolveReferenceImage(relPath, workspaceRoot, sharedRoot) {
  * @returns {Promise<object>} parsed JSON
  * @throws {Error} 401/HTTP 错误 / 网络错误
  */
-async function callGateway(payload, { gatewayUrl, gatewayKey, channel, channelBase, signal }) {
+async function callGateway(payload, { gatewayUrl, gatewayKey, channel, channelBase, modelId, signal }) {
   const passthroughUrl = gatewayUrl.replace(/\/$/, '') + PASSTHROUGH_PATH;
-  const channelUrl = channelBase.replace(/\/$/, '') + GENERATE_CONTENT_PATH;
+  const channelUrl = channelBase.replace(/\/$/, '') + generateContentPathFor(modelId);
 
   const wrapped = {
     channel,
@@ -369,6 +379,10 @@ become part of the spec.json design history.`,
         .max(2)
         .optional()
         .describe('Output modalities; default ["IMAGE"]. Add "TEXT" if you want the model\'s commentary alongside the image.'),
+      model: z
+        .enum(['flash', 'pro'])
+        .optional()
+        .describe('NB2 model tier; "flash" (default, gemini-3.1-flash-image-preview) for most images. "pro" (gemini-3-pro-image-preview, ~2-3× slower & costlier) only for anchor shots that become referenceImages seeds for downstream pages — cover hero / character bible identity sheet / brand mockup hero. See cookbook § H model routing.'),
     },
     async ({
       prompt,
@@ -379,7 +393,18 @@ become part of the spec.json design history.`,
       outputName,
       thinkingLevel = 'minimal',
       responseModalities = ['IMAGE'],
+      model = DEFAULT_MODEL,
     }) => {
+      const modelId = MODELS[model];
+      if (!modelId) {
+        return {
+          content: [{
+            type: 'text',
+            text: `generate_image failed: unknown model '${model}'. Use 'flash' or 'pro'.`,
+          }],
+          isError: true,
+        };
+      }
       // 1. env / 配置
       const gatewayUrl = process.env.NODESIGN_GATEWAY_URL || DEFAULT_NODESK_URL;
       const gatewayKey = process.env.NODESIGN_GATEWAY_KEY;
@@ -447,6 +472,7 @@ become part of the spec.json design history.`,
           gatewayKey,
           channel,
           channelBase,
+          modelId,
           signal: ctx?.abortController?.signal,
         });
       } catch (err) {
@@ -538,6 +564,7 @@ become part of the spec.json design history.`,
           assetRole: assetRole || null,
           aspectRatio,
           imageSize,
+          model,            // 'flash' | 'pro'，区分前端 badge 显示 + spec.json 审计
           referenceImageCount: inlineImageParts.length,
           accompanyText: extracted.accompanyText || null,
         });
@@ -547,7 +574,7 @@ become part of the spec.json design history.`,
       const captionParts = [
         `Generated ${fileName}`,
         `at ${agentRelPath}`,
-        `(${aspectRatio}, ${imageSize}, ${(imgBuf.length / 1024).toFixed(1)} KB)`,
+        `(${aspectRatio}, ${imageSize}, ${model}, ${(imgBuf.length / 1024).toFixed(1)} KB)`,
       ];
       if (assetRole) captionParts.push(`role=${assetRole}`);
       if (inlineImageParts.length > 0) {
