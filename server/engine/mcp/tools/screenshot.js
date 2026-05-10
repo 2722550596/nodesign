@@ -47,13 +47,19 @@ as an image content block. Use this to visually inspect the design you wrote
 
 The screenshot uses headless chromium at the given viewport (default = the
 deck-aspect declared on canvas wrap, i.e. 16:9 → 1920×1080, 9:16 → 1080×1920,
-16:10 → 1920×1200, 4:3 → 1440×1080). Set fullPage=true (default) to capture
-the full scrollable page, or false to only capture the visible viewport.
-Output is rendered at deviceScaleFactor=2 → 4K-ready bitmap.
+16:10 → 1920×1200, 4:3 → 1440×1080). Output is rendered at deviceScaleFactor=2
+→ 4K-ready bitmap.
 
-Targeted captures (overrides fullPage):
+**Targeting (cheapest → most expensive)**:
+- pageIndex: capture only section[data-page="N"] — **prefer this for per-page checks** (~30-50KB image)
 - selector: capture only the first element matching this CSS selector
-- pageIndex: capture only section[data-page="N"]
+- (default, no targeting): capture viewport only (~30-50KB)
+- fullPage=true: capture full scrollable page — **N× more expensive for N-page deck**
+  (~150-300KB for 9 pages). Only use for true deck-wide overview; otherwise prefer
+  pageIndex loop or dispatch the vision-checker subagent (subagent context is
+  isolated, your main context stays small).
+
+Targeted captures (selector / pageIndex) override fullPage.
 
 Returns: image content block (you see it directly via vision) plus a short
 text caption with size info.
@@ -78,7 +84,7 @@ Do NOT use this tool when:
       fullPage: z
         .boolean()
         .optional()
-        .describe('Capture full scrollable page instead of just viewport (default true). Ignored if selector or pageIndex is given.'),
+        .describe('Capture full scrollable page instead of just viewport (default false — N× more expensive for N-page deck). Ignored if selector or pageIndex is given.'),
       selector: z
         .string()
         .optional()
@@ -108,7 +114,10 @@ Do NOT use this tool when:
       // 默认 viewport = canvas wrap 声明的 deck 比例尺寸（4 档预设），caller 显式给则用 caller 的
       const dims = resolveDeckSize(extractDeckAspect(html));
       const vp = viewport || { width: dims.width, height: dims.height };
-      const fp = fullPage !== false;
+      // 默认 false：fullPage 截图体积是 viewport 的 N× (N=页数)，且会留在 context
+      // 多 turn 直到 autoCompact。agent 不显式传就走 viewport 单屏（cheapest），
+      // 真要 deck-wide overview 显式 fullPage:true 或派 vision-checker。
+      const fp = fullPage === true;
 
       let browser;
       try {

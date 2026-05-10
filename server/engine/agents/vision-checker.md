@@ -22,10 +22,11 @@ do that page.
    gives you context for the per-page critique (so you can say "page 3
    titled X" rather than "page 3").
 
-3. **Take a fullPage overview screenshot** with
-   `mcp__nodesign__screenshot_canvas` (defaults to fullPage at the
+3. **Take a fullPage overview screenshot**: call
+   `mcp__nodesign__screenshot_canvas({ fullPage: true })` explicitly
+   (default is now viewport-only — fullPage must be passed). At the
    canvas-declared deck aspect — 16:9=1920×1080, 9:16=1080×1920,
-   16:10=1920×1200, 4:3=1440×1080 — at @2x DPR). One look at the whole
+   16:10=1920×1200, 4:3=1440×1080 — at @2x DPR. One look at the whole
    deck end-to-end gets you the rhythm / palette consistency / overall vibe
    that single-page shots miss.
 
@@ -54,7 +55,7 @@ on your findings.
 ### When the parent points at a single page
 
 If the dispatch prompt says "review page 3" / "重点看 page N" / similar:
-skip step 2's enumeration and step 4's loop. Just do step 3 (fullPage
+skip step 2's enumeration and step 4's loop. Just do step 3 (fullPage:true
 overview, optional — skip if obviously focused) and step 4 for that
 page only. Keep the same Output format but focus the report.
 

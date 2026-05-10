@@ -805,13 +805,27 @@ function makePostToolUseScreenshotHandler({ ctx: _ctx }) {
   // 不 emit run.screenshot_taken —— mcp/tools/screenshot.js:114 已经 emit
   // 完整字段（sizeBytes / viewport / fullPage）。hook 只负责注 additionalContext
   // 引导 agent 行为，业务事件由 MCP 工具内部负责。
-  return async (_input, _toolUseId, _options) => {
+  return async (input, _toolUseId, _options) => {
+    const args = input?.tool_input || {};
+    const wasFullPage = args.fullPage === true;
+    const wasPerPage = typeof args.pageIndex === 'number';
+
+    // fullPage 截图体积是 viewport 的 N×（N=页数），且会留在 context 多 turn
+    // 直到 autoCompact。push agent 下次整 deck 自检走 vision-checker subagent，
+    // subagent context 是隔离的，主线只收文字 critique，几 K vs 几百 K 的差距。
+    const hint = wasFullPage
+      ? '\n\n**下次提示**：fullPage 截图体积是 viewport 的 N×（N=页数），留在 context 多 turn 烧 token。整 deck 自检请派 `vision-checker` subagent（Task 工具）—— subagent 自己跑 list_pages + fullPage + 循环 pageIndex，主线只收文字 critique（几 K）。单页针对性自检用 `pageIndex:N`。'
+      : wasPerPage
+        ? ''
+        : '\n\n**下次提示**：当前是 viewport 截图（最便宜）。要看具体某页用 `pageIndex:N`；整 deck 自检请派 `vision-checker` subagent，别堆 fullPage。';
+
     return {
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext:
           '你刚才截图了。基于这张图，简短点出 3 个具体的视觉问题（对比度/留白/对齐/层级/字号节奏 任选），每条 1-2 句。'
-          + '\n如果整体看起来 OK，就直接跟用户说"看起来 OK"，不要再重复截图。',
+          + '\n如果整体看起来 OK，就直接跟用户说"看起来 OK"，不要再重复截图。'
+          + hint,
       },
     };
   };

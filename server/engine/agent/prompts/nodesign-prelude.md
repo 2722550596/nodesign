@@ -130,28 +130,25 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 **HTML preview 约束**（视觉方向 / 配色 / 字体 / 排版示意场景）：
 - 尺寸：240×140（前端 sandbox iframe 渲染区）
-- 内容：**self-contained HTML 片段**——`<style>...</style>` 块 + `<div>` / `<h1>` / `<p>` 等结构标签都允许；不引外部图 / 外部 CSS / 外部 JS。
-  前端用 iframe srcDoc + `sandbox=""` 渲染：CSS 正常工作（`<style>` 块可以用，**不要被"inline"误读成只能用 `style=""` 属性**）；`<script>` 会被 sandbox 阻止，别加。
+- 内容：**HTML 片段，每个元素 `style="..."` 属性写样式**。⚠️ SDK validator 硬性拒 `<style>` 和 `<script>` 标签——只能 inline style 属性（"inline" 字面理解：写在 element 里，不是 `<style>` 块）。也不能含 `<html>` / `<body>` / `<!doctype>` 等完整文档标签，纯 fragment。
 - 体积：≤ 5KB（超出会被截断）
 - 用途：让用户视觉对比 4 个选项的差异（主色 + 字体方向 + 排版示意），不是渲染完整页面
 
-**典型 HTML preview 范例**（240×140 配色 + 字体方向）：
+**典型 HTML preview 范例**（240×140 配色 + 字体方向，全 inline style）：
 
 ```html
-<style>
-  /* 字体 chain 4 段式：latin → 苹果 CJK → Noto CJK → generic（跟真 deck 同款规则） */
-  body { margin: 0; padding: 12px; background: #f9f8f6; font-family: 'Lyon Display', 'Songti SC', 'Noto Serif SC', serif; color: #2d2418; }
-  h1 { font-size: 28px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.02em; }
-  p { font-size: 11px; color: #c45c3f; margin: 0; }
-</style>
-<h1>Cover</h1>
-<p>warm cream + cherry accent + serif</p>
+<div style="background: #f9f8f6; padding: 12px; font-family: 'Lyon Display', 'Songti SC', 'Noto Serif SC', serif; color: #2d2418;">
+  <h1 style="font-size: 28px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.02em;">Cover</h1>
+  <p style="font-size: 11px; color: #c45c3f; margin: 0;">warm cream + cherry accent + serif</p>
+</div>
 ```
+
+字体 chain 4 段式（latin → 苹果 CJK → Noto CJK → generic）跟真 deck 同款规则——只是从 `<style>` 块挪到每个元素的 `style` 属性里。
 
 ### 何时用 image preview vs HTML preview vs 不带 preview
 
 - **image preview**（base64 / asset path）：多张候选图选哪张（cover / portrait / decoration）→ 先 generate_image 出 3 变体，每个 option 的 preview 字段贴对应图
-- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 → 用 `<style>` 块 + 结构标签演示主色 / 字体 / 排版差异（`<style>` 块允许，不要被"inline"误读成只能用 `style=""`）
+- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 → 每个元素 `style="..."` 属性演示主色 / 字体 / 排版差异（**别用 `<style>` 块、`<script>`、`<html>`/`<body>`——SDK validator 拒**）
 - **不带 preview**：离散文字决策（yes/no, deck-kind 选择, 是否需要 PDF）→ 选项标签足够说明
 
 ---
@@ -283,44 +280,53 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 
 ---
 
-## 文件改动工作流（Edit / Write 选档）
+## 文件改动工作流（首次 Write / 迭代 Edit 两阶段）
 
-**默认 Edit**——便宜、不覆盖用户在 canvas 上 DirectEdit 的并发改动、git diff 干净。Write 是逃生口（Edit 真碎了才用），不是省事工具。错档常见后果两种：①Write 滥用 → 每个 turn 几 K 输出 token 浪费 + 用户改动被覆盖；②长 verbatim Edit 反复挂 → 退化到 `head + cat << HEREDOC + tail + mv` 重组（line 飘就崩，HEREDOC 嵌 HTML 转义雷区）。
+**两阶段心智模型**——按 canvas.html 现状分，不按 diff 大小分：
 
-### 三档判断
+| 阶段 | canvas.html 状态 | 用什么 | 为什么 |
+|---|---|---|---|
+| **第一遍生成**（cp 模板后整体填内容 / 完全新做一份） | 还是模板 / 还没真内容 | **Write 整文件一刀** | 一刀走，0 verbatim 风险，0 cp+多次 Edit 链条退化。boilerplate（importmap / shadcn-lite / 键盘 nav）verbatim 带过靠 Read 一次即可 |
+| **后续迭代**（用户调色 / 改一段文字 / 修一页 layout / 微调） | 有真内容了 | **Edit 短 diff** | 200 vs 7-10K token、保 DirectEdit 并发改、diff 干净 |
 
-| 改动尺度 | 例子 | 用什么 |
-|---|---|---|
-| **小**（1-3 token / 1 class / 1 段属性） | 改 title / 改色值 / 加一个 class / design-tokens 单项 | Edit，old_string 仅覆盖目标 ± 上下文 1-2 行 |
-| **中**（1-2 sections 内重写 / 加一段新章节 / 替换一段示例） | 重写一页 section 文字 / 把 cover 占位换成实内容 / 加一个 React mount | Edit，锚定独一无二的边界（HTML 注释 / unique class / data-anchor）。**100+ 行 verbatim 仍在 Edit 范围**——边界锚定好就稳 |
-| **大**（删 3+ 段 + 加 3+ 段 / 重组 200+ 行 / 整 sections 区换个底朝天） | cp 模板后整 sections 区换 9 页自定 / 全文 layout 重新组织 | Write 全量覆写——verbatim 真的碎才用 |
+界限：**现在 canvas.html 是不是已经有真 deck 内容**——没 → 第一遍 → Write；有 → 迭代 → Edit。
 
-### Edit 失败的对的反应（**别一挂就跑 Write**）
+### 第一遍 Write 的具体节奏
 
-- **第一次 oldString mismatch** → Read 一次目标区块刷新真实字节 → 再 Edit。**多数能救活**——失败常因记忆里的 old_string 跟实际差一两个空格 / class 顺序 / 注释字符，Read 后 verbatim 粘就过。
-- **Read 完再 Edit 又挂** = old_string 真的太复杂（含装饰字符 / 嵌套注释 / 跨多 section）→ **这才升档 Write**。不是失败一次就跑路。
-- **多处同串改** → `replace_all: true`（重命名 / 统一改色号 / 批量改 anchor），不是反复单 Edit 也不是 Write。
+1. `Bash: cp canvas.template.html canvas.html`（系统已就位 → 跳过本步）
+2. `Read canvas.html` **完整读一遍**——拿 importmap (60 行 21 库 esm.sh URL + version pin) / shadcn-lite (97 行 4 件 React 组件) / keyboard nav (84 行 IIFE) 这些 boilerplate 的 verbatim
+3. `Write canvas.html` 一刀：
+   - head/script 区 boilerplate **完整 verbatim 带回去**（importmap URL 错版本号 / shadcn 闭花括号丢 → deck 静默坏）
+   - design-tokens 改成你 deck 隐喻的色 / 字 / 间距
+   - sections 区写你的真内容
+4. `mcp__nodesign__screenshot_canvas({ pageIndex: 1 })` 看一两个关键页确认对路（**别用 fullPage**，N× 贵）；整 deck 评审派 vision-checker subagent（context 隔离，主线不增长）
+5. 之后小调走 Edit
 
-### Write 的代价（默认避免它的三个理由）
+### 第一遍为什么不走 cp + 多次 Edit
 
-1. **token 贵** —— canvas.html 600-900 行 Write 一次 7-10K 输出 token；Edit 一次 ~200，差 30-50 倍。每个 turn 都 Write = 流速明显变慢、context 烧得快。
-2. **覆写并发改动** —— 用户在画布上 DirectEdit 双击改字 / 加 comment 是异步进 pending-changes buffer 的；Write 整文件会**覆盖用户没合的改动**。Edit 只动指定区段，用户其他改动自然保留。
-3. **diff 不可读** —— Write 等于全行变更，用户审"你这一刀改了哪儿"得逐行对比；Edit 的 diff 只有真改的 ±3 行，一眼能看完。
+c3db5740 现场实测：cp + 4 个小 Edit + 1 失败 multi-section Edit (5K verbatim) + 3 个 Bash heredoc 重组 + 9+ 个边框/布局 Edit + 中间 ~10 次 Read = **17K output + 5K input ≈ 22K total，多次失败**。
+
+同样的 deck Write-first 路径估算：1 次 Read template (~4K) + 1 次 Write (~5K，含 verbatim boilerplate) + 2-3 个小 Edit 修边框 ≈ **9-10K total，0 失败**。
+
+**~50-60% 节省 + 失败率清零**。Write 听起来"贵"是错觉——它绕过的失败 / 重读 / 重组成本远大于多打一次模板的 token。
+
+### 迭代的 Edit 用法
+
+- old_string **从最近一次 Read 结果直接粘**，不凭印象重构。HTML 含装饰字符（`┄` `══`）/ 嵌套注释 / 半角全角括号混用时，凭记忆复述会差字节——物理限制不是纪律问题。
+- **多处同串改** → `replace_all: true`（重命名 / 统一改色号 / 批量改 anchor），不是反复单 Edit。
+- Edit 失败一次 → Read 一次刷新真实字节 → 再 Edit。**多数能救活**（差一两个空格 / class 顺序）。Read 完再挂才考虑别的路径——但这阶段你已经在迭代不在第一遍，不应该有大块替换需求。
+
+### Write 在迭代阶段的代价（**所以默认避免**）
+
+1. **token 30-50× 贵** —— Edit 一次 ~200 token，Write 整文件 7-10K。每个迭代 turn 都 Write = 流速明显变慢、context 烧得快。
+2. **覆写 DirectEdit 并发改动** —— 用户在画布上双击改字 / 加 comment 异步进 pending-changes buffer；Write 整文件**覆盖用户没合的改动**。Edit 只动指定区段，用户其他改动自然保留。
+3. **diff 不可读** —— Write 全行变更，用户审"你这一刀改了哪儿"得逐行对比；Edit 的 diff 只有真改的 ±3 行。
 
 ### Bash 文件操作的副作用
 
 Bash `cp` / `mv` / `sed -i` / `> file` 改了文件后，下次 Edit 之前**先 Read 一次刷 cache**——SDK Edit 通过 Read tool 跟踪文件 freshness，绕开 Read 的修改让下次 Edit 报"File modified since read"。
 
-`head -n N + cat << HEREDOC + tail + mv` 这种 line-number 切片重组比 Write 还脆（line 飘移 + HEREDOC 嵌 HTML 转义雷区），任何场景都别走。
-
-### cp + 改 canvas.html 起手式
-
-1. `Bash: cp canvas.template.html canvas.html`
-2. **小改 Edit 起手** — title / design-tokens（颜色/字号/字体）/ data-deck-aspect，5-8 个 Edit，飞快、不会挂。
-3. **section 区按你 deck 跟模板范例的关系分流**：
-   - 跟范例风格接近 / 1-3 页 → cp 范例 section 改文字 + Edit 加新 page，**全程 Edit**
-   - 整套 redesign / 多页 / 自定 layout → Read 一次 sections 区 → Write 整文件（head/script verbatim 带过，sections 区换成你的）
-4. `mcp__nodesign__screenshot_canvas` 自查再迭代。
+`head -n N + cat << HEREDOC + tail + mv` 这种 line-number 切片重组比 Write 还脆（line 飘移 + HEREDOC 嵌 HTML 转义雷区），**任何场景都别走**——大块替换走 Write。
 
 ---
 
