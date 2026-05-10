@@ -25,7 +25,11 @@ const SERVER_ROOT = path.resolve(__dirname, '..');
 
 const DEFAULT_PYTHON = path.join(SERVER_ROOT, '.venv-rembg', 'bin', 'python3');
 const DEFAULT_SERVICE = path.join(__dirname, 'rembg-service.py');
-const DEFAULT_PRELOAD = 'isnet-general-use,birefnet-general-lite';
+// 默认只预热 isnet-general-use（fast 档）。birefnet-general-lite (balanced) /
+// birefnet-general (best) 都带 alpha matting，pymatting 单线程 CPU 重，预热占
+// 200-400MB 内存但实际很少用——按需 lazy load 即可。
+// 改回多模型预热：env NODESIGN_REMBG_PRELOAD=isnet-general-use,birefnet-general-lite
+const DEFAULT_PRELOAD = 'isnet-general-use';
 
 let serviceProc = null;
 let started = false;
