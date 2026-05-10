@@ -20,6 +20,7 @@ stdout 拿 rembg 抠完背景的 PNG。stderr 走 logging（urllib3 LibreSSL 警
       --model birefnet-general-lite --alpha-matting > out.png
 """
 import argparse
+import os
 import sys
 import warnings
 
@@ -28,6 +29,18 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from rembg import remove, new_session
+
+
+def _resolve_providers():
+    """决定 onnxruntime providers，与 rembg-service.py 一致：
+    darwin 默认 CPU only（绕 CoreML+birefnet 卡死），其它平台 ort 自选；
+    env NODESIGN_REMBG_PROVIDERS 覆盖。"""
+    env = os.environ.get('NODESIGN_REMBG_PROVIDERS', '').strip()
+    if env:
+        return [p.strip() for p in env.split(',') if p.strip()]
+    if sys.platform == 'darwin':
+        return ['CPUExecutionProvider']
+    return None
 
 
 def main() -> int:
@@ -50,7 +63,7 @@ def main() -> int:
             print('rembg-bridge: empty stdin', file=sys.stderr)
             return 2
 
-        session = new_session(args.model)
+        session = new_session(args.model, providers=_resolve_providers())
         output_data = remove(
             input_data,
             session=session,
