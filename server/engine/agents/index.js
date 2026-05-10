@@ -161,7 +161,8 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
         'Visually inspect the current canvas.html design via screenshot. '
         + 'Use this when you need an independent second-pair-of-eyes review on '
         + 'whether the design looks right — alignment, contrast, hierarchy, spacing, '
-        + 'a11y readability. Returns a structured critique with concrete fix suggestions.',
+        + 'a11y readability, and (when design-plan.md exists) per-page plan compliance. '
+        + 'Returns a structured per-page critique with concrete fix suggestions.',
       prompt: loadPrompt('vision-checker'),
       // judgment 类——视觉评审 capability 必须跟主 agent 同级，走 sdkSpoofMain
       // （Kimi 主时是 'claude-opus-4-7[1m]' alias，SDK 信 1M context；proxy 出口
@@ -172,10 +173,20 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
       // 显式列 mcp__nodesign__web_search 是同样的稳妥做法）。Phase 1.1 audit 后
       // 改成显式声明，保证 vision-checker.md 里写的 mcp__nodesign__screenshot_canvas
       // 真实可调。
+      //
+      // 2026-05-10：新增 list_pages（枚举页数 → 决定循环 pageIndex 上界）+
+      // TodoWrite（多步逐页评审编排，让前端可见 vision-checker 在做啥）。
       tools: [
         'mcp__nodesign__screenshot_canvas',
+        'mcp__nodesign__list_pages',
         'Read', 'Glob',
+        'TodoWrite',
       ],
+      // maxTurns：逐页评审下界估算 = 1 (Read plan) + 1 (list_pages) + 1
+      // (fullPage 总览) + N (per-page 截图) + 1-2 (think + report)。N 页 deck
+      // 至少 N+5 turn。16 容纳到 ~10 页 deck；超长 deck 主 agent 应 prompt
+      // 里点名分批评审。
+      maxTurns: 16,
     },
 
     'ds-extractor': {

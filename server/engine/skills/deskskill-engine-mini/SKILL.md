@@ -932,27 +932,38 @@ canvas.template.html 预置的暖灰白 + 深棕 palette + Inter / Instrument Se
 
 > Task 调用语法 / dispatch prompt 模板 PreToolUse hook 首调时注入。
 
-### 自检 vs 派 vision-checker
+### 主路径：完整 deck 写完派一次 vision-checker
 
-**先自己 screenshot_canvas 看一眼**——你能 vision 看图，发现明显的错位 / 截断 / 对比度低**就直接自己改**。**别凡事都派 vision-checker**——它跑要 8 turn，浪费 budget。
+**完整 deck 写完后默认派一次 vision-checker 跑逐页自检**——它是独立第三视角，自动 Read design-plan.md 跑 Tier 0（plan compliance）+ list_pages 取页数 + fullPage 总览 + 循环 pageIndex 逐页对照 plan + 按页分组报告。比你自己 screenshot 一张 fullPage 看一眼能多发现的：跨页节奏 / palette 一致性 / plan 各页 c_decisions 是否兑现 / 单页 4 铁律打分。
 
-**残留骨架自检**（骨架先行模式专用）：grep canvas.html 一次：
+Budget：逐页模式 ~`页数+5` turn（10 页 deck ≈ 15 turn），上限 16。超长 deck 在 prompt 里点名分批（"只看 1-5 页"）。
+
+**别派 vision-checker 的场景**（直接自己 screenshot 看就行）：
+- 改错字 / 单一字号微调 / 改一处颜色
+- 用户已经在反馈具体问题（"page 3 标题太小" → 直接 Edit）
+- 同一 deck 上一轮派过 + 这轮改动很小 → 看上轮 critique 的剩余 issue
+- 你刚 screenshot 自己看过、已经发现明显错位 / 截断 / 对比度低 → 直接 Edit 改
+
+**残留骨架自检**（骨架先行模式专用，在派 vision-checker 之前先 grep）：
 - `data-skeleton=` 残留 → 漏填的页（应该都被换成 `data-anchor`）
 - `// §mount:` 残留 → 漏的 React mount
 
-**真正派 vision-checker 的场景**：
+骨架不残留再派 vision-checker，否则它给的 critique 会被空骨架噪声淹掉。
+
+### 派的时机
+
 | 场景 | 派？ | 理由 |
 |---|:---:|---|
-| 整个 deck 写完（首跑） | ✅ | 默认派一次自检，建立质量底线 |
-| 关键页（封面 / 数据页 / 章节扉页）改完 | ✅ | prompt 里点名 page N，单页评审 |
-| 用户问"看着怎么样" / "你觉得 OK 吗" | ✅ | 用独立视角答比自己说"挺好的"可信 |
+| **整个 deck 写完（首跑）** | ✅ **默认派** | 建立质量底线；vision-checker 自动逐页对照 plan，主动捕捉你自己 screenshot 一张图看不出的跨页节奏 / palette / Tier 0 plan compliance 问题 |
+| 关键页（封面 / 数据页 / 章节扉页）改完后想确认 | ✅ | prompt 里点名 page N 走单页定向评审，vision-checker 跳过逐页循环只评这一页（~5 turn 够） |
+| 用户问"看着怎么样" / "你觉得 OK 吗" | ✅ | 独立视角答比自己说"挺好的"可信 |
 | 用户已经在反馈具体问题 | ❌ | 用户已告诉哪儿不对，直接 Edit 改 |
-| 改错字 / 单一字号微调 | ❌ | 浪费 8-turn 子代理 budget |
-| 同一 deck 上一轮派过 + 这轮改动很小 | ❌ | 看上轮 critique 的剩余 issue 即可 |
+| 改错字 / 单一字号微调 | ❌ | 4-5 turn 起步，对单字号微调比例失调 |
+| 同一 deck 上一轮派过 + 这轮改动很小 | ❌ | 看上轮 critique 的剩余 issue |
 
 ### 收到 critique 怎么处理
 
-vision-checker 返一段含 `VERDICT: <ok|minor-issues|major-issues> / ISSUES: ... / OVERALL: ...` 的结构化文本。
+vision-checker 返一段含 `VERDICT: <ok|minor-issues|major-issues> / ISSUES (按页分组) / OVERALL: ...` 的结构化文本。**ISSUES 按 PAGE N 分组**，每条带 severity + PROBLEM + FIX；可能还有 DECK-WIDE 桶（跨页问题）。
 
 | VERDICT | 你的反应 |
 |---|---|
@@ -960,11 +971,10 @@ vision-checker 返一段含 `VERDICT: <ok|minor-issues|major-issues> / ISSUES: .
 | `minor-issues` | 选 1-2 条最影响第一印象的快速 Edit 修；剩下小毛病挂"后续可调"清单跟用户报 |
 | `major-issues` | 全部修，逐条 Edit。修完先让用户看一眼再决定要不要再派 vision-checker（连续派会陷入 self-criticism loop） |
 
-**别犯的错**：
-- ❌ critique 转给用户读 —— 它是给**你**的，**你来挑哪条修**，用户看修完结果
-- ❌ 自动循环派（修完 → 再派 → 又有 issue → 再修...）—— **限 1 个 turn-cluster 内最多 2 次**
-- ❌ 改动很小（一处字号）就派 —— 浪费 8-turn budget
-- ❌ 派完不报告 —— 在给用户的回复里**简短带一句**自检结果
+**几个常踩的坑**：
+- critique 是给**你**的，不要原文转给用户读——你来挑哪条修，用户看修完结果
+- 自动循环派（修完 → 再派 → 又有 issue → 再修...）控制在 1 个 turn-cluster 内最多 2 次
+- 派完在给用户的回复里**简短带一句**自检结果（"vision-checker 看完，主要 2 条已修"），不要默默修完不说
 
 ---
 
