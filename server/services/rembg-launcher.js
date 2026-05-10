@@ -44,7 +44,7 @@ function killStaleServices() {
     // pgrep -f 匹配完整 cmdline，-d ' ' 用空格分隔多 PID。
     // pattern "python.*rembg-service\\.py" 收紧只匹配 python 解释器执行
     // rembg-service.py 的进程（避免误杀含字符串的 node test / 编辑器等）。
-    const out = execSync('pgrep -fd " " "python.*rembg-service\\.py"', {
+    const out = execSync('pgrep -ifd " " "python.*rembg-service\\.py"', {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).toString().trim();
     if (!out) return;
@@ -60,7 +60,7 @@ function killStaleServices() {
     const deadline = Date.now() + 1000;
     while (Date.now() < deadline) {
       try {
-        execSync('pgrep -f "python.*rembg-service\\.py"', { stdio: 'ignore' });
+        execSync('pgrep -if "python.*rembg-service\\.py"', { stdio: 'ignore' });
         // 还活着，继续 wait
       } catch {
         // pgrep exit 1 = 没找到 = 全死了
