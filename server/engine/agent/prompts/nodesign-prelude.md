@@ -43,7 +43,7 @@ cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**
 | `canvas.template.html` | 文件 | session 创建时系统从 skill 拷过来的起手模板，**Read 后 cp 改写** 写 canvas.html |
 | `spec.json` | 文件 | 跨 turn / 跨 session 设计意图档案；工作台自动注入最近 5 条 decisions 摘要 |
 | `design-plan.md` | 文件 | plan-mode 通过后的 plan 落档（仅 plan-mode 才有） |
-| `assets/` | softlink → shared/assets/ | 用户上传素材 + generate_image 落档（`assets/generated/<name>.png`）；跨 session 共享 |
+| `assets/` | softlink → shared/assets/ | 用户上传素材 + generate_image 落档（`assets/generated/<name>.png`）；跨 session 共享。**Glob/Grep 默认不跟 symlink，对 `assets/*` 会返回空——靠每轮 system 注入的"workspace 里已有 N 个参考素材"清单直接 Read 路径**；plan mode 也允许 `ls assets/` / `find assets/` 兜底实地查 |
 | `agent-memory/` | softlink → shared/.claude/agent-memory/ | 跨 session **长期记忆**：`memory.md` = main agent 通用；`brand/memory.md` = 品牌档案 |
 | `skills/` | softlink → shared/.claude/skills/ | 项目级**自定义** skills（用户可往 shared 写） |
 | `agents/` | softlink → shared/.claude/agents/ | 项目级**自定义** subagents |
@@ -362,7 +362,7 @@ agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体
 | 子代理 | 一句话用途 | 何时调 |
 |---|---|---|
 | `explorer` | **研究员**：搜外链 / 找参考图 URL / 验证事实 / 找字体 CDN | "我需要外部信息但搜起来要几个 turn"的场景 |
-| `vision-checker` | 截图 + 挑剔视觉评审（read-only；**首调时 hook 注派遣模板**） | 整个 deck 写完 / 关键页改完 / 用户问"看着怎么样"。详见 SKILL.md § Stage 4 |
+| `vision-checker` | 截图 + 逐页对照 plan 的独立视觉评审（read-only；自动 list_pages + fullPage + 循环 pageIndex 跑全 deck；**首调时 hook 注派遣模板**） | **整 deck 第一版写完默认派一次**（建立质量底线）/ 关键页改完单页定向 / 用户问"看着怎么样"。详见 SKILL.md § Stage 4 + § 完成时怎么收尾 |
 | `ds-extractor` | 抽 design system tokens（color/type/spacing） | 用户说"抽 design system" 时 |
 | `tweak-proposer` | 推 tweak schema（slider / colorpicker） | tweak UI 流接通后再用 |
 

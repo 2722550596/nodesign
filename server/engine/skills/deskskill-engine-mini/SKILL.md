@@ -990,11 +990,14 @@ vision-checker 返一段含 `VERDICT: <ok|minor-issues|major-issues> / ISSUES (�
 
 | 动作 | 适合的时机 | 它能带来什么 |
 |---|---|---|
+| **`Task(subagent_type='vision-checker')`** | **整 deck 第一版写完后默认派一次**（也包括重大改动 / 用户问"看着怎么样"）| 独立第三视角逐页对照 plan，捕捉跨页节奏 / palette / Tier 0 plan compliance 你自己 screenshot 看不出的问题。详见 § Stage 4 |
 | `record_decision` | 在每个有意义的决策节点都可以记（deck_kind 锁定 / tone 收敛 / palette 锁定 / metaphor 选定 / 关键页技术选择 / 反例对齐 / 重要的 motion 取舍） | 跨 turn / 跨 session 持久化；hook 自动注最近 5 条；下次 resume 不失忆。density 高一点（5-8 条/session）通常更好用 |
 | `expose_tweaks` | deck 第一版完整写完、形态稳定后调一次 | 让 deck 从"静态产物"变"可调产品"，是 NoDesign 的差异化价值 |
 | `export_handoff` | 用户说"差不多 / 可以发了 / 给我交付"时主动调 | 用户不用摸 UI 找 export 按钮 |
 
-**关键页自检**：写完封面 / 数据页 / 章节扉页后调 screenshot_canvas 过一眼。心里没底时直说"我看着差点意思但说不清，想听你的反馈"比假装"OK"有价值。
+**收尾默认顺序**（整 deck 第一版收尾时）：写完最后一页 → `screenshot_canvas` 自己快速扫一眼明显错位 → 派 `vision-checker` 跑逐页 → 按 critique 修 → `record_decision` + `expose_tweaks`。中间小步收尾（改一页 / 加一段）跳过 vision-checker，自己 screenshot 看够了。
+
+**心里没底时**直说"我看着差点意思但说不清，想听你的反馈"比假装"OK"有价值——也可以直接派 vision-checker 拿独立判断垫底。
 
 ---
 
