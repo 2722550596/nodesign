@@ -846,6 +846,17 @@ export default function ProjectWorkspace() {
         showToast(`Tweaks 已更新（${evt.count} 个控件）`, 'info');
         break;
 
+      case 'run.pending_changes_cleared': {
+        // agent 调 clear_pending_changes 后，前端 comments state 同步移除 ——
+        // 让橙色 overlay 标记跟 agent 处理行为对齐。不 guard isStale：哪怕事件来自
+        // 上一 run（重连补推 / 慢推），buffer 文件已实际清掉，state 也该 sync。
+        const cleared = Array.isArray(evt.clearedIds) ? evt.clearedIds : null;
+        if (!cleared || cleared.length === 0) break;
+        const set = new Set(cleared);
+        setComments(prev => prev.filter(c => !set.has(c.id)));
+        break;
+      }
+
       case 'run.canvas_navigate': {
         if (isStale) break;
         // C6: agent 调 navigate_to_page → 前端 scrollIntoView 该 section
@@ -1270,8 +1281,12 @@ export default function ProjectWorkspace() {
     }
     if (!text || !text.trim()) return;
     const trimmed = text.trim();
+    // 前后端 id 统一——同一个 id 既挂前端 comments state（驱动橙色 overlay），
+    // 也挂后端 pending-changes item.id。agent 调 clear_pending_changes 时 event
+    // 带 clearedIds，前端按 id filter 移除对应橙色框。
+    const cid = newId('cmt');
     setComments(arr => [...arr, {
-      id: newId('cmt'),
+      id: cid,
       anchor: ctx.anchor,
       aiContext: ctx.aiContext,
       text: trimmed,
@@ -1282,6 +1297,7 @@ export default function ProjectWorkspace() {
     if (currentSessionId) {
       try {
         await PendingChanges.push(id, currentSessionId, {
+          id: cid,
           kind: 'comment',
           anchor: ctx.anchor,
           aiContext: ctx.aiContext,

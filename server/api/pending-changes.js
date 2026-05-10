@@ -94,8 +94,12 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
 
     const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
 
+    // 接受 body.id（前端 newId('cmt') 等）以让前后端 id 统一——agent 调
+    // clear_pending_changes 时 event 带 clearedIds，前端 comments state 用同一
+    // id filter 出橙色 overlay。无传入则后端 randomUUID 兜底。
+    const itemId = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : randomUUID();
     const item = {
-      id: randomUUID(),
+      id: itemId,
       kind,
       anchor,
       ...(body.aiContext ? { aiContext: body.aiContext } : {}),

@@ -324,9 +324,10 @@ export const Events = {
     type: 'run.tweaks_exposed', count, added, replaced,
   }),
 
-  // clear_pending_changes 工具完成，前端可清相应本地 pending hint
-  pendingChangesCleared: (removed, remaining) => ({
-    type: 'run.pending_changes_cleared', removed, remaining,
+  // clear_pending_changes 工具完成，前端可清相应本地 pending hint。
+  // clearedIds 让前端 comments state 精确 filter 出橙色 overlay（前后端 id 已统一）
+  pendingChangesCleared: (clearedIds, removed, remaining) => ({
+    type: 'run.pending_changes_cleared', clearedIds, removed, remaining,
   }),
 
   // ── A4.1（2026-05-02）：AskUserQuestion 走 SDK canUseTool 路径 ──

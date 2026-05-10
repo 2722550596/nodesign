@@ -52,20 +52,28 @@ acted on them, so the same changes don't re-appear in the next turn.
           if (err.code !== 'ENOENT') throw err;
         }
 
-        const before = buf.items.length;
+        const beforeItems = buf.items;
+        let clearedItems;
         if (Array.isArray(ids) && ids.length > 0) {
           const set = new Set(ids);
-          buf.items = buf.items.filter(it => !set.has(it.id));
+          clearedItems = beforeItems.filter(it => set.has(it.id));
+          buf.items = beforeItems.filter(it => !set.has(it.id));
         } else {
+          clearedItems = beforeItems;
           buf.items = [];
         }
-        const removed = before - buf.items.length;
+        const removed = clearedItems.length;
+        // 带上被清的 id 列表，让前端可以同步移除 comments state 里对应的橙色 overlay。
+        // 前端 comments[].id 跟 pending-changes item.id 已统一（见 ProjectWorkspace
+        // handleAddComment + pending-changes.js POST accept body.id）。
+        const clearedIds = clearedItems.map(it => it.id);
 
         await fs.writeFile(bufPath, JSON.stringify(buf, null, 2), 'utf8');
 
         try {
           ctx?.emit?.({
             type: 'run.pending_changes_cleared',
+            clearedIds,
             removed,
             remaining: buf.items.length,
           });
