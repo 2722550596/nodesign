@@ -26,7 +26,7 @@ import {
 } from '../projects/workspace.js';
 import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
-import { buildStandaloneHtml, isHybridHtml } from './exports/build-standalone.js';
+import { buildStandaloneHtml, isHybridHtml, inlineLocalImages } from './exports/build-standalone.js';
 
 const router = express.Router();
 
@@ -129,11 +129,24 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
         // 传 sessionRoot 让 build-standalone 能 inline 本地图片（assets/generated/...）
         html = await buildStandaloneHtml(html, { sessionRoot });
       } catch (err) {
+        // standalone 任何一步炸——管道里图片 inline 也不会跑，用户拿到的 HTML
+        // 离开 session 目录后 <img src="assets/..."> 全 404。降级路径必须仍把
+        // 图片 inline 一遍兜底，否则一次 esbuild 失败 = 整个 deck 图片全丢。
         console.warn('[exports/html] standalone build failed, falling back to viewport-fit:', err.message);
         html = injectViewportFit(html);
+        try {
+          html = await inlineLocalImages(html, sessionRoot);
+        } catch (e2) {
+          console.warn('[exports/html] image inline fallback also failed:', e2.message);
+        }
       }
     } else {
       html = injectViewportFit(html);
+      try {
+        html = await inlineLocalImages(html, sessionRoot);
+      } catch (e) {
+        console.warn('[exports/html] image inline (legacy path) failed:', e.message);
+      }
     }
 
     const filename = `${safeFilename(project.name)}.html`;

@@ -263,8 +263,15 @@ function cacheSet(key, val) {
 }
 
 /**
- * 把所有 babel script 内容拼成一个 entry，喂给 esbuild bundle。
- * esbuild 远程 import 走 esm.sh HTTP plugin（自写 onResolve / onLoad）+ LRU cache。
+ * 把每段 babel script 当独立 ES module 喂 esbuild bundle；用合成 entry
+ * `import './_nd_script_0_'; import './_nd_script_1_';` 串起来驱动执行。
+ *
+ * 为什么不直接 concat：浏览器里每个 `<script>` 是自己的作用域，agent 习惯写
+ * 多段（譬如 `__nd-shadcn-lite` 段定义 `function Card`，`__nd-app` 段再
+ * `const { Card } = window.__ndShadcn`）。两段直接拼成一个 esbuild entry 会
+ * 撞 "The symbol Card has already been declared"，整条 standalone 管道炸 →
+ * 用户拿到没 inline 图片的降级 HTML。改成多 module 后各自顶层作用域隔离，
+ * 跟 `<script>` 语义对齐；共享 react 实例靠 importmap 同 URL 自动 dedupe。
  *
  * @param {Array<{ content: string, fullTag: string }>} babelScripts
  * @param {object | null} importmap importmap 的 imports 字段是 bare specifier → URL 的映射
@@ -276,23 +283,32 @@ export async function bundleBabelScripts(babelScripts, importmap) {
   // 这种 case 直接返空，assemble 阶段不注入 module script。
   if (babelScripts.length === 0) return '';
 
-  // 拼 entry：多 babel script 内容直接 concat（每段独立 IIFE-style 代码，能共存）
-  const entryContent = babelScripts.map(s => s.content).join('\n\n;\n\n');
-
   const importmapImports = importmap?.imports || {};
+
+  // 每段当独立虚拟模块，合成 entry 按声明顺序依次 side-effect import
+  const scriptVfs = new Map();
+  const entryImports = babelScripts.map((s, i) => {
+    const vp = `/__nd_script_${i}__.tsx`;
+    scriptVfs.set(vp, s.content);
+    return `import '${vp}';`;
+  }).join('\n');
 
   const result = await build({
     stdin: {
-      contents: entryContent,
-      loader: 'tsx',         // 支持 JSX + TS
+      contents: entryImports,
+      loader: 'tsx',
       sourcefile: '__nd_entry__.tsx',
+      resolveDir: '/',  // 让虚拟绝对路径 import 能命中 onResolve
     },
     bundle: true,
     format: 'esm',
     minify: true,
     target: 'es2020',
     write: false,            // 不写盘，结果在 outputFiles
-    plugins: [esmShHttpPlugin(importmapImports)],
+    plugins: [
+      scriptVfsPlugin(scriptVfs),
+      esmShHttpPlugin(importmapImports),
+    ],
     // tsx loader 默认 jsx: classic（变 React.createElement），我们模板用 import React 就走通
     jsx: 'transform',
     jsxFactory: 'React.createElement',
@@ -303,6 +319,26 @@ export async function bundleBabelScripts(babelScripts, importmap) {
     throw new Error('esbuild errors: ' + result.errors.map(e => e.text).join('; '));
   }
   return result.outputFiles[0].text;
+}
+
+/**
+ * 把每段 babel script 解析成独立虚拟 module，给 esbuild bundle 用。
+ * 路径形如 `/__nd_script_0__.tsx`，靠 scriptVfs Map 查内容。
+ */
+function scriptVfsPlugin(scriptVfs) {
+  return {
+    name: 'nd-script-vfs',
+    setup(buildApi) {
+      buildApi.onResolve({ filter: /^\/__nd_script_\d+__\.tsx$/ }, (args) => ({
+        path: args.path,
+        namespace: 'nd-script-vfs',
+      }));
+      buildApi.onLoad({ filter: /.*/, namespace: 'nd-script-vfs' }, (args) => ({
+        contents: scriptVfs.get(args.path) || '',
+        loader: 'tsx',
+      }));
+    },
+  };
 }
 
 /**
@@ -693,7 +729,7 @@ async function inlineOneAsset(srcPath, sessionRoot, cache) {
  * @param {string} sessionRoot  绝对路径，相对路径从这里 resolve
  * @returns {Promise<string>}
  */
-async function inlineLocalImages(html, sessionRoot) {
+export async function inlineLocalImages(html, sessionRoot) {
   const cache = new Map();  // 同一图被多次引用只读一次盘 + base64 一次
 
   // ── 收集所有候选 src（先收集再异步批量替换）──
