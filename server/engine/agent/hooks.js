@@ -143,6 +143,15 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
       // expose_tweaks 首次调用时注入完整语法
       matcher: 'mcp__nodesign__expose_tweaks',
       hooks: [makePreToolUseExposeTweaksSyntaxInjector()],
+    }, {
+      // Write canvas.html 首次调用时提醒 agent 先 Read 拿 verbatim boilerplate
+      // SDK 对 Write 没有 Edit 那样的"必须 Read"强约束，凭印象重写 importmap /
+      // shadcn-lite 容易差字节 → deck 看着写出来但浏览器加载不出 React。
+      // 中期方向：anchored Edit-first 替换 <style id="design-tokens"> +
+      // <div class="__nd-deck-wrap"> 两块，省 verbatim 搬运。详见 memory
+      // idea_canvas_write_flow_redesign.md
+      matcher: 'Write',
+      hooks: [makePreToolUseWriteCanvasReadReminder()],
     }],
 
     // Stop —— agent 准备结束 query 时触发，发自检事件给前端
@@ -1165,6 +1174,54 @@ function makePreToolUseExposeTweaksSyntaxInjector() {
           '<system-reminder>\n[expose_tweaks 完整语法 — 首次注入]\n\n'
         + syntax
         + '\n\n本语法每 session 只注入一次。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
+/**
+ * PreToolUse(Write) — 首次 Write canvas.html 时提醒 agent 先 Read 拿 verbatim。
+ *
+ * 背景：canvas.html 已是 cp 后的 template（~3K boilerplate：importmap +
+ * shadcn-lite + keyboard nav）。SDK 对 Write 没有 Edit 那样的"必须 Read"强约束，
+ * agent 凭印象 verbatim 重写这些块容易差字节——importmap URL 错版本号、shadcn 闭
+ * 花括号差一对——结果 deck 看着写出来但浏览器加载不出 React / standalone build
+ * 报错。短期 hook 堵漏。
+ *
+ * 触发：matcher='Write' + file_path endsWith('canvas.html') + 本 session 首次。
+ * 不匹配 canvas.template.html（template 本身不该被 Write）/ spec.json / .md 笔记。
+ *
+ * 设计原则：
+ *   - metadata-not-content：不预读 template 注入内容，让 agent 自己 Read
+ *   - 不阻塞，permissionDecision='allow'
+ *   - 跟 prelude § 文件改动工作流 形成回声而非新规则
+ *   - 内容里同时提 Write-first / Edit-first 两条走法，不强推
+ *
+ * 长期方向：anchored Edit-first（替换 <style id="design-tokens"> 和
+ * <div class="__nd-deck-wrap"> 两块），省 ~5K verbatim 搬运。需实测样本支撑后
+ * 再改 prelude 文件改动工作流大段。详见 memory idea_canvas_write_flow_redesign。
+ */
+function makePreToolUseWriteCanvasReadReminder() {
+  let alreadyReminded = false;
+  return async (input, _toolUseId, _options) => {
+    if (alreadyReminded) return {};
+    const filePath = input?.tool_input?.file_path || '';
+    if (!filePath.endsWith('canvas.html')) return {};
+    alreadyReminded = true;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[Write canvas.html 起手提醒]\n\n'
+        + 'canvas.html 已是 cp 后的 template（~3K boilerplate：importmap + shadcn-lite + keyboard nav）。\n'
+        + '凭印象 verbatim 重写这些块容易跟原文差一两个字符——importmap URL 错版本号、shadcn 闭花括号差一对——\n'
+        + '结果 deck 看着写出来了但浏览器加载不出 React / standalone build 报错。\n\n'
+        + '两条走法可选：\n'
+        + '- Write-first：Read canvas.html 一遍把 verbatim 装进 context，再 Write 整文件\n'
+        + '- Edit-first（更省）：Read 后只 Edit 替换 <style id="design-tokens"> 和 <div class="__nd-deck-wrap"> 两块（boilerplate 不动），~5K → 1-2K diff\n\n'
+        + '本提醒每 session 只触发一次。\n'
         + '</system-reminder>',
       },
     };
