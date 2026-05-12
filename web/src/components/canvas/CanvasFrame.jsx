@@ -414,10 +414,12 @@ export default function CanvasFrame({
               onCommitMove?.(payload, result?.revert);
             }}
             onCommitFreePosition={(payload, refs) => {
+              // styleDelta = 用户意图（进 buffer）；runtimeLocks = 前端视觉补偿（不进 buffer）
               const result = applyStyleToRuntime({
                 sourceEl: refs.sourceEl,
                 parentEl: refs.parentEl,
                 styleDelta: payload.styleDelta,
+                runtimeLocks: payload.runtimeLocks,
                 parentNeedsRelative: payload.parentNeedsRelative,
               });
               onCommitFreePosition?.(payload, result?.revert);

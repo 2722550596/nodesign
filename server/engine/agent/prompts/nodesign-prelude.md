@@ -262,10 +262,20 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
        2. **如果邻居 reflow 后明显破坏视觉**（如最后一个元素拖走导致容器塌缩、网格留洞、auto height 父收缩）→ 给被影响的邻居加 `min-width` / `min-height` 或 `flex-basis` 保持原尺寸；或把 source 改 `position: absolute` 脱离 flow
        3. 用户的 `linkedToEditId` follow-up comment 会明确说"重排 OK"或"严格不动邻居"，**有就听用户的，没说就走默认保护**
    - **pending-style** —— 按 `styleDelta` 改 inline style 或对应 Tailwind class（如 styleDelta.marginLeft 改 `ml-*`）。
-     - **自由模式（free position）**特殊：`styleDelta` 含 `{position:'absolute', left, top}` 时，意味着用户按住 P 拖到了一个绝对像素位置。落地要点：
-       1. 给 source 加 inline `style="position:absolute; left:Xpx; top:Ypx"`（或对应 absolute Tailwind class）
-       2. 看 `aiContext.parentNeedsRelative` —— true 时把 `parentAnchor` 标识的父元素加 `position:relative`（不然 absolute 锚定到更上的 positioned ancestor，跟用户拖的位置错位）
-       3. 不要破坏 source 的现有 padding / margin / 内容；只加 / 改这 3 个定位属性
+     - **自由模式（free position）—— 最小改动原则**（P3 重要 2026-05-12）：
+       - `styleDelta` 现在**只含** `{position:'absolute', left, top}` —— 这是用户的真实意图（落位）
+       - **不要无脑写整个 source 的样式**。默认只改这 3 个定位字段，**保留 source 原本的 CSS class 行为**（响应式、flex/grid 分配的尺寸、margin、transform 等）
+       - 看 `aiContext.parentNeedsRelative` —— true 时把 `parentAnchor` 父元素加 `position:relative`
+       - **`aiContext.preDragLayout` 是关键决策上下文**——source 拖前的 computed style 快照，让你判断是否需要追加补救：
+
+         | preDragLayout 情况 | 切 absolute 后会怎样 | 落地建议 |
+         |---|---|---|
+         | `flex > 0` / `flexGrow > 0` / `flexBasis: 0` | source 之前靠 flex 父分配宽度，切 absolute 后宽度变 content-auto 几何突变 | **额外写 inline width/height** = `preDragGeometry.{w,h}` 锁尺寸 |
+         | `gridArea` / `gridColumn/Row` 非默认 | source 之前占 grid cell，切 absolute 后 cell 空出 | 同上锁尺寸 + 考虑给 grid 容器加 `grid-template-areas` 显式管理 |
+         | `width: 'XXpx'` （source 自己有显式宽度） | 几何稳定，宽度走 CSS class 不变 | **只写 3 字段不动 width**（最小改动） |
+         | `display: inline*` | inline 元素切 absolute 后变 block-like | 锁尺寸更稳 |
+
+       - **不要破坏 source 的现有 padding / 内容 / Tailwind class**；优先在 inline style 写定位，必要时追加 width/height 锁尺寸，其它属性原样保留
      - **Constraint anchor (P2)**：`item.constraint = { x, y }` 时，用户在 ConstraintPanel 上指定了"父 resize 时跟哪边"。`styleDelta` 已经按 anchor 算好对应 CSS，agent 直接照搬即可。9 种 anchor 组合的 CSS 模式参考：
        | constraint | CSS （除 position:absolute 外）|
        |---|---|

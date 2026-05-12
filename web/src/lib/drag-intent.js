@@ -608,24 +608,44 @@ export function buildPendingStyleAbsolute({ sourceEl, parentEl, left, top }) {
   const parentCs = parentView ? parentView.getComputedStyle(parentEl) : null;
   const parentNeedsRelative = parentCs && parentCs.position === 'static';
 
-  // 切到 absolute 时 source 离开父 layout 流：flex/grid 分配的尺寸 / margin auto 居中 /
-  // transform 偏移 全失效。如果只设 left/top 不锁尺寸，浏览器按 content auto 重新算 width/height，
-  // 元素几何突变（800 宽的 flex item 变成 content 200 宽）→ 用户感知"跳到指定位置之外"。
-  // 修法：用 ghost mouseup 那刻的 source rect 锁 width/height + 清 margin / transform 干扰项。
   const sr = sourceEl.getBoundingClientRect();
+  const sourceView = sourceEl.ownerDocument.defaultView;
+  const sourceCs = sourceView ? sourceView.getComputedStyle(sourceEl) : null;
+
+  // ============================================================
+  // 关键拆分（2026-05-12 P3 修）：
+  //
+  // styleDelta = **用户意图**（进 buffer 给 agent 看）—— 只含 position + left + top
+  //   agent 落地时默认只改这 3 个字段，保留 source 原本的响应式特性（CSS class 里
+  //   的 flex/grid/auto width 等）
+  //
+  // runtimeLocks = **前端 runtime 视觉补偿**（不进 buffer，agent 看不到）—— width
+  //   /height/margin/transform 临时锁定，防止 source 切 absolute 时几何突变。
+  //   apply 后用户视觉立即到位；revert 时一起还原。agent 落地源码后 iframe reload
+  //   时不带这些锁，让原响应式生效（**除非** agent 看 preDragLayout 判断必须显式
+  //   写 width/height 防反向跳变）。
+  //
+  // aiContext.preDragLayout = **决策上下文** — source 拖前的关键 computed style，
+  //   让 agent 自己判断"是否需要补 width/height 锁尺寸 + 邻居怎么保护"
+  // ============================================================
+
   const styleDelta = {
     position: 'absolute',
     left: `${left}px`,
     top: `${top}px`,
+  };
+
+  const runtimeLocks = {
     width: `${Math.round(sr.width)}px`,
     height: `${Math.round(sr.height)}px`,
-    margin: '0px',                  // 清 4 边 margin 避免叠加 left/top
-    transform: 'none',              // 清可能存在的 translate(-50%) 等位移
+    margin: '0px',
+    transform: 'none',
   };
 
   return {
     sourceAnchor: serializeAnchor(sourceEl),
     styleDelta,
+    runtimeLocks,
     parentAnchor: serializeAnchor(parentEl),
     parentNeedsRelative,
     reactMount,
@@ -634,8 +654,22 @@ export function buildPendingStyleAbsolute({ sourceEl, parentEl, left, top }) {
       sourceTextHint: (sourceEl.textContent || '').trim().slice(0, 40),
       parentTag: parentEl.tagName.toLowerCase(),
       parentNeedsRelative,
-      lockedSize: { w: Math.round(sr.width), h: Math.round(sr.height) },
-      hint: 'free-position (absolute) — width/height locked to ghost rect to prevent geometry jump',
+      preDragGeometry: { w: Math.round(sr.width), h: Math.round(sr.height) },
+      preDragLayout: sourceCs ? {
+        display: sourceCs.display,
+        position: sourceCs.position,
+        flex: sourceCs.flex,
+        flexGrow: sourceCs.flexGrow,
+        flexBasis: sourceCs.flexBasis,
+        gridArea: sourceCs.gridArea,
+        gridColumn: sourceCs.gridColumn,
+        gridRow: sourceCs.gridRow,
+        width: sourceCs.width,
+        height: sourceCs.height,
+        margin: sourceCs.margin,
+        transform: sourceCs.transform,
+      } : null,
+      hint: 'free-position (absolute). User intent = position/left/top ONLY. preDragLayout shows source\'s pre-drag computed styles for your decision on whether additional width/height locks are needed to preserve geometry.',
     },
   };
 }

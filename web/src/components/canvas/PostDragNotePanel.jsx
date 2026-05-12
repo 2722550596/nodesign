@@ -134,7 +134,7 @@ export default function PostDragNotePanel({
           fontSize: 9, color: 'rgba(45,36,24,0.6)',
           textTransform: 'uppercase', letterSpacing: 0.5,
         }}>
-          调整完成 · 可选备注
+          可选备注 · 默认最小改动
         </span>
         <button
           onClick={() => onDismiss?.()}
@@ -160,7 +160,7 @@ export default function PostDragNotePanel({
         onKeyDown={handleKeyDown}
         // 不自动 focus —— 用户拖完不一定想填，焦点抢过来会打断后续操作
         autoFocus={false}
-        placeholder={`不用担心邻居被改 — agent 会默认保护邻居 layout。\n如有特殊指令请填……（Cmd+Enter 提交）`}
+        placeholder={`agent 落地时默认：\n· 只改你拖到的位置（left/top）\n· 保留元素原本的响应式/尺寸/边距\n· 不打扰邻居 layout\n\n如有特殊指令请填……（Cmd+Enter 提交）`}
         rows={3}
         style={{
           width: '100%',

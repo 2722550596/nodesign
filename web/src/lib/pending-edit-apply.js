@@ -71,14 +71,17 @@ export function applyMoveToRuntime({ iframeDoc, sourceEl, targetContainer, befor
  * React mount 区域：不动 source / parent 的 DOM 属性（会被 next render 覆盖）。
  * 仍 push 后端 pending-style，agent 落地时改源码。
  */
-export function applyStyleToRuntime({ sourceEl, parentEl, styleDelta, parentNeedsRelative }) {
+export function applyStyleToRuntime({ sourceEl, parentEl, styleDelta, runtimeLocks, parentNeedsRelative }) {
   if (!sourceEl || !styleDelta) return { applied: 'marker-only', reason: 'invalid', revert: () => {} };
   if (isInsideReactMount(sourceEl) || (parentEl && isInsideReactMount(parentEl))) {
     return { applied: 'marker-only', reason: 'react-mount', revert: () => {} };
   }
+  // 合并 styleDelta（用户意图）+ runtimeLocks（前端视觉补偿）一起 apply 到 runtime DOM。
+  // styleDelta 进 buffer 给 agent；runtimeLocks 只在前端 runtime 生效，agent 看不到。
+  const combinedStyles = { ...styleDelta, ...(runtimeLocks || {}) };
   // Snapshot 旧值，包成 revert 闭包
   const prevSourceStyles = {};
-  for (const k of Object.keys(styleDelta)) {
+  for (const k of Object.keys(combinedStyles)) {
     prevSourceStyles[k] = sourceEl.style[k] || '';  // 空字符串 = 移除 inline 值
   }
   const prevParentPosition = parentNeedsRelative && parentEl ? (parentEl.style.position || '') : null;
@@ -86,7 +89,7 @@ export function applyStyleToRuntime({ sourceEl, parentEl, styleDelta, parentNeed
     if (parentNeedsRelative && parentEl) {
       parentEl.style.position = 'relative';
     }
-    for (const [k, v] of Object.entries(styleDelta)) {
+    for (const [k, v] of Object.entries(combinedStyles)) {
       sourceEl.style[k] = v;
     }
     return {
