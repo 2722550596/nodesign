@@ -160,7 +160,7 @@ export default function PostDragNotePanel({
         onKeyDown={handleKeyDown}
         // 不自动 focus —— 用户拖完不一定想填，焦点抢过来会打断后续操作
         autoFocus={false}
-        placeholder={`agent 落地时默认：\n· 只改你拖到的位置（left/top）\n· 保留元素原本的响应式/尺寸/边距\n· 不打扰邻居 layout\n\n如有特殊指令请填……（Cmd+Enter 提交）`}
+        placeholder={`agent 落地时默认：\n· 把你拖到的位置实现到位\n· 拿邻居信息自己判断，让邻居尽量不动\n· 保留元素原本的响应式 / 尺寸 / 边距\n\n如有特殊指令请填……（Cmd+Enter 提交）`}
         rows={3}
         style={{
           width: '100%',
@@ -208,3 +208,4 @@ export default function PostDragNotePanel({
     </div>
   );
 }
+

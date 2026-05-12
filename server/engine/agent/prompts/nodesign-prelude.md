@@ -257,10 +257,25 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
      - **`move.intent` 提示语义**（P2 新增）：
        - `sibling-before` / `sibling-after`：本质都是"插入 sibling"，按 before 字段定位
        - `child-of`：用户拖到了 target 元素 **内部** → `move.container` 就是 target 元素自己，`move.before` 通常 null（append 到末尾）。这跟 sibling-* 的语义区别是：source 变成了 container 的**子节点**而不是兄弟节点
-     - **默认保护邻居 layout**（P3 启发式）：用户拖动一个元素时，**默认希望邻居 layout 保持不变**——只挪 source 不动其它。落地时优先选用：
-       1. 直接 DOM 树移动（剪 + 插）——简单 case 邻居在 flex/grid 自动 reflow 后多数情况就够好
-       2. **如果邻居 reflow 后明显破坏视觉**（如最后一个元素拖走导致容器塌缩、网格留洞、auto height 父收缩）→ 给被影响的邻居加 `min-width` / `min-height` 或 `flex-basis` 保持原尺寸；或把 source 改 `position: absolute` 脱离 flow
-       3. 用户的 `linkedToEditId` follow-up comment 会明确说"重排 OK"或"严格不动邻居"，**有就听用户的，没说就走默认保护**
+     - **默认保护邻居 layout**（P3 强化 2026-05-12）：用户拖动元素时**默认期望邻居视觉位置/尺寸尽量不动**——只挪 source 不动其它。`aiContext.neighbors` 给你**决策上下文**（邻居 anchor + 原几何），由你**自己选合适的 CSS 手段**实现这个目标。
+
+       **aiContext.neighbors 结构**：
+       - `pending-move/pending-duplicate`: `{ sourceParent: [...], targetContainer: [...] }`（同容器时两者重合）
+       - `pending-style` (free position): `[...]`（source 同容器邻居 flat list）
+       - 每条 neighbor：`{ anchor, tag, rect: { w, h } }`
+
+       **手段不是被规定的**——根据具体 layout 情况选最合适的（任意组合）：
+       - 把 source 改 `position: absolute` 让它脱离 flow，邻居自然不受影响（自由模式已经这样了）
+       - 用 `transform: translate(X, Y)` 视觉移动 source 不动 DOM
+       - 给某个邻居加 `min-width` / `min-height` / `flex-basis: Xpx` 防它扩张
+       - 给容器加 `min-height` 防塌缩
+       - 调整 grid-template-areas / grid-template-columns 精细控制
+       - 必要时给个别邻居加 inline `width/height` 锁尺寸
+       - 或者**判断本次 reflow 是合理的**（如 3 张卡片走 1 张剩 2 张平分宽度），不做额外保护
+
+       **核心原则**：用户拖动想要的是"我把这个元素挪到那"——副作用越少越好。具体怎么实现你来判断，但要能说出为什么这样选。
+
+       **`linkedToEditId` follow-up comment 的优先级最高**：用户填了"重排 OK" / "保持完全不动" 等明确指令，按 comment 来。没填走默认（你自己判断"尽量不动"）
    - **pending-style** —— 按 `styleDelta` 改 inline style 或对应 Tailwind class（如 styleDelta.marginLeft 改 `ml-*`）。
      - **自由模式（free position）—— 最小改动原则**（P3 重要 2026-05-12）：
        - `styleDelta` 现在**只含** `{position:'absolute', left, top}` —— 这是用户的真实意图（落位）

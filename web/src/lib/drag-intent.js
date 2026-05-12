@@ -655,6 +655,7 @@ export function buildPendingStyleAbsolute({ sourceEl, parentEl, left, top }) {
       parentTag: parentEl.tagName.toLowerCase(),
       parentNeedsRelative,
       preDragGeometry: { w: Math.round(sr.width), h: Math.round(sr.height) },
+      neighbors: captureNeighbors(parentEl, sourceEl),  // source 同容器邻居，agent 切 absolute 时给它们加 inline 锁防 reflow
       preDragLayout: sourceCs ? {
         display: sourceCs.display,
         position: sourceCs.position,
@@ -672,6 +673,29 @@ export function buildPendingStyleAbsolute({ sourceEl, parentEl, left, top }) {
       hint: 'free-position (absolute). User intent = position/left/top ONLY. preDragLayout shows source\'s pre-drag computed styles for your decision on whether additional width/height locks are needed to preserve geometry.',
     },
   };
+}
+
+/**
+ * Capture 一个父容器内 source 的邻居列表（serializeAnchor + 当前几何）—— 给 agent 做
+ * "保护邻居 layout" 决策用。aiContext.neighbors[] 让 agent 看到具体邻居 anchor + 原尺寸，
+ * 能按列表给每个加 inline width/height/flex-grow:0/flex-shrink:0 锁定。
+ *
+ * 没这个 capture 之前 prompt 里教"默认保护邻居"是空头支票——agent 不知道邻居是谁。
+ */
+export function captureNeighbors(parentEl, excludeEl) {
+  if (!parentEl) return [];
+  const out = [];
+  for (const c of parentEl.children) {
+    if (!c || c.nodeType !== 1 || c === excludeEl) continue;
+    ensureNodeId(c);
+    const r = c.getBoundingClientRect();
+    out.push({
+      anchor: serializeAnchor(c),
+      tag: c.tagName.toLowerCase(),
+      rect: { w: Math.round(r.width), h: Math.round(r.height) },
+    });
+  }
+  return out;
 }
 
 /**
@@ -762,6 +786,14 @@ export function buildPendingMove({ sourceEl, targetContainer, beforeEl, intent =
   if (beforeEl) ensureNodeId(beforeEl);
 
   const reactMount = isInsideReactMount(sourceEl) || isInsideReactMount(targetContainer);
+  const sourceParent = sourceEl.parentElement;
+  // 邻居 capture：source 离开原 parent 后 sourceParentNeighbors 会 reflow；
+  // source 进入 target 后 targetContainerNeighbors 会 reflow（target 可能 = sourceParent）。
+  // agent 看 neighbors[] 决定是否给每个加 inline 锁。
+  const sourceParentNeighbors = captureNeighbors(sourceParent, sourceEl);
+  const targetContainerNeighbors = targetContainer === sourceParent
+    ? sourceParentNeighbors  // 同容器拖：邻居重合
+    : captureNeighbors(targetContainer, sourceEl);
 
   return {
     sourceAnchor: serializeAnchor(sourceEl),
@@ -778,6 +810,10 @@ export function buildPendingMove({ sourceEl, targetContainer, beforeEl, intent =
       targetTextHint: (targetContainer.textContent || '').trim().slice(0, 60),
       intent,
       alignmentHints,
+      neighbors: {
+        sourceParent: sourceParentNeighbors,
+        targetContainer: targetContainerNeighbors,
+      },
     },
   };
 }
