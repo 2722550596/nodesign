@@ -10,14 +10,27 @@
  *   {
  *     items: [{
  *       id: string,
- *       kind: 'edit' | 'comment',
+ *       kind: 'edit' | 'comment'
+ *           | 'pending-move' | 'pending-style' | 'pending-duplicate' | 'pending-delete',
  *       anchor: { dataId, path, textHint, bbox },
- *       aiContext: { tag, role?, pageInfo?, outerHtml?, computed?, siblings? },
- *       diff?: { oldText, newText },     // edit 时有
- *       text?: string,                   // comment 时有
+ *       aiContext: { tag, role?, pageInfo?, outerHtml?, computed?, siblings?,
+ *                    targetContainerTag?, alignmentHints? },
+ *       diff?: { oldText, newText },                          // edit 时有
+ *       text?: string,                                        // comment 时有
+ *       move?: { container: anchor, before: anchor|null },    // pending-move / -duplicate 时有
+ *       styleDelta?: { left?, top?, marginLeft?, ... },       // pending-style 时有
+ *       reactMount?: boolean,                                  // 涉及 React mount 区→改 JSX 源码
  *       ts: ISO,
  *     }]
  *   }
+ *
+ * 2026-05-12 新增 4 个 pending-* kind（画布拖移工具产物）：
+ *   - pending-move      用户拖动元素跨/内容器；按 move.container + move.before 改 DOM 树位置
+ *   - pending-duplicate 用户 alt-drag 复制；先 clone source 再插入 target
+ *   - pending-style     用户 nudge / 调对齐；按 styleDelta 改 inline style 或 class
+ *   - pending-delete    用户按 Del 删元素；按 anchor 删 source 节点
+ *
+ *  reactMount=true 的 item 走 `<script id="__nd-app">` 里的 JSX 改动（不是改 HTML 段）。
  *
  * 拉完后建议调 mcp__nodesign__clear_pending_changes 清 buffer，避免重复处理。
  */
@@ -35,22 +48,33 @@ import { z } from 'zod';
 export function makeGetPendingChangesTool({ workspaceRoot, ctx: _ctx }) {
   return tool(
     'get_pending_changes',
-    `Read the user's pending changes buffer — a list of direct edits and
-inline comments the user made on the canvas in between chat turns.
+    `Read the user's pending changes buffer — a list of direct edits, inline
+comments, and drag-tool moves the user made on the canvas in between chat
+turns.
 
 When to use:
 - You see a <system>用户在过去时段做了 N 处变更...</system> hint at the top
   of the user's message → call this tool to read the actual changes.
-- The user references "the change I just made" / "the edit I did" → check
-  the buffer first.
+- The user references "the change I just made" / "the edit I did" / "the move
+  I just did" → check the buffer first.
 
 Each item has:
-- kind: 'edit' (user changed text by double-clicking in the canvas) or
-        'comment' (user wrote a comment for an element)
+- kind: one of
+    'edit'             (user changed text by double-clicking in the canvas)
+    'comment'          (user wrote a comment for an element)
+    'pending-move'     (user dragged an element to a new container/position)
+    'pending-duplicate'(user alt-dragged to copy an element to a new spot)
+    'pending-style'    (user nudged / adjusted alignment → inline style delta)
+    'pending-delete'   (user deleted an element)
 - anchor: stable element reference (dataId / path / textHint / bbox)
-- aiContext: element role, page info, outerHTML, computed styles, siblings
-- diff (edit only): { oldText, newText }
-- text (comment only): the comment body
+- aiContext: element role, page info, outerHTML, computed styles, siblings,
+             plus targetContainerTag / alignmentHints for moves
+- diff (edit): { oldText, newText }
+- text (comment): the comment body
+- move (pending-move / pending-duplicate): { container: anchor, before: anchor|null }
+- styleDelta (pending-style): { left?, top?, marginLeft?, ... }
+- reactMount: when true, the change touches a React mount subtree → modify
+              the JSX inside <script id="__nd-app"> rather than the static HTML
 
 After processing, call mcp__nodesign__clear_pending_changes to clear the
 buffer so subsequent turns don't see the same changes again.`,

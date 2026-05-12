@@ -225,6 +225,8 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 用户不只通过 chat 跟你说话 —— 他们也可以**直接在 canvas 上**：
 - **双击文本改字**（contenteditable，blur 后自动 PUT 回 canvas.html，**Read 文件就能看到最新内容**）
 - **选中元素写评论**（"这块字号再大一点" / "颜色不协调"）
+- **拖移元素**（drag mode，2026-05-12 起）—— 跨容器搬节点 / 复制 / nudge 对齐 / 删除。
+  前端只在运行时改 DOM 让用户看到视觉，**源代码原封不动，等你来落**。
 
 这些"过去时段的动作"会被收集到 buffer。下次用户发 chat 消息时，**user message 顶部**会注入：
 
@@ -234,14 +236,46 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 1. 立即调 `mcp__nodesign__get_pending_changes`（无参）拿全部 items
 2. 每条 item 含：
-   - `kind`: `'edit'` / `'comment'`
+   - `kind`: `'edit'` / `'comment'` / `'pending-move'` / `'pending-duplicate'` / `'pending-style'` / `'pending-delete'`
    - `anchor`: 元素稳定锚点（{ dataId, path, textHint, bbox }）
-   - `aiContext`: 元素角色 / 页面信息 / outerHTML / computed styles / siblings
+   - `aiContext`: 元素角色 / 页面信息 / outerHTML / computed styles / siblings；移动类还带 `targetContainerTag` + `alignmentHints`
    - `diff`（edit）: `{ oldText, newText }` —— 用户改成了什么
    - `text`（comment）: 评论原文
+   - `move`（pending-move / pending-duplicate）: `{ container: anchor, before: anchor|null }` —— 目标容器 + 插在哪个 sibling 之前（null 表示末尾）
+   - `styleDelta`（pending-style）: 待改的 inline style key/value
+   - `reactMount`（任意）: true → 改的是 `<script id="__nd-app">` 里的 JSX 子树，不是 HTML 段
 3. **决策怎么响应**：
    - **comments 是用户的修改请求** —— 按评论的指示改 canvas.html（用 Edit 工具）
    - **edits 是用户已经手动改完的** —— done deal 不动；只在回复里知会"用户改了 N 处文字 OK"
+   - **pending-move / pending-duplicate** —— 用户已经在画布拖完了视觉，但**源代码还是老样子**。
+     - 用 `anchor.dataId` (data-anchor) 在 canvas.html 里 grep 出 source 段
+     - 用 `move.container.dataId` 找出 target 容器段
+     - 用 `move.before.dataId` 找出"插在它前面"的 sibling（null 时插末尾）
+     - 用 Edit 工具完成 DOM 树移动：剪 source 段 → 插到 target 容器内 before sibling 前
+     - `pending-duplicate` 同理但保留 source 原位置
+     - **`move.intent` 提示语义**（P2 新增）：
+       - `sibling-before` / `sibling-after`：本质都是"插入 sibling"，按 before 字段定位
+       - `child-of`：用户拖到了 target 元素 **内部** → `move.container` 就是 target 元素自己，`move.before` 通常 null（append 到末尾）。这跟 sibling-* 的语义区别是：source 变成了 container 的**子节点**而不是兄弟节点
+   - **pending-style** —— 按 `styleDelta` 改 inline style 或对应 Tailwind class（如 styleDelta.marginLeft 改 `ml-*`）。
+     - **自由模式（free position）**特殊：`styleDelta` 含 `{position:'absolute', left, top}` 时，意味着用户按住 P 拖到了一个绝对像素位置。落地要点：
+       1. 给 source 加 inline `style="position:absolute; left:Xpx; top:Ypx"`（或对应 absolute Tailwind class）
+       2. 看 `aiContext.parentNeedsRelative` —— true 时把 `parentAnchor` 标识的父元素加 `position:relative`（不然 absolute 锚定到更上的 positioned ancestor，跟用户拖的位置错位）
+       3. 不要破坏 source 的现有 padding / margin / 内容；只加 / 改这 3 个定位属性
+     - **Constraint anchor (P2)**：`item.constraint = { x, y }` 时，用户在 ConstraintPanel 上指定了"父 resize 时跟哪边"。`styleDelta` 已经按 anchor 算好对应 CSS，agent 直接照搬即可。9 种 anchor 组合的 CSS 模式参考：
+       | constraint | CSS （除 position:absolute 外）|
+       |---|---|
+       | `(left, top)` 默认 | `left: Xpx; top: Ypx` |
+       | `(right, top)` | `right: Xpx; top: Ypx` |
+       | `(left, bottom)` | `left: Xpx; bottom: Ypx` |
+       | `(right, bottom)` | `right: Xpx; bottom: Ypx` |
+       | `(center, top)` | `left: 50%; top: Ypx; transform: translateX(-50%)` |
+       | `(left, center)` | `left: Xpx; top: 50%; transform: translateY(-50%)` |
+       | `(center, center)` | `left: 50%; top: 50%; transform: translate(-50%, -50%)` |
+       | `(stretch, top)` | `left: Xpx; right: Ypx; top: Zpx; width: auto` |
+       | `(center, bottom)` 等组合 | 按规则推 |
+       直接复用 `styleDelta` 写到 source 即可；记得**清掉 source 上跟 anchor 冲突的旧 inline style**（比如老 left 切到 right anchor 后老 left 要清，让浏览器只看新写的 right）
+   - **pending-delete** —— 直接删 source 段。
+   - **reactMount=true** 的任何 kind —— 改 `<script id="__nd-app">` 里的 JSX 而不是静态 HTML。anchor 的 dataId 仍能在 JSX 里找到（agent 写 JSX 时也该给元素加 data-anchor）。
    - 用户消息本身可能是对这些 changes 的进一步说明（"你看我改的字够大吗"），结合上下文一起处理
 4. 处理完所有 items 后**必调** `mcp__nodesign__clear_pending_changes`（无参，全清）
 5. **收尾时**：在最终回复里**总结处理了哪些 pending changes**
@@ -259,11 +293,12 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ### DirectEdit 常见 anti-pattern
 
-agent 容易在 pending changes 流程上犯的 3 类错（每条都让用户体感"agent 没看到我的改动"）：
+agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体感"agent 没看到我的改动"）：
 
-- **跳过 get_pending_changes 直接回应** — 看到 system 提示但忽略，丢掉用户在 canvas 上的全部 edit / comment 上下文，回应跟用户的实际操作脱节
+- **跳过 get_pending_changes 直接回应** — 看到 system 提示但忽略，丢掉用户在 canvas 上的全部 edit / comment / 拖移上下文，回应跟用户的实际操作脱节
 - **处理完忘记 clear_pending_changes** — 下个 turn 仍见到同样的 changes 重复处理一遍，浪费 turn + 让用户困惑"我刚不是改过了"
 - **把 edit 当 comment 处理** — edit 是用户已经手动 done deal（contenteditable blur 已 PUT 文件），把它"按指令再改回去"等于 revert 用户操作
+- **pending-move 当成 comment "建议" 处理** —— pending-move 是**结构化操作意图**不是建议。用户已经"在画布上看见东西搬到新位置了"（前端运行时改了 DOM 但没碰源码），你必须按 `anchor.dataId` 真的把 source 段从 canvas.html 剪走插到 target 容器去；不照做下次 iframe reload 视觉跳回，用户体感"我拖了等于没拖"
 
 ---
 

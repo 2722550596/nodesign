@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 
 /**
@@ -27,6 +27,13 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
   // C32：保留 reload 前的 scrollY，让 FileChanged hook 触发的 reload 不丢用户位置
   // 用 useRef 而非 state（避免 reload 触发额外 re-render）
   const lastScrollY = useRef(0);
+
+  // P3 #2 乐观更新：src/srcDoc 变化 → fade 出 → onLoad → fade 入。代替之前生硬的白屏闪烁。
+  const [reloading, setReloading] = useState(false);
+  useEffect(() => {
+    setReloading(true);
+    return undefined;
+  }, [src, srcDoc]);
 
   // mode 切换 → 重新挂/卸 bridge（不需要 reload）
   useEffect(() => {
@@ -71,6 +78,10 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
         });
       } catch { /* ignore */ }
     }
+    // P3 #2 乐观更新：内容 painted → fade in（小延迟让 layout 稳定）
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => setReloading(false));
+    });
   };
 
   return (
@@ -101,6 +112,9 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
           background: '#fff',
           transform: zoom === 1 ? 'none' : `scale(${zoom})`,
           transformOrigin: 'center center',
+          // P3 #2 乐观更新：reload 期间 opacity 0.5 + transition，掩盖白屏闪烁
+          opacity: reloading ? 0.5 : 1,
+          transition: 'opacity 180ms ease-out',
         }}
       />
     </div>

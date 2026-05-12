@@ -9,6 +9,13 @@ import SystemPopover from './SystemPopover.jsx';
 import InspectFloatingCard from './InspectFloatingCard.jsx';
 import CommentOverview from './CommentOverview.jsx';
 import CommentMarkers from './CommentMarkers.jsx';
+import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
+import GrabHandle from './GrabHandle.jsx';
+import ConstraintPanel from './ConstraintPanel.jsx';
+import PendingEditsBar from './PendingEditsBar.jsx';
+import PendingMoveMarkers from './PendingMoveMarkers.jsx';
+import { applyMoveToRuntime, applyStyleToRuntime } from '../../lib/pending-edit-apply.js';
+import { buildPendingStyleConstraint } from '../../lib/drag-intent.js';
 import { usePanelManager } from '../layout/PanelManager.jsx';
 import { SessionConfig } from '../../lib/api.js';
 import { COLOR, STAGE } from '../../lib/theme.js';
@@ -70,12 +77,38 @@ export default function CanvasFrame({
   // 父组件仍可能传入，destructure 忽略即可（未来 Tweaks v2 接管后再取用）
   // Tweaks 浮窗 toggle 按钮：仅 agent expose 过 controls 才显示
   tweaksAvailable = false,
+  // 2026-05-12 起：画布拖移工具（drag mode）
+  pendingEdits = [],
+  onCommitMove,           // (payload) => void —— 嵌入模式 (DOM 树 move)
+  onCommitFreePosition,   // (payload) => void —— 自由模式 (position: absolute)
+  onApplyPendingEdits,    // () => void —— 触发 agent run
+  onUndoPending,          // () => void
+  onClearAllPending,      // () => void
+  canUndoPending = false,
+  isStreaming = false,
 }) {
   // 直接 hook PanelManager 拿 tweaks 浮窗当前 visible 状态 + setter（用于 toggle）
   const { panels, setPanelVisible } = usePanelManager();
   const tweaksOpen = !!panels?.tweaks?.visible;
   const handleToggleTweaks = () => setPanelVisible('tweaks', !tweaksOpen);
   const [mode, setMode] = useState('edit');
+  // Drag 模式下的"自由模式 / 嵌入模式" toggle —— 自由模式 = absolute 落点；嵌入 = DOM 树 move
+  const [dragFreeMode, setDragFreeMode] = useState(false);
+
+  // P3 #4 协作 lock：agent run 期间强制退出 drag 模式 + 锁 Apply 按钮，避免 agent 改源码
+  // 和用户改 DOM 同时进行（虽然 race 不会真损坏数据，但视觉上会闪烁/错位）
+  useEffect(() => {
+    if (isStreaming && mode === 'drag') {
+      setMode('edit');
+    }
+  }, [isStreaming, mode]);
+  // P2 D: GrabHandle 触发 drag → DragOverlay.startDrag(sourceEl, parentX, parentY)
+  // dragApiRef.current = { startDrag, pickDragSource }，由 DragOverlay 在 mount 时填充
+  const dragApiRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+  // P2 Constraints: 拖完保留 selection 给 ConstraintPanel + 键盘 nudge
+  const [draggedSource, setDraggedSource] = useState(null);
+  const [activeConstraint, setActiveConstraint] = useState({ x: 'left', y: 'top' });
   const [zoom, setZoom] = useState('fit');     // 'fit' | number
   const [wrapSize, setWrapSize] = useState({ width: 0, height: 0 });
   const [reloadKey, setReloadKey] = useState(0);
@@ -259,6 +292,9 @@ export default function CanvasFrame({
       <CanvasToolbar
         mode={mode}
         onModeChange={(m) => { setMode(m); onSelectChange?.(null); }}
+        dragFreeMode={dragFreeMode}
+        onDragFreeModeChange={setDragFreeMode}
+        isStreaming={isStreaming}
         zoom={effectiveZoom}
         isAutoFit={zoom === 'fit'}
         onZoomChange={(z) => setZoom(z)}
@@ -288,13 +324,14 @@ export default function CanvasFrame({
 
       {/* SlideNavigator 已删（2026-05-07）— 用户翻页用滚动 / 键盘 ←→ */}
 
-      {(mode === 'edit' || mode === 'preview') && (
+      {(mode === 'edit' || mode === 'preview' || mode === 'drag') && (
         <div ref={iframeWrapRef} style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
           <HtmlIframe
             key={`${activeCandidateId || 'default'}-${reloadKey}-${dirty ? 'doc' : 'src'}`}
             src={dirty ? undefined : htmlSrc}
             srcDoc={dirty ? sourceText : (!htmlSrc ? htmlContent : undefined)}
-            mode={mode}
+            // drag 模式下 iframe 内不挂 contenteditable / click 选中，DragOverlay 自己接管
+            mode={mode === 'drag' ? 'preview' : mode}
             onSelect={handleSelect}
             onTextEdit={handleTextEdit}
             onIframeReady={handleIframeReady}
@@ -319,6 +356,98 @@ export default function CanvasFrame({
               onSelectChange?.(anchor);
             }}
           />
+          {/* React 区 pending-move/duplicate 紫色 marker（纯 HTML 区已真搬 DOM，不需要 marker）*/}
+          <PendingMoveMarkers
+            edits={pendingEdits}
+            iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+            zoom={effectiveZoom}
+          />
+          {/* Drag 模式核心 overlay — 仅 mode === 'drag' 时挂事件 */}
+          {/* GrabHandle —— 只显示 hover preview 框 + tag label，提示"按这个就能拖"。
+              真正的 drag-start 由 DragOverlay 接 iframe doc mousedown 触发（mousedown 用
+              pickDragSource 自动找 block-level 祖先，避免选错 inline 子节点）*/}
+          <GrabHandle
+            active={mode === 'drag' && !isDragging}
+            iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+            zoom={effectiveZoom}
+            pickDragSource={pickDragSource}
+            isDragging={isDragging}
+          />
+          <DragOverlay
+            active={mode === 'drag'}
+            iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+            zoom={effectiveZoom}
+            freeMode={dragFreeMode}
+            onFreeModeChange={setDragFreeMode}
+            apiRef={dragApiRef}
+            onDraggingChange={setIsDragging}
+            onSelectionChange={setDraggedSource}
+            onCommitMove={(payload, refs) => {
+              if (refs.duplicate) {
+                // Alt-drag 复制：clone source 后 insert 到 target；原 source 不动
+                const clone = refs.sourceEl?.cloneNode(true);
+                let revertClone = () => {};
+                if (clone && refs.targetContainer) {
+                  // 清掉 clone 上跟 anchor 系统冲突的 data-anchor（保持唯一）
+                  try { clone.removeAttribute('data-anchor'); } catch { /* */ }
+                  if (refs.beforeEl && refs.beforeEl.parentNode === refs.targetContainer) {
+                    refs.targetContainer.insertBefore(clone, refs.beforeEl);
+                  } else {
+                    refs.targetContainer.appendChild(clone);
+                  }
+                  revertClone = () => { try { clone.remove(); } catch { /* */ } };
+                }
+                onCommitMove?.(payload, revertClone);
+                return;
+              }
+              const result = applyMoveToRuntime({
+                iframeDoc,
+                sourceEl: refs.sourceEl,
+                targetContainer: refs.targetContainer,
+                beforeEl: refs.beforeEl,
+              });
+              onCommitMove?.(payload, result?.revert);
+            }}
+            onCommitFreePosition={(payload, refs) => {
+              const result = applyStyleToRuntime({
+                sourceEl: refs.sourceEl,
+                parentEl: refs.parentEl,
+                styleDelta: payload.styleDelta,
+                parentNeedsRelative: payload.parentNeedsRelative,
+              });
+              onCommitFreePosition?.(payload, result?.revert);
+            }}
+          />
+          {/* P2 Constraints: 自由模式下选中元素后浮窗显示 anchor grid */}
+          <ConstraintPanel
+            active={mode === 'drag' && dragFreeMode && !isDragging && !!draggedSource}
+            iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+            zoom={effectiveZoom}
+            sourceEl={draggedSource}
+            currentConstraint={activeConstraint}
+            onChange={(c) => {
+              setActiveConstraint(c);
+              if (!draggedSource) return;
+              const parent = draggedSource.parentElement;
+              const payload = buildPendingStyleConstraint({
+                sourceEl: draggedSource,
+                parentEl: parent,
+                constraint: c,
+              });
+              if (!payload) return;
+              const result = applyStyleToRuntime({
+                sourceEl: draggedSource,
+                parentEl: parent,
+                styleDelta: payload.styleDelta,
+                parentNeedsRelative: payload.parentNeedsRelative,
+              });
+              onCommitFreePosition?.({
+                ...payload,
+                // ProjectWorkspace.handleCommitFreePosition 收 sourceAnchor / styleDelta / aiContext
+                // 这里把 constraint 嵌进 styleDelta 之外的字段一同传上去
+              }, result?.revert);
+            }}
+          />
           {mode === 'edit' && selectedAnchor && iframeDoc && (
             <InspectFloatingCard
               selectedAnchor={selectedAnchor}
@@ -333,6 +462,15 @@ export default function CanvasFrame({
               onDeleteComment={onDeleteComment}
             />
           )}
+          {/* 底部 pending edits 操作栏 — 仅在有 pending-* 时显示 */}
+          <PendingEditsBar
+            edits={pendingEdits}
+            onApply={onApplyPendingEdits}
+            onUndo={onUndoPending}
+            onClearAll={onClearAllPending}
+            canUndo={canUndoPending}
+            isRunning={isStreaming}
+          />
         </div>
       )}
 

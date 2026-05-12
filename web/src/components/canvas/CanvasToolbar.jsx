@@ -1,8 +1,9 @@
-import { Edit3, Eye, Code2, Maximize2, Settings, Sliders, MessageSquare, RotateCcw } from 'lucide-react';
+import { Edit3, Eye, Code2, Move, Pin, Maximize2, Settings, Sliders, MessageSquare, RotateCcw } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, STAGE } from '../../lib/theme.js';
 
 const MODES = [
   { id: 'edit',    label: 'Edit',    icon: Edit3 },
+  { id: 'drag',    label: 'Drag',    icon: Move },
   { id: 'preview', label: 'Preview', icon: Eye },
   { id: 'code',    label: 'Code',    icon: Code2 },
 ];
@@ -26,12 +27,14 @@ const MODES = [
  */
 export default function CanvasToolbar({
   mode, onModeChange,
+  dragFreeMode = false, onDragFreeModeChange,
   zoom = 1, isAutoFit = false, onZoomChange, onFitToggle,
   onTweaksClick, tweaksAvailable = false, tweaksOpen = false,
   tweaksEnabled = true, onTweaksEnabledChange,
   onCommentClick, commentOverviewOpen = false, commentCount = 0, commentBtnRef,
   onReload,
   onSystemClick, systemBtnRef, systemActive = false,
+  isStreaming = false,  // 协作 lock：agent run 期间 Drag mode 不可点
 }) {
   return (
     <div style={{
@@ -54,10 +57,13 @@ export default function CanvasToolbar({
         {MODES.map(m => {
           const Icon = m.icon;
           const active = mode === m.id;
+          const locked = m.id === 'drag' && isStreaming;
           return (
             <button
               key={m.id}
-              onClick={() => onModeChange?.(m.id)}
+              onClick={() => { if (!locked) onModeChange?.(m.id); }}
+              disabled={locked}
+              title={locked ? 'agent 正在跑，drag 模式暂停以避免冲突' : undefined}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
                 padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
@@ -67,6 +73,8 @@ export default function CanvasToolbar({
                 borderRadius: 4,
                 boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
                 transition: 'all 0.15s',
+                opacity: locked ? 0.45 : 1,
+                cursor: locked ? 'not-allowed' : 'pointer',
               }}
             >
               <Icon size={11} />
@@ -75,6 +83,37 @@ export default function CanvasToolbar({
           );
         })}
       </div>
+
+      {/* Drag mode 下的"自由模式"开关 —— 开 = 拖动落地为 absolute (left/top px)，关 = DOM 树 move */}
+      {mode === 'drag' && (
+        <button
+          onClick={() => onDragFreeModeChange?.(!dragFreeMode)}
+          title={dragFreeMode
+            ? '自由模式 ON · 松手落到像素位置（再按或点切回嵌入模式 / 快捷键 P）'
+            : '嵌入模式 · 松手按 DOM 树插入到容器（点开启自由模式或按 P）'}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+            padding: `${GAP.xs + 1}px ${GAP.md}px`,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
+            color: dragFreeMode ? '#fff' : COLOR.text2,
+            background: dragFreeMode ? '#14b8a6' : 'rgba(0,0,0,0.04)',
+            borderRadius: 4,
+            border: 'none',
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            boxShadow: dragFreeMode ? '0 1px 3px rgba(20,184,166,0.35)' : 'none',
+          }}
+        >
+          <Pin size={11} />
+          {dragFreeMode ? '自由' : '嵌入'}
+          <span style={{
+            marginLeft: 2,
+            fontSize: 9,
+            opacity: 0.7,
+            fontWeight: 400,
+          }}>P</span>
+        </button>
+      )}
 
       <div style={{ flex: 1 }} />
 

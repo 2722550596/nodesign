@@ -37,6 +37,7 @@ import { serializeForAI } from '../lib/element-semantics.js';
 import { Canvas, Turn, Assets, Exports, Sessions, PendingChanges } from '../lib/api.js';
 import { openProjectWS } from '../lib/ws-client.js';
 import { sessionMessagesToDisplay } from '../lib/session-to-messages.js';
+import { usePendingEdits } from '../hooks/usePendingEdits.js';
 
 export default function ProjectWorkspace() {
   // H1：URL 作为 session 唯一 source of truth
@@ -141,6 +142,8 @@ export default function ProjectWorkspace() {
   const [directEditAnchor, setDirectEditAnchor] = useState(null);
   const [patches, setPatches] = useState([]);     // P0 mock：D 流盲区，C7 真接
   const [comments, setComments] = useState([]);   // P0 mock：D 流不在范围
+  // Pending edits (画布拖移工具) — 后端 PendingChanges 持久化，前端 state 切 session 重拉
+  const pendingEditsHook = usePendingEdits({ projectId: id, sessionId: currentSessionId });
   const exportBtnRef = useRef(null);
   const actionsBtnRef = useRef(null);
   // A2.2b：autoCompact 阈值预警的"已警告"flag。同一轮接近阈值只 toast 一次，
@@ -149,6 +152,54 @@ export default function ProjectWorkspace() {
 
   // ── memo / callback（必须在 early return 之前）──
   const deckSpec = useMemo(() => MOCK_DECK_SPEC, []);
+
+  /**
+   * 画布拖移工具：用户拖完一个元素 → DragOverlay 把 payload 推上来
+   * payload = { sourceAnchor, move: { container, before }, reactMount, aiContext }
+   */
+  const handleCommitMove = useCallback((payload, revertFn) => {
+    if (!payload) return;
+    pendingEditsHook.push({
+      kind: payload.duplicate ? 'pending-duplicate' : 'pending-move',
+      anchor: payload.sourceAnchor,
+      move: payload.move,
+      reactMount: payload.reactMount,
+      aiContext: payload.aiContext,
+    }, revertFn);
+  }, [pendingEditsHook]);
+
+  /**
+   * 画布拖移工具 · 自由模式：用户按 P 切换后拖完一个元素 → 落地为 absolute 定位
+   * payload = { sourceAnchor, styleDelta: { position, left, top }, parentAnchor, parentNeedsRelative, reactMount, aiContext }
+   * revertFn  = 撤销时把 source 原 inline style 恢复 + 取消父元素 position:relative
+   */
+  const handleCommitFreePosition = useCallback((payload, revertFn) => {
+    if (!payload) return;
+    pendingEditsHook.push({
+      kind: 'pending-style',
+      anchor: payload.sourceAnchor,
+      styleDelta: payload.styleDelta,
+      reactMount: payload.reactMount,
+      ...(payload.constraint ? { constraint: payload.constraint } : {}),
+      aiContext: {
+        ...payload.aiContext,
+        parentAnchor: payload.parentAnchor,
+        parentNeedsRelative: payload.parentNeedsRelative,
+      },
+    }, revertFn);
+  }, [pendingEditsHook]);
+
+  // handleApplyPendingEdits 引用 handleSend（声明在更下方）—— useCallback 只 store
+  // 函数体，user 点 Apply 时才查 handleSend，那时已声明，closure 安全。
+  // 用 ref 持 handleSend 避免每次它 re-create 时本 callback deps 跟着 break。
+  const handleSendRef = useRef(null);
+  const handleApplyPendingEdits = useCallback(() => {
+    const count = pendingEditsHook.edits.length;
+    if (count === 0) return;
+    const summary = describeEditsForChat(pendingEditsHook.edits);
+    const message = `应用我刚在画布上做的 ${count} 处调整（${summary}）。请用 get_pending_changes 拉详情后按 anchor 改 canvas.html，处理完调 clear_pending_changes。`;
+    handleSendRef.current?.(message);
+  }, [pendingEditsHook.edits]);
 
   // 浮窗默认 layout —— chat / canvas 改回固定栏（不浮）；
   // 5 个次级 UI 仍是浮窗（bounds = canvas 容器），默认 hidden 按需 spawn。
@@ -854,6 +905,8 @@ export default function ProjectWorkspace() {
         if (!cleared || cleared.length === 0) break;
         const set = new Set(cleared);
         setComments(prev => prev.filter(c => !set.has(c.id)));
+        // 拖移工具产生的 pending edits 也按 clearedIds 同步移除
+        pendingEditsHook.onAppliedExternally(cleared);
         break;
       }
 
@@ -1140,6 +1193,9 @@ export default function ProjectWorkspace() {
       showToast(`发送失败：${err.message}`, 'error');
     }
   };
+  // 让 handleApplyPendingEdits（在 early-return 之前定义）能查到本 closure 内最新
+  // 的 handleSend。普通赋值，不是 hook，每次 render 重新指向当前 handleSend。
+  handleSendRef.current = handleSend;
 
   /** streamInput 重构：用户主动结束当前 session（终结 query handle）
    *  - 调 close endpoint → backend inputQueue.close + abortController.abort
@@ -1580,6 +1636,14 @@ export default function ProjectWorkspace() {
             onDirectEdit={handleDirectEdit}
             onTriggerRun={handleTriggerRun}
             tweaksAvailable={isTweaksExposed}
+            pendingEdits={pendingEditsHook.edits}
+            onCommitMove={handleCommitMove}
+            onCommitFreePosition={handleCommitFreePosition}
+            onApplyPendingEdits={handleApplyPendingEdits}
+            onUndoPending={pendingEditsHook.undo}
+            onClearAllPending={pendingEditsHook.clearAll}
+            canUndoPending={pendingEditsHook.canUndo}
+            isStreaming={isStreaming}
           />
 
           {/* 浮窗层 —— bounds='parent' = 不出 canvas section
@@ -1759,3 +1823,26 @@ const primaryBtnStyle = {
   borderRadius: 6,
   cursor: 'pointer',
 };
+
+/**
+ * 描述 pending edits 给 chat 的预设文案——给 agent 一个简短人话摘要
+ * （详情还是要它调 get_pending_changes 拿）。
+ */
+function describeEditsForChat(edits) {
+  const counts = { move: 0, dup: 0, style: 0, del: 0, reactHits: 0 };
+  for (const e of edits) {
+    if (e.kind === 'pending-move') counts.move++;
+    else if (e.kind === 'pending-duplicate') counts.dup++;
+    else if (e.kind === 'pending-style') counts.style++;
+    else if (e.kind === 'pending-delete') counts.del++;
+    if (e.reactMount) counts.reactHits++;
+  }
+  const parts = [];
+  if (counts.move) parts.push(`${counts.move} 拖动`);
+  if (counts.dup) parts.push(`${counts.dup} 复制`);
+  if (counts.style) parts.push(`${counts.style} 样式`);
+  if (counts.del) parts.push(`${counts.del} 删除`);
+  let s = parts.join(' + ');
+  if (counts.reactHits > 0) s += `；其中 ${counts.reactHits} 处涉及 React mount 区域，要改 <script id="__nd-app"> 里的 JSX`;
+  return s || '若干调整';
+}

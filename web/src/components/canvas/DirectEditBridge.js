@@ -145,8 +145,11 @@ function isTextLeaf(el) {
  * 走到 section[data-page] 或 body 为止——超出 section 范围不算（mount 必须在 section 内）。
  *
  * 命中时 dblclick 不挂 contenteditable；click 选中仍允许（评论可以挂任何元素）。
+ *
+ * 也供 DragOverlay / drag-intent 复用——拖动 React mount 元素时改走 floating
+ * marker（不动 DOM 避免被 React next render 覆盖），落地时让 agent 改 JSX 源码。
  */
-function isInsideReactMount(el) {
+export function isInsideReactMount(el) {
   let cur = el;
   while (cur && cur.nodeType === 1) {
     if (cur.hasAttribute && cur.hasAttribute('data-react-mount')) return true;

@@ -11,7 +11,18 @@
  *   DELETE /api/projects/:pid/sessions/:sid/pending-changes  全清（也接 ?ids=）
  *
  * 文件：<sessionRoot>/pending-changes.json
- *   { items: [{ id, kind, anchor, aiContext?, diff?, text?, ts }] }
+ *   { items: [{ id, kind, anchor, aiContext?, diff?, text?, move?, styleDelta?, reactMount?, ts }] }
+ *
+ * 2026-05-12 起新增 kind:
+ *   - 'pending-move'      用户在 canvas 上拖动元素（前端虚拟改 DOM，agent run 时落源码）
+ *                          带 move: { container: anchor, before: anchor|null }
+ *   - 'pending-style'     用户拖动 / nudge 改样式（位移、对齐等）
+ *                          带 styleDelta: { left?, top?, marginLeft?, ... }
+ *                          可选 constraint: { x, y } (Figma 风格 anchor — 决定父 resize 时跟哪边)
+ *   - 'pending-duplicate' 用户 alt-drag 复制元素
+ *                          带 move: { container, before }
+ *   - 'pending-delete'    用户按 Del 删除元素
+ *   全部可选带 reactMount: true 表示要改 JSX 源码不是 HTML。
  */
 
 import express from 'express';
@@ -73,8 +84,9 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
     if (!guard(req, res)) return;
     const body = req.body || {};
     const { kind, anchor } = body;
-    if (kind !== 'edit' && kind !== 'comment') {
-      return res.status(400).json({ error: 'kind must be "edit" or "comment"' });
+    const VALID_KINDS = ['edit', 'comment', 'pending-move', 'pending-style', 'pending-duplicate', 'pending-delete'];
+    if (!VALID_KINDS.includes(kind)) {
+      return res.status(400).json({ error: `kind must be one of ${VALID_KINDS.join(' / ')}` });
     }
     if (!anchor || typeof anchor !== 'object') {
       return res.status(400).json({ error: 'anchor object required' });
@@ -85,12 +97,25 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
           || typeof diff.oldText !== 'string' || typeof diff.newText !== 'string') {
         return res.status(400).json({ error: 'edit kind requires diff: { oldText, newText }' });
       }
-    } else {
+    } else if (kind === 'comment') {
       const { text } = body;
       if (typeof text !== 'string' || !text.trim()) {
         return res.status(400).json({ error: 'comment kind requires non-empty text' });
       }
+    } else if (kind === 'pending-move' || kind === 'pending-duplicate') {
+      const { move } = body;
+      if (!move || typeof move !== 'object' || !move.container || typeof move.container !== 'object') {
+        return res.status(400).json({
+          error: `${kind} requires move: { container: anchor, before: anchor|null }`,
+        });
+      }
+    } else if (kind === 'pending-style') {
+      const { styleDelta } = body;
+      if (!styleDelta || typeof styleDelta !== 'object') {
+        return res.status(400).json({ error: 'pending-style requires styleDelta object' });
+      }
     }
+    // pending-delete 只需 anchor
 
     const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
 
@@ -103,7 +128,16 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
       kind,
       anchor,
       ...(body.aiContext ? { aiContext: body.aiContext } : {}),
-      ...(kind === 'edit' ? { diff: body.diff } : { text: body.text }),
+      ...(body.reactMount === true ? { reactMount: true } : {}),
+      ...(kind === 'edit' ? { diff: body.diff } : {}),
+      ...(kind === 'comment' ? { text: body.text } : {}),
+      ...((kind === 'pending-move' || kind === 'pending-duplicate') ? { move: body.move } : {}),
+      ...(kind === 'pending-style' ? {
+        styleDelta: body.styleDelta,
+        ...(body.constraint && typeof body.constraint === 'object'
+          ? { constraint: body.constraint }  // { x: 'left'|'right'|'center'|'stretch', y: 'top'|'bottom'|'center'|'stretch' }
+          : {}),
+      } : {}),
       ts: new Date().toISOString(),
     };
 
@@ -156,9 +190,17 @@ export async function readPendingSummary(sessionRoot) {
     if (items.length === 0) return { count: 0, summary: '' };
     const edits = items.filter(it => it.kind === 'edit').length;
     const comments = items.filter(it => it.kind === 'comment').length;
+    const moves = items.filter(it => it.kind === 'pending-move').length;
+    const duplicates = items.filter(it => it.kind === 'pending-duplicate').length;
+    const styles = items.filter(it => it.kind === 'pending-style').length;
+    const deletes = items.filter(it => it.kind === 'pending-delete').length;
     const parts = [];
     if (edits > 0) parts.push(`${edits} 编辑`);
     if (comments > 0) parts.push(`${comments} 评论`);
+    if (moves > 0) parts.push(`${moves} 拖动`);
+    if (duplicates > 0) parts.push(`${duplicates} 复制`);
+    if (styles > 0) parts.push(`${styles} 样式`);
+    if (deletes > 0) parts.push(`${deletes} 删除`);
     return {
       count: items.length,
       summary: `用户在过去时段做了 ${items.length} 处变更（${parts.join(' + ')}）`,
