@@ -49,7 +49,7 @@ export default function DragOverlay({
   onCancel,                          // () => void —— Esc / 拖到 invalid 区
   apiRef,                            // P2 D: GrabHandle 通过此 ref 调 .startDrag(sourceEl, internalX, internalY)
   onDraggingChange,                  // (isDragging: bool) => void —— 让 GrabHandle 拖动期间隐藏
-  onSelectionChange,                 // (sourceEl) => void —— 拖完后保留 selection，告知外层显 ConstraintPanel
+  onSelectionChange,                 // (sourceEl) => void —— 拖完后保留 selection，告知外层显 PostDragNotePanel
 }) {
   // === drag state ===
   const [drag, setDrag] = useState(null);   // null | { source, sourceRect, ghostRect, dropTarget, dropIntent, alignGuides, distanceLabels, reactMount, freeMode }

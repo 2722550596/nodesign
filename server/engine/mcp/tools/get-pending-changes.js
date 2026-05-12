@@ -71,6 +71,10 @@ Each item has:
              plus targetContainerTag / alignmentHints for moves
 - diff (edit): { oldText, newText }
 - text (comment): the comment body
+- linkedToEditId (comment, optional): when present, this comment is a follow-up
+  instruction tied to another pending edit (e.g. "for that drag I just did, keep
+  the neighbor element fixed"). Always read the linked edit and treat them as
+  one combined operation; both get cleared together.
 - move (pending-move / pending-duplicate): { container: anchor, before: anchor|null }
 - styleDelta (pending-style): { left?, top?, marginLeft?, ... }
 - reactMount: when true, the change touches a React mount subtree → modify

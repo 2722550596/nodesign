@@ -608,13 +608,24 @@ export function buildPendingStyleAbsolute({ sourceEl, parentEl, left, top }) {
   const parentCs = parentView ? parentView.getComputedStyle(parentEl) : null;
   const parentNeedsRelative = parentCs && parentCs.position === 'static';
 
+  // 切到 absolute 时 source 离开父 layout 流：flex/grid 分配的尺寸 / margin auto 居中 /
+  // transform 偏移 全失效。如果只设 left/top 不锁尺寸，浏览器按 content auto 重新算 width/height，
+  // 元素几何突变（800 宽的 flex item 变成 content 200 宽）→ 用户感知"跳到指定位置之外"。
+  // 修法：用 ghost mouseup 那刻的 source rect 锁 width/height + 清 margin / transform 干扰项。
+  const sr = sourceEl.getBoundingClientRect();
+  const styleDelta = {
+    position: 'absolute',
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${Math.round(sr.width)}px`,
+    height: `${Math.round(sr.height)}px`,
+    margin: '0px',                  // 清 4 边 margin 避免叠加 left/top
+    transform: 'none',              // 清可能存在的 translate(-50%) 等位移
+  };
+
   return {
     sourceAnchor: serializeAnchor(sourceEl),
-    styleDelta: {
-      position: 'absolute',
-      left: `${left}px`,
-      top: `${top}px`,
-    },
+    styleDelta,
     parentAnchor: serializeAnchor(parentEl),
     parentNeedsRelative,
     reactMount,
@@ -623,7 +634,8 @@ export function buildPendingStyleAbsolute({ sourceEl, parentEl, left, top }) {
       sourceTextHint: (sourceEl.textContent || '').trim().slice(0, 40),
       parentTag: parentEl.tagName.toLowerCase(),
       parentNeedsRelative,
-      hint: 'free-position (absolute)',
+      lockedSize: { w: Math.round(sr.width), h: Math.round(sr.height) },
+      hint: 'free-position (absolute) — width/height locked to ghost rect to prevent geometry jump',
     },
   };
 }

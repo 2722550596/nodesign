@@ -144,6 +144,8 @@ export default function ProjectWorkspace() {
   const [comments, setComments] = useState([]);   // P0 mock：D 流不在范围
   // Pending edits (画布拖移工具) — 后端 PendingChanges 持久化，前端 state 切 session 重拉
   const pendingEditsHook = usePendingEdits({ projectId: id, sessionId: currentSessionId });
+  // 最近一条 pending-* edit 的 id —— PostDragNotePanel 的 comment 用它做 linkedToEditId
+  const [lastPendingEditId, setLastPendingEditId] = useState(null);
   const exportBtnRef = useRef(null);
   const actionsBtnRef = useRef(null);
   // A2.2b：autoCompact 阈值预警的"已警告"flag。同一轮接近阈值只 toast 一次，
@@ -157,15 +159,16 @@ export default function ProjectWorkspace() {
    * 画布拖移工具：用户拖完一个元素 → DragOverlay 把 payload 推上来
    * payload = { sourceAnchor, move: { container, before }, reactMount, aiContext }
    */
-  const handleCommitMove = useCallback((payload, revertFn) => {
+  const handleCommitMove = useCallback(async (payload, revertFn) => {
     if (!payload) return;
-    pendingEditsHook.push({
+    const item = await pendingEditsHook.push({
       kind: payload.duplicate ? 'pending-duplicate' : 'pending-move',
       anchor: payload.sourceAnchor,
       move: payload.move,
       reactMount: payload.reactMount,
       aiContext: payload.aiContext,
     }, revertFn);
+    if (item?.id) setLastPendingEditId(item.id);
   }, [pendingEditsHook]);
 
   /**
@@ -173,9 +176,9 @@ export default function ProjectWorkspace() {
    * payload = { sourceAnchor, styleDelta: { position, left, top }, parentAnchor, parentNeedsRelative, reactMount, aiContext }
    * revertFn  = 撤销时把 source 原 inline style 恢复 + 取消父元素 position:relative
    */
-  const handleCommitFreePosition = useCallback((payload, revertFn) => {
+  const handleCommitFreePosition = useCallback(async (payload, revertFn) => {
     if (!payload) return;
-    pendingEditsHook.push({
+    const item = await pendingEditsHook.push({
       kind: 'pending-style',
       anchor: payload.sourceAnchor,
       styleDelta: payload.styleDelta,
@@ -187,7 +190,23 @@ export default function ProjectWorkspace() {
         parentNeedsRelative: payload.parentNeedsRelative,
       },
     }, revertFn);
+    if (item?.id) setLastPendingEditId(item.id);
   }, [pendingEditsHook]);
+
+  /**
+   * 拖完浮 PostDragNotePanel 收到的 follow-up 评论 → push 一条 comment 关联到 lastEditId
+   * agent 看到 comment with linkedToEditId 时一起处理（comment 是对那次 edit 的补充指令）
+   */
+  const handleSubmitDragNote = useCallback(async (sourceAnchor, text) => {
+    if (!text || !text.trim()) return;
+    if (!lastPendingEditId) return;
+    await pendingEditsHook.push({
+      kind: 'comment',
+      anchor: sourceAnchor,
+      text: text.trim(),
+      linkedToEditId: lastPendingEditId,
+    });
+  }, [pendingEditsHook, lastPendingEditId]);
 
   // handleApplyPendingEdits 引用 handleSend（声明在更下方）—— useCallback 只 store
   // 函数体，user 点 Apply 时才查 handleSend，那时已声明，closure 安全。
@@ -1639,6 +1658,8 @@ export default function ProjectWorkspace() {
             pendingEdits={pendingEditsHook.edits}
             onCommitMove={handleCommitMove}
             onCommitFreePosition={handleCommitFreePosition}
+            onSubmitDragNote={handleSubmitDragNote}
+            lastPendingEditId={lastPendingEditId}
             onApplyPendingEdits={handleApplyPendingEdits}
             onUndoPending={pendingEditsHook.undo}
             onClearAllPending={pendingEditsHook.clearAll}

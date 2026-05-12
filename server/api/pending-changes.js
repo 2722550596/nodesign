@@ -11,7 +11,7 @@
  *   DELETE /api/projects/:pid/sessions/:sid/pending-changes  全清（也接 ?ids=）
  *
  * 文件：<sessionRoot>/pending-changes.json
- *   { items: [{ id, kind, anchor, aiContext?, diff?, text?, move?, styleDelta?, reactMount?, ts }] }
+ *   { items: [{ id, kind, anchor, aiContext?, diff?, text?, linkedToEditId?, move?, styleDelta?, reactMount?, ts }] }
  *
  * 2026-05-12 起新增 kind:
  *   - 'pending-move'      用户在 canvas 上拖动元素（前端虚拟改 DOM，agent run 时落源码）
@@ -102,6 +102,10 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
       if (typeof text !== 'string' || !text.trim()) {
         return res.status(400).json({ error: 'comment kind requires non-empty text' });
       }
+      // linkedToEditId (optional) —— 把评论挂到某条 pending edit 上，作为该次操作的补充指令
+      if (body.linkedToEditId !== undefined && typeof body.linkedToEditId !== 'string') {
+        return res.status(400).json({ error: 'linkedToEditId must be string if present' });
+      }
     } else if (kind === 'pending-move' || kind === 'pending-duplicate') {
       const { move } = body;
       if (!move || typeof move !== 'object' || !move.container || typeof move.container !== 'object') {
@@ -130,7 +134,10 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
       ...(body.aiContext ? { aiContext: body.aiContext } : {}),
       ...(body.reactMount === true ? { reactMount: true } : {}),
       ...(kind === 'edit' ? { diff: body.diff } : {}),
-      ...(kind === 'comment' ? { text: body.text } : {}),
+      ...(kind === 'comment' ? {
+        text: body.text,
+        ...(body.linkedToEditId ? { linkedToEditId: body.linkedToEditId } : {}),
+      } : {}),
       ...((kind === 'pending-move' || kind === 'pending-duplicate') ? { move: body.move } : {}),
       ...(kind === 'pending-style' ? {
         styleDelta: body.styleDelta,

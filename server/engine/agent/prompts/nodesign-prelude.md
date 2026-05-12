@@ -246,6 +246,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
    - `reactMount`（任意）: true → 改的是 `<script id="__nd-app">` 里的 JSX 子树，不是 HTML 段
 3. **决策怎么响应**：
    - **comments 是用户的修改请求** —— 按评论的指示改 canvas.html（用 Edit 工具）
+     - **comment 带 `linkedToEditId`**（P3 新增）：评论关联到 buffer 里的某条 pending-* edit（拖完浮 PostDragNotePanel 提交的 follow-up）。处理时**把该 comment 视为对那条 edit 的补充指令**——比如 pending-move 关联 comment "保持其它元素位置不变" → 走默认保护邻居的更严格档；pending-move 关联 comment "顺便把右边那块也搬过来" → 视为复合操作一起做。处理完两条都进 clearedIds
    - **edits 是用户已经手动改完的** —— done deal 不动；只在回复里知会"用户改了 N 处文字 OK"
    - **pending-move / pending-duplicate** —— 用户已经在画布拖完了视觉，但**源代码还是老样子**。
      - 用 `anchor.dataId` (data-anchor) 在 canvas.html 里 grep 出 source 段
@@ -256,6 +257,10 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
      - **`move.intent` 提示语义**（P2 新增）：
        - `sibling-before` / `sibling-after`：本质都是"插入 sibling"，按 before 字段定位
        - `child-of`：用户拖到了 target 元素 **内部** → `move.container` 就是 target 元素自己，`move.before` 通常 null（append 到末尾）。这跟 sibling-* 的语义区别是：source 变成了 container 的**子节点**而不是兄弟节点
+     - **默认保护邻居 layout**（P3 启发式）：用户拖动一个元素时，**默认希望邻居 layout 保持不变**——只挪 source 不动其它。落地时优先选用：
+       1. 直接 DOM 树移动（剪 + 插）——简单 case 邻居在 flex/grid 自动 reflow 后多数情况就够好
+       2. **如果邻居 reflow 后明显破坏视觉**（如最后一个元素拖走导致容器塌缩、网格留洞、auto height 父收缩）→ 给被影响的邻居加 `min-width` / `min-height` 或 `flex-basis` 保持原尺寸；或把 source 改 `position: absolute` 脱离 flow
+       3. 用户的 `linkedToEditId` follow-up comment 会明确说"重排 OK"或"严格不动邻居"，**有就听用户的，没说就走默认保护**
    - **pending-style** —— 按 `styleDelta` 改 inline style 或对应 Tailwind class（如 styleDelta.marginLeft 改 `ml-*`）。
      - **自由模式（free position）**特殊：`styleDelta` 含 `{position:'absolute', left, top}` 时，意味着用户按住 P 拖到了一个绝对像素位置。落地要点：
        1. 给 source 加 inline `style="position:absolute; left:Xpx; top:Ypx"`（或对应 absolute Tailwind class）

@@ -11,11 +11,10 @@ import CommentOverview from './CommentOverview.jsx';
 import CommentMarkers from './CommentMarkers.jsx';
 import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
 import GrabHandle from './GrabHandle.jsx';
-import ConstraintPanel from './ConstraintPanel.jsx';
+import PostDragNotePanel from './PostDragNotePanel.jsx';
 import PendingEditsBar from './PendingEditsBar.jsx';
 import PendingMoveMarkers from './PendingMoveMarkers.jsx';
 import { applyMoveToRuntime, applyStyleToRuntime } from '../../lib/pending-edit-apply.js';
-import { buildPendingStyleConstraint } from '../../lib/drag-intent.js';
 import { usePanelManager } from '../layout/PanelManager.jsx';
 import { SessionConfig } from '../../lib/api.js';
 import { COLOR, STAGE } from '../../lib/theme.js';
@@ -81,6 +80,8 @@ export default function CanvasFrame({
   pendingEdits = [],
   onCommitMove,           // (payload) => void —— 嵌入模式 (DOM 树 move)
   onCommitFreePosition,   // (payload) => void —— 自由模式 (position: absolute)
+  onSubmitDragNote,       // (sourceAnchor, text) => Promise —— PostDragNotePanel 提交 follow-up 评论
+  lastPendingEditId = null,  // 用于 PostDragNotePanel 判断是否有可关联的 edit
   onApplyPendingEdits,    // () => void —— 触发 agent run
   onUndoPending,          // () => void
   onClearAllPending,      // () => void
@@ -106,9 +107,10 @@ export default function CanvasFrame({
   // dragApiRef.current = { startDrag, pickDragSource }，由 DragOverlay 在 mount 时填充
   const dragApiRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
-  // P2 Constraints: 拖完保留 selection 给 ConstraintPanel + 键盘 nudge
+  // P3: 拖完保留 selection 给 PostDragNotePanel + 键盘 nudge
   const [draggedSource, setDraggedSource] = useState(null);
-  const [activeConstraint, setActiveConstraint] = useState({ x: 'left', y: 'top' });
+  // PostDragNotePanel 是否可见：拖完即 true；用户点 X / Esc / 提交后 false
+  const [notePanelOpen, setNotePanelOpen] = useState(false);
   const [zoom, setZoom] = useState('fit');     // 'fit' | number
   const [wrapSize, setWrapSize] = useState({ width: 0, height: 0 });
   const [reloadKey, setReloadKey] = useState(0);
@@ -381,7 +383,10 @@ export default function CanvasFrame({
             onFreeModeChange={setDragFreeMode}
             apiRef={dragApiRef}
             onDraggingChange={setIsDragging}
-            onSelectionChange={setDraggedSource}
+            onSelectionChange={(src) => {
+              setDraggedSource(src);
+              if (src) setNotePanelOpen(true);  // 拖完即时浮 PostDragNotePanel（不抢焦点）
+            }}
             onCommitMove={(payload, refs) => {
               if (refs.duplicate) {
                 // Alt-drag 复制：clone source 后 insert 到 target；原 source 不动
@@ -418,35 +423,18 @@ export default function CanvasFrame({
               onCommitFreePosition?.(payload, result?.revert);
             }}
           />
-          {/* P2 Constraints: 自由模式下选中元素后浮窗显示 anchor grid */}
-          <ConstraintPanel
-            active={mode === 'drag' && dragFreeMode && !isDragging && !!draggedSource}
+          {/* P3: 拖完浮 follow-up 评论框 —— 取代 ConstraintPanel（anchor 9 选格已砍 UI，
+              schema + helper + prelude 翻译表保留）。drag 和 edit 分离 mode，但用一条
+              comment with linkedToEditId 把两者复合：用户拖完可选填补充指令 → agent
+              处理 pending-move 时一起读这条 comment。 */}
+          <PostDragNotePanel
+            active={mode === 'drag' && notePanelOpen && !isDragging && !!draggedSource}
             iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
             zoom={effectiveZoom}
             sourceEl={draggedSource}
-            currentConstraint={activeConstraint}
-            onChange={(c) => {
-              setActiveConstraint(c);
-              if (!draggedSource) return;
-              const parent = draggedSource.parentElement;
-              const payload = buildPendingStyleConstraint({
-                sourceEl: draggedSource,
-                parentEl: parent,
-                constraint: c,
-              });
-              if (!payload) return;
-              const result = applyStyleToRuntime({
-                sourceEl: draggedSource,
-                parentEl: parent,
-                styleDelta: payload.styleDelta,
-                parentNeedsRelative: payload.parentNeedsRelative,
-              });
-              onCommitFreePosition?.({
-                ...payload,
-                // ProjectWorkspace.handleCommitFreePosition 收 sourceAnchor / styleDelta / aiContext
-                // 这里把 constraint 嵌进 styleDelta 之外的字段一同传上去
-              }, result?.revert);
-            }}
+            hasPendingEditId={!!lastPendingEditId}
+            onSubmit={onSubmitDragNote}
+            onDismiss={() => setNotePanelOpen(false)}
           />
           {mode === 'edit' && selectedAnchor && iframeDoc && (
             <InspectFloatingCard
