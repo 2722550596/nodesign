@@ -45,7 +45,7 @@ import {
   closeQuerySession,
   markSessionActivity,
 } from '../runs/active-runs.js';
-import { loadSkill, ensureSkillStarterFiles } from './skill.js';
+import { loadSkill, ensureSkillStarterFiles, PLUGIN_ROOT } from './skill.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -352,11 +352,27 @@ export async function runSession({
     // proxy 出口把 alias 还原成真 appModel 给 gateway。详见 model-context.js。
     model: sdkModel,
     tools: toolAllowlist,
+    // systemPrompt.append 只放 NODESIGN_PRELUDE（平台协议 / 路径地图 / 工作流硬规则） ——
+    // 语义层"平台强制、用户不可覆盖"。SKILL.md（设计方法论） 走 SDK 原生 plugins+skills：
+    //   - plugins：加载 server/engine/plugins/nodesign（含 .claude-plugin/plugin.json + skills/）
+    //   - skills：把 deskskill-engine-mini 加进 main session 的 skill catalog
+    //
+    // SDK 行为（sdk.d.ts:1649-1671 / 2598）：SDK 在 system prompt 里给 agent 看到 skill listing
+    // （含 frontmatter description，单条截到 1536 字符），agent 自主决定何时通过内置 `Skill`
+    // 工具加载 body 进 context。**SDK 自己注入 listing，host 不该再在 prelude 里写硬规则强制
+    // invoke** —— description 写好让 agent 主动判断即可。
+    //
+    // 历史：2026-05-18 之前是 `append: [PRELUDE, skill.systemPrompt].join('\n\n---\n\n')` ——
+    // SKILL.md body 全文每 turn 恒驻在 system prompt 里。改造后 system prompt 静态前缀更稳
+    // （省 cache），SKILL.md body 只在 agent 真需要决策时进入 context。详见
+    // memory/nodesign_system_prompt_architecture.md。
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append: [NODESIGN_PRELUDE, skill.systemPrompt].filter(Boolean).join('\n\n---\n\n'),
+      append: NODESIGN_PRELUDE,
     },
+    plugins: [{ type: 'local', path: PLUGIN_ROOT }],
+    skills: [skillId],
 
     // resume 时不传 permissionMode：SDK 会从 JSONL 读原 session flags + 检查
     // bypassPermissions 必须有 --dangerously-skip-permissions 启动才允许。如果

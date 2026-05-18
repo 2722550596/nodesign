@@ -1,17 +1,19 @@
 # NoDesign agent prelude — workspace 路径 + 协议 + MCP 速查
 
-> 本文 append 在 SDK preset `claude_code` 之后、SKILL.md 之前。**所有 NoDesign agent 共用**。
+> 本文 append 在 SDK preset `claude_code` 之后。**所有 NoDesign agent 共用**。
 >
-> **职责分工（2026-05-08 重编排）**：
+> **职责分工（2026-05-18 重编排）**：
 > - **本文** = 常驻 system context（路径地图 / 业务 MCP 速查 / DirectEdit / agentic 标记 / Hybrid 范式骨架 / 工作流硬规则）—— 每个 turn agent 都看到
-> - **SKILL.md** = 设计方法论 / 5 阶段决策树 / deck-kind 分流（每 turn 也看到）
+> - **`deskskill-engine-mini` skill** = 设计方法论 / 5 阶段决策树 / deck-kind 分流 / 反默认套路。
+>   走 SDK 原生 skill 机制：SDK 在 system prompt 里给你看到 skill listing（含 description），
+>   你按 description 自己决定何时通过 `Skill` 工具加载 body 进 context 来做设计决策。
 > - **PreToolUse hook 按需注入**（agent 第一次调对应工具时才看到完整内容）：
 >   - `generate_image cookbook` → 完整 5 元素公式 + reference 模式 + 渲文字铁律
 >   - `expose_tweaks 完整语法` → 控件 schema 详解
 >   - `vision-checker 派遣模板` → Task prompt 范例
-> - **SDK preset `claude_code`** 自带的工具用法（Read/Edit/Glob/Grep/AskUserQuestion/TodoWrite/Bash 等）—— 不在本文重复教
+> - **SDK preset `claude_code`** 自带的工具用法（Read/Edit/Glob/Grep/AskUserQuestion/TodoWrite/Bash/Skill 等）—— 不在本文重复教
 >
-> 用法不清查 PreToolUse 注入内容；做什么决策查 SKILL.md。
+> 用法不清查 PreToolUse 注入内容；做什么设计决策查 `deskskill-engine-mini` skill。
 
 ---
 
