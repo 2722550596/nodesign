@@ -6,36 +6,10 @@ description: NoDesign deck 设计方法论 — 5 阶段决策树（ask → plan 
 
 # deskskill-engine-mini — deck 设计方法论
 
-> **本文 = 设计方法论 / 5 阶段决策树 / deck-kind 分流**（每 turn 恒驻）
+> **本文 = 设计方法论 / 5 阶段决策树 / deck-kind 分流**（agent invoke `Skill` 加载后进 conversation history）
 > 工具/语法 reference 在 prelude（HOW to use a tool） + PreToolUse hook 注入（cookbook / 语法 / dispatch 模板）。
-
----
-
-## ⚠️ 设计开始前的第一动作：跟用户对齐 deck 比例
-
-**新建 deck 的第一轮回复里就要问用户比例**——比追问 deck-kind 还要更早，因为
-比例直接决定每个 section 的设计稿尺寸（1920×1080 / 1920×1200 / 1080×1920 / 1440×1080），
-版面写死针对某比例，**切了等于整套重做**。
-
-**4 档可选**：
-
-| aspect | 尺寸 | 典型场景 |
-|---|---|---|
-| `16:9` | 1920×1080 | 默认：PPT / 演讲 / 文档 / 桌面浏览 |
-| `16:10` | 1920×1200 | 宽屏笔电 / Mac 屏（比 16:9 多 120px 高） |
-| `9:16` | 1080×1920 | 手机竖屏 / IG / 小红书 / 短故事 / 直播 cover |
-| `4:3` | 1440×1080 | 老投影仪 / 经典 PPT 软件 / 学术答辩 |
-
-**必须主动问的话术**：
-
-> "我打算按 16:9 (1920×1080) 来做（PPT/演讲常见）。你这个 deck 主要在哪看？
-> (a) 投影 / 桌面 16:9　(b) Mac 屏 16:10　(c) 手机竖屏 9:16　(d) 老 PPT 4:3"
-
-**例外**：用户首句 brief 已明确说了（"做个手机宣发竖屏"/"老式投影仪用"），
-直接锁那档不必再问。其它情况一律先问。
-
-写法：cp `canvas.template.html` 后改 `<div class="__nd-deck-wrap" data-deck-aspect="...">` 即可。
-section 内 `width: var(--deck-w); height: var(--deck-h)` 自动跟随。
+>
+> ⚠️ **比例硬规则属协议层** —— 详见 prelude § 第一动作硬规则。Stage 0 第一句话就该问比例（4 档：16:9 / 16:10 / 9:16 / 4:3），版面锁死后切换 = 整套重做。
 
 ---
 
@@ -862,7 +836,7 @@ theme: { extend: { fontFamily: {
 - "图和文等量重要，且各占 40-50%？" 是 → hybrid
 - 都不是 → text-led（默认）
 
-⚠️ **决定 layout-role 后立即** `Read patterns/<role>.md`（image-led-cover / section-divider / portrait / quote-backdrop / text-led / hybrid-grid）拿到对应骨架 + 写法铁律 + 标记规约。模板已不带 6 个范例（避免心智被默认视觉锚定），patterns/ 是按需读的真实 reference。
+决定 layout-role 后按 prelude § Hybrid 范式骨架 的 patterns/ 指引按需 Read 对应骨架 reference（标记规约 / 铁律 / 最小代码片段）。**不读 patterns 直接照搬模板范例 = 心智被锚定到 default 视觉**——模板已不带 6 个范例，patterns/ 是按需读的真实 reference。
 
 **3 条铁律**（写 image-led 必看）：
 1. 图传达的别再用文字重述

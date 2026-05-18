@@ -75,12 +75,19 @@ export const NODESIGN_PLAN_INSTRUCTIONS = (() => {
 //   - tools 字段是"可见集合"白名单，不在里面的内置工具会被剥离
 //   - 不是 auto-allow（auto-allow 由 permissionMode='bypassPermissions' 已经全
 //     跳）。之前 sdkOptions 同设 allowedTools 是冗余，已删
+//   - **Skill 必须显式列出**：SDK `skills:` option 只把 `Skill(<name>)` 注入到
+//     `allowedTools`（权限层），**不动 tools 数组**（可见集层）。漏列 Skill =
+//     `--tools` flag 显式不含 Skill → CLI binary 把 Skill 工具从 agent 可见集
+//     剥离 → 即使 plugins+skills option 都传对了，agent 也看不到 Skill 工具，
+//     永远调不到任何 SDK skill。SDK 文档 sdk.d.ts:1651 那句 "do not need to
+//     add Skill to allowedTools" 只承诺权限层，没承诺可见层。
 export const DEFAULT_TOOL_ALLOWLIST = [
   'Read', 'Write', 'Edit', 'Glob', 'Grep', 'TodoWrite', 'Bash',
   'AskUserQuestion',
   'WebFetch',
   'Task',
   'ExitPlanMode',
+  'Skill',
 ];
 
 // 主产物候选 — canvas.html 列首位（P0 per-project workspace 主文件名），
