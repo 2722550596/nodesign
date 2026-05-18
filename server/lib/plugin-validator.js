@@ -243,9 +243,18 @@ export async function validatePluginZip(buffer) {
         errors: [`${skillFilePath} frontmatter \`name: ${frontmatter.name}\` 不合规：仅允许 [a-z0-9-]，长度 ≤ 40`],
       };
     }
+    // description 按 Anthropic skill 范式强制必填 —— SDK 把 description 注入 system prompt 的
+    // skill listing 让 agent 决定何时 invoke。缺 description = agent 看不清这个 skill 是干啥的，
+    // 几乎不会主动调
+    if (!frontmatter.description || !frontmatter.description.trim()) {
+      return {
+        ok: false,
+        errors: [`${skillFilePath} 缺 YAML frontmatter \`description\` 字段（必需，让 agent 决定何时调用此 skill）`],
+      };
+    }
 
     // warn 阈值
-    if (frontmatter.description && frontmatter.description.length > WARN_THRESHOLDS.DESC_MAX_CHARS) {
+    if (frontmatter.description.length > WARN_THRESHOLDS.DESC_MAX_CHARS) {
       warnings.push(
         `${skillFilePath} description ${frontmatter.description.length} char 超 ${WARN_THRESHOLDS.DESC_MAX_CHARS}（SDK skill listing 会被截）`,
       );
@@ -480,9 +489,16 @@ function validateSingleMd(buffer) {
       errors: [`name \`${frontmatter.name}\` 是保留名（包装成 plugin 时会撞内置保留前缀：${[...RESERVED_PLUGIN_NAMES].join(' / ')}）`],
     };
   }
+  // description 按 Anthropic skill 范式强制必填（同 plugin-zip mode）
+  if (!frontmatter.description || !frontmatter.description.trim()) {
+    return {
+      ok: false,
+      errors: ['SKILL.md 缺 YAML frontmatter `description` 字段（必需，让 agent 决定何时调用此 skill）'],
+    };
+  }
 
   const warnings = [];
-  if (frontmatter.description && frontmatter.description.length > WARN_THRESHOLDS.DESC_MAX_CHARS) {
+  if (frontmatter.description.length > WARN_THRESHOLDS.DESC_MAX_CHARS) {
     warnings.push(
       `description ${frontmatter.description.length} char 超 ${WARN_THRESHOLDS.DESC_MAX_CHARS}（SDK skill listing 会被截）`,
     );
@@ -585,9 +601,16 @@ async function validateSingleSkillZip(zip, entries, topDirs) {
       errors: [`name \`${frontmatter.name}\` 是保留名（包装成 plugin 时会撞内置保留前缀）`],
     };
   }
+  // description 按 Anthropic skill 范式强制必填（同其他 mode）
+  if (!frontmatter.description || !frontmatter.description.trim()) {
+    return {
+      ok: false,
+      errors: [`${skillMdPath} 缺 YAML frontmatter \`description\` 字段（必需，让 agent 决定何时调用此 skill）`],
+    };
+  }
 
   const warnings = [];
-  if (frontmatter.description && frontmatter.description.length > WARN_THRESHOLDS.DESC_MAX_CHARS) {
+  if (frontmatter.description.length > WARN_THRESHOLDS.DESC_MAX_CHARS) {
     warnings.push(
       `${skillMdPath} description ${frontmatter.description.length} char 超 ${WARN_THRESHOLDS.DESC_MAX_CHARS}`,
     );

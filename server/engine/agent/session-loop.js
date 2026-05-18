@@ -394,6 +394,13 @@ export async function runSession({
     plugins: installed.plugins,
     skills: installed.skills,
 
+    // 2026-05-18 安全：关 inline shell execution。SDK 默认允许 skill / slash command 内
+    // inline shell 命令（Anthropic 标准 skill 协议的一部分，如 setup script）—— 但 NoDesign
+    // 允许用户上传 plugin，若不关 = 用户上传的 SKILL.md 含 shell 命令会被 SDK 真的执行 = RCE。
+    // 内置 deskskill-engine-mini 不依赖 inline shell，关掉无功能损失。
+    // 详见 memory nodesign_sdk_skills_options_internals.md「安全相关 SDK option」。
+    disableSkillShellExecution: true,
+
     // resume 时不传 permissionMode：SDK 会从 JSONL 读原 session flags + 检查
     // bypassPermissions 必须有 --dangerously-skip-permissions 启动才允许。如果
     // 老 session 是在没这个 flag 的版本下创建的（老 SDK / 老代码），现在硬传
