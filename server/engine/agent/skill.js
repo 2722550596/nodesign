@@ -19,8 +19,11 @@
  *   你是一个 deck 设计 agent...（任意 markdown）
  *
  * 本模块职责：
- *   - 解析 SKILL.md 的 YAML frontmatter + body（loadSkill / listSkills）
+ *   - 解析 SKILL.md 的 YAML frontmatter + body（loadSkill）
  *   - 把 skill 起手文件（canvas.template.html 等）拷进 session cwd（ensureSkillStarterFiles）
+ *
+ * 注：批量扫 plugin 下所有 skill 走 plugin-loader.js `listInstalledPluginsDetailed`，
+ * 不在本模块（API 层 server/api/skills.js 用那个）。
  *
  * SDK 集成（在 session-loop.js）：
  *   - plugins: [{ type: 'local', path: PLUGIN_ROOT }]  → 让 SDK 识别本 plugin
@@ -83,39 +86,9 @@ export async function loadSkill(skillId) {
 }
 
 /**
- * 列出 SKILLS_ROOT 下所有 skill。
- * 每条返回 { id, name, version, description }（不读 body）
- */
-export async function listSkills() {
-  let entries;
-  try {
-    entries = await fs.readdir(SKILLS_ROOT, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    throw err;
-  }
-  const skills = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const skillFile = path.join(SKILLS_ROOT, entry.name, 'SKILL.md');
-    try {
-      const raw = await fs.readFile(skillFile, 'utf8');
-      const { frontmatter } = parseFrontmatter(raw);
-      skills.push({
-        id: entry.name,
-        name: frontmatter.name || entry.name,
-        version: frontmatter.version || '0.0.0',
-        description: frontmatter.description || '',
-      });
-    } catch { /* ignore broken skills */ }
-  }
-  return skills;
-}
-
-/**
  * 把 skill 自带的工作区起手文件（目前主要是 canvas.template.html）拷贝
  * 进 session cwd，让 agent 能直接 `Read canvas.template.html` 而不必去
- * 仓库相对路径找（agent 看不到 server/engine/skills/）。
+ * 仓库相对路径找（agent 看不到 server/engine/plugins/nodesign/skills/）。
  *
  * **拷贝不软链**：
  *   - 跨平台稳（Windows symlink 要 admin / Linux bwrap 不解析 symlink）

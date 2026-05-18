@@ -35,7 +35,7 @@
 ## 你跑在哪（agent workspace 路径地图）
 
 cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd** ——
-仓库相对路径（如 `server/engine/skills/...`）agent 看不见，找文件用 cwd 相对路径。
+仓库相对路径（如 `server/engine/plugins/nodesign/skills/...`）agent 看不见，找文件用 cwd 相对路径。
 
 ### cwd 直接可见的文件 / 目录
 
@@ -62,7 +62,7 @@ cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**
 
 ### 看不见的（NoDesign 内部，agent 访问不到）
 
-- `server/engine/skills/` — engine 自带 skills 源码（你的 SKILL.md 就在这；
+- `server/engine/plugins/nodesign/skills/` — engine 自带 skills 源码（你的 SKILL.md 就在这；
   `canvas.template.html` 已被拷到 cwd，cwd 相对路径直接 Read 即可）
 - `server/projects-data/` 其它 project / session — 物理隔离
 - 仓库其它源码（`web/`, `server/lib/`, `node_modules/`）— 都跟你无关

@@ -4,8 +4,8 @@
  * 4 项基础检查（不依赖 LLM gateway，始终跑）：
  *   1. EventBus 订阅 / 发布 / 模式匹配
  *   2. AgentContext 构造 + ensureNotAborted + cancel
- *   3. loadSkill() 解析 SKILL.md frontmatter + body
- *   4. listSkills() 列举
+ *   3. parseFrontmatter SKILL.md 解析
+ *   4. loadSkill() 单个 skill + loadInstalledPlugins() 全量扫
  *
  * 跑：node server/engine/agent/_smoke.js
  *
@@ -15,7 +15,8 @@
 
 import { EventBus, Events } from './events.js';
 import { AgentContext } from './context.js';
-import { loadSkill, listSkills, parseFrontmatter } from './skill.js';
+import { loadSkill, parseFrontmatter } from './skill.js';
+import { loadInstalledPlugins } from './plugin-loader.js';
 
 const log = (s) => console.log(`  ${s}`);
 const ok = (s) => console.log(`  ✅ ${s}`);
@@ -120,8 +121,8 @@ async function main() {
     ok('YAML 注释行被忽略');
   }
 
-  // ── 4. loadSkill / listSkills ──
-  console.log('4) loadSkill');
+  // ── 4. loadSkill + loadInstalledPlugins ──
+  console.log('4) loadSkill / loadInstalledPlugins');
   {
     const skill = await loadSkill('deskskill-engine-mini');
     if (skill.name !== 'deskskill-engine-mini') fail('skill name 错', skill);
@@ -134,10 +135,13 @@ async function main() {
     if (!threw) fail('找不到的 skill 没抛 SKILL_NOT_FOUND');
     ok('不存在 skill 抛 SKILL_NOT_FOUND');
 
-    const all = await listSkills();
-    if (all.length === 0) fail('listSkills 应至少返回 deskskill-engine-mini');
-    if (!all.find(s => s.id === 'deskskill-engine-mini')) fail('listSkills 缺 deskskill-engine-mini', all);
-    ok(`listSkills → [${all.map(s => s.id).join(', ')}]`);
+    // 全量扫：内置 nodesign plugin 至少含 deskskill-engine-mini
+    const installed = await loadInstalledPlugins({});
+    if (installed.plugins.length === 0) fail('loadInstalledPlugins 应至少含 builtin nodesign');
+    if (!installed.skills.includes('deskskill-engine-mini')) {
+      fail('loadInstalledPlugins.skills 缺 deskskill-engine-mini', installed.skills);
+    }
+    ok(`loadInstalledPlugins → plugins=${installed.plugins.length} skills=[${installed.skills.join(', ')}]`);
   }
 
   console.log('\n✅ 全部通过\n');
