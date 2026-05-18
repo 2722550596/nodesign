@@ -1,12 +1,15 @@
 /**
  * skill.js — Skill 加载器（YAML frontmatter + Markdown body）
  *
- * Skill 文件结构（兼容 Anthropic SKILL.md 标准 + Claude Code skills）：
- *   server/engine/skills/<skill-id>/SKILL.md
+ * 目录结构（2026-05-18 起，对齐 Claude Code plugin convention）：
+ *   server/engine/plugins/nodesign/
+ *     .claude-plugin/plugin.json       — plugin 元数据
+ *     skills/<skill-id>/SKILL.md       — 各 skill
+ *     skills/<skill-id>/<其他起手文件>
  *
- * SKILL.md 格式：
+ * SKILL.md 格式（YAML frontmatter + body）：
  *   ---
- *   name: deskskill-engine
+ *   name: deskskill-engine-mini
  *   version: 0.0.1
  *   description: 给 LLM 看的"什么时候用我"的描述
  *   ---
@@ -15,17 +18,14 @@
  *
  *   你是一个 deck 设计 agent...（任意 markdown）
  *
+ * 本模块职责：
+ *   - 解析 SKILL.md 的 YAML frontmatter + body（loadSkill / listSkills）
+ *   - 把 skill 起手文件（canvas.template.html 等）拷进 session cwd（ensureSkillStarterFiles）
  *
- * MVP：
- *   - 只解析 YAML frontmatter + body
- *   - body 直接当 systemPrompt 传给 SDK
- *   - 不做 references/ 子目录递归加载（Claude Code 那套）
- *   - 不做 cache_control 切分（SDK 的 systemPrompt 数组 + SYSTEM_PROMPT_DYNAMIC_BOUNDARY 留 P3.5+）
- *
- * 未来扩展：
- *   - 嵌套 references/<file>.md 自动 inline
- *   - YAML frontmatter 加 model / effort / tools 的默认值
- *   - 拼 cache boundary：把 description + body 切静态/动态两段
+ * SDK 集成（在 session-loop.js）：
+ *   - plugins: [{ type: 'local', path: PLUGIN_ROOT }]  → 让 SDK 识别本 plugin
+ *   - skills: [<skill-id>]                              → 让 SDK 把 description 注入 system prompt
+ *   - SKILL.md body 通过 SDK 内置 Skill 工具按需加载（不再走 systemPrompt.append 恒驻）
  */
 
 import { promises as fs } from 'fs';
@@ -34,9 +34,14 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Skill 根目录（存放 <skill-id>/SKILL.md）*/
+/** Plugin 根目录（含 .claude-plugin/plugin.json + skills/）*/
+export const PLUGIN_ROOT = path.resolve(
+  process.env.NODESIGN_PLUGIN_DIR || path.join(__dirname, '../plugins/nodesign')
+);
+
+/** Skills 子目录（plugin convention：<plugin>/skills/<skill-id>/SKILL.md）*/
 export const SKILLS_ROOT = path.resolve(
-  process.env.NODESIGN_SKILLS_DIR || path.join(__dirname, '../skills')
+  process.env.NODESIGN_SKILLS_DIR || path.join(PLUGIN_ROOT, 'skills')
 );
 
 /**

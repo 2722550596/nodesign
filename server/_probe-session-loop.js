@@ -52,7 +52,7 @@ async function main() {
     sessionWorkspaceRoot: sessionRoot,
     eventBus: bus,
     inputQueue,
-    skillId: 'hello-world',
+    skillId: 'deskskill-engine-mini',
   }).catch((err) => {
     console.error('[probe-sl] runSession threw:', err.message);
     throw err;
@@ -62,7 +62,7 @@ async function main() {
   await new Promise((r) => setTimeout(r, 1500));
 
   // turn 1
-  const run1 = createRun({ skillId: 'hello-world', brief: 'turn 1', projectId });
+  const run1 = createRun({ skillId: 'deskskill-engine-mini', brief: 'turn 1', projectId });
   console.log(`[probe-sl] >>> turn 1 runId=${run1.id.slice(0, 12)}`);
   const ok1 = pushUserMessage(sessionId, run1.id, {
     type: 'user',
@@ -79,7 +79,7 @@ async function main() {
   console.log(`[probe-sl] <<< turn 1 done — final length=${finalTexts[0]?.length || 0}`);
 
   // turn 2
-  const run2 = createRun({ skillId: 'hello-world', brief: 'turn 2', projectId });
+  const run2 = createRun({ skillId: 'deskskill-engine-mini', brief: 'turn 2', projectId });
   console.log(`[probe-sl] >>> turn 2 runId=${run2.id.slice(0, 12)} (references turn 1)`);
   const ok2 = pushUserMessage(sessionId, run2.id, {
     type: 'user',

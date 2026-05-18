@@ -63,7 +63,7 @@ async function main() {
   {
     const bus = new EventBus();
     const collected = bus.collect('*');
-    const ctx = new AgentContext({ runId: 'run_smoke_0001', skillId: 'hello-world', eventBus: bus });
+    const ctx = new AgentContext({ runId: 'run_smoke_0001', skillId: 'deskskill-engine-mini', eventBus: bus });
 
     ctx.emit({ type: 'run.start' });
     if (collected.buffer.length !== 1) fail('emit 没推到 bus');
@@ -123,11 +123,11 @@ async function main() {
   // ── 4. loadSkill / listSkills ──
   console.log('4) loadSkill');
   {
-    const skill = await loadSkill('hello-world');
-    if (skill.name !== 'hello-world') fail('skill name 错', skill);
-    if (!skill.systemPrompt.includes('Nodesign')) fail('systemPrompt 内容不像 hello-world', skill.systemPrompt.slice(0, 100));
+    const skill = await loadSkill('deskskill-engine-mini');
+    if (skill.name !== 'deskskill-engine-mini') fail('skill name 错', skill);
+    if (!skill.systemPrompt.includes('deck')) fail('systemPrompt 内容不像 deskskill-engine-mini', skill.systemPrompt.slice(0, 100));
     if (!skill.description) fail('description 没解析');
-    ok(`hello-world v${skill.version} 加载成功（systemPrompt ${skill.systemPrompt.length} 字节）`);
+    ok(`deskskill-engine-mini v${skill.version} 加载成功（systemPrompt ${skill.systemPrompt.length} 字节）`);
 
     let threw = false;
     try { await loadSkill('does-not-exist'); } catch (e) { threw = e.code === 'SKILL_NOT_FOUND'; }
@@ -135,8 +135,8 @@ async function main() {
     ok('不存在 skill 抛 SKILL_NOT_FOUND');
 
     const all = await listSkills();
-    if (all.length === 0) fail('listSkills 应至少返回 hello-world');
-    if (!all.find(s => s.id === 'hello-world')) fail('listSkills 缺 hello-world', all);
+    if (all.length === 0) fail('listSkills 应至少返回 deskskill-engine-mini');
+    if (!all.find(s => s.id === 'deskskill-engine-mini')) fail('listSkills 缺 deskskill-engine-mini', all);
     ok(`listSkills → [${all.map(s => s.id).join(', ')}]`);
   }
 

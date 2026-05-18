@@ -1,3 +1,9 @@
+---
+name: deskskill-engine-mini
+version: 0.0.1
+description: NoDesign deck 设计方法论 — 5 阶段决策树（ask → plan → explore → generate → vision-check）+ deck-kind 分流（emotion/info/data/tool/教程/单图/单页/海报/section-divider）+ 跨 kind 视觉默认套路反例。当用户要做 deck / 演示 / 幻灯片 / PPT / 海报 / 长图 / 单页报告 / pitch / lecture 等任何多页或单页视觉化设计任务时使用。包含设计开始前必问比例 (4 档 aspect)、4 铁律 (rule-of-12 网格 / 字号阶梯 / 节奏对比 / metaphor)、deck-kind 锁定后的反默认决策模板。
+---
+
 # deskskill-engine-mini — deck 设计方法论
 
 > **本文 = 设计方法论 / 5 阶段决策树 / deck-kind 分流**（每 turn 恒驻）
@@ -232,6 +238,20 @@ senior 设计师跟客户访谈时不会怕"问太多"——客户嫌烦的是�
 deck-kind 锁定后主动列"对你这个 [kind] deck，这几种做法容易显俗，我打算避开"——比写完发现"不太对"省一轮返工。
 
 **这不是硬清单，是 starter prompt** —— 给你启动反例思路，用户可以认领 / 补 / 否决，最终对齐过的反例落 `design-plan.md.meta.anti_cliche` 或 `record_decision`，Stage 3 generate 回查 + Stage 4 vision-checker 按 kind 分流 critique。
+
+**跨 kind 通用视觉默认（所有 deck-kind 都常踩，写每页前先把这 5 条过一遍）**
+
+下面是 AI deck 视觉层最常滑入的 5 个 default 套路 —— 它们不挑 kind，不挑主题，甚至跟 brief 多详细无关。"内容写对了"≠"视觉做对了"，叙事层避了俗不代表版式没掉进套路。
+
+| 视觉默认套路 | 为什么俗 | 替代方向 |
+|---|---|---|
+| **等高卡片网格**（3-4 张 grid-cols 平铺，每张同尺寸 + 同 padding + 同信息密度） | 无主角 → 注意力均摊 → 像参数表不像演示 | **打破均质**：左大右两小 (6/3/3) / 一张占大半 + 其他堆角 / Z-pattern 错位 / 单 hero + 下面三细行注脚 |
+| **emoji 当视觉主角**（👁️🧠💻 / ❓🧊🗺️ / 🎯⚡🚀 这种放在 ID 级位置） | emoji 是 1 字符 system glyph，撑不起 hero；3 个并排时还各自小学课本风格不统一 | hero 位用大字 / 真图 / 数据 / 形状切割 / 编号符号；emoji 只配出现在辅料句子里 |
+| **浅色 wash 渐变背景 + 浮动小圆点**（白蓝渐变 / 米黄 cream / 几个抽象圆 + 竖纹） | 是 AI 图床默认 hero 风 + 装饰说不出对应什么状态变化 | 纯色 + 一个有意图的元素（一根分隔线 / 一块色块 / 一张占满图）/ 或纯白纯黑承担 visual silence |
+| **黄色 / 紫色 chip 当 section label**（顶部居中一个 pill "第一部分 · XX"） | section divider 应该独占一页节奏，不是每页顶贴个标签当目录 | section 分页用 dedicated section-divider.md 模式（独占一页 + 大编号 + 一句概括）；正文页就别再贴 chip 复述 |
+| **相邻页同版式复用**（chip + 标题 + 副标题 + 卡片网格 + 脚注一句话，5 页都这样） | deck 像 PDF 不像被播放的演示；4 铁律 ③ 节奏对比直接失守 | grep 上一页 c_decisions.rhythm_vs_prev，主动选反维度（满↔空 / 图↔字 / 静态↔微动 / 解释↔沉默） |
+
+**这 5 条不分 kind 全适用**——做完一页停下来对照 5 行，命中 ≥2 就回去改。这比下面 kind-specific 反例优先级更高（kind 反例多偏叙事层，视觉层翻车这 5 条几乎包含 80% 案例）。
 
 每个 kind 的常见俗套锚（容易让 deck 显得平庸的默认套路）：
 
