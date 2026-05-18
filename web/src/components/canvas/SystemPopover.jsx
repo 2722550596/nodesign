@@ -98,7 +98,7 @@ export default function SystemPopover({
           </div>
         )}
 
-        <SystemTab project={project} deckSpec={deckSpec} />
+        <SystemTab project={project} deckSpec={deckSpec} projectId={projectId} />
 
         {/* 项目档案 折叠 — 默认收起（agent 内部知识，用户偶尔翻） */}
         <div style={{

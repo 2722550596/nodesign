@@ -45,7 +45,8 @@ import {
   closeQuerySession,
   markSessionActivity,
 } from '../runs/active-runs.js';
-import { loadSkill, ensureSkillStarterFiles, PLUGIN_ROOT } from './skill.js';
+import { loadSkill, ensureSkillStarterFiles } from './skill.js';
+import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -327,6 +328,17 @@ export async function runSession({
   // 子进程死，nodejs 端 stdin write EPIPE 整个 server 挂。
   const isResume = await jsonlExistsForSession(cwdRoot, sessionId);
 
+  // 扫已装 plugin（内置 + 用户级 + project 级），返 SDK options 直接用的形态。
+  // 装新 plugin 只有重启 session 才生效（v1 接受，详见 plan § "Hot-reload v2"）。
+  // skillId 参数（传入的 'deskskill-engine-mini'）保留兼容，但实际 skills 列表以
+  // installed.skills 为准 —— 包含所有已装 plugin 内的 skill name 合集。
+  const installed = await loadInstalledPlugins({ projectId });
+  console.log(
+    `[session-loop] plugins=[${installed.plugins.map(p => p.path.split('/').pop()).join(', ')}] `
+    + `skills=[${installed.skills.join(', ')}] `
+    + `(builtin=${installed.diagnostics.builtin} user=${installed.diagnostics.user} project=${installed.diagnostics.project})`
+  );
+
   const sdkOptions = {
     cwd: cwdRoot,
     abortController: sessionAbortController,
@@ -371,8 +383,8 @@ export async function runSession({
       preset: 'claude_code',
       append: NODESIGN_PRELUDE,
     },
-    plugins: [{ type: 'local', path: PLUGIN_ROOT }],
-    skills: [skillId],
+    plugins: installed.plugins,
+    skills: installed.skills,
 
     // resume 时不传 permissionMode：SDK 会从 JSONL 读原 session flags + 检查
     // bypassPermissions 必须有 --dangerously-skip-permissions 启动才允许。如果

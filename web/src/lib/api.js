@@ -351,6 +351,46 @@ export const Sessions = {
   },
 };
 
+// ── Plugins（plugin zip 上传/列表/卸载，2026-05-18）──
+// 用户级与 project 级走两套 endpoint；都是 multipart `file` upload。
+// 后端校验在 server/lib/plugin-validator.js，返 4xx 时 body.errors[] 含详细原因。
+export const Plugins = {
+  // 用户级（跨 project 全局）
+  listUser: () => jsonRequest('GET', '/api/plugins'),
+  installUser: async (file, { force } = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const qs = force ? '?force=true' : '';
+    const res = await fetch(`/api/plugins/install${qs}`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw Object.assign(new Error(data.error || res.statusText), {
+        status: res.status, body: data,
+      });
+    }
+    return data;
+  },
+  removeUser: (name) => jsonRequest('DELETE', `/api/plugins/${encodeURIComponent(name)}`),
+
+  // Project 级（仅当前 project）
+  listProject: (pid) => jsonRequest('GET', `/api/projects/${pid}/plugins`),
+  installProject: async (pid, file, { force } = {}) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    const qs = force ? '?force=true' : '';
+    const res = await fetch(`/api/projects/${pid}/plugins/install${qs}`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw Object.assign(new Error(data.error || res.statusText), {
+        status: res.status, body: data,
+      });
+    }
+    return data;
+  },
+  removeProject: (pid, name) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/plugins/${encodeURIComponent(name)}`),
+};
+
 // ── Health ──
 export const Health = {
   check: () => jsonRequest('GET', '/api/health'),

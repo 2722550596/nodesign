@@ -1,4 +1,4 @@
-import { Cpu, Wrench, Plug, Users, Activity } from 'lucide-react';
+import { Cpu, Wrench, Plug, Users, Activity, Box, BookOpen } from 'lucide-react';
 import { COLOR, GAP, FONT_MONO } from '../../lib/theme.js';
 
 /**
@@ -168,6 +168,27 @@ function InfoChips({ info }) {
       icon: Users,
       label: `${info.agents.length}a`,
       title: `Subagents: ${info.agents.join(', ')}`,
+    });
+  }
+
+  // Plugin / Skill 来自 SDK run.system_init（agent-shared.js:213-223）。
+  // 2026-05-18 起后端切到 SDK 原生 plugins+skills，前端这里把它们也曝出来。
+  // plugins 字段 SDK 给的 shape 可能是 [{name,...}] 或字符串数组——双兼容。
+  if (Array.isArray(info.plugins) && info.plugins.length > 0) {
+    const names = info.plugins.map(p => (typeof p === 'string' ? p : (p.name || p.id))).filter(Boolean);
+    items.push({
+      icon: Box,
+      label: `${names.length}p`,
+      title: `Plugins: ${names.join(', ')}`,
+    });
+  }
+
+  if (Array.isArray(info.skills) && info.skills.length > 0) {
+    const names = info.skills.map(s => (typeof s === 'string' ? s : (s.name || s.id))).filter(Boolean);
+    items.push({
+      icon: BookOpen,
+      label: `${names.length}s`,
+      title: `Skills: ${names.join(', ')}`,
     });
   }
 

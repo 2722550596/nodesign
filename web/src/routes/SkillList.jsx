@@ -1,42 +1,139 @@
-import { Link } from 'react-router-dom';
-import { Wrench, Plus } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Wrench, Plus, Upload, Trash2, BookOpen, Box, ChevronDown, ChevronRight } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
-import { MOCK_SKILLS } from '../mock/design-systems.js';
-import { timeAgo } from '../lib/helpers.js';
 import { useGlobalStore } from '../stores/globalStore.js';
+import { Plugins, Skills } from '../lib/api.js';
 
-const STATUS_LABEL = {
-  active: '激活',
-  paused: '暂停',
-  experimental: '实验中',
+/**
+ * SkillList — 用户级 plugin 管理面板（跨 project 全局）
+ *
+ * 数据：
+ *   - GET /api/skills        列内置 + 用户级 plugin（不传 projectId）
+ *   - POST/DELETE /api/plugins/...   上传 / 卸载
+ *
+ * Project 级 plugin 不在这页 — 走 project 内的 SystemTab。
+ *
+ * 上传流程：选 zip → POST /api/plugins/install → 成功 toast / 409 弹覆盖确认
+ * 卸载流程：点垃圾桶 → 二次确认 → DELETE → 刷新
+ * 内置 plugin (scope='builtin') 只展示不能卸载
+ */
+
+const SCOPE_LABEL = {
+  builtin: '内置',
+  user: '用户级',
 };
-const STATUS_COLOR = {
-  active: '#4A8A4A',
-  paused: '#8A7A62',
-  experimental: '#B85C1A',
+const SCOPE_COLOR = {
+  builtin: '#4A8A4A',
+  user: '#7A6B3A',
 };
 
 export default function SkillList() {
   const showToast = useGlobalStore(s => s.showToast);
+  const confirm = useGlobalStore(s => s.confirm);
+
+  const [plugins, setPlugins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { plugins: list } = await Skills.list();
+      setPlugins(list || []);
+    } catch (err) {
+      showToast(`加载 plugin 列表失败：${err.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleUpload = useCallback(async (file, force = false) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const result = await Plugins.installUser(file, { force });
+      const name = result?.installed?.name;
+      showToast(`已装 plugin \`${name}\`（新会话生效）`, 'success');
+      if (result?.warnings?.length) {
+        showToast(`警告：${result.warnings.join('；')}`, 'warn');
+      }
+      await refresh();
+    } catch (err) {
+      if (err.status === 409 && err.body?.existing) {
+        const ok = await confirm({
+          title: '覆盖已装 plugin？',
+          message: `已装 \`${err.body.existing.name}@${err.body.existing.version}\`，将覆盖为 \`${err.body.incoming.name}@${err.body.incoming.version}\`。`,
+          confirmLabel: '覆盖',
+          cancelLabel: '取消',
+          danger: true,
+        });
+        if (ok) {
+          await handleUpload(file, true);
+        }
+        return;
+      }
+      const detail = err.body?.errors?.length ? `：${err.body.errors.join('；')}` : '';
+      showToast(`安装失败${detail || `：${err.message}`}`, 'error');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }, [refresh, showToast, confirm]);
+
+  const handleUninstall = useCallback(async (name) => {
+    const ok = await confirm({
+      title: '卸载 plugin？',
+      message: `从用户级目录移除 \`${name}\`。文件会被删除，新会话不再加载。`,
+      confirmLabel: '卸载',
+      cancelLabel: '取消',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await Plugins.removeUser(name);
+      showToast(`已卸载 \`${name}\``, 'success');
+      await refresh();
+    } catch (err) {
+      showToast(`卸载失败：${err.message}`, 'error');
+    }
+  }, [refresh, showToast, confirm]);
+
   return (
     <AppShell
       breadcrumb={[{ label: 'Skill' }]}
       actions={
-        <button
-          onClick={() => showToast('P6 实现：从本地路径 / GitHub URL 安装 skill', 'info')}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-            padding: `${GAP.sm + 1}px ${GAP.xl}px`,
-            fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
-            color: COLOR.btnText, background: COLOR.btn,
-            border: `1px solid ${COLOR.btn}`,
-            borderRadius: 8,
-            cursor: 'pointer',
-          }}
-        >
-          <Plus size={14} /> 安装 Skill
-        </button>
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleUpload(f);
+            }}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              padding: `${GAP.sm + 1}px ${GAP.xl}px`,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
+              color: COLOR.btnText, background: COLOR.btn,
+              border: `1px solid ${COLOR.btn}`,
+              borderRadius: 8,
+              cursor: uploading ? 'not-allowed' : 'pointer',
+              opacity: uploading ? 0.6 : 1,
+            }}
+          >
+            <Upload size={14} /> {uploading ? '安装中…' : '上传 plugin zip'}
+          </button>
+        </>
       }
     >
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: `${GAP.page}px ${GAP.page}px` }}>
@@ -49,14 +146,36 @@ export default function SkillList() {
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2,
             lineHeight: 1.6, margin: 0,
           }}>
-            多 skill 可插拔。每个 skill 有自己的 SKILL.md、references、转换器（→ page-spec）。<br />
-            探索新 skill 流程，反过来优化老 skill —— Nodesign 的核心 belief。
+            按 SDK plugin convention 组织：一个 plugin 含多个 skill。
+            内置不可卸载；用户级（跨 project）可上传 zip 包安装。Project 级在每个项目的 System 面板里管。
           </p>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.md }}>
-          {MOCK_SKILLS.map(s => <SkillRow key={s.id} skill={s} />)}
-        </div>
+        {loading && plugins.length === 0 ? (
+          <div style={{
+            padding: GAP.xl,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
+            textAlign: 'center',
+          }}>加载中…</div>
+        ) : plugins.length === 0 ? (
+          <div style={{
+            padding: GAP.xl,
+            border: `1px dashed ${COLOR.borderMd}`,
+            borderRadius: 8,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
+            textAlign: 'center',
+          }}>暂无 plugin。点右上「上传 plugin zip」装一个。</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.md }}>
+            {plugins.map(p => (
+              <PluginRow
+                key={p.path || p.name}
+                plugin={p}
+                onUninstall={p.scope === 'builtin' ? null : () => handleUninstall(p.name)}
+              />
+            ))}
+          </div>
+        )}
 
         <div style={{
           marginTop: GAP.page,
@@ -67,85 +186,151 @@ export default function SkillList() {
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
           lineHeight: 1.6,
         }}>
-          ⓘ <strong style={{ color: COLOR.text2 }}>P2 阶段为 mock。</strong>
-          P3+：从 server/skills/installed/ 真实读取；P4：跑 skill 时按 id 加载 SKILL.md + references → 拼 system prompt。
+          ⓘ <strong style={{ color: COLOR.text2 }}>Plugin zip 格式</strong>：根目录或单层 wrapper 内含
+          <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>.claude-plugin/plugin.json</code>
+          + <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>skills/&lt;id&gt;/SKILL.md</code>。
+          plugin.json 必含 name；每个 SKILL.md 必有 YAML frontmatter name。
+          大小 ≤ 8MB / entries ≤ 200。新会话生效（v1 不支持 hot-reload）。
         </div>
       </div>
     </AppShell>
   );
 }
 
-function SkillRow({ skill }) {
-  const statusLabel = STATUS_LABEL[skill.status] || skill.status;
-  const statusColor = STATUS_COLOR[skill.status] || COLOR.sub;
-  const successRatePct = (skill.successRate * 100).toFixed(0);
-  const lowRate = skill.successRate < 0.6;
+function PluginRow({ plugin, onUninstall }) {
+  const [expanded, setExpanded] = useState(false);
+  const scopeLabel = SCOPE_LABEL[plugin.scope] || plugin.scope;
+  const scopeColor = SCOPE_COLOR[plugin.scope] || COLOR.sub;
+  const skillCount = plugin.skills?.length || 0;
 
   return (
     <div style={{
-      padding: `${GAP.lg}px ${GAP.xl}px`,
       background: '#fff',
       border: `1px solid ${COLOR.border}`,
       borderRadius: 10,
-      display: 'flex', alignItems: 'center', gap: GAP.lg,
+      overflow: 'hidden',
     }}>
-      <div style={{
-        width: 40, height: 40, borderRadius: 8,
-        background: COLOR.bgCard,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
-      }}>
-        <Wrench size={16} color={COLOR.text4} />
-      </div>
-
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: 2 }}>
-          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text }}>
-            {skill.name}
-          </span>
-          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-            {skill.version}
-          </span>
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 3,
-            fontFamily: FONT_MONO, fontSize: 10, color: statusColor,
-            padding: '1px 7px',
-            background: 'rgba(0,0,0,0.04)',
-            borderRadius: 100,
-          }}>
-            <span style={{ width: 5, height: 5, borderRadius: 3, background: statusColor }} />
-            {statusLabel}
-          </span>
-        </div>
+      <div
+        onClick={() => skillCount > 0 && setExpanded(e => !e)}
+        style={{
+          padding: `${GAP.lg}px ${GAP.xl}px`,
+          display: 'flex', alignItems: 'center', gap: GAP.lg,
+          cursor: skillCount > 0 ? 'pointer' : 'default',
+        }}
+      >
         <div style={{
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
-          lineHeight: 1.5,
-        }}>{skill.description}</div>
+          width: 40, height: 40, borderRadius: 8,
+          background: COLOR.bgCard,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
+        }}>
+          <Box size={16} color={COLOR.text4} />
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: 2 }}>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text }}>
+              {plugin.name}
+            </span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
+              {plugin.version}
+            </span>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontFamily: FONT_MONO, fontSize: 10, color: scopeColor,
+              padding: '1px 7px',
+              background: 'rgba(0,0,0,0.04)',
+              borderRadius: 100,
+            }}>
+              <span style={{ width: 5, height: 5, borderRadius: 3, background: scopeColor }} />
+              {scopeLabel}
+            </span>
+            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
+              {skillCount} skill
+            </span>
+          </div>
+          {plugin.description && (
+            <div style={{
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
+              lineHeight: 1.5,
+            }}>{plugin.description}</div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, flexShrink: 0 }}>
+          {onUninstall ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); onUninstall(); }}
+              title="卸载"
+              style={{
+                background: 'transparent', border: 'none',
+                color: COLOR.sub, cursor: 'pointer',
+                padding: GAP.xs,
+              }}
+            >
+              <Trash2 size={14} />
+            </button>
+          ) : (
+            <span
+              title="内置不可卸载"
+              style={{
+                fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+                opacity: 0.5, padding: `0 ${GAP.xs}px`,
+              }}
+            >🔒</span>
+          )}
+          {skillCount > 0 && (
+            expanded ? <ChevronDown size={14} color={COLOR.sub} /> : <ChevronRight size={14} color={COLOR.sub} />
+          )}
+        </div>
       </div>
 
-      <div style={{
-        display: 'flex', gap: GAP.lg, alignItems: 'center',
-        flexShrink: 0,
-      }}>
-        <Stat label="跑次" value={skill.runs} />
-        <Stat label="成功率" value={`${successRatePct}%`} warn={lowRate} />
-        <span style={{
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-          minWidth: 56, textAlign: 'right',
-        }}>{timeAgo(skill.updatedAt)}</span>
-      </div>
+      {expanded && skillCount > 0 && (
+        <div style={{
+          borderTop: `1px solid ${COLOR.borderLt}`,
+          background: 'rgba(0,0,0,0.02)',
+          padding: `${GAP.md}px ${GAP.xl}px`,
+          display: 'flex', flexDirection: 'column', gap: GAP.sm,
+        }}>
+          {plugin.skills.map(s => (
+            <SkillSubrow key={s.id} skill={s} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function Stat({ label, value, warn }) {
+function SkillSubrow({ skill }) {
   return (
-    <div style={{ textAlign: 'right' }}>
-      <div style={{
-        fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 500,
-        color: warn ? COLOR.error : COLOR.text,
-      }}>{value}</div>
-      <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub }}>{label}</div>
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
+      padding: `${GAP.xs + 1}px ${GAP.md}px`,
+      background: '#fff',
+      borderRadius: 6,
+    }}>
+      <BookOpen size={12} color={COLOR.text4} style={{ marginTop: 3, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.sm }}>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2 }}>
+            {skill.name}
+          </span>
+          <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+            {skill.version}
+          </span>
+          {skill.id !== skill.name && (
+            <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+              · id: {skill.id}
+            </span>
+          )}
+        </div>
+        {skill.description && (
+          <div style={{
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+            lineHeight: 1.5, marginTop: 2,
+          }}>{skill.description}</div>
+        )}
+      </div>
     </div>
   );
 }

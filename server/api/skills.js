@@ -1,76 +1,73 @@
 /**
- * server/api/skills.js — Skill 列表
+ * server/api/skills.js — Skill 列表（plugin-aware）
  *
- * GET /api/skills                    列全局 skills（server/engine/skills/）
- * GET /api/skills?projectId=xxx      列全局 + project local（.claude/skills/）
+ * GET /api/skills                    列内置 + 用户级 plugin（不区分 project）
+ * GET /api/skills?projectId=xxx      上面 + 加 project 级 plugin 内的 skills（拍平到 projectLocal）
  *
- * P0 只读不写。skill 上传留到 P0+。
+ * 2026-05-18 schema 改造（plugin convention）：
+ *   {
+ *     plugins: [
+ *       { name, version, description, scope: 'builtin' | 'user', path, skills: [...] },
+ *       ...
+ *     ],
+ *     projectLocal: [...]   // project 级 plugin 内的 skills 拍平，scope: 'project'
+ *   }
+ *
+ * 数据源（plugin-loader.js 已经做了 scan + manifest 解析）：
+ *   - builtin: server/engine/plugins/nodesign/
+ *   - user:    <userHome>/.nodesign/plugins/*\/
+ *   - project: <pid>/shared/.claude/plugins/*\/
+ *
+ * P0 只读不写；plugin 安装/卸载在 /api/plugins 和 /api/projects/:pid/plugins。
  */
 
 import express from 'express';
-import { promises as fs } from 'fs';
-import path from 'path';
-import { listSkills as listGlobalSkills } from '../engine/agent/skill.js';
+
 import { validateProjectId, getProject } from '../projects/store.js';
-import { getProjectWorkspace } from '../projects/workspace.js';
+import {
+  getUserPluginsRoot,
+  getBuiltinPluginsRoot,
+  getProjectPluginsRoot,
+  listInstalledPluginsDetailed,
+} from '../engine/agent/plugin-loader.js';
 
 const router = express.Router();
 
 router.get('/', async (req, res, next) => {
   try {
-    const global = await listGlobalSkills();
-    let projectLocal = [];
+    const [builtin, user] = await Promise.all([
+      listInstalledPluginsDetailed(getBuiltinPluginsRoot()),
+      listInstalledPluginsDetailed(getUserPluginsRoot()),
+    ]);
 
+    const plugins = [
+      ...builtin.map(p => ({ ...p, scope: 'builtin' })),
+      ...user.map(p => ({ ...p, scope: 'user' })),
+    ];
+
+    let projectLocal = [];
     const pid = req.query.projectId;
     if (pid && typeof pid === 'string') {
       try {
         validateProjectId(pid);
         if (getProject(pid)) {
-          projectLocal = await listProjectLocalSkills(pid);
+          const projectPlugins = await listInstalledPluginsDetailed(getProjectPluginsRoot(pid));
+          // 拍平 project 级 skills（保留 plugin name 追溯）
+          for (const p of projectPlugins) {
+            for (const s of p.skills) {
+              projectLocal.push({
+                ...s,
+                scope: 'project',
+                pluginName: p.name,
+              });
+            }
+          }
         }
       } catch { /* invalid pid → 静默忽略 */ }
     }
 
-    res.json({
-      global: global.map((s) => ({ ...s, scope: 'global' })),
-      projectLocal: projectLocal.map((s) => ({ ...s, scope: 'project' })),
-    });
+    res.json({ plugins, projectLocal });
   } catch (err) { next(err); }
 });
-
-async function listProjectLocalSkills(pid) {
-  const wsRoot = getProjectWorkspace(pid);
-  const skillsDir = path.join(wsRoot, '.claude', 'skills');
-  let entries;
-  try {
-    entries = await fs.readdir(skillsDir, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    throw err;
-  }
-  const out = [];
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const skillFile = path.join(skillsDir, e.name, 'SKILL.md');
-    try {
-      const raw = await fs.readFile(skillFile, 'utf8');
-      const fmMatch = /^---\s*\n([\s\S]*?)\n---/.exec(raw);
-      const frontmatter = {};
-      if (fmMatch) {
-        for (const line of fmMatch[1].split('\n')) {
-          const m = /^([a-zA-Z_][\w]*)\s*:\s*(.*)$/.exec(line.trim());
-          if (m) frontmatter[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
-        }
-      }
-      out.push({
-        id: e.name,
-        name: frontmatter.name || e.name,
-        version: frontmatter.version || '0.0.0',
-        description: frontmatter.description || '',
-      });
-    } catch { /* skip broken skill */ }
-  }
-  return out;
-}
 
 export default router;

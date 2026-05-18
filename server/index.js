@@ -30,6 +30,7 @@ import instructionRouter from './api/instruction.js';
 import memoryRouter from './api/memory.js';
 import pendingChangesRouter from './api/pending-changes.js';
 import recentRouter from './api/recent.js';
+import { userPluginsRouter, projectPluginsRouter } from './api/plugins.js';
 import { platform } from './runtime/platform.js';
 
 // 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
@@ -65,10 +66,13 @@ app.use('/api/projects', sessionsRouter);
 app.use('/api/projects', instructionRouter);
 app.use('/api/projects', memoryRouter);
 app.use('/api/projects', pendingChangesRouter);  // C4: 用户直接编辑 + 评论 buffer
+app.use('/api/projects', projectPluginsRouter);  // 2026-05-18: project 级 plugin 上传/卸载/列表
 // 跨项目聚合：/api/sessions/recent
 app.use('/api', recentRouter);
 // skills 全局
 app.use('/api/skills', skillsRouter);
+// 用户级 plugin（跨 project 全局）
+app.use('/api/plugins', userPluginsRouter);
 
 // ── 错误兜底 ──
 app.use((err, _req, res, _next) => {
