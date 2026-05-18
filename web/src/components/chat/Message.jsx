@@ -1012,6 +1012,8 @@ const TOOL_ICONS = {
   WebSearch: Globe,
   Task: Bot,                                   // 通用 fallback（无 agentType 时）
   AskUserQuestion: HelpCircle,                 // 问号 = 主动问用户
+  Skill: BookOpen,                             // SDK 内置 Skill 工具 — agent 加载方法论 body
+                                               // （跟 mcp__nodesign__read_page 视觉同源 = "在读方法论"）
   // MCP nodesign 工具（2026-05-07 补齐 11 个漏映射；之前都走 fallback Wrench）
   'mcp__nodesign__screenshot_canvas': Camera,
   'mcp__nodesign__export_handoff': Download,
@@ -1096,6 +1098,15 @@ function summarizeToolInput(toolName, input) {
   }
   if (toolName === 'Task') {
     return `${input.subagent_type || ''}: ${(input.prompt || input.description || '').slice(0, 60)}`;
+  }
+  if (toolName === 'Skill') {
+    // SDK 内置 Skill 工具 input schema 未文档化（sdk-tools.d.ts 没显式定义）。
+    // 三段式 fallback：① 具名字段优先 ② 第一个 string 字段 ③ JSON 截断兜底
+    // 运行时确认 SDK 真用的字段名后再收紧
+    const named = input.skill || input.name || input.skillId;
+    if (named) return String(named);
+    const firstStr = Object.values(input).find(v => typeof v === 'string' && v.length > 0);
+    return firstStr ? firstStr.slice(0, 80) : JSON.stringify(input).slice(0, 80);
   }
   if (toolName === 'mcp__nodesign__generate_image') {
     const role = input.assetRole ? `[${input.assetRole}] ` : '';
