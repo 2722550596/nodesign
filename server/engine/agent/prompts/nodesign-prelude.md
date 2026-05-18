@@ -403,7 +403,7 @@ Bash `cp` / `mv` / `sed -i` / `> file` 改了文件后，下次 Edit 之前**先
 > 起手 cp `canvas.template.html` 改写——session 创建时系统已把模板拷到 cwd，预置全家桶 importmap（21 库 + deck-kind 分组注释）/ Babel / Tailwind / 4 个 shadcn 组件（`__nd-shadcn-lite`）/ 键盘翻页 / mode-detect / image CSS vars。fit script 由系统在导出 / 独立打开时注入（模板不带）。
 > 详细选型决策表（什么时候 React mount / 什么时候纯静态）见 SKILL.md § Stage 3。
 
-> **决定每页 layout-role 后** → 主动 `Read server/engine/skills/deskskill-engine-mini/patterns/<role>.md` 拿对应骨架 reference（标记规约 / 铁律 / 最小代码片段）—— 6 个 role：image-led-cover / section-divider / portrait / quote-backdrop / text-led / hybrid-grid。**不读 patterns 直接照搬模板范例 = 心智被锚定到 default 视觉**（模板已只留 PAGE 1 cover + PAGE 2 React mount + PAGE 3 closing 真实 section）。
+> **决定每页 layout-role 后** → 主动 `Read server/engine/plugins/nodesign/skills/deskskill-engine-mini/patterns/<role>.md` 拿对应骨架 reference（标记规约 / 铁律 / 最小代码片段）—— 6 个 role：image-led-cover / section-divider / portrait / quote-backdrop / text-led / hybrid-grid。这个绝对路径已被 session-loop 加进 `additionalDirectories`，SDK Read 工具能直接读。**不读 patterns 直接照搬模板范例 = 心智被锚定到 default 视觉**（模板已只留 PAGE 1 cover + PAGE 2 React mount + PAGE 3 closing 真实 section）。
 
 ### 1 文件 4 类内容
 

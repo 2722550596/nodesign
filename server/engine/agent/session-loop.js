@@ -346,7 +346,15 @@ export async function runSession({
     ...(isResume ? { resume: sessionId } : { sessionId }),
     // title 仅在新建时有效（resume 用持久化的 title）
     ...(sessionTitle && !isResume ? { title: sessionTitle.slice(0, 80) } : {}),
-    ...(sharedRoot ? { additionalDirectories: [sharedRoot] } : {}),
+    // additionalDirectories：cwd 外但允许 Read 的目录。
+    //   - sharedRoot：project 共享资源（assets / agent-memory / .claude/）
+    //   - 每个已装 plugin 根：让 agent 能 Read patterns / references 等 SKILL.md 附件
+    //     （SDK Skill 工具只加载 SKILL.md body 自身，附件靠 agent 主动 Read，
+    //      要求路径在 sandbox 范围内 — 详见 memory nodesign_sdk_plugin_routes.md）
+    additionalDirectories: [
+      ...(sharedRoot ? [sharedRoot] : []),
+      ...installed.plugins.map(p => p.path),
+    ],
 
     env: {
       ...process.env,
