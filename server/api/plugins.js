@@ -38,8 +38,8 @@ import {
   listInstalledPluginsDetailed,
 } from '../engine/agent/plugin-loader.js';
 import {
-  validatePluginZip,
-  extractPluginZip,
+  validateSkillUpload,
+  extractToStaging,
   LIMITS,
 } from '../lib/plugin-validator.js';
 
@@ -55,19 +55,52 @@ function isValidPluginName(name) {
     && !RESERVED_PLUGIN_NAMES.has(name);
 }
 
+// 允许的上传 mime / 后缀（双轨：单 .md / zip）。multer fileFilter 拦其他类型。
+const ALLOWED_MIME = new Set([
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/octet-stream',  // 部分 OS 上 .zip 拿不到准确 mime；按 extension 兜底校验
+  'text/markdown',
+  'text/x-markdown',
+  'text/plain',                // 部分 OS 上 .md 报 text/plain
+]);
+const ALLOWED_EXT_RE = /\.(md|zip)$/i;
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: LIMITS.ZIP_MAX_BYTES },
+  // fileFilter 不 throw error（避免被 express generic error handler 截到返 500），
+  // 把 validation 错误存到 req 上 + reject 文件；handler 检查 req.fileValidationError 返 400
+  fileFilter: (req, file, cb) => {
+    const mimeOk = ALLOWED_MIME.has(file.mimetype);
+    const extOk = ALLOWED_EXT_RE.test(file.originalname || '');
+    if (mimeOk || extOk) return cb(null, true);
+    req.fileValidationError = `不支持的文件类型 (mime=${file.mimetype} name=${file.originalname}) — 仅接受 .md 或 .zip`;
+    cb(null, false);
+  },
 });
+
+/** 统一处理 multer 阶段 reject：fileValidationError 优先于 no-file */
+function rejectInvalidFile(req, res) {
+  if (req.fileValidationError) {
+    res.status(400).json({ error: req.fileValidationError });
+    return true;
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'no file (field name: file)' });
+    return true;
+  }
+  return false;
+}
 
 // ── 安装核心（两轨共用） ──
 
 async function installPluginToRoot(buffer, targetRoot, { force }) {
-  const validation = await validatePluginZip(buffer);
+  const validation = await validateSkillUpload(buffer);
   if (!validation.ok) {
     return { status: 400, body: { error: 'validation failed', errors: validation.errors } };
   }
-  const { manifest, skills, warnings, rootPrefix } = validation;
+  const { manifest, skills, warnings, mode } = validation;
   const targetDir = path.join(targetRoot, manifest.name);
 
   let existingManifest = null;
@@ -100,7 +133,7 @@ async function installPluginToRoot(buffer, targetRoot, { force }) {
   await fs.mkdir(tmpDir);
 
   try {
-    await extractPluginZip(buffer, tmpDir, rootPrefix);
+    await extractToStaging({ buffer, validation, stagingDir: tmpDir });
     if (existingManifest) {
       await fs.rm(targetDir, { recursive: true, force: true });
     }
@@ -116,6 +149,7 @@ async function installPluginToRoot(buffer, targetRoot, { force }) {
       installed: { ...manifest, path: targetDir, skills },
       replaced: existingManifest || null,
       warnings,
+      uploadMode: mode,  // 'single-md' / 'single-skill-zip' / 'plugin-zip' — UI 用 toast
     },
   };
 }
@@ -154,7 +188,7 @@ userPluginsRouter.get('/', async (_req, res, next) => {
 
 userPluginsRouter.post('/install', upload.single('file'), async (req, res, next) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'no file (field name: file)' });
+    if (rejectInvalidFile(req, res)) return;
     const force = req.query.force === 'true';
     const result = await installPluginToRoot(req.file.buffer, getUserPluginsRoot(), { force });
     res.status(result.status).json(result.body);
@@ -186,7 +220,7 @@ projectPluginsRouter.post('/:pid/plugins/install', upload.single('file'), async 
   try {
     validateProjectId(req.params.pid);
     if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
-    if (!req.file) return res.status(400).json({ error: 'no file (field name: file)' });
+    if (rejectInvalidFile(req, res)) return;
     const force = req.query.force === 'true';
     const root = getProjectPluginsRoot(req.params.pid);
     const result = await installPluginToRoot(req.file.buffer, root, { force });

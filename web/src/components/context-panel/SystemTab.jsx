@@ -153,7 +153,7 @@ export default function SystemTab({ project, deckSpec, projectId }) {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".zip,application/zip"
+          accept=".md,.zip,application/zip,text/markdown,text/plain"
           style={{ display: 'none' }}
           onChange={(e) => {
             const f = e.target.files?.[0];
@@ -175,13 +175,13 @@ export default function SystemTab({ project, deckSpec, projectId }) {
             opacity: uploading ? 0.6 : 1,
           }}
         >
-          <Upload size={11} /> {uploading ? '安装中…' : '上传 plugin zip'}
+          <Upload size={11} /> {uploading ? '安装中…' : '上传 skill / plugin'}
         </button>
         <div style={{
           marginTop: GAP.xs,
           fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
         }}>
-          仅装到本 project；全局可见的 plugin 走右上角 Skill 页面。新会话生效。
+          支持单 .md / skill zip / 完整 plugin zip。仅装到本 project；全局可见的走右上角 Skill 页面。新会话生效。
         </div>
       </Section>
 

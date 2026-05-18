@@ -110,7 +110,7 @@ export default function SkillList() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".zip,application/zip"
+            accept=".md,.zip,application/zip,text/markdown,text/plain"
             style={{ display: 'none' }}
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -131,7 +131,7 @@ export default function SkillList() {
               opacity: uploading ? 0.6 : 1,
             }}
           >
-            <Upload size={14} /> {uploading ? '安装中…' : '上传 plugin zip'}
+            <Upload size={14} /> {uploading ? '安装中…' : '上传 skill / plugin'}
           </button>
         </>
       }
@@ -186,10 +186,25 @@ export default function SkillList() {
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
           lineHeight: 1.6,
         }}>
-          ⓘ <strong style={{ color: COLOR.text2 }}>Plugin zip 格式</strong>：根目录或单层 wrapper 内含
-          <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>.claude-plugin/plugin.json</code>
-          + <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>skills/&lt;id&gt;/SKILL.md</code>。
-          plugin.json 必含 name；每个 SKILL.md 必有 YAML frontmatter name。
+          ⓘ <strong style={{ color: COLOR.text2 }}>上传格式</strong>（三种皆可，host 自动包装）：
+          <ul style={{ margin: `${GAP.xs}px 0`, paddingLeft: GAP.xl, lineHeight: 1.7 }}>
+            <li>
+              <strong>单个 .md 文件</strong>（最简）：含 YAML frontmatter
+              <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>name</code>的 SKILL.md
+            </li>
+            <li>
+              <strong>Skill zip</strong>：zip 内有
+              <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>SKILL.md</code>
+              + 可选附件（patterns/references/ 等）
+            </li>
+            <li>
+              <strong>完整 plugin zip</strong>：含
+              <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>.claude-plugin/plugin.json</code>
+              + <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>skills/&lt;id&gt;/SKILL.md</code>
+              （SDK 原生 plugin convention）
+            </li>
+          </ul>
+          单 .md / skill zip 自动包装时 plugin name = frontmatter.name。
           大小 ≤ 8MB / entries ≤ 200。新会话生效（v1 不支持 hot-reload）。
         </div>
       </div>
