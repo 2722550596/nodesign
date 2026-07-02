@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, Wrench, MoreHorizontal, Copy, Trash2, Edit2, ArrowUp } from 'lucide-react';
+import { Plus, Sparkles, Wrench, LayoutTemplate, MoreHorizontal, Copy, Trash2, Edit2, ArrowUp } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import CreateProjectModal from '../components/project/CreateProjectModal.jsx';
 import PlanModeToggle from '../components/chat/PlanModeToggle.jsx';
@@ -45,6 +45,7 @@ export default function Home() {
     <AppShell
       actions={
         <>
+          <Link to="/templates" style={iconBtnStyle}><LayoutTemplate size={14} /> 模板</Link>
           <Link to="/skills" style={iconBtnStyle}><Wrench size={14} /> Skill</Link>
           <button style={primaryBtnStyle} onClick={openCreate}>
             <Plus size={14} /> 新建项目

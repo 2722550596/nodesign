@@ -3,6 +3,7 @@ import Home from './routes/Home.jsx';
 import ProjectHub from './routes/ProjectHub.jsx';
 import ProjectWorkspace from './routes/ProjectWorkspace.jsx';
 import SkillList from './routes/SkillList.jsx';
+import TemplateMarket from './routes/TemplateMarket.jsx';
 import ToastContainer from './components/ui/ToastContainer.jsx';
 import GlobalDialogs from './components/ui/GlobalDialogs.jsx';
 
@@ -16,6 +17,7 @@ const router = createBrowserRouter([
   { path: '/projects/:id/work', element: <ProjectWorkspace /> },
   { path: '/projects/:id/sessions/:sid', element: <ProjectWorkspace /> },
   { path: '/skills', element: <SkillList /> },
+  { path: '/templates', element: <TemplateMarket /> },
 ]);
 
 export default function App() {
