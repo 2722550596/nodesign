@@ -359,7 +359,12 @@ export async function runSession({
     env: {
       ...process.env,
       ANTHROPIC_BASE_URL: baseUrlForBinary,
-      ANTHROPIC_API_KEY: process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY,
+      // 订阅模式（gateway URL 未设）下不能注入 NODESIGN_GATEWAY_KEY —— binary 见到
+      // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth。此时 GATEWAY_KEY 仅供
+      // generate_image 等业务工具直读。
+      ANTHROPIC_API_KEY: realGatewayUrl
+        ? (process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY)
+        : process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
       CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
       // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
