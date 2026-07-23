@@ -21,6 +21,7 @@ import { getSessionWorkspace, validateSessionId } from '../projects/workspace.js
 import { withConfigDir } from '../lib/sdk-session.js';
 import { platform } from '../runtime/platform.js';
 import { getProjectBus } from './broker.js';
+import { requestAuthed } from '../auth/session.js';
 import {
   getCurrentTurnRunId,
   hasActiveQuerySession,
@@ -100,6 +101,12 @@ export function setupWS(httpServer) {
   });
 
   httpServer.on('upgrade', (req, socket, head) => {
+    // 登录墙：cookie 无效直接拒（同 /api 守卫；密码未配置时 requestAuthed 恒 true）
+    if (!requestAuthed(req)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return socket.destroy();
+    }
+
     let url;
     try {
       url = new URL(req.url || '/', 'http://x');

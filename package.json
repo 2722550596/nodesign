@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Nodesign — 云端 SaaS skill engine（自由创作 + 风格参照 + 元素级 edit）",
   "scripts": {
+    "postinstall": "node server/ops/fix-sdk-musl.mjs",
     "start": "node --env-file-if-exists=.env server/index.js",
     "dev": "node --env-file-if-exists=.env --watch server/index.js",
     "smoke:engine": "node --env-file-if-exists=.env server/engine/_smoke.js",
@@ -38,5 +39,10 @@
       "playwright vs puppeteer — playwright 更现代但带 chromium ~150MB，部署环境吃得消？",
       "better-sqlite3 vs pg — SaaS 数据规模会涨，可能要切 PostgreSQL；MVP 先 SQLite 起步"
     ]
+  },
+  "allowScripts": {
+    "better-sqlite3@12.9.0": true,
+    "esbuild@0.28.0": true,
+    "sharp@0.34.5": true
   }
 }

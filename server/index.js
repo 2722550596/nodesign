@@ -31,6 +31,8 @@ import memoryRouter from './api/memory.js';
 import pendingChangesRouter from './api/pending-changes.js';
 import recentRouter from './api/recent.js';
 import { userPluginsRouter, projectPluginsRouter } from './api/plugins.js';
+import { authRouter, authGuard } from './auth/middleware.js';
+import { authEnabled } from './auth/session.js';
 import { platform } from './runtime/platform.js';
 
 // 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
@@ -53,6 +55,14 @@ app.get('/api/health', (_req, res) => {
     ts: new Date().toISOString(),
   });
 });
+
+// ── 登录墙（health 之后、业务路由之前）──
+// NODESIGN_AUTH_PASSWORD 未配置时守卫直通（dev 便利），但公网部署必须配 —— 启动时 loud warn
+if (!authEnabled()) {
+  console.warn('[auth] ⚠️ NODESIGN_AUTH_PASSWORD 未设置 — 登录墙关闭，切勿公网暴露！');
+}
+app.use('/api/auth', authRouter);
+app.use('/api', authGuard);
 
 // ── 业务路由 ──
 // projects router 挂在 /api/projects（CRUD）

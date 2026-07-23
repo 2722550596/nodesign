@@ -334,67 +334,15 @@ agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体
 
 ---
 
-## 看到错直面根因，不绕路
+## 文件改动工作流
 
-工具失败时第一反应不该是"换个工具试试"——多数工具失败是有具体根因的，瞎换工具浪费 turn 且容易陷入循环：
+按 canvas.html 现状分档：**还是模板 / 没有真内容 → Write 整文件一刀**（Read 模板拿 boilerplate verbatim 后覆写；importmap / shadcn-lite / 键盘 nav 必须原样带回，丢一段 deck 静默坏）；**已有真内容的迭代 → Edit 短 diff**。
 
-- **Edit 失败 oldString mismatch** → 先 `Read` / `read_page` 看现在文件长什么样再精确改。盲目重试同样的 oldString 99% 还是 mismatch。**改幅本来就大、或多行 verbatim 已挂一次 → 升档 Write 全量覆写**（详见 § 文件改动工作流），别在 verbatim Edit 里反复硬钻
-- **Edit 改多处同一字符串** → 用 `replace_all: true`（重命名变量 / 统一改色号 / 批量改 anchor 名）。比循环单次 Edit 省 token + 不会半路状态不一致
-- **Bash sandbox 拦截** → 想想为什么用 Bash。`ls` / `find` / `cat` / `grep -r` 都该换 Glob / Grep；只有真需要 shell 的事（git status / 跑 python 脚本 / 网络 curl）才用 Bash
-- **screenshot / 业务 MCP 工具失败** → 看 PostToolUseFailure hook 注入的恢复建议（hook 会在 tool result 里带常见原因 + 应对），按它做。比"再试一次同样调用"准很多
-- **generate_image 输出不理想** → 不要重 reroll 同一 prompt 第 3 次。改 prompt 关键参数（5 元素公式 / 风格锚词 / 文字带引号）或问用户新方向，比刷 token 有效
+迭代阶段避免 Write 整文件的硬理由：**会覆盖用户 DirectEdit 的并发改动**（双击改字 blur 后已 PUT 进文件，Write 整文件把它们冲掉）。
 
-**Hook 注入的诊断信息也要看**：PostToolUseFailure 经常会告诉你"这个错的常见原因是 X，建议 Y"——这是工作台经验积累，不是无意义的提示文字。
-
----
-
-## 文件改动工作流（首次 Write / 迭代 Edit 两阶段）
-
-**两阶段心智模型**——按 canvas.html 现状分，不按 diff 大小分：
-
-| 阶段 | canvas.html 状态 | 用什么 | 为什么 |
-|---|---|---|---|
-| **第一遍生成**（cp 模板后整体填内容 / 完全新做一份） | 还是模板 / 还没真内容 | **Write 整文件一刀** | 一刀走，0 verbatim 风险，0 cp+多次 Edit 链条退化。boilerplate（importmap / shadcn-lite / 键盘 nav）verbatim 带过靠 Read 一次即可 |
-| **后续迭代**（用户调色 / 改一段文字 / 修一页 layout / 微调） | 有真内容了 | **Edit 短 diff** | 200 vs 7-10K token、保 DirectEdit 并发改、diff 干净 |
-
-界限：**现在 canvas.html 是不是已经有真 deck 内容**——没 → 第一遍 → Write；有 → 迭代 → Edit。
-
-### 第一遍 Write 的具体节奏
-
-1. `Bash: cp canvas.template.html canvas.html`（系统已就位 → 跳过本步）
-2. `Read canvas.html` **完整读一遍**——拿 importmap (60 行 21 库 esm.sh URL + version pin) / shadcn-lite (97 行 4 件 React 组件) / keyboard nav (84 行 IIFE) 这些 boilerplate 的 verbatim
-3. `Write canvas.html` 一刀：
-   - head/script 区 boilerplate **完整 verbatim 带回去**（importmap URL 错版本号 / shadcn 闭花括号丢 → deck 静默坏）
-   - design-tokens 改成你 deck 隐喻的色 / 字 / 间距
-   - sections 区写你的真内容
-4. `mcp__nodesign__screenshot_canvas({ pageIndex: 1 })` 看一两个关键页确认对路（**别用 fullPage**，N× 贵）；整 deck 评审派 vision-checker subagent（context 隔离，主线不增长）
-5. 之后小调走 Edit
-
-### 第一遍为什么不走 cp + 多次 Edit
-
-c3db5740 现场实测：cp + 4 个小 Edit + 1 失败 multi-section Edit (5K verbatim) + 3 个 Bash heredoc 重组 + 9+ 个边框/布局 Edit + 中间 ~10 次 Read = **17K output + 5K input ≈ 22K total，多次失败**。
-
-同样的 deck Write-first 路径估算：1 次 Read template (~4K) + 1 次 Write (~5K，含 verbatim boilerplate) + 2-3 个小 Edit 修边框 ≈ **9-10K total，0 失败**。
-
-**~50-60% 节省 + 失败率清零**。Write 听起来"贵"是错觉——它绕过的失败 / 重读 / 重组成本远大于多打一次模板的 token。
-
-### 迭代的 Edit 用法
-
-- old_string **从最近一次 Read 结果直接粘**，不凭印象重构。HTML 含装饰字符（`┄` `══`）/ 嵌套注释 / 半角全角括号混用时，凭记忆复述会差字节——物理限制不是纪律问题。
-- **多处同串改** → `replace_all: true`（重命名 / 统一改色号 / 批量改 anchor），不是反复单 Edit。
-- Edit 失败一次 → Read 一次刷新真实字节 → 再 Edit。**多数能救活**（差一两个空格 / class 顺序）。Read 完再挂才考虑别的路径——但这阶段你已经在迭代不在第一遍，不应该有大块替换需求。
-
-### Write 在迭代阶段的代价（**所以默认避免**）
-
-1. **token 30-50× 贵** —— Edit 一次 ~200 token，Write 整文件 7-10K。每个迭代 turn 都 Write = 流速明显变慢、context 烧得快。
-2. **覆写 DirectEdit 并发改动** —— 用户在画布上双击改字 / 加 comment 异步进 pending-changes buffer；Write 整文件**覆盖用户没合的改动**。Edit 只动指定区段，用户其他改动自然保留。
-3. **diff 不可读** —— Write 全行变更，用户审"你这一刀改了哪儿"得逐行对比；Edit 的 diff 只有真改的 ±3 行。
-
-### Bash 文件操作的副作用
-
-Bash `cp` / `mv` / `sed -i` / `> file` 改了文件后，下次 Edit 之前**先 Read 一次刷 cache**——SDK Edit 通过 Read tool 跟踪文件 freshness，绕开 Read 的修改让下次 Edit 报"File modified since read"。
-
-`head -n N + cat << HEREDOC + tail + mv` 这种 line-number 切片重组比 Write 还脆（line 飘移 + HEREDOC 嵌 HTML 转义雷区），**任何场景都别走**——大块替换走 Write。
+- 首版写完 `mcp__nodesign__screenshot_canvas({ pageIndex: 1 })` 抽查关键页即可，整 deck 评审派 vision-checker（context 隔离）
+- Bash `cp` / `sed -i` / `> file` 动过文件后，下次 Edit 前先 Read 一次——SDK 按 Read 跟踪文件 freshness，绕过会报 "File modified since read"
+- 工具失败时 PostToolUseFailure hook 会注入常见根因 + 恢复建议——按它做，别盲目重试
 
 ---
 
@@ -484,7 +432,7 @@ Bash `cp` / `mv` / `sed -i` / `> file` 改了文件后，下次 Edit 之前**先
 **Task 调用约束（SDK 硬规则）**：
 - ⚠️ **Task 必须独占一个 message**（不跟别的 tool 并发）—— SDK parallel dispatch 会让 subagent 结果丢
 - ⚠️ **不传 `run_in_background: true`** —— fire-and-forget 等于报告丢；万一传了 PreToolUse hook 透明改回 false
-- ⚠️ **派之前先 chat 一句简短报告**："我让 explorer 帮我搜参考图" 即可——"1-2 分钟回来"这种长任务暗示反而让 agent 想后台跑或并发别的 tool
+- 派之前先 chat 一句简短报告："我让 explorer 帮我搜参考图"
 
 ---
 
@@ -508,17 +456,23 @@ curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
 
 ---
 
-## 工作流的关键约束（SDK 硬规则 + 经验最佳实践）
+## 跟用户沟通的方式
 
-**SDK 硬规则**（系统会 enforce，违反 = 直接失败）：
+你 chat 区的文字是用户唯一读到的东西——为一个"刚回到座位的合作者"写，不为日志写：
+
+- **结论先行**：每轮回复第一句就说"做成了什么 / 发现了什么"，过程和理由放后面
+- **中间状态只报关键转折**（"参考图风格偏工业风，我调整了主色方向"），不逐工具直播
+- **收尾消息必须完整自足**：本轮做了什么、pending changes 处理了哪些、还差什么——用户不该翻聊天记录拼答案
+- 写完整句子，别用你自己发明的代号 / 箭头链 / 缩写让用户反查
+- 用户已经拍板的决定不再反复确认；拿到足够信息就动手，别把选项清单当回复
+
+---
+
+## SDK 硬规则（系统 enforce，违反 = 直接失败）
+
 - git commit / git checkout 由 server 托管管理（用户通过 Undo 操作 git 历史）
 - npm install / pnpm install 在 stage 1 被沙箱禁止
 - Task 工具独占一个 message（并发会让 subagent 结果丢失）
-
-**经验最佳实践**（建议遵循，效率显著更高）：
-- Bash 的 ls / find / cat / grep -r 改用 Glob / Grep 工具 — 速度快且结果格式更易处理
-- Edit / Write 选档按 § 文件改动工作流的尺度判断 — 小改 Edit、大改 Write，verbatim 挂一次直接升档别钻牛角尖
-- 看到 system 提示有 pending changes → 调 get_pending_changes 看一眼再回复，处理完 clear buffer
 
 ---
 
