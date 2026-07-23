@@ -125,7 +125,10 @@ export function pickThinkingConfig(model) {
   // ⚠️ Sonnet 5 起 budgetTokens 已被 API 移除（enabled+budget 会 400），
   // 不能再落到 enabled 分支 —— 2026-07-23 订阅模式切 sonnet-5 时修。
   if (model && /^claude-(?:opus-(?:4-[6789]|[5-9])|sonnet-[5-9]|fable|mythos)/.test(model)) {
-    return { type: 'adaptive' };
+    // display 必须显式 'summarized' —— Sonnet 5 / Opus 4.7+ 默认 'omitted'：
+    // thinking 照常发生（照常计费）但流出的 thinking 块是空文本 → 前端思考期
+    // 完全静默，用户以为后端死了（2026-07-23 "失联"问题的主因）。
+    return { type: 'adaptive', display: 'summarized' };
   }
   return { type: 'enabled', budgetTokens: 8192 };
 }
@@ -329,7 +332,17 @@ function handleSystemMessage(ctx, msg) {
       break;
 
     case 'status':
-      // SDK 进度/心跳状态，旁路（前端不需要）
+      // SDK 进度/心跳状态 → 转发（前端 header 存活点 + compacting toast 消费；
+      // 曾被旁路，是"前端不知道后端死活"的帮凶之一）
+      ctx.emit({ type: 'run.status', status: msg.status });
+      break;
+
+    case 'thinking_tokens':
+      // SDK 0.3+ 思考进度心跳（~1s 一条，estimated_tokens 累计值）。
+      // 转成 run.status 让前端知道"在思考、没死"并可显示进度。
+      ctx.emit({
+        type: 'run.status', status: 'thinking', tokens: msg.estimated_tokens,
+      });
       break;
 
     default:

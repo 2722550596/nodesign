@@ -21,6 +21,7 @@ export default function ChatPanel({
   trayItems, onRemoveTrayItem, onPickFile,
   promptSuggestion, onDismissSuggestion,
   agentProgress,
+  thinkingTokens = null,      // run.status thinking 心跳的累计 tokens（null = 非思考期）
   onStop,
   todos,
   sessionTitle,
@@ -102,6 +103,17 @@ export default function ChatPanel({
               transition: 'background 0.3s ease',
             }}
           />
+        )}
+
+        {/* 思考进度 — run.status status='thinking' 心跳（~1s/条，累计 tokens）。
+            有它在跳说明后端活着且模型在思考；正文/工具事件到达即被父级清掉 */}
+        {isStreaming && thinkingTokens != null && (
+          <span style={{
+            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+            flexShrink: 0, whiteSpace: 'nowrap',
+          }}>
+            思考中 · ~{thinkingTokens >= 1000 ? `${(thinkingTokens / 1000).toFixed(1)}k` : thinkingTokens} tok
+          </span>
         )}
 
         {/* 结束本会话：streamInput query 终结 + URL 跳回 /work（前端 state 由 effect reset）

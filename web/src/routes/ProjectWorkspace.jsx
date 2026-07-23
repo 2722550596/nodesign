@@ -108,6 +108,9 @@ export default function ProjectWorkspace() {
   // 走 setProjectSystemInfo / mergeProjectContextUsage 更新；旧的局部 useState 删掉。
   const [promptSuggestion, setPromptSuggestion] = useState(null);
   const [agentProgress, setAgentProgress] = useState(null);
+  // 思考心跳（run.status status='thinking' 的累计 tokens）——ChatPanel header
+  // "思考中 · ~N tokens" 显示；正文/工具事件到达即清（思考段结束）
+  const [thinkingTokens, setThinkingTokens] = useState(null);
   // C29：DecisionsTab 自动刷新触发器（agent 调 record_decision / compact 后 bump）
   const [decisionsReloadKey, setDecisionsReloadKey] = useState(0);
   // C5：TweaksPanel 自动刷新触发器（agent 调 expose_tweaks 后 bump）
@@ -343,6 +346,7 @@ export default function ProjectWorkspace() {
     setInputs([]);                    // 清空附件托盘
     setPromptSuggestion(null);        // 清掉上 session 残留 SuggestionChip
     setAgentProgress(null);           // 清 subagent progress
+    setThinkingTokens(null);          // 清思考心跳
     setQueueDepth(0);                 // 清 queue depth（切 session 跨 query 不延续）
     setLastEventAt(Date.now());       // 重置事件时间避免切 session 时 header dot 误判"静默"
     setIsTweaksExposed(false);        // 切 session 时清，新 session 待 agent 重 expose
@@ -555,6 +559,7 @@ export default function ProjectWorkspace() {
       case 'run.start':
         if (isStale) break;
         setIsStreaming(true);
+        setThinkingTokens(null);
         setTodos([]);
         break;
       case 'run.permission_mode_changed': {
@@ -584,6 +589,7 @@ export default function ProjectWorkspace() {
         break;
       case 'run.delta.text':
         if (isStale) break;
+        setThinkingTokens(null); // 正文开始流 = 思考段结束
         setMessages(prev => appendTextDelta(prev, 'assistant', evt.text, evt.runId));
         break;
       case 'run.delta.thinking':
@@ -658,6 +664,7 @@ export default function ProjectWorkspace() {
         setIsStreaming(false);
         setCurrentRunId(null);
         setActiveRun(null);
+        setThinkingTokens(null);
         useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
         useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 done → toggle 锁死
         // 收尾：清 thinking 流式光标（run 结束后最后一条 thinking 不该一直闪）
@@ -697,6 +704,7 @@ export default function ProjectWorkspace() {
         setIsStreaming(false);
         setCurrentRunId(null);
         setActiveRun(null);
+        setThinkingTokens(null);
         useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
         useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 error → toggle 锁死
         setMessages(prev => [...clearThinkingStreaming(prev), {
@@ -749,10 +757,14 @@ export default function ProjectWorkspace() {
 
       case 'run.status':
         if (isStale) break;
-        // SDK 内部状态：'compacting' | 'requesting' | null。
+        // SDK 内部状态：'compacting' | 'requesting' | 'thinking' | null。
         // requesting 每个 LLM call 都触发，太频繁 → 跳过；只 toast compacting
         // （少见但耗时长，需要让用户知道"在压缩、不是卡住"）。
-        if (evt.status === 'compacting') {
+        // thinking = SDK 0.3 思考心跳（~1s 一条，带累计 tokens）——喂 ChatPanel
+        // header 的"思考中"进度显示；事件本身也刷新 lastEventAt 让存活点保持绿色。
+        if (evt.status === 'thinking') {
+          setThinkingTokens(evt.tokens || 0);
+        } else if (evt.status === 'compacting') {
           showToast('正在压缩上下文...', 'info');
         }
         break;
@@ -1611,6 +1623,7 @@ export default function ProjectWorkspace() {
             promptSuggestion={promptSuggestion}
             onDismissSuggestion={() => setPromptSuggestion(null)}
             agentProgress={agentProgress}
+            thinkingTokens={thinkingTokens}
             onStop={currentRunId ? handleStop : null}
             todos={todos}
             sessionTitle={currentSessionTitle}
