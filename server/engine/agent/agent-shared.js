@@ -88,6 +88,9 @@ export const DEFAULT_TOOL_ALLOWLIST = [
   'Task',
   'ExitPlanMode',
   'Skill',
+  // deferred MCP 工具的取 schema 入口（ENABLE_TOOL_SEARCH=true 时生效）。
+  // 漏挂 = 延迟加载的工具永远调不到（同 Skill 的可见集陷阱）
+  'ToolSearch',
 ];
 
 // 主产物候选 — canvas.html 列首位（P0 per-project workspace 主文件名），
@@ -118,7 +121,10 @@ export const STREAMING_ENABLED = true;
  *   - 新一代 Opus 改了行为时再扩 regex
  */
 export function pickThinkingConfig(model) {
-  if (model && /^claude-opus-(?:4-[6789]|[5-9])/.test(model)) {
+  // adaptive 一族：Opus 4.6+ / Sonnet 5+ / Fable / Mythos。
+  // ⚠️ Sonnet 5 起 budgetTokens 已被 API 移除（enabled+budget 会 400），
+  // 不能再落到 enabled 分支 —— 2026-07-23 订阅模式切 sonnet-5 时修。
+  if (model && /^claude-(?:opus-(?:4-[6789]|[5-9])|sonnet-[5-9]|fable|mythos)/.test(model)) {
     return { type: 'adaptive' };
   }
   return { type: 'enabled', budgetTokens: 8192 };

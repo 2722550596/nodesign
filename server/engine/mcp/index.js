@@ -57,17 +57,24 @@ import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
  * @param {import('../agent/context.js').AgentContext} [deps.ctx]  EventBus 入口
  * @returns SDK MCP server config（喂给 query options.mcpServers）
  */
+// 常驻 schema 白名单（2026-07-23 订阅模式 token 瘦身）：
+// 高频 + schema 小的工具第一 turn 就注入 prompt；不在名单里的走 SDK 默认
+// deferred —— system prompt 只留工具名，agent 用 ToolSearch 按需拉 schema
+// （需要 ENABLE_TOOL_SEARCH=true + allowlist 含 ToolSearch，见 session-loop）。
+// 实测 defer 掉 generate_image/web_search/remove_background 等 6 个胖工具
+// 省 ~80k 字符常驻 schema。prelude 的工具速查表仍列全部工具名 + 一句话用途，
+// agent 知道存在什么、需要时先 ToolSearch("select:mcp__nodesign__<tool>")。
+// （kimi 时代曾全局 alwaysLoad —— kimi 不认 ToolSearch；claude 系模型原生受训，可放心 defer）
+const ALWAYS_LOAD_TOOLS = new Set([
+  'screenshot_canvas', 'read_page', 'list_pages', 'query_elements',
+  'get_computed_styles', 'navigate_to_page', 'highlight',
+  'record_decision', 'get_pending_changes', 'clear_pending_changes',
+]);
+
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
   return createSdkMcpServer({
     name: 'nodesign',
     version: '0.1.0',
-    // SDK 默认 mcp 工具 deferred —— 只把工具名灌进 system prompt，完整 schema
-    // 藏在 ToolSearch 后面，agent 必须先 query 才能调。NoDesign 这 14 个工具
-    // 是业务核心（SKILL.md 全程在引导调它们），defer 直接让 agent 当不存在。
-    // alwaysLoad: true → 所有 schema 第一 turn 就注入 prompt，agent 直接可调。
-    // 代价 ~3-5k system prompt tokens，相对差异化能力（vision 自检 / tweaks /
-    // pending changes / list_pages 精准切片）值得。
-    alwaysLoad: true,
     tools: [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
       makeScreenshotCanvasTool({ workspaceRoot, ctx }),
@@ -128,6 +135,12 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；
       // agent 在 caption / 自然回话邀请反馈，下一轮用户 chat 即天然 gate。
-    ],
+    ].map((t) => (
+      // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
+      // 集中在这打标避免改 16 个工具文件）
+      ALWAYS_LOAD_TOOLS.has(t.name)
+        ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
+        : t
+    )),
   });
 }

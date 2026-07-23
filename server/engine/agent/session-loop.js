@@ -367,6 +367,9 @@ export async function runSession({
         : process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
       CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
+      // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
+      // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
+      ENABLE_TOOL_SEARCH: 'true',
       // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
       // 用于 SDK 内部 helper（如 task title 总结、auto-compaction 等小调）。
       ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),

@@ -157,8 +157,11 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ## NoDesign 业务 MCP 工具速查（17 个）
 
-> 调用名一律 `mcp__nodesign__<tool>`。SDK 已经把完整 schema 注入到 system
-> prompt 顶层（alwaysLoad: true），**第一 turn 就能直接调**，无需 ToolSearch。
+> 调用名一律 `mcp__nodesign__<tool>`。高频工具（截图 / 读页 / pending changes 等）
+> schema 常驻可直接调；**generate_image / web_search / remove_background /
+> expose_tweaks / export_handoff / request_plan_mode 是延迟加载** —— 调用前先
+> `ToolSearch("select:mcp__nodesign__<tool>")` 取 schema（要用几个就一次
+> select 逗号并列，别一个一个取）。
 > 详细工具决策（WHEN to use）见 SKILL.md 各 stage 段；本表只列 HOW 一行速记。
 
 | 工具 | 一句话 | 核心入参 |
