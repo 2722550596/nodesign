@@ -1,10 +1,14 @@
-# generate_image 完整 cookbook（Nano Banana 2）
+# generate_image 完整 cookbook
 
 > 此文件由 PreToolUse(mcp__nodesign__generate_image) hook 在 agent 首次调用工具时
 > 注入。SKILL.md 已含精简版核心要点，本文是深度参考——agent 看完后可拿出更稳的 prompt。
 
-调用网关：NoDesk passthrough → DMXAPI → Gemini 3.1 Flash Image Preview。落档
-`assets/generated/<name>.{png|jpg}`，HTML 里引 `<img src="assets/generated/<name>.jpg">`
+**后端（2026-07-27 起）**：默认走 codex 订阅生图。你的 prompt 会被逐字下传给图像
+模型；生效参数只有 prompt + aspectRatio + referenceImages（PDF reference 不支持，
+imageSize / thinkingLevel / useGrounding / model 静默忽略——本文提到这些 Gemini
+参数的段落只在 gateway 模式下适用）。单张 ~45-60s，别挥霍：一张对齐好的 anchor
+胜过一堆试探性变体。prompt 写作方法论（5 元素公式 / 渲文字 / 反例）全部照旧适用。
+落档 `assets/generated/<name>.png`，HTML 里引 `<img src="assets/generated/<name>.png">`
 （softlink 透明）。
 
 ## 0. Reference 来源策略（生图前先决定从哪儿拿 reference）

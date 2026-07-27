@@ -41,6 +41,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import sharp from 'sharp';
@@ -129,6 +130,73 @@ const MIME_BY_EXT = {
 const DEFAULT_NODESK_URL = 'https://llm-gateway-api.nodesk.tech';
 const DEFAULT_DMXAPI_BASE = 'https://www.dmxapi.cn';
 const DEFAULT_CHANNEL = 'DMX';
+
+// ── codex 生图桥（2026-07-27：NoDesk 网关退役，codex 成为默认 provider）──
+// 骑 codex CLI 订阅（零 API 费）：spawn `codex exec` 让它调自带图像生成工具，
+// 图直接落到我们指定的绝对路径。实测单张 ~45-60s，参考图走 -i 附件（同样实测
+// 风格参照有效）。桥接 prompt 必须写死"逐字传递零改写"——codex agent 默认会
+// 按自己的 Augmentation rules 润色 prompt。
+const IMAGE_PROVIDER = () => (process.env.NODESIGN_IMAGE_PROVIDER || 'codex').toLowerCase();
+const CODEX_BIN = process.env.NODESIGN_CODEX_BIN || 'codex';
+const CODEX_IMAGE_TIMEOUT_MS = Number(process.env.NODESIGN_CODEX_IMAGE_TIMEOUT_MS) || 240_000;
+
+function buildCodexBridgePrompt({ prompt, aspectRatio, absOut, refCount }) {
+  return [
+    '你是图像生成管道的执行端，只做下面几件事，不做任何多余动作：',
+    '1. 调用你的图像生成工具生成一张图。<image-prompt> 标签内的内容必须逐字作为生成 prompt，禁止改写、增删、翻译或润色。',
+    `2. 输出比例：${aspectRatio}。优先用工具的比例/尺寸参数；工具没有对应参数时，作为补充说明传给工具，但不修改 <image-prompt> 原文。`,
+    refCount > 0
+      ? `3. 本消息附带 ${refCount} 张参考图，把它们作为图像生成的参考输入（风格 / 主体一致性参照）。`
+      : '3. 本次无参考图。',
+    `4. 生成后把图片文件复制到精确路径 ${absOut}（目录已存在）。`,
+    '5. 最后只回复该绝对路径。',
+    '<image-prompt>',
+    prompt,
+    '</image-prompt>',
+  ].join('\n');
+}
+
+/**
+ * 跑一次 codex exec 生图，以目标文件落盘为成功标准（codex 的文本回复不可信），
+ * 失败自动重试一次。abort signal / 超时都 SIGKILL 子进程。
+ */
+async function runCodexImageGen({ bridgePrompt, refPaths, cwd, signal, expectFile, timeoutMs = CODEX_IMAGE_TIMEOUT_MS }) {
+  const args = ['exec', '--skip-git-repo-check', '-s', 'workspace-write', '-C', cwd, bridgePrompt];
+  for (const p of refPaths) args.push('-i', p);
+
+  const runOnce = () => new Promise((resolve, reject) => {
+    const child = spawn(CODEX_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+    let stderrTail = '';
+    child.stdout.on('data', () => { /* 排空防背压 */ });
+    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
+    const killTimer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* */ }
+      reject(new Error(`codex exec timeout after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    const onAbort = () => { try { child.kill('SIGKILL'); } catch { /* */ } };
+    signal?.addEventListener?.('abort', onAbort, { once: true });
+    child.on('error', (err) => { clearTimeout(killTimer); reject(err); });
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      signal?.removeEventListener?.('abort', onAbort);
+      if (signal?.aborted) return reject(new Error('aborted'));
+      if (code !== 0) return reject(new Error(`codex exec exited ${code}: ${stderrTail.slice(-300) || 'no stderr'}`));
+      resolve();
+    });
+  });
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await runOnce();
+      const st = await fs.stat(expectFile).catch(() => null);
+      if (st && st.size > 0) return;
+      throw new Error(`codex finished but target file missing/empty: ${expectFile}`);
+    } catch (err) {
+      if (attempt === 2 || signal?.aborted) throw err;
+      console.warn(`[generate-image] codex attempt ${attempt} failed (${err.message}), retrying once`);
+    }
+  }
+}
 
 const PASSTHROUGH_PATH = '/default/passthrough';
 // model id 在 callGateway 时动态拼，因为支持 flash / pro 路由
@@ -285,9 +353,16 @@ function buildOutputName(outputName, assetRole) {
 export function makeGenerateImageTool({ workspaceRoot, sharedRoot = null, ctx } = {}) {
   return tool(
     'generate_image',
-    `Generate a high-quality image via Gemini 3.1 Flash Image Preview (Nano Banana 2).
+    `Generate a high-quality image.
 Use this to add hero / cover / background / frame / icon / decoration / portrait
 / illustration / quote-backdrop / section-divider / pattern visuals to canvas.html.
+
+BACKEND NOTE: default backend is codex-imagegen (subscription). Under it the
+parameters that matter are prompt + aspectRatio + referenceImages (+ assetRole /
+outputName for naming). imageSize / thinkingLevel / responseModalities / model /
+useGrounding are Gemini-gateway-only and silently ignored; PDF referenceImages
+are NOT supported (images only). Expect ~45-60s per image — batch wisely and
+prefer one good anchor shot over many speculative variants.
 
 Saves the image to assets/generated/<name>.png inside the workspace (visible
 across sessions via the shared/ softlink). Returns the image as an inline
@@ -417,29 +492,27 @@ become part of the spec.json design history.`,
           isError: true,
         };
       }
-      // 1. env / 配置
-      const gatewayUrl = process.env.NODESIGN_GATEWAY_URL || DEFAULT_NODESK_URL;
-      const gatewayKey = process.env.NODESIGN_GATEWAY_KEY;
-      if (!gatewayKey) {
-        return {
-          content: [{
-            type: 'text',
-            text: 'generate_image failed: NODESIGN_GATEWAY_KEY not set in env. Cannot reach NoDesk passthrough gateway.',
-          }],
-          isError: true,
-        };
-      }
-      const channel = process.env.NODESIGN_GATEWAY_CHANNEL || DEFAULT_CHANNEL;
-      const channelBase =
-        process.env.NODESIGN_GATEWAY_CHANNEL_URL_BASE || DEFAULT_DMXAPI_BASE;
+      // 1. provider 分流（2026-07-27：NoDesk 网关退役，默认 codex 订阅生图；
+      //    gateway 分支保留给显式 NODESIGN_IMAGE_PROVIDER=gateway 的场景）
+      const provider = IMAGE_PROVIDER();
 
-      // 2. 解析 referenceImages（fail-fast）
-      const inlineImageParts = [];
+      // 输出命名 + 目录提前定：codex 分支需要先有确定的目标路径让 codex 落盘
+      const finalName = buildOutputName(outputName, assetRole);
+      const useShared = !!sharedRoot;
+      const outDir = path.join(
+        useShared ? sharedRoot : workspaceRoot,
+        'assets',
+        'generated',
+      );
+      await fs.mkdir(outDir, { recursive: true });
+
+      // 2. 解析 referenceImages（fail-fast；两个 provider 共用解析，消费方式不同：
+      //    codex 用 abs 路径走 -i 附件，gateway 读文件转 base64 inline parts）
+      const resolvedRefs = [];
       if (referenceImages && referenceImages.length > 0) {
         for (const rel of referenceImages) {
-          let resolved;
           try {
-            resolved = await resolveReferenceImage(rel, workspaceRoot, sharedRoot);
+            resolvedRefs.push(await resolveReferenceImage(rel, workspaceRoot, sharedRoot));
           } catch (err) {
             return {
               content: [{
@@ -449,6 +522,69 @@ become part of the spec.json design history.`,
               isError: true,
             };
           }
+        }
+      }
+
+      let imgBuf;
+      let outMime = 'image/png';
+      let accompanyText = null;
+      let response = null;   // gateway 分支才有（grounding metadata 从这取）
+      let fileName;
+      let absOut;
+
+      if (provider === 'codex') {
+        const pdfRef = resolvedRefs.find((r) => r.mimeType === 'application/pdf');
+        if (pdfRef) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'generate_image failed: codex provider 不支持 PDF reference（-i 只收图片）。先把 PDF 内容转述进 prompt，或截图后当图片 reference。',
+            }],
+            isError: true,
+          };
+        }
+        fileName = `${finalName}.png`;
+        absOut = path.join(outDir, fileName);
+        const bridgePrompt = buildCodexBridgePrompt({
+          prompt, aspectRatio, absOut, refCount: resolvedRefs.length,
+        });
+        try {
+          await runCodexImageGen({
+            bridgePrompt,
+            refPaths: resolvedRefs.map((r) => r.abs),
+            cwd: outDir,
+            signal: ctx?.abortController?.signal,
+            expectFile: absOut,
+          });
+        } catch (err) {
+          return {
+            content: [{
+              type: 'text',
+              text: `generate_image codex error: ${err?.message || String(err)}`,
+            }],
+            isError: true,
+          };
+        }
+        imgBuf = await fs.readFile(absOut);
+      } else {
+        // ── gateway 分支（显式 opt-in）──
+        const gatewayUrl = process.env.NODESIGN_GATEWAY_URL || DEFAULT_NODESK_URL;
+        const gatewayKey = process.env.NODESIGN_GATEWAY_KEY;
+        if (!gatewayKey) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'generate_image failed: NODESIGN_IMAGE_PROVIDER=gateway 但 NODESIGN_GATEWAY_KEY 未设。',
+            }],
+            isError: true,
+          };
+        }
+        const channel = process.env.NODESIGN_GATEWAY_CHANNEL || DEFAULT_CHANNEL;
+        const channelBase =
+          process.env.NODESIGN_GATEWAY_CHANNEL_URL_BASE || DEFAULT_DMXAPI_BASE;
+
+        const inlineImageParts = [];
+        for (const resolved of resolvedRefs) {
           const buf = await fs.readFile(resolved.abs);
           inlineImageParts.push({
             inline_data: {
@@ -457,93 +593,81 @@ become part of the spec.json design history.`,
             },
           });
         }
-      }
 
-      // 3. 构建 Gemini generateContent payload
-      const parts = [{ text: prompt }, ...inlineImageParts];
-      const payload = {
-        contents: [{ parts }],
-        generationConfig: {
-          responseModalities,
-          imageConfig: {
-            aspectRatio,
-            imageSize,
+        // Gemini generateContent payload
+        const parts = [{ text: prompt }, ...inlineImageParts];
+        const payload = {
+          contents: [{ parts }],
+          generationConfig: {
+            responseModalities,
+            imageConfig: {
+              aspectRatio,
+              imageSize,
+            },
+            thinkingConfig: {
+              thinkingLevel: thinkingLevel === 'high' ? 'High' : 'Minimal',
+              includeThoughts: false,
+            },
           },
-          thinkingConfig: {
-            thinkingLevel: thinkingLevel === 'high' ? 'High' : 'Minimal',
-            includeThoughts: false,
-          },
-        },
-        // Image Search Grounding：opt-in。NB2 自决要不要真用（人物 query
-        // 模型自动跳过，Google guardrail；地标/产品/真实场景才会触发）。
-        ...(useGrounding ? { tools: [{ googleSearch: {} }] } : {}),
-      };
-
-      // 4. 调网关
-      let response;
-      try {
-        response = await callGateway(payload, {
-          gatewayUrl,
-          gatewayKey,
-          channel,
-          channelBase,
-          modelId,
-          signal: ctx?.abortController?.signal,
-        });
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text',
-            text: `generate_image gateway error: ${err?.message || String(err)}`,
-          }],
-          isError: true,
+          // Image Search Grounding：opt-in。NB2 自决要不要真用（人物 query
+          // 模型自动跳过，Google guardrail；地标/产品/真实场景才会触发）。
+          ...(useGrounding ? { tools: [{ googleSearch: {} }] } : {}),
         };
-      }
 
-      // 5. 提图
-      let extracted;
-      try {
-        extracted = extractFinalImage(response);
-      } catch (err) {
-        return {
-          content: [{
-            type: 'text',
-            text:
-              `generate_image failed: ${err.message}. `
-              + `Response keys: ${Object.keys(response || {}).join(', ')}. `
-              + `Try refining the prompt or check gateway logs.`,
-          }],
-          isError: true,
-        };
-      }
-
-      // 6. 落地 —— 扩展名跟 Gemini 返回的 mimeType 走（实测 Gemini 3.1
-      // Flash Image 经常返 image/jpeg 而不是 png，硬写 .png 会让文件名
-      // 和真实编码不一致）。
-      const finalName = buildOutputName(outputName, assetRole);
-      const ext = (() => {
-        switch ((extracted.mimeType || '').toLowerCase()) {
-          case 'image/jpeg': case 'image/jpg': return '.jpg';
-          case 'image/webp': return '.webp';
-          case 'image/gif':  return '.gif';
-          case 'image/png':
-          default:           return '.png';
+        try {
+          response = await callGateway(payload, {
+            gatewayUrl,
+            gatewayKey,
+            channel,
+            channelBase,
+            modelId,
+            signal: ctx?.abortController?.signal,
+          });
+        } catch (err) {
+          return {
+            content: [{
+              type: 'text',
+              text: `generate_image gateway error: ${err?.message || String(err)}`,
+            }],
+            isError: true,
+          };
         }
-      })();
-      const imgBuf = Buffer.from(extracted.base64, 'base64');
-      const fileName = `${finalName}${ext}`;
 
-      // Pick base: sharedRoot/assets/generated/ if available, else workspaceRoot/assets/generated/
-      const useShared = !!sharedRoot;
-      const outDir = path.join(
-        useShared ? sharedRoot : workspaceRoot,
-        'assets',
-        'generated',
-      );
-      await fs.mkdir(outDir, { recursive: true });
-      const absOut = path.join(outDir, fileName);
-      // 原图不压缩——保留 Gemini 输出的全分辨率给最终交付（导出 / iframe 引用）
-      await fs.writeFile(absOut, imgBuf);
+        let extracted;
+        try {
+          extracted = extractFinalImage(response);
+        } catch (err) {
+          return {
+            content: [{
+              type: 'text',
+              text:
+                `generate_image failed: ${err.message}. `
+                + `Response keys: ${Object.keys(response || {}).join(', ')}. `
+                + `Try refining the prompt or check gateway logs.`,
+            }],
+            isError: true,
+          };
+        }
+
+        // 扩展名跟 Gemini 返回的 mimeType 走（实测 Gemini 3.1 Flash Image
+        // 经常返 image/jpeg 而不是 png，硬写 .png 会让文件名和真实编码不一致）
+        const ext = (() => {
+          switch ((extracted.mimeType || '').toLowerCase()) {
+            case 'image/jpeg': case 'image/jpg': return '.jpg';
+            case 'image/webp': return '.webp';
+            case 'image/gif':  return '.gif';
+            case 'image/png':
+            default:           return '.png';
+          }
+        })();
+        imgBuf = Buffer.from(extracted.base64, 'base64');
+        outMime = extracted.mimeType || 'image/png';
+        accompanyText = extracted.accompanyText || null;
+        fileName = `${finalName}${ext}`;
+        absOut = path.join(outDir, fileName);
+        // 原图不压缩——保留全分辨率给最终交付（导出 / iframe 引用）
+        await fs.writeFile(absOut, imgBuf);
+      }
 
       // 额外生成 thumbnail（仅给 chat 缩略图 / WS 推送用，原图保留）
       // 落到 .thumbnails/ 子目录，agent 通常不引用（隐藏目录命名暗示），但能被
@@ -606,9 +730,9 @@ become part of the spec.json design history.`,
           assetRole: assetRole || null,
           aspectRatio,
           imageSize,
-          model,            // 'flash' | 'pro'，区分前端 badge 显示 + spec.json 审计
-          referenceImageCount: inlineImageParts.length,
-          accompanyText: extracted.accompanyText || null,
+          model: provider === 'codex' ? 'codex' : model,   // 前端 badge 显示 + spec.json 审计
+          referenceImageCount: resolvedRefs.length,
+          accompanyText,
           groundingUsed: groundingPath !== null,           // model 真触发了搜索
           groundingSourceCount,
           groundingPath,                                    // sidecar 相对路径，前端读 attribution HTML
@@ -619,11 +743,13 @@ become part of the spec.json design history.`,
       const captionParts = [
         `Generated ${fileName}`,
         `at ${agentRelPath}`,
-        `(${aspectRatio}, ${imageSize}, ${model}, ${(imgBuf.length / 1024).toFixed(1)} KB)`,
+        provider === 'codex'
+          ? `(${aspectRatio}, codex-imagegen, ${(imgBuf.length / 1024).toFixed(1)} KB)`
+          : `(${aspectRatio}, ${imageSize}, ${model}, ${(imgBuf.length / 1024).toFixed(1)} KB)`,
       ];
       if (assetRole) captionParts.push(`role=${assetRole}`);
-      if (inlineImageParts.length > 0) {
-        captionParts.push(`with ${inlineImageParts.length} reference image${inlineImageParts.length > 1 ? 's' : ''}`);
+      if (resolvedRefs.length > 0) {
+        captionParts.push(`with ${resolvedRefs.length} reference image${resolvedRefs.length > 1 ? 's' : ''}`);
       }
       if (groundingPath) {
         captionParts.push(`grounded with ${groundingSourceCount} source${groundingSourceCount > 1 ? 's' : ''}`);
@@ -633,8 +759,8 @@ become part of the spec.json design history.`,
       const caption = captionParts.join(' ');
 
       const content = [{ type: 'text', text: caption }];
-      if (extracted.accompanyText) {
-        content.push({ type: 'text', text: `Model commentary: ${extracted.accompanyText}` });
+      if (accompanyText) {
+        content.push({ type: 'text', text: `Model commentary: ${accompanyText}` });
       }
       if (groundingPath) {
         // 给 agent 看到本次 grounding 用的搜索 + top sources，方便它在回话里
@@ -659,7 +785,7 @@ become part of the spec.json design history.`,
       // agent 仍能通过 caption 里的 agentRelPath 引用原图（`<img src="assets/generated/foo.png">`）。
       // thumbnail 失败时降级回原 base64（保险，agent 至少能看到图）。
       const imageBlockData = thumb ? thumb.buf.toString('base64') : imgBuf.toString('base64');
-      const imageBlockMime = thumb ? thumb.mimeType : extracted.mimeType;
+      const imageBlockMime = thumb ? thumb.mimeType : outMime;
       content.push({
         type: 'image',
         data: imageBlockData,
