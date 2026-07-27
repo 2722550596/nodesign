@@ -1,62 +1,23 @@
 # Portrait（layout-role: `image-led`）
 
-> 人物 / 演讲者卡片 — 4:5 居左图 + 右侧元数据 + quote。
+人物页：主角介绍 / 团队页 / 专家背书。人像 + 身份信息 + 一句 quote 或 tagline。
 
-## 何时用
+## 意图
 
-- **emotion 类**主角介绍页 / 角色卡
-- **sales / funding 类**团队页 / 创始人介绍
-- **decision 类**专家背书页（4:5 比例 vs landscape 是"个人"vs"环境"的暗示）
-- 跟 `quote-backdrop` 区别：portrait 是"人 + quote"，backdrop 是"图弱化 + 大字引言"——人物在不在前景看清
+这页在建立"人的可信度或存在感"。竖幅（4:5 / 2:3）人像暗示"这是个人"，
+横幅环境照暗示"这是个场景"，按你要的语义选。跟 quote-backdrop 的区别：
+portrait 人在前景，quote-backdrop 图弱化、大字是主角。
 
-## 标记规约
+## 真正硬的几条
 
-| 元素 | 必/选 | 规约 |
-|---|---|---|
-| `<section data-page="N">` | 必装 | |
-| `data-anchor="portrait-<name>-pN"` | 必装 | deck 内唯一；多 portrait 时加 `-pN` 页号后缀 |
-| `data-layout="portrait"` | 选填 | layout hint |
-| `data-layout-role="image-led"` | 必装 | |
-| `<img>` 4:5 / 2:3 | 必装 | grid 左格，object-cover |
-| `data-asset-role="portrait"` | 必装 img | |
-| `data-asset-source="generated"` | 必装 img | |
-| Speaker label（mono）| 推荐 | 角色名 / title，小字打底 |
-| 姓名 h2 | 必装 | font-display + var(--h1) |
-| Quote / tagline | 推荐 | italic + Instrument Serif |
+- **多人物必须锁风格**：generate_image 用同一批 referenceImages 保持光线和质感一致，
+  否则团队页像从三个图库拼出来的。
+- **信息分三层**：身份小字、姓名大字、quote 另一种质感（斜体或衬线），三层不同
+  重量，别做成同字号列表。
+- 人像圆角克制：全圆（头像化）让人物失去分量，除非锚本身就是社交产品气质。
 
-## 写法铁律
+## 写法
 
-1. **`grid-cols-[480px_1fr]` 是骨架不是定值** —— 不同视觉密度可调到 [400px_1fr] / [560px_1fr]
-2. **圆角 `rounded-2xl` 别全圆** —— 全圆（rounded-full）人物失去稳重感，rounded-2xl 现代但保留方寸
-3. **引用 quote 用 italic + Instrument Serif** —— 跟正文衬线区分
-4. **speaker label 用 mono 小字** —— "Speaker" / "Founder" / "角色名"，反差衬托姓名
-5. **图选择**：generate_image 时 `assetRole="portrait"`，aspectRatio="4:5"；多人物时 referenceImages 锁定光线 / 风格
-
-## 最小代码片段
-
-```html
-<section data-page="3" data-anchor="portrait-maya-p3"
-         data-layout="portrait" data-layout-role="image-led"
-         class="bg-[var(--paper)]">
-  <div class="h-full grid grid-cols-[480px_1fr] gap-24 p-24">
-    <img src="assets/generated/portrait-maya.jpg"
-         data-asset-role="portrait"
-         data-asset-source="generated"
-         class="w-full h-full object-cover rounded-2xl" alt="Maya Chen" />
-
-    <div class="flex flex-col justify-center gap-6">
-      <div class="font-mono text-sm tracking-widest uppercase text-[var(--muted)]">
-        {Speaker / 角色名}
-      </div>
-      <h2 class="font-display text-[var(--ink)] leading-none"
-          style="font-size: var(--h1)">
-        {Maya Chen}
-      </h2>
-      <p class="text-2xl text-[var(--muted)] italic"
-         style="font-family: 'Instrument Serif', 'Songti SC', 'Noto Serif SC', serif;">
-        {一句 quote 或 tagline · 改我}
-      </p>
-    </div>
-  </div>
-</section>
-```
+左图右文或上图下文皆可，比例和间距从锚推导。img 建议带
+`data-asset-role="portrait"`；section 常规三件套标记（data-page /
+data-layout-role / 唯一 data-anchor，重名加 `-pN` 后缀）。

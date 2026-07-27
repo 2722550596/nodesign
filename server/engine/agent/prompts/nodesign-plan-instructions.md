@@ -24,11 +24,11 @@
 
 ## generate_image 在 plan mode
 
-**核心原则参 SKILL § 0.2.6 看图说话是 brainstorm default**——不分 mode 都按那个节奏跑（主体明确就先出 1-2 张候选当对齐起点；关键页 reference 让用户挑；不要先 ask 几轮再生图）。
+**核心原则参 SKILL § 钉锚的手段（图比文字快）**——不分 mode 都按那个节奏跑（主体明确就先出 1-2 张候选当对齐起点；关键页 reference 让用户挑；不要先 ask 几轮再生图）。
 
 **plan-mode 特有补充**：
 
-1. **每页都跑这个节奏**：plan-mode 是逐页 brainstorm，所以每页有图需求时都按 § 0.2.6 走（Mode A 通常只在关键页跑）
+1. **每页都跑这个节奏**：plan-mode 是逐页 brainstorm，所以每页有图需求时都按上面的节奏走（非 plan 模式通常只在关键页跑）
 2. **每页对齐结果落 `design-plan.md.pages[N].c_decisions`**（schema 见下方）：
    - `reference: <来源 + 具体——"用户上传 cover.png" / "web_search 第 2 张" / "模型脑里"〉`
    - 如果生成了候选图，把最终选的图当 `referenceImages` 种子写进 c_decisions
@@ -44,8 +44,8 @@ agent 先构思再问 = 给用户具体靶子打 = 比"你想要什么风格？"
 确认 = 单页错了只重做一页，全 plan 错了 = 全推翻；用户能在每页 redirect
 方向，不会被 agent 拖到尽头才发现整体走偏。
 
-**Deck-kind aware**：进 plan mode 之前 Stage 0 应该已经锁定 deck_kind（见 SKILL.md
-§ 0.0 Deck-kind 识别）。plan mode 的整体破局 + 逐页 brainstorm 都按 kind 分流：
+**Deck-kind aware**：进 plan mode 之前钉锚阶段应该已经锁定 deck_kind（见 SKILL.md
+§ Deck 意图）。plan mode 的整体破局 + 逐页 brainstorm 都按 kind 分流：
 
 - decision/sales/funding/launch 等"导演决策"类 → 重点对齐 decision_spine 各步骤分页 + 每页 function_in_arc 承担哪一步
 - emotion/ceremony → 重点对齐 metaphor + 情绪曲线节奏对比
@@ -124,14 +124,14 @@ meta:
   tone: <严肃商务 / 温暖人文 / 学术克制 / 戏剧化叙事 / Other>
   palette: <主色 + 强调色十六进制>
   metaphor: <核心隐喻一句话；emotion / sales / ceremony 必填，其他选填>
-  motion_budget: <静态 / 微动效 / entry 动效 / 戏剧化 / Other —— Stage 0 § 特效量对齐 锁定>
-  anti_cliche: <数组，列出本 deck 主动避开的俗套（SKILL.md § 0.0.5 starter prompt + 用户补充）。
+  motion_budget: <静态 / 微动效 / entry 动效 / 戏剧化 / Other —— 钉锚时锁定（动效预算是锚的组成之一）>
+  anti_cliche: <数组，列出本 deck 主动避开的俗套（SKILL.md § 反默认清单 + 用户补充）。
                 例：decision 型可能锁
                   - "标题写名词不写结论"
                   - "数据图表无结论 caption"
                   - "风险藏起来 / 一笔带过"
                   - "套蓝色渐变 + icon + 三栏 KPI 通用商务模板"
-                Stage 3 generate 写每页前回查；vision-checker Tier 0 按这份清单 critique>
+                generate 写每页前回查；vision-checker Tier 0 按这份清单 critique>
   page_count: N
   cross_page_anchor: <第 N 张图当 referenceImages 种子；或 portrait Maya 跨页固定>
 
@@ -145,7 +145,7 @@ pages:
   - index: 1
     role: cover
     a_intent: <一句话画面描述（主体+动作+构图+风格）>
-    b_layout: <text-led / image-led / data-led / hybrid>   # 跟 SKILL § 页型决策表 + canvas data-layout-role 对齐
+    b_layout: <text-led / image-led / data-led / hybrid>   # 跟 canvas data-layout-role + patterns/<role>.md 对齐
     c_decisions:
       reference: <来源 + 具体>
       opposition: <反默认决策一行 — OPPOSITION：不走"标题居中纯文字"的偷懒做法>

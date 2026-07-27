@@ -28,7 +28,7 @@
 
 写法 `<div class="__nd-deck-wrap" data-deck-aspect="...">`。**比例锁死后切换 = 整套版面重排**——
 版面排针对某比例，切了几乎重做。即便 brief 看起来明显是 16:9 也仍要主动问一句确认；
-唯一例外是 brief 第一句明确说了（"做个手机竖屏宣发"）。详见 SKILL § ⚠️ 设计开始前的第一动作。
+唯一例外是 brief 第一句明确说了（"做个手机竖屏宣发"）。详见 SKILL § 一、钉锚。
 
 ---
 
@@ -162,7 +162,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 > expose_tweaks / export_handoff / request_plan_mode 是延迟加载** —— 调用前先
 > `ToolSearch("select:mcp__nodesign__<tool>")` 取 schema（要用几个就一次
 > select 逗号并列，别一个一个取）。
-> 详细工具决策（WHEN to use）见 SKILL.md 各 stage 段；本表只列 HOW 一行速记。
+> 详细工具决策（WHEN to use）见 SKILL.md；本表只列 HOW 一行速记。
 
 | 工具 | 一句话 | 核心入参 |
 |---|---|---|
@@ -187,7 +187,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 **`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2、tavily ≤3、exa ≤2。Query 加年份词（2025/2026）。**英文 query 走 tavily 而非 baidu**（baidu 英文实测严重跑题）。
 
-**Search-first 软规则**：拿到首条 brief 时先判断要不要搜——主题/品牌/产品/最新事件类**默认搜 1-2 次**，纯创作 / 已有 outline 才跳。详见 SKILL.md § Stage 0。
+**Search-first 软规则**：拿到首条 brief 时先判断要不要搜——主题/品牌/产品/最新事件类**默认搜 1-2 次**，纯创作 / 已有 outline 才跳。详见 SKILL.md § 钉锚的手段。
 
 **`WebFetch`（SDK 内置）配合 web_search**：`{ url, prompt }` —— 取 URL 后用 prompt 总结，不灌完整 HTML 到 context。多页 fetch 派给 explorer 子代理。
 
@@ -205,11 +205,11 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | 属性 | 装在哪 | 用途 |
 |---|---|---|
 | `data-page="N"` | section 必装 | 分页（前端 SlideNavigator / list_pages 全靠它） |
-| `data-layout-role="<text-led \| image-led \| data-led \| hybrid>"` | section 必装 | 页型角色，跟 SKILL § 页型决策表联动 + 决定每页内容承载方式 |
+| `data-layout-role="<text-led \| image-led \| data-led \| hybrid>"` | section 必装 | 页型角色，对应 patterns/<role>.md 骨架参考 + 决定每页内容承载方式 |
 | `data-anchor="kebab-name"` | 每页 2-4 个关键元素 | agent 跨 turn 引用 + 用户评论 pin + findElementByAnchor 锚源（**deck 内唯一**） |
 | `data-react-mount="<id>"` | **React mount 容器 div 必装** | DirectEdit guard 识别——不挂 contenteditable，防止 React re-render 覆盖用户改的字 |
 | `data-layout="<自由词>"` | section 选填 | layout 名 hint，list_pages 给你做总览；按隐喻自由命名 |
-| `data-skeleton="<slug>"` | section 临时（骨架优先模式）| 骨架先行写法的占位锚——空 section 等待逐页 Edit 填充时用，填完应替换成 `data-anchor`（slug 保留作为 vision-checker 反查锚）。详见 SKILL § 起手式骨架优先 5 步 |
+| `data-skeleton="<slug>"` | section 临时（骨架优先模式）| 骨架先行写法的占位锚——空 section 等待逐页 Edit 填充时用，填完应替换成 `data-anchor`（slug 保留作为 vision-checker 反查锚）。详见 SKILL § 二、展开 起手式 |
 
 ### 命名规范
 
@@ -352,7 +352,7 @@ agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体
 ## Hybrid 范式骨架（2026-05-06 起所有 deck 默认）
 
 > 起手 cp `canvas.template.html` 改写——session 创建时系统已把模板拷到 cwd，预置全家桶 importmap（21 库 + deck-kind 分组注释）/ Babel / Tailwind / 4 个 shadcn 组件（`__nd-shadcn-lite`）/ 键盘翻页 / mode-detect / image CSS vars。fit script 由系统在导出 / 独立打开时注入（模板不带）。
-> 详细选型决策表（什么时候 React mount / 什么时候纯静态）见 SKILL.md § Stage 3。
+> 详细选型决策（什么时候 React mount / 什么时候纯静态）见 SKILL.md § 技术选型。
 
 > **6 个 layout-role 范本** 在 `<skill plugin>/patterns/<role>.md`（image-led-cover / section-divider / portrait / quote-backdrop / text-led / hybrid-grid）—— invoke `Skill` 加载方法论后，body 内部会按 role 指引按需 Read 这些骨架 reference（标记规约 / 铁律 / 最小代码片段）。这些 plugin path 已被 session-loop 加进 `additionalDirectories`，SDK Read 工具直接放行。**不读 patterns 直接照搬模板范例 = 心智被锚定到 default 视觉**（模板已只留 PAGE 1 cover + PAGE 2 React mount + PAGE 3 closing 真实 section）。
 
@@ -392,7 +392,7 @@ agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体
 
 ### 全家桶库速查（importmap 已声明，agent `import` 即用）
 
-> **按 deck-kind 快速选型**见 SKILL.md § Hybrid 选型按 deck-kind 分流；**按 importmap 分组**速览见 canvas.template.html 顶部 importmap 注释。本表是按"内容类型"微观查（"我要画图表→recharts"），跨表 lookup 互补。
+> 选型原则见 SKILL.md § 技术选型；**按 importmap 分组**速览见 canvas.template.html 顶部 importmap 注释。本表是按"内容类型"微观查（"我要画图表→recharts"）。
 
 | 库 | 用在 |
 |---|---|
@@ -428,7 +428,7 @@ agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体
 | 子代理 | 一句话用途 | 何时调 |
 |---|---|---|
 | `explorer` | **研究员**：搜外链 / 找参考图 URL / 验证事实 / 找字体 CDN | "我需要外部信息但搜起来要几个 turn"的场景 |
-| `vision-checker` | 截图 + 逐页对照 plan 的独立视觉评审（read-only；自动 list_pages + fullPage + 循环 pageIndex 跑全 deck；**首调时 hook 注派遣模板**） | **整 deck 第一版写完默认派一次**（建立质量底线）/ 关键页改完单页定向 / 用户问"看着怎么样"。详见 SKILL.md § Stage 4 + § 完成时怎么收尾 |
+| `vision-checker` | 截图 + 逐页对照 plan 的独立视觉评审（read-only；自动 list_pages + fullPage + 循环 pageIndex 跑全 deck；**首调时 hook 注派遣模板**） | **整 deck 第一版写完默认派一次**（建立质量底线）/ 关键页改完单页定向 / 用户问"看着怎么样"。详见 SKILL.md § 四、自检与收尾 |
 | `ds-extractor` | 抽 design system tokens（color/type/spacing） | 用户说"抽 design system" 时 |
 | `tweak-proposer` | 推 tweak schema（slider / colorpicker） | tweak UI 流接通后再用 |
 
@@ -479,4 +479,4 @@ curl -L -o ./assets/bgm.mp3 "https://cdn.pixabay.com/audio/..."
 
 ---
 
-> 业务方法论（5-stage paradigm / deck-kind 分流 / 导演心智 / 完成时收尾） 由后面 append 的 SKILL.md 提供。
+> 业务方法论（风格锚范式：钉锚 / 展开 / 迭代守锚 / 反默认清单） 由 `deskskill-engine-mini` skill 提供。

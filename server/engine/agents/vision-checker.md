@@ -84,7 +84,7 @@ rendered design honors them:
 
 **Single-page rules (universal cross-kind)**:
 
-For each page, briefly check the 4 rules from SKILL.md § Stage 3:
+For each page, briefly check the 4 per-page questions from SKILL.md § 二、展开:
 - **One Sentence Rule** — Does the page have ONE clear core sentence
   (the conclusion / quote / heading), with everything else visually subordinate?
   If multiple sentences compete for top billing, hierarchy failed.
