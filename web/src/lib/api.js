@@ -165,8 +165,19 @@ export const Assets = {
     jsonRequest('DELETE', `/api/projects/${pid}/assets/${encodeURIComponent(filename)}`),
 
   // ── 工作台产物墙（2026-07-27 v1）──
-  /** 产物清单（project 级：上传素材 + generated 生成图） */
+  /** 产物清单（project 级：上传素材 + generated 生成图 + 便签） */
   artifacts: (pid) => jsonRequest('GET', `/api/projects/${pid}/artifacts`),
+  /** 新建灵感便签 → shared/assets/notes/<ts>-<slug>.md */
+  createNote: (pid, { text, title, sessionId } = {}) =>
+    jsonRequest('POST', `/api/projects/${pid}/notes`, { text, title, sessionId }),
+  /** 删便签 */
+  removeNote: (pid, filename) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/notes/${encodeURIComponent(filename)}`),
+  /** 画布布局（空间画布，含 zones 分区）*/
+  getBoard: (pid) => jsonRequest('GET', `/api/projects/${pid}/board`),
+  putBoard: (pid, board) => jsonRequest('PUT', `/api/projects/${pid}/board`, { board }),
+  /** diff 合并写：{ size?, objects?: {id: obj|null}, zones?: {id: zone|null} }，null=删 */
+  patchBoard: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/board`, { patch }),
   /**
    * 产物文件 URL（project 级，不依赖 session）。
    * relPath 是 artifacts 返回的 agent 视角路径（'assets/...'），
@@ -225,7 +236,7 @@ export const Turn = {
    *   - 'plan' → 启用 SDK 原生 plan mode（read-only + ExitPlanMode 审批流）
    *   - 其他/不传 → 默认 bypassPermissions
    */
-  send: async ({ pid, chat, attachments = [], skillId, sessionId, permissionMode, requestId }) => {
+  send: async ({ pid, chat, attachments = [], skillId, sessionId, permissionMode, requestId, raw }) => {
     // Phase A.6（2026-05-07）：requestId 幂等防重发。
     // 弱网下用户可能点两次发送或 fetch 超时自动重试。后端 LRU 同 requestId 直接返
     // 已存在的 { runId, sessionId } 不重复创建 session/run。
@@ -233,6 +244,7 @@ export const Turn = {
     const body = { chat, attachments, skillId };
     if (sessionId !== undefined) body.sessionId = sessionId;
     if (permissionMode) body.permissionMode = permissionMode;
+    if (raw === true) body.raw = true;   // 斜杠命令直达（/compact 等），跳过消息装饰
     body.requestId = requestId || (crypto?.randomUUID
       ? crypto.randomUUID()
       : `req-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);

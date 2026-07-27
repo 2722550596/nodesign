@@ -11,7 +11,7 @@ import CommentOverview from './CommentOverview.jsx';
 import CommentMarkers from './CommentMarkers.jsx';
 import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
 import GrabHandle from './GrabHandle.jsx';
-import ArtifactBoard from './ArtifactBoard.jsx';
+import BoardCanvas from './BoardCanvas.jsx';
 import PostDragNotePanel from './PostDragNotePanel.jsx';
 import PendingEditsBar from './PendingEditsBar.jsx';
 import PendingMoveMarkers from './PendingMoveMarkers.jsx';
@@ -91,14 +91,49 @@ export default function CanvasFrame({
   // 工作台产物墙（2026-07-27 v1）
   onAddToContext,          // (item) => void —— 物件加入上下文托盘（inputs）
   artifactRefreshToken,    // 变化时产物墙重拉（复用 reloadToken：image_generated / file_changed 都 bump）
+  boardVersion,            // board.updated 事件 bump —— agent 改过画布布局时整份重拉
+  boardUi = null,          // BoardCanvas 上报的 UI 态（ProjectWorkspace 持有：会话栏也要消费）
+  onBoardUiState,          // (ui) => void —— 上报回调
 }) {
   // 直接 hook PanelManager 拿 tweaks 浮窗当前 visible 状态 + setter（用于 toggle）
   const { panels, setPanelVisible } = usePanelManager();
   const tweaksOpen = !!panels?.tweaks?.visible;
   const handleToggleTweaks = () => setPanelVisible('tweaks', !tweaksOpen);
-  const [mode, setMode] = useState('edit');
+  // 无 session（/work 路径）时默认落在工作台 —— 没 deck 可看，产物墙就是主视图
+  const [mode, setMode] = useState(htmlSrc ? 'edit' : 'board');
+  // 从 /work 新建 session 后首次有 canvas → 自动切回 edit 看 deck 生成
+  const hadSrcRef = useRef(!!htmlSrc);
+  useEffect(() => {
+    if (htmlSrc && !hadSrcRef.current && mode === 'board') {
+      if (stayBoardRef.current) {
+        stayBoardRef.current = false;   // 工作台聚焦切会话：留在画布
+      } else {
+        setMode('edit');
+      }
+    }
+    hadSrcRef.current = !!htmlSrc;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [htmlSrc]);
   // Drag 模式下的"自由模式 / 嵌入模式" toggle —— 自由模式 = absolute 落点；嵌入 = DOM 树 move
   const [dragFreeMode, setDragFreeMode] = useState(false);
+
+  // 工具栏合并（2026-07-27）：BoardCanvas 通过 apiRef 暴露操作、onUiState 上报
+  // 状态（状态本体在 ProjectWorkspace，会话栏也消费），board 模式下控件统一画在
+  // CanvasToolbar（画布区不再叠自己的浮条）
+  const boardApiRef = useRef(null);
+  // 从工作台聚焦别的 session 工作区时置位：切会话后首个 canvas 不自动跳 edit，
+  // 视图留在工作台
+  const stayBoardRef = useRef(false);
+  // ✏️ 跨会话编辑时置位：切会话后直接进 Edit（session→session 时 htmlSrc 一直
+  // 存在，靠 hadSrcRef 的自动切换永远不触发，需要这条显式意图）
+  const editNavRef = useRef(false);
+  useEffect(() => {
+    if (editNavRef.current) {
+      editNavRef.current = false;
+      setMode('edit');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   // P3 #4 协作 lock：agent run 期间强制退出 drag 模式 + 锁 Apply 按钮，避免 agent 改源码
   // 和用户改 DOM 同时进行（虽然 race 不会真损坏数据，但视觉上会闪烁/错位）
@@ -298,6 +333,7 @@ export default function CanvasFrame({
       <CanvasToolbar
         mode={mode}
         onModeChange={(m) => { setMode(m); onSelectChange?.(null); }}
+        board={mode === 'board' ? { ui: boardUi, api: boardApiRef } : null}
         dragFreeMode={dragFreeMode}
         onDragFreeModeChange={setDragFreeMode}
         isStreaming={isStreaming}
@@ -473,11 +509,19 @@ export default function CanvasFrame({
       )}
 
       {mode === 'board' && (
-        <ArtifactBoard
+        <BoardCanvas
           projectId={projectId}
           currentSessionId={sessionId}
           refreshToken={artifactRefreshToken}
+          boardVersion={boardVersion}
           onAddToContext={onAddToContext}
+          apiRef={boardApiRef}
+          onUiState={onBoardUiState}
+          onStayBoard={() => { stayBoardRef.current = true; }}
+          onEditNav={() => { editNavRef.current = true; }}
+          // 聚焦 deck = 离开画布层，进入 deck 工具视图（Edit/Drag/... 只在这里开放，
+          // 天然只作用于当前聚焦的 deck）
+          onFocusDeck={() => setMode('edit')}
         />
       )}
 
