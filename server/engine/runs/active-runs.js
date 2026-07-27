@@ -40,6 +40,8 @@
  * 多实例部署时需要分布式协调（Redis pub/sub），stage 1 单进程够用。
  */
 
+import { markRunFailed } from './store.js';
+
 /**
  * @typedef {object} PendingQuestion
  * @property {(answers: Record<string, string>) => void} resolve
@@ -599,12 +601,21 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
   // 失去引用，旧 SDK binary 仍在跑变孤儿 → 跟新 binary 并行 Write 同 canvas.html
   // = 用户看到"独立 main 进程在 write"的 bug 来源）。caller 拿到 false 不再 spawn
   // 第二个 query。前端 race / 后端 fallback / resume race 都靠这条兜底。
-  if (activeQuerySessions.has(sessionId)) {
-    console.warn(
-      `[active-runs] registerQuerySession: sid=${sessionId.slice(0, 8)} already active, `
-      + `refusing duplicate registration (would orphan existing SDK binary + cause double-write race)`
-    );
-    return false;
+  const existing = activeQuerySessions.get(sessionId);
+  if (existing) {
+    // aborted 但没被清的残留 entry（abort 路径绕过了 unregister）—— 清掉重注册。
+    // 老逻辑对这种残留一律拒绝，跟 turn.js 的 hasActiveQuerySession（aborted 返
+    // false）判定不一致：窗口内用户消息 push 进无人消费的新 queue = 静默黑洞。
+    if (existing.abortController.signal.aborted) {
+      console.warn(`[active-runs] registerQuerySession: sid=${sessionId.slice(0, 8)} had stale aborted entry, cleaning up before re-register`);
+      unregisterQuerySession(sessionId);
+    } else {
+      console.warn(
+        `[active-runs] registerQuerySession: sid=${sessionId.slice(0, 8)} already active, `
+        + `refusing duplicate registration (would orphan existing SDK binary + cause double-write race)`
+      );
+      return false;
+    }
   }
   const token = Symbol('querySession');
   activeQuerySessions.set(sessionId, {
@@ -613,6 +624,7 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     query: null,
     inputQueue,
     currentRunId: null,
+    pendingRunIds: [],
     pendingQuestions: new Map(),
     pendingElicitations: new Map(),
     pendingPlanRequests: new Map(),
@@ -714,10 +726,17 @@ export function pushUserMessage(sessionId, runId, sdkUserMessage) {
   const rec = activeQuerySessions.get(sessionId);
   if (!rec) return false;
   if (rec.abortController.signal.aborted) return false;
-  // 把 runId 关联到 SDK message，runSession 那头收到 user message echo 时拿出来
-  // 用作 currentTurn 标记。SDKUserMessage 没有自定义字段，我们走旁路：先在
-  // session record 上设 currentRunId，runSession 收到 user message 时读这个值
-  rec.currentRunId = runId;
+  // runId 关联走旁路（SDKUserMessage 没有自定义字段）：
+  //   - session idle（currentRunId 空）→ 直接设 currentRunId，SDK 拉到消息即处理
+  //   - turn 进行中 → **排队**，不抢占 currentRunId。老逻辑立即覆盖会让 session-loop
+  //     的 turn 边界检测把还在跑的 turn1 误判成 TURN_LEAK 标 failed，turn2 又没有
+  //     run.start/run.done —— 前端表现"stop 按钮消失但字还在冒"。finishTurn 时
+  //     promoteNextPendingRunId 把队头晋升为下一 turn，跟 inputQueue 一一对应。
+  if (rec.currentRunId) {
+    rec.pendingRunIds.push(runId);
+  } else {
+    rec.currentRunId = runId;
+  }
   rec.lastActivityAt = Date.now();
   try {
     rec.inputQueue.push(sdkUserMessage);
@@ -726,6 +745,21 @@ export function pushUserMessage(sessionId, runId, sdkUserMessage) {
     console.warn(`[active-runs] pushUserMessage failed for ${sessionId}: ${err.message}`);
     return false;
   }
+}
+
+/**
+ * turn 结束时晋升下一个排队的 runId（session-loop finishTurn 调）。
+ * 无排队时置 null（等下一次 pushUserMessage 直接设）。
+ * 跟 inputQueue 严格一一对应：每条 mid-turn push 的 message 配一个 pendingRunId。
+ *
+ * @param {string} sessionId
+ * @returns {string|null} 晋升后的 currentRunId
+ */
+export function promoteNextPendingRunId(sessionId) {
+  const rec = activeQuerySessions.get(sessionId);
+  if (!rec) return null;
+  rec.currentRunId = rec.pendingRunIds.shift() || null;
+  return rec.currentRunId;
 }
 
 /**
@@ -841,6 +875,11 @@ export function unregisterQuerySession(sessionId, expectedToken = null) {
     try { p.reject(new Error('session ended before user decided plan approval')); } catch { /* */ }
   }
   rec.pendingPlanApprovals?.clear?.();
+  // 排队中还没跑到的 turn：run 行不能永远停 pending，标 failed 让前端/审计有终态
+  for (const rid of (rec.pendingRunIds || [])) {
+    try { markRunFailed(rid, 'session ended before queued turn started'); } catch { /* */ }
+  }
+  if (rec.pendingRunIds) rec.pendingRunIds.length = 0;
   activeQuerySessions.delete(sessionId);
 }
 

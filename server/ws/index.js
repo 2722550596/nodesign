@@ -28,6 +28,7 @@ import {
   closeQuerySession,
   markSessionActivity,
 } from '../engine/runs/active-runs.js';
+import { getLiveTurnSnapshot } from '../engine/runs/live-turn.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HYDRATE_CHUNK_SIZE = 50;
@@ -76,15 +77,26 @@ function unrefSession(sid) {
   if (entry.count > 0) return;
   // 0 ref → 启 grace timer。若 grace 期内有新 WS 进同 sid，refSession 会清掉 timer
   if (entry.graceTimer) clearTimeout(entry.graceTimer);
-  entry.graceTimer = setTimeout(() => {
+  const onGraceExpired = () => {
     const cur = sessionRefs.get(sid);
     if (!cur || cur.count > 0) return;  // 期间有新连上，不关
+    // 进行中的 turn 不杀（2026-07-27）：用户关 tab / 切走时后端应该把活干完，
+    // 前端重连后靠 hydrate + live_turn 快照接回状态。这正是"前端丢失后端工作
+    // 状态"要保住的那半 —— 老逻辑 60s 就 cancel 在跑的 turn，是真丢工作。
+    // 续一个 grace 周期再查；turn 结束后仍无订阅者才真正关（idle SDK 进程回收）。
+    if (getCurrentTurnRunId(sid)) {
+      console.info(`[ws] grace expired for sid=${sid.slice(0, 8)} but turn in flight — deferring close`);
+      cur.graceTimer = setTimeout(onGraceExpired, WS_GRACE_MS);
+      cur.graceTimer.unref?.();
+      return;
+    }
     sessionRefs.delete(sid);
     if (hasActiveQuerySession(sid)) {
       console.info(`[ws] grace expired for sid=${sid.slice(0, 8)}, closing session (no_active_subscriber)`);
       closeQuerySession(sid, 'no_active_subscriber');
     }
-  }, WS_GRACE_MS);
+  };
+  entry.graceTimer = setTimeout(onGraceExpired, WS_GRACE_MS);
   entry.graceTimer.unref?.();
 }
 
@@ -226,28 +238,41 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
   // grace timer N ms 后 closeQuerySession 让 SDK subprocess 自然退出。
   refSession(sid);
 
-  // hydrate 起点 seq：sendHydrate 是 await 异步（拉 jsonl + chunk send，100~500ms），
-  // 期间若 agent 推 run.delta.* 进 bus，listener 还没 attach → 事件丢失（jsonl 是
-  // turn 边界 flush，hydrate 拍到的不含中间 deltas）。用起点 seq 作为 subscribeFromSeq
-  // 的 since 让它 replay hydrate 期间产生的 live event，覆盖时间差漏洞。
+  // ── 连接协议（2026-07-27 重构：快照 + 尾随，每次连接都全量重建）──
+  //
+  //   ① jsonl hydrate     — 已完成 turn 的历史（turn 边界 flush 的持久层）
+  //   ② ws.live_turn 快照 — 进行中 turn 的物化重建（live-turn.js 同步折叠，
+  //                          覆盖"刷新 / 断线期间错过的全部流式内容"）
+  //   ③ 尾随订阅          — 从快照 seq 起 replay ring buffer + 切 live
+  //
+  // 老协议的 ?since= 游标 + gap 补 hydrate 废弃：ring buffer(2000) 对 token 级
+  // streaming 几秒断线就 gap，gap 后 hydrate 帧晚于 replay/live 到达，前端
+  // hydrate.end 整体替换 messages 把刚渲染的内容洗掉。新协议 hydrate 永远先发，
+  // 快照覆盖 ring 之外的一切，ring 只需覆盖"读 jsonl 的几百 ms"同步窗口。
+  // `since` 参数保留解析但忽略（旧前端兼容）。
   const seqAtHydrateStart = bus._seq || 0;
-  const shouldHydrateFirst = !!sid && since === 0;
-  if (shouldHydrateFirst) {
+  if (sid) {
     await sendHydrate(ws, pid, sid, seqAtHydrateStart);
   }
 
-  // subscribeFromSeq 同步先 replay buffer 里 seq > since 的，然后切 live。
-  // listener 抛错被 EventBus 内部吞 + warn —— ws.send 失败也只是 warn 不抛，避免影响别人。
-  //
-  // since=0 + hydrate 路径走 hydrate 起点 seq；其他场景沿用 client 传的 since。
-  // hydrate 拿 jsonl 快照 + replay 拿 hydrate 期间中间 deltas，两者无重叠不重复推送。
-  //
-  // sid 过滤：projectBuses 是 per-project 共享，多 session 同时跑时 bus 上有跨 session
-  // 事件交错。带 sid 的 WS 只推 event.sessionId === sid 的事件 + event.sessionId 缺失
-  // 的"全局事件"（兼容老事件 / ws.* 控制帧）。无 sid 的 WS（/work 路径）保持原样收全部。
-  const subscribeSince = shouldHydrateFirst ? seqAtHydrateStart : since;
+  // 进行中 turn 快照（无进行中 turn 时 null）。折叠是 publish 时同步执行的，
+  // 此刻 snapshot.seq 即本 session 最后一条事件的 seq —— 从它起订阅无缝衔接。
+  const snapshot = sid ? getLiveTurnSnapshot(sid) : null;
+  if (snapshot && ws.readyState === ws.OPEN) {
+    try {
+      ws.send(JSON.stringify({ type: 'ws.live_turn', sessionId: sid, ...snapshot }));
+    } catch (err) {
+      console.warn(`[ws] live_turn send failed for ${pid}:`, err.message);
+    }
+  }
+
+  // sid 过滤：projectBuses per-project 共享，只推本 session 事件 + 无 sessionId
+  // 的全局事件。sid=null（/work 路径）时 session-scoped 事件全部不推 ——
+  // 老行为"收全部"会把别的 session 的 delta 渲进空 chat（串台）；/work 没有
+  // session，本来就不该收 run 流，新建 session 后前端会带 sid 重连。
+  const subscribeSince = snapshot ? snapshot.seq : seqAtHydrateStart;
   const { unsubscribe, replayed, gap } = bus.subscribeFromSeq(subscribeSince, (event) => {
-    if (sid && event.sessionId && event.sessionId !== sid) return;
+    if (event.sessionId && event.sessionId !== sid) return;
     if (ws.readyState === ws.OPEN) {
       try {
         ws.send(JSON.stringify(event));
@@ -256,13 +281,6 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
       }
     }
   });
-
-  // Phase A.4：since>0 但 gap=true（buffer 挤掉 / server 重启）→ 补 hydrate
-  // gap 时新 listener 已经 attach 了 live 事件流，但 buffer 中 seq > since 部分被挤掉，
-  // 必须重新 hydrate 拿当前 messages 完整状态。hydrate 帧排在 ws.connected 之前。
-  if (sid && !shouldHydrateFirst && gap) {
-    await sendHydrate(ws, pid, sid, bus._seq || 0);
-  }
 
   const heartbeat = setInterval(() => {
     if (ws.readyState === ws.OPEN) {

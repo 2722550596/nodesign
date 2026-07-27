@@ -37,6 +37,7 @@ import {
   unregisterQuerySession,
   getCurrentTurnRunId,
   setCurrentTurnRunId,
+  promoteNextPendingRunId,
   registerPendingQuestion,
   registerPendingElicitation,
   registerPendingPlanApproval,
@@ -262,6 +263,21 @@ export async function runSession({
       `[session-loop] runSession sid=${sessionId.slice(0, 8)} skipped — already active. `
       + `Caller (turn.js) should have used pushUserMessage instead of startNewRunSession.`
     );
+    // 这条消息 push 进了一个无人消费的新 inputQueue —— 不能静默丢。标 run 失败 +
+    // emit run.error 让前端弹提示，用户重发即走 pushUserMessage 正常路径。
+    if (initialRunId) {
+      try { markRunFailed(initialRunId, 'duplicate session registration race'); } catch { /* */ }
+    }
+    try {
+      eventBus.publish({
+        type: 'run.error',
+        sessionId,
+        ...(initialRunId ? { runId: initialRunId } : {}),
+        message: '会话正忙，这条消息没有进入队列，请重发一次',
+        code: 'DUPLICATE_SESSION',
+        ts: new Date().toISOString(),
+      });
+    } catch { /* */ }
     return;
   }
   // initialRunId：register 后立刻设 currentRunId，让 for-await-of 第一次见到
@@ -291,53 +307,72 @@ export async function runSession({
     appModel: model,
   });
 
-  const wsRoot = await sharedCtx.workspace.ensure();
-  const skill = await loadSkill(skillId);
-
-  // Path 整理（2026-05-06）：把 skill 自带的起手文件（canvas.template.html
-  // 等）拷到 session cwd —— SKILL.md 教 agent `Read canvas.template.html`
-  // 直接生效。幂等 + fail-soft。
+  // ── init 段（2026-07-27 起整体 try/catch）——
+  // 老代码这些 await 在主 try 块之外，任一抛错 → Promise reject 只被 turn.js
+  // console.error，没有 run.start 也没有 run.error，run 行永远 pending，
+  // 前端完全零反馈（丢状态路径 P5）。现在失败时补 run.error + markRunFailed。
+  let wsRoot, skill, realGatewayUrl, baseUrlForBinary, fastModel, isResume, installed;
   try {
-    const r = await ensureSkillStarterFiles(wsRoot, skill.id);
-    if (r.copied.length > 0) {
-      console.log(`[session-loop] starter files copied: ${r.copied.join(', ')}`);
-    }
-  } catch (err) {
-    console.warn(`[session-loop] ensureSkillStarterFiles failed:`, err.message);
-  }
+    wsRoot = await sharedCtx.workspace.ensure();
+    skill = await loadSkill(skillId);
 
-  const realGatewayUrl = process.env.NODESIGN_GATEWAY_URL || process.env.ANTHROPIC_BASE_URL;
-  let baseUrlForBinary = realGatewayUrl;
-  if (realGatewayUrl) {
+    // Path 整理（2026-05-06）：把 skill 自带的起手文件（canvas.template.html
+    // 等）拷到 session cwd —— SKILL.md 教 agent `Read canvas.template.html`
+    // 直接生效。幂等 + fail-soft。
     try {
-      const proxy = await getOrStartProxy(realGatewayUrl);
-      // 编码 sessionId 进 BASE_URL 路径 → proxy 解析后透传给 NoDesk 的 ND-Thread-Id
-      baseUrlForBinary = `${proxy.baseUrl}/__nd/${encodeURIComponent(sessionId)}`;
+      const r = await ensureSkillStarterFiles(wsRoot, skill.id);
+      if (r.copied.length > 0) {
+        console.log(`[session-loop] starter files copied: ${r.copied.join(', ')}`);
+      }
     } catch (err) {
-      console.warn(`[session-loop] proxy start failed, fallback direct: ${err.message}`);
+      console.warn(`[session-loop] ensureSkillStarterFiles failed:`, err.message);
     }
+
+    realGatewayUrl = process.env.NODESIGN_GATEWAY_URL || process.env.ANTHROPIC_BASE_URL;
+    baseUrlForBinary = realGatewayUrl;
+    if (realGatewayUrl) {
+      try {
+        const proxy = await getOrStartProxy(realGatewayUrl);
+        // 编码 sessionId 进 BASE_URL 路径 → proxy 解析后透传给 NoDesk 的 ND-Thread-Id
+        baseUrlForBinary = `${proxy.baseUrl}/__nd/${encodeURIComponent(sessionId)}`;
+      } catch (err) {
+        console.warn(`[session-loop] proxy start failed, fallback direct: ${err.message}`);
+      }
+    }
+
+    // 快速 model（subagent + SDK helper 共用）
+    fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
+
+    // 检测 jsonl 是否已存在 —— 决定走 resume（已存在）还是 sessionId（新建）
+    // 之前的 bug：session-loop 永远传 sessionId，但如果用户 close session 后又
+    // 用同 sid 起 query（hasActiveQuerySession=false 走 startNewRunSession），
+    // SDK binary 看 jsonl 已存在抛 "Session ID ... is already in use"，
+    // 子进程死，nodejs 端 stdin write EPIPE 整个 server 挂。
+    isResume = await jsonlExistsForSession(cwdRoot, sessionId);
+
+    // 扫已装 plugin（内置 + 用户级 + project 级），返 SDK options 直接用的形态。
+    // 装新 plugin 只有重启 session 才生效（v1 接受，详见 plan § "Hot-reload v2"）。
+    // skillId 参数（传入的 'deskskill-engine-mini'）保留兼容，但实际 skills 列表以
+    // installed.skills 为准 —— 包含所有已装 plugin 内的 skill name 合集。
+    installed = await loadInstalledPlugins({ projectId });
+    console.log(
+      `[session-loop] plugins=[${installed.plugins.map(p => p.path.split('/').pop()).join(', ')}] `
+      + `skills=[${installed.skills.join(', ')}] `
+      + `(builtin=${installed.diagnostics.builtin} user=${installed.diagnostics.user} project=${installed.diagnostics.project})`
+    );
+  } catch (err) {
+    console.error(`[session-loop] init failed sid=${sessionId.slice(0, 8)}:`, err.message);
+    if (initialRunId) {
+      sharedCtx.runId = initialRunId;   // emit 带正确 runId，前端才不会 stale-guard 吞掉
+      try { markRunFailed(initialRunId, `init: ${err.message || 'unknown'}`); } catch { /* */ }
+    }
+    sharedCtx.emit(Events.error(`会话初始化失败：${err.message}`, 'INIT_FAILED', err.stack));
+    unregisterQuerySession(sessionId, sessionToken);
+    try {
+      eventBus.publish({ type: 'run.query.end', sessionId, reason: 'init_failed', ts: new Date().toISOString() });
+    } catch { /* */ }
+    throw err;
   }
-
-  // 快速 model（subagent + SDK helper 共用）
-  const fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
-
-  // 检测 jsonl 是否已存在 —— 决定走 resume（已存在）还是 sessionId（新建）
-  // 之前的 bug：session-loop 永远传 sessionId，但如果用户 close session 后又
-  // 用同 sid 起 query（hasActiveQuerySession=false 走 startNewRunSession），
-  // SDK binary 看 jsonl 已存在抛 "Session ID ... is already in use"，
-  // 子进程死，nodejs 端 stdin write EPIPE 整个 server 挂。
-  const isResume = await jsonlExistsForSession(cwdRoot, sessionId);
-
-  // 扫已装 plugin（内置 + 用户级 + project 级），返 SDK options 直接用的形态。
-  // 装新 plugin 只有重启 session 才生效（v1 接受，详见 plan § "Hot-reload v2"）。
-  // skillId 参数（传入的 'deskskill-engine-mini'）保留兼容，但实际 skills 列表以
-  // installed.skills 为准 —— 包含所有已装 plugin 内的 skill name 合集。
-  const installed = await loadInstalledPlugins({ projectId });
-  console.log(
-    `[session-loop] plugins=[${installed.plugins.map(p => p.path.split('/').pop()).join(', ')}] `
-    + `skills=[${installed.skills.join(', ')}] `
-    + `(builtin=${installed.diagnostics.builtin} user=${installed.diagnostics.user} project=${installed.diagnostics.project})`
-  );
 
   const sdkOptions = {
     cwd: cwdRoot,
@@ -697,10 +732,10 @@ export async function runSession({
     }
     activeTurnRunId = null;
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
-    // 同步清 active-runs 的 currentRunId —— 否则 SDK 在 result 之后推的"尾巴
-    // system message"（status / post_turn_summary 等）进 stream 时，cid 仍 = 已结束
-    // 的老 runId 会触发 startTurn() 再调 markRunStarted() 抛"不在 pending 状态"
-    setCurrentTurnRunId(sessionId, null);
+    // 晋升排队的下一 turn（无排队时置 null）—— 追加消息在 turn 内不再抢占
+    // currentRunId（见 active-runs pushUserMessage），排队的 runId 在这里接棒。
+    // 老逻辑固定置 null 的副作用：mid-turn 追加后第二轮没有 run.start/run.done。
+    promoteNextPendingRunId(sessionId);
     // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
     // 注意：NODESIGN_CURRENT_APP_MODEL 不在这里删（session-level 而非 turn-level）。
@@ -761,6 +796,10 @@ export async function runSession({
     };
 
     for await (const message of stream) {
+      // 每条 SDK message 都是活跃信号 —— 老逻辑只有 push / turn 边界算活跃，
+      // 单个 turn 跑超 30 分钟（多页 deck + 子代理）会被 idle timeout 掐死（P8）
+      markSessionActivity(sessionId);
+
       // 检测 turn 边界：currentRunId 切换 → 新 turn
       const cid = getCurrentTurnRunId(sessionId);
       if (cid && cid !== activeTurnRunId) {

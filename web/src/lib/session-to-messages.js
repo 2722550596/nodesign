@@ -117,6 +117,8 @@ export function sessionMessagesToDisplay(sessionMessages) {
             id: `${sm.uuid}:text:${blockIdx}`,
             role: 'assistant',
             content: block.text,
+            // 历史消息标记：appendTextDelta 不把新一轮的 delta 粘到 hydrate 消息尾部
+            hydrated: true,
           });
           break;
         }
@@ -128,6 +130,7 @@ export function sessionMessagesToDisplay(sessionMessages) {
             content: block.thinking,
             // hydrate 历史不再 streaming
             isStreaming: false,
+            hydrated: true,
           });
           break;
         }

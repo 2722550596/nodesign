@@ -9,6 +9,7 @@
  */
 
 import { EventBus } from '../engine/agent/events.js';
+import { attachLiveTurnTracker } from '../engine/runs/live-turn.js';
 
 /** @type {Map<string, EventBus>} */
 const projectBuses = new Map();
@@ -18,6 +19,9 @@ export function getProjectBus(projectId) {
   let bus = projectBuses.get(projectId);
   if (!bus) {
     bus = new EventBus();
+    // live-turn 快照折叠器：进行中 turn 的事件物化成可恢复状态，
+    // WS 重连走"hydrate + ws.live_turn 快照 + 尾随"三段协议。见 live-turn.js
+    attachLiveTurnTracker(bus);
     projectBuses.set(projectId, bus);
   }
   return bus;

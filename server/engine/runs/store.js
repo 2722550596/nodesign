@@ -60,6 +60,21 @@ db.exec(`
 
 console.log(`[engine/runs] SQLite ready at ${DB_PATH}`);
 
+// 启动清扫：上个进程留下的 pending/running 行（server 重启时 SDK 子进程全死，
+// 这些 run 不可能再推进）标成 failed，否则永久停在 running 成僵尸（丢状态路径 P12）
+try {
+  const swept = db.prepare(`
+    UPDATE runs SET status = 'failed', error = 'server restarted while run in flight',
+      finished_at = datetime('now'), updated_at = datetime('now')
+    WHERE status IN ('pending', 'running')
+  `).run();
+  if (swept.changes > 0) {
+    console.log(`[engine/runs] swept ${swept.changes} orphaned run(s) from previous process`);
+  }
+} catch (err) {
+  console.warn(`[engine/runs] orphan sweep failed:`, err.message);
+}
+
 // ── ID 生成 ──
 
 /**
