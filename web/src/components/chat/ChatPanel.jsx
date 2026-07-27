@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, XCircle } from 'lucide-react';
+import { ChevronDown, XCircle, Focus } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import TodoPanel from './TodoPanel.jsx';
@@ -25,6 +25,7 @@ export default function ChatPanel({
   onStop,
   todos,
   sessionTitle,
+  boardFocus = null,          // 工作台工作视图聚焦的工作区 { id, title, count, isSession }
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
   hasActiveSession = false,  // 有 currentSessionId 才显示"结束会话"入口
@@ -145,6 +146,24 @@ export default function ChatPanel({
           </button>
         )}
       </div>
+
+      {/* 工作台聚焦条：工作视图锁定某工作区时提示当前上下文场域。
+          session 工作区 = 对话就是它；自建文件夹 = 内容用画布「＋」带进来 */}
+      {boardFocus && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: `4px ${GAP.lg}px`,
+          borderBottom: `1px solid ${COLOR.borderLt}`,
+          background: 'rgba(176,140,79,0.07)',
+          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+        }}>
+          <Focus size={10} style={{ flexShrink: 0 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            聚焦工作区：{boardFocus.title} · {boardFocus.count} 项
+            {!boardFocus.isSession && ' · 文件夹（内容用画布「＋」带进对话）'}
+          </span>
+        </div>
+      )}
 
       <TodoPanel todos={todos} />
       <MessageList

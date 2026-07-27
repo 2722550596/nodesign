@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Share2, Download, MoreHorizontal } from 'lucide-react';
+import { Share2, Download, MoreHorizontal, FoldVertical } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 // 主区两栏固定（左 chat + 右 canvas 占满）；5 个次级 UI = 浮窗 bounds=parent
 // 限制在 canvas section 内（chat / canvas 不再可拖动 — PLAN.md:431 旧决策回归）。
@@ -94,6 +94,10 @@ export default function ProjectWorkspace() {
   const [selectedAnchor, setSelectedAnchor] = useState(null);
   const [iframeDoc, setIframeDoc] = useState(null);
   const [reloadToken, setReloadToken] = useState(0);
+  // agent 改画布布局（board.updated）→ bump，BoardCanvas 整份重拉 board.json
+  const [boardVersion, setBoardVersion] = useState(0);
+  // 工作台 UI 态（BoardCanvas 上报）：工具栏 + 会话栏聚焦条共同消费
+  const [boardUi, setBoardUi] = useState(null);
   // 稳定引用让 ChatPanel/MessageList 下游 React.memo 生效；之前 inline 箭头每次
   // render 都 new function，子组件 props 浅比较永不命中。
   const handleCanvasReload = useCallback(() => setReloadToken(t => t + 1), []);
@@ -1144,6 +1148,14 @@ export default function ProjectWorkspace() {
         break;
       }
 
+      // agent 侧 pin_to_board 改了画布布局 → 整份布局重拉（不套 stale-run guard：
+      // board 是 project 级状态，不属于某个 run）
+      case 'board.updated': {
+        setBoardVersion(v => v + 1);
+        if (evt.summary) showToast(`工作台：${evt.summary}`, 'info');
+        break;
+      }
+
       // Phase B 批次 3：SDK 自动 recall 写入 globalStore，MemoryCard 折叠区显示
       case 'run.memory_recall':
         if (isStale) break;
@@ -1289,6 +1301,21 @@ export default function ProjectWorkspace() {
     setCurrentRunId(null);
     setActiveRun(null);
     navigate(`/projects/${id}/work`, { replace: true });
+  };
+
+  /** 手动压缩上下文：raw 模式发 /compact 斜杠命令直达 SDK（跳过消息装饰，
+      多包一层 system 注入 SDK 就不认命令了）。压缩过程走正常 run 生命周期。 */
+  const handleCompact = async () => {
+    if (!currentSessionId || isStreaming) return;
+    try {
+      const r = await Turn.send({ pid: id, chat: '/compact', sessionId: currentSessionId, raw: true });
+      setCurrentRunId(r.runId);
+      setActiveRun({ runId: r.runId });
+      setIsStreaming(true);
+      showToast('开始压缩上下文（历史将被摘要替换，产物和档案不受影响）', 'info');
+    } catch (err) {
+      showToast(`压缩失败：${err.message}`, 'error');
+    }
   };
 
   /** 终止当前活跃 run（用户点 ChatPanel 的 Stop 按钮） */
@@ -1591,6 +1618,16 @@ export default function ProjectWorkspace() {
           {(systemInfo || contextUsage) && (
             <ContextUsageBar info={systemInfo} liveUsage={contextUsage} />
           )}
+          {currentSessionId && (
+            <button
+              style={{ ...iconBtnStyle, ...(isStreaming ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
+              disabled={isStreaming}
+              onClick={handleCompact}
+              title={isStreaming ? 'agent 正在跑，先等本轮结束' : '手动压缩上下文（/compact：历史换摘要，给长会话腾空间）'}
+            >
+              <FoldVertical size={13} /> 压缩
+            </button>
+          )}
           {/* UndoButton (git checkout) 已砍（2026-05-07）—— SDK rewindFiles 通过
               对话里"回到此处"覆盖所有 undo 场景（含历史 session resume 链路）。
               git undo 不再必要，且语义跟对话里的精确 undo 重叠混淆。 */}
@@ -1671,6 +1708,7 @@ export default function ProjectWorkspace() {
             onStop={currentRunId ? handleStop : null}
             todos={todos}
             sessionTitle={currentSessionTitle}
+            boardFocus={boardUi?.focus || null}
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
             hasActiveSession={!!currentSessionId}
@@ -1723,6 +1761,9 @@ export default function ProjectWorkspace() {
             canUndoPending={pendingEditsHook.canUndo}
             isStreaming={isStreaming}
             artifactRefreshToken={reloadToken}
+            boardVersion={boardVersion}
+            boardUi={boardUi}
+            onBoardUiState={setBoardUi}
             onAddToContext={(item) => {
               // 工作台物件 → 上下文托盘（同上传附件语义，下一条消息带给 agent）。
               // 按 path 去重防重复点击堆积。

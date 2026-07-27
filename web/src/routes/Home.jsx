@@ -97,8 +97,8 @@ export default function Home() {
         show={createOpen}
         onClose={() => setCreateOpen(false)}
         onCreated={(proj) => {
-          // 强制落 Hub（不再分支）—— 让 Hub 成为持久能力的家
-          navigate(`/projects/${proj.id}`);
+          // 2026-07-27 起工作台是项目主页 —— 新建项目直接进画布
+          navigate(`/projects/${proj.id}/work`);
         }}
       />
     </AppShell>
@@ -551,7 +551,7 @@ function ProjectCard({ project }) {
       onMouseLeave={() => { setHover(false); setMenuOpen(false); }}
       style={{ position: 'relative' }}
     >
-      <Link to={`/projects/${project.id}`} style={{
+      <Link to={`/projects/${project.id}/work`} style={{
         display: 'block',
         padding: GAP.lg,
         background: '#fff',
