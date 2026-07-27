@@ -86,24 +86,27 @@ Do NOT use this tool for:
             : {}),
         };
         // 串行 read-modify-write 防 spec.json 三路并发覆盖（详见 workspace.js mutateSpecJson）
-        await mutateSpecJson(workspaceRoot, (spec) => {
+        // mutateSpecJson 返回落盘后的完整 spec —— 回调参数 spec 出了回调就没了，
+        // 这里曾直接引用导致 ReferenceError：写档成功却向 agent 报失败（还引发重试重复条目）
+        const next = await mutateSpecJson(workspaceRoot, (spec) => {
           if (!Array.isArray(spec.decisions)) spec.decisions = [];
           spec.decisions.push(entry);
         });
+        const count = Array.isArray(next?.decisions) ? next.decisions.length : 1;
 
         try {
           ctx?.emit?.({
             type: 'run.decision_recorded',
             title: entry.title,
             scope: entry.scope || null,
-            decisionsCount: spec.decisions.length,
+            decisionsCount: count,
           });
         } catch { /* emit fail-safe */ }
 
         return {
           content: [{
             type: 'text',
-            text: `Decision recorded in spec.json (decisions[${spec.decisions.length - 1}]): "${entry.title}"`,
+            text: `Decision recorded in spec.json (decisions[${count - 1}]): "${entry.title}"`,
           }],
         };
       } catch (err) {
