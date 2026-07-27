@@ -22,6 +22,8 @@
 const APP_TO_SDK_MODEL = {
   'kimi-k2.6':              'claude-opus-4-7[1m]',
   'kimi-k2':                'claude-opus-4-7[1m]',
+  'claude-sonnet-5[1m]':    'claude-sonnet-5[1m]',
+  'claude-sonnet-5':        'claude-sonnet-5',
   'claude-opus-4-7[1m]':    'claude-opus-4-7[1m]',
   'claude-sonnet-4-6[1m]':  'claude-sonnet-4-6[1m]',
   'claude-opus-4-7':        'claude-opus-4-7',
@@ -32,6 +34,8 @@ const APP_TO_SDK_MODEL = {
 const APP_MODEL_REAL_WINDOW = {
   'kimi-k2.6':              256_000,
   'kimi-k2':                256_000,
+  'claude-sonnet-5[1m]':    1_000_000,
+  'claude-sonnet-5':        200_000,
   'claude-opus-4-7[1m]':    1_000_000,
   'claude-sonnet-4-6[1m]':  1_000_000,
   'claude-opus-4-7':        200_000,

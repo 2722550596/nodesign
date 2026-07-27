@@ -43,6 +43,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { mutex } from 'async-mutex-lite';
 import { validateProjectId } from './store.js';
+import { resolveModelContextWindow } from '../engine/agent/model-context.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -140,13 +141,25 @@ The agent will see this verbatim. Keep it concise and actionable.
  *   binary-fixup-proxy 在出口把 model 还原成真 kimi-k2.6 给 gateway。
  *   现在 230400 真生效，SDK auto-compact 在 230k 触发，留 26k margin 防 400。
  *
- *   1M context 模型（如 claude-opus-4-7[1m]）走真名不 spoofing。如要拉满 1M
- *   而不是 230400 触发，可以把这个值调高（SDK 接受 1e5 ~ 1e6 区间）。
+ *   2026-07-27 起不再写死 230400：按 NODESIGN_MODEL 真实窗口 × 0.9 计算。
+ *   sonnet-5[1m] → 900000（SDK 在此再扣内部 reserve，实际 compact 触发 ~86w）；
+ *   kimi-k2.6 → 230400（原值，256000 × 0.9）；未知模型兜底 200000 × 0.9。
+ *   SDK 接受 1e5 ~ 1e6 区间。切回 kimi 只需改 env 重启，默认值自动跟随。
+ *   旧项目 settings.json 里遗留的 230400 视为 stale default 强制迁移
+ *  （mergeSettingsDefaults 内特判），用户手改过的其他值不动。
  */
+const MAIN_MODEL = process.env.NODESIGN_MODEL || 'kimi-k2.6';
+const LEGACY_DEFAULT_WINDOWS = new Set([230400]);
+
+function defaultAutoCompactWindow() {
+  const realWindow = resolveModelContextWindow(MAIN_MODEL) ?? 200_000;
+  return Math.min(Math.round(realWindow * 0.9), 1_000_000);
+}
+
 const DEFAULT_NODESIGN_SETTINGS = {
   $schema: 'https://json.schemastore.org/claude-code-settings.json',
   autoCompactEnabled: true,
-  autoCompactWindow: 230400,  // 256000 × 0.9
+  autoCompactWindow: defaultAutoCompactWindow(),
 };
 
 /**
@@ -169,6 +182,15 @@ async function mergeSettingsDefaults(settingsPath) {
     }
   }
   const merged = { ...DEFAULT_NODESIGN_SETTINGS, ...existing };
+  // stale default 迁移：旧代码把 230400 写进过所有项目的 settings.json，
+  // existing 优先的 merge 规则会让新默认值永远进不去 —— 命中旧默认值时视为
+  // "非用户自定义"，跟随当前默认。用户改成其他数字则尊重不动。
+  if (
+    LEGACY_DEFAULT_WINDOWS.has(existing.autoCompactWindow) &&
+    existing.autoCompactWindow !== DEFAULT_NODESIGN_SETTINGS.autoCompactWindow
+  ) {
+    merged.autoCompactWindow = DEFAULT_NODESIGN_SETTINGS.autoCompactWindow;
+  }
   // 旧 _comment 字段不再写默认（曾经的 placeholder），用户自定义保留
   const before = JSON.stringify(existing);
   const after = JSON.stringify(merged);
