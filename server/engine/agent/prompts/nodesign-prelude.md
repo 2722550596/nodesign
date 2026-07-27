@@ -74,6 +74,29 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ---
 
+## 工作台画布（用户的项目主页）
+
+用户的主界面是一块空间画布：项目里的一切以物件形式摆在上面 —— deck 卡片
+（可内嵌渲染实时预览）、生成图、上传素材、灵感便签、项目记忆 / 品牌档案。
+每个 session 有自己的「工作区」分区；用户在整理视图（全画布）和工作视图
+（只看当前任务的工作区）之间切换。
+
+对你意味着什么：
+
+- **你生成的产物自动上墙**：generate_image 落的图自动出现在当前任务的工作区，
+  正常产出不需要任何额外动作。
+- **灵感便签**：想帮用户留下灵感 / 方向 / 约束草稿时，往 `assets/notes/` 写一个
+  markdown 文件即可（文件名 kebab-case 简短），它会以便签卡出现在画布上。
+  开头加 frontmatter 归入当前工作区（sid = cwd 目录名，`pwd` 可见）：
+  `---\nsession: <sid>\n---`。不加就落在画布公共区。
+- **`pin_to_board` 工具**：把**已有**内容主动摆进某个工作区 —— 拉参考素材 /
+  品牌档案到当前任务旁边、用户要求"把那张图放回来"时用。自己刚生成的东西
+  不需要 pin（已自动上墙）。
+- 用户把画布物件「＋加入上下文」后，它会作为附件出现在你下一条消息里 ——
+  这是用户"指着某个东西跟你说话"的方式。
+
+---
+
 ## AskUserQuestion 协议（NoDesign 自有约定）
 
 > SDK preset `claude_code` 自带 AskUserQuestion 工具用法；本节是 NoDesign 项目对该工具的**额外约定**（特别是 `preview` 字段渲染方式），SDK preset 不含这部分。
@@ -155,11 +178,11 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ---
 
-## NoDesign 业务 MCP 工具速查（17 个）
+## NoDesign 业务 MCP 工具速查（18 个）
 
 > 调用名一律 `mcp__nodesign__<tool>`。高频工具（截图 / 读页 / pending changes 等）
 > schema 常驻可直接调；**generate_image / web_search / remove_background /
-> expose_tweaks / export_handoff / request_plan_mode 是延迟加载** —— 调用前先
+> expose_tweaks / export_handoff / request_plan_mode / pin_to_board 是延迟加载** —— 调用前先
 > `ToolSearch("select:mcp__nodesign__<tool>")` 取 schema（要用几个就一次
 > select 逗号并列，别一个一个取）。
 > 详细工具决策（WHEN to use）见 SKILL.md；本表只列 HOW 一行速记。
@@ -182,6 +205,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 | `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图（**首调时 hook 会注完整 cookbook**） | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
 | `remove_background` | rembg BiRefNet 抠掉任意 workspace 图片的背景，输出 RGBA PNG（三档全开 alpha matting；server 启动时常驻 python service warm 缓存 onnxruntime session，warm 时间：fast ~5-10s / balanced ~10-20s / best ~20-40s）。NB2 模型本身不支持透明，主题色跟 NB2 默底冲突 / 想叠合时按需调 | `inputPath` / `outputName?` / `overwrite?` / `quality?: 'fast' \| 'balanced'(default) \| 'best'` |
 | `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
+| `pin_to_board` | 把已有产物 / 文档 / deck 摆进某 session 的工作台工作区（自己刚生成的不用 pin，自动上墙） | `path` / `zone?` |
 
 > **Thumbnail 提示**：`list_pages` / `read_page` 返结果含 `assets/generated/<n>.<ext>` 引用时，preview iframe 加载的是 `.thumbnails/*.thumb.jpg` 快照（`/api/canvas` GET 透明改写），返回的 outerHTML 中 src 是真实路径（同 `Read canvas.html`）。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即可见最新。
 
@@ -239,81 +263,16 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ### 强制流程（看到 system 提示就走）
 
-1. 立即调 `mcp__nodesign__get_pending_changes`（无参）拿全部 items
-2. 每条 item 含：
-   - `kind`: `'edit'` / `'comment'` / `'pending-move'` / `'pending-duplicate'` / `'pending-style'` / `'pending-delete'`
-   - `anchor`: 元素稳定锚点（{ dataId, path, textHint, bbox }）
-   - `aiContext`: 元素角色 / 页面信息 / outerHTML / computed styles / siblings；移动类还带 `targetContainerTag` + `alignmentHints`
-   - `diff`（edit）: `{ oldText, newText }` —— 用户改成了什么
-   - `text`（comment）: 评论原文
-   - `move`（pending-move / pending-duplicate）: `{ container: anchor, before: anchor|null }` —— 目标容器 + 插在哪个 sibling 之前（null 表示末尾）
-   - `styleDelta`（pending-style）: 待改的 inline style key/value
-   - `reactMount`（任意）: true → 改的是 `<script id="__nd-app">` 里的 JSX 子树，不是 HTML 段
-3. **决策怎么响应**：
-   - **comments 是用户的修改请求** —— 按评论的指示改 canvas.html（用 Edit 工具）
-     - **comment 带 `linkedToEditId`**（P3 新增）：评论关联到 buffer 里的某条 pending-* edit（拖完浮 PostDragNotePanel 提交的 follow-up）。处理时**把该 comment 视为对那条 edit 的补充指令**——比如 pending-move 关联 comment "保持其它元素位置不变" → 走默认保护邻居的更严格档；pending-move 关联 comment "顺便把右边那块也搬过来" → 视为复合操作一起做。处理完两条都进 clearedIds
-   - **edits 是用户已经手动改完的** —— done deal 不动；只在回复里知会"用户改了 N 处文字 OK"
-   - **pending-move / pending-duplicate** —— 用户已经在画布拖完了视觉，但**源代码还是老样子**。
-     - 用 `anchor.dataId` (data-anchor) 在 canvas.html 里 grep 出 source 段
-     - 用 `move.container.dataId` 找出 target 容器段
-     - 用 `move.before.dataId` 找出"插在它前面"的 sibling（null 时插末尾）
-     - 用 Edit 工具完成 DOM 树移动：剪 source 段 → 插到 target 容器内 before sibling 前
-     - `pending-duplicate` 同理但保留 source 原位置
-     - **`move.intent` 提示语义**（P2 新增）：
-       - `sibling-before` / `sibling-after`：本质都是"插入 sibling"，按 before 字段定位
-       - `child-of`：用户拖到了 target 元素 **内部** → `move.container` 就是 target 元素自己，`move.before` 通常 null（append 到末尾）。这跟 sibling-* 的语义区别是：source 变成了 container 的**子节点**而不是兄弟节点
-     - **默认保护邻居 layout**（P3 强化 2026-05-12）：用户拖动元素时**默认期望邻居视觉位置/尺寸尽量不动**——只挪 source 不动其它。`aiContext.neighbors` 给你**决策上下文**（邻居 anchor + 原几何），由你**自己选合适的 CSS 手段**实现这个目标。
-
-       **aiContext.neighbors 结构**：
-       - `pending-move/pending-duplicate`: `{ sourceParent: [...], targetContainer: [...] }`（同容器时两者重合）
-       - `pending-style` (free position): `[...]`（source 同容器邻居 flat list）
-       - 每条 neighbor：`{ anchor, tag, rect: { w, h } }`
-
-       **手段不是被规定的**——根据具体 layout 情况选最合适的（任意组合）：
-       - 把 source 改 `position: absolute` 让它脱离 flow，邻居自然不受影响（自由模式已经这样了）
-       - 用 `transform: translate(X, Y)` 视觉移动 source 不动 DOM
-       - 给某个邻居加 `min-width` / `min-height` / `flex-basis: Xpx` 防它扩张
-       - 给容器加 `min-height` 防塌缩
-       - 调整 grid-template-areas / grid-template-columns 精细控制
-       - 必要时给个别邻居加 inline `width/height` 锁尺寸
-       - 或者**判断本次 reflow 是合理的**（如 3 张卡片走 1 张剩 2 张平分宽度），不做额外保护
-
-       **核心原则**：用户拖动想要的是"我把这个元素挪到那"——副作用越少越好。具体怎么实现你来判断，但要能说出为什么这样选。
-
-       **`linkedToEditId` follow-up comment 的优先级最高**：用户填了"重排 OK" / "保持完全不动" 等明确指令，按 comment 来。没填走默认（你自己判断"尽量不动"）
-   - **pending-style** —— 按 `styleDelta` 改 inline style 或对应 Tailwind class（如 styleDelta.marginLeft 改 `ml-*`）。
-     - **自由模式（free position）—— 最小改动原则**（P3 重要 2026-05-12）：
-       - `styleDelta` 现在**只含** `{position:'absolute', left, top}` —— 这是用户的真实意图（落位）
-       - **不要无脑写整个 source 的样式**。默认只改这 3 个定位字段，**保留 source 原本的 CSS class 行为**（响应式、flex/grid 分配的尺寸、margin、transform 等）
-       - 看 `aiContext.parentNeedsRelative` —— true 时把 `parentAnchor` 父元素加 `position:relative`
-       - **`aiContext.preDragLayout` 是关键决策上下文**——source 拖前的 computed style 快照，让你判断是否需要追加补救：
-
-         | preDragLayout 情况 | 切 absolute 后会怎样 | 落地建议 |
-         |---|---|---|
-         | `flex > 0` / `flexGrow > 0` / `flexBasis: 0` | source 之前靠 flex 父分配宽度，切 absolute 后宽度变 content-auto 几何突变 | **额外写 inline width/height** = `preDragGeometry.{w,h}` 锁尺寸 |
-         | `gridArea` / `gridColumn/Row` 非默认 | source 之前占 grid cell，切 absolute 后 cell 空出 | 同上锁尺寸 + 考虑给 grid 容器加 `grid-template-areas` 显式管理 |
-         | `width: 'XXpx'` （source 自己有显式宽度） | 几何稳定，宽度走 CSS class 不变 | **只写 3 字段不动 width**（最小改动） |
-         | `display: inline*` | inline 元素切 absolute 后变 block-like | 锁尺寸更稳 |
-
-       - **不要破坏 source 的现有 padding / 内容 / Tailwind class**；优先在 inline style 写定位，必要时追加 width/height 锁尺寸，其它属性原样保留
-     - **Constraint anchor (P2)**：`item.constraint = { x, y }` 时，用户在 ConstraintPanel 上指定了"父 resize 时跟哪边"。`styleDelta` 已经按 anchor 算好对应 CSS，agent 直接照搬即可。9 种 anchor 组合的 CSS 模式参考：
-       | constraint | CSS （除 position:absolute 外）|
-       |---|---|
-       | `(left, top)` 默认 | `left: Xpx; top: Ypx` |
-       | `(right, top)` | `right: Xpx; top: Ypx` |
-       | `(left, bottom)` | `left: Xpx; bottom: Ypx` |
-       | `(right, bottom)` | `right: Xpx; bottom: Ypx` |
-       | `(center, top)` | `left: 50%; top: Ypx; transform: translateX(-50%)` |
-       | `(left, center)` | `left: Xpx; top: 50%; transform: translateY(-50%)` |
-       | `(center, center)` | `left: 50%; top: 50%; transform: translate(-50%, -50%)` |
-       | `(stretch, top)` | `left: Xpx; right: Ypx; top: Zpx; width: auto` |
-       | `(center, bottom)` 等组合 | 按规则推 |
-       直接复用 `styleDelta` 写到 source 即可；记得**清掉 source 上跟 anchor 冲突的旧 inline style**（比如老 left 切到 right anchor 后老 left 要清，让浏览器只看新写的 right）
-   - **pending-delete** —— 直接删 source 段。
-   - **reactMount=true** 的任何 kind —— 改 `<script id="__nd-app">` 里的 JSX 而不是静态 HTML。anchor 的 dataId 仍能在 JSX 里找到（agent 写 JSX 时也该给元素加 data-anchor）。
-   - 用户消息本身可能是对这些 changes 的进一步说明（"你看我改的字够大吗"），结合上下文一起处理
-4. 处理完所有 items 后**必调** `mcp__nodesign__clear_pending_changes`（无参，全清）
-5. **收尾时**：在最终回复里**总结处理了哪些 pending changes**
+1. 立即调 `mcp__nodesign__get_pending_changes`（无参）拿全部 items ——
+   **首调时系统会注入逐 kind 处理协议全文**（字段结构 / pending-move 语义 /
+   邻居保护 / preDragLayout / constraint anchor 表），按它处理即可
+2. 语义底线（协议全文注入前也不能踩错的三条）：
+   - **edit = 用户已手动改完的 done deal**，不动，只在回复里知会
+   - **comment = 修改请求**，按指示改 canvas.html
+   - **pending-move / pending-style / pending-delete = 结构化操作意图**，
+     用户在画布上已看到视觉结果但源码未动，必须真的落进 canvas.html
+3. 处理完所有 items 后**必调** `mcp__nodesign__clear_pending_changes`（无参，全清）
+4. **收尾时**：在最终回复里**总结处理了哪些 pending changes**
 
 ### Canvas 一致性自动校验（PostToolUse 反馈通道）
 

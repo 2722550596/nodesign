@@ -39,6 +39,7 @@
  *   run.rate_limit             { info }                                    rate limit 变化
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
  *   run.plan_mode_requested    { toolUseId, reason, estimatedPages?, taskKind? }  agent 调 request_plan_mode（阻塞态，前端 banner 决定后 POST /plan-request/:tid/decide 解阻塞）
+ *   board.updated              { objectId, zoneId, summary }               pin_to_board 改画布布局（sessionId:null 广播，前端整份重拉 board.json）
  *
  * 外层把 EventBus 桥接到：
  *   - WebSocket：subscribe('*') → ws.send(JSON.stringify(evt))

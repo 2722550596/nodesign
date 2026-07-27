@@ -44,6 +44,7 @@ import { makeClearPendingChangesTool } from './tools/clear-pending-changes.js';
 import { makeGenerateImageTool } from './tools/generate-image.js';
 import { makeRemoveBackgroundTool } from './tools/remove-background.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
+import { makePinToBoardTool } from './tools/pin-to-board.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -131,6 +132,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 工具是**阻塞态** — handler await 用户决定再返回，避免 agent 在等的时候继续动作
       // （之前非阻塞导致 agent 边请求边写文件，等用户点 yes 时 run 已 done → 切不了）。
       makeRequestPlanModeTool({ ctx, sessionId }),
+
+      // 工作台分区画布（2026-07-27）：agent 协助摆放 —— 把产物/文档/deck 钉进
+      // 某 session 的工作区。写 board.json（board-store 单锁）+ 广播 board.updated。
+      makePinToBoardTool({ sharedRoot, projectId, sessionId, ctx }),
 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；

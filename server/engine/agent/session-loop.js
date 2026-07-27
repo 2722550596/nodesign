@@ -46,7 +46,8 @@ import {
   closeQuerySession,
   markSessionActivity,
 } from '../runs/active-runs.js';
-import { loadSkill, ensureSkillStarterFiles } from './skill.js';
+// skill 起手文件拷贝已挪 hooks.js PreToolUse(Skill/Bash)（2026-07-27），
+// session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
@@ -311,22 +312,13 @@ export async function runSession({
   // 老代码这些 await 在主 try 块之外，任一抛错 → Promise reject 只被 turn.js
   // console.error，没有 run.start 也没有 run.error，run 行永远 pending，
   // 前端完全零反馈（丢状态路径 P5）。现在失败时补 run.error + markRunFailed。
-  let wsRoot, skill, realGatewayUrl, baseUrlForBinary, fastModel, isResume, installed;
+  let wsRoot, realGatewayUrl, baseUrlForBinary, fastModel, isResume, installed;
   try {
     wsRoot = await sharedCtx.workspace.ensure();
-    skill = await loadSkill(skillId);
 
-    // Path 整理（2026-05-06）：把 skill 自带的起手文件（canvas.template.html
-    // 等）拷到 session cwd —— SKILL.md 教 agent `Read canvas.template.html`
-    // 直接生效。幂等 + fail-soft。
-    try {
-      const r = await ensureSkillStarterFiles(wsRoot, skill.id);
-      if (r.copied.length > 0) {
-        console.log(`[session-loop] starter files copied: ${r.copied.join(', ')}`);
-      }
-    } catch (err) {
-      console.warn(`[session-loop] ensureSkillStarterFiles failed:`, err.message);
-    }
+    // 起手文件拷贝（canvas.template.html 等）2026-07-27 起不再在 init 无条件做 ——
+    // 挪到 hooks.js 的 PreToolUse(Skill/Bash)：agent 真的开始 deck 工作
+    // （加载 deskskill / cp 模板）才拷。非 deck 会话（便签 / 整理画布）cwd 干净。
 
     realGatewayUrl = process.env.NODESIGN_GATEWAY_URL || process.env.ANTHROPIC_BASE_URL;
     baseUrlForBinary = realGatewayUrl;
@@ -668,7 +660,7 @@ export async function runSession({
     hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot }),
 
     mcpServers: {
-      nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sessionId, ctx: sharedCtx }),
+      nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx }),
     },
 
     // mainModel = appModel ('kimi-k2.6')，sdkModel = SDK 视角 alias ('claude-opus-4-7[1m]')。

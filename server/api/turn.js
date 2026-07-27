@@ -130,7 +130,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     const project = getProject(req.params.pid);
     if (!project) return res.status(404).json({ error: 'project not found' });
 
-    const { chat, attachments, skillId, sessionId, permissionMode, requestId } = req.body || {};
+    const { chat, attachments, skillId, sessionId, permissionMode, requestId, raw } = req.body || {};
     if (!chat || typeof chat !== 'string' || !chat.trim()) {
       return res.status(400).json({ error: 'chat string required' });
     }
@@ -206,7 +206,11 @@ router.post('/:pid/turn', async (req, res, next) => {
     const sessionRoot = await ensureSessionWorkspace(project.id, sid);
     const pendingSummary = isNewSession ? { count: 0, summary: '' } : await readPendingSummary(sessionRoot);
     const assetsSummary = await readAssetsSummary(sessionRoot);
-    const { displayText, blocks } = await composeUserMessage(chat, attachments, pendingSummary, assetsSummary, sessionRoot);
+    // raw：纯文本直达 SDK，不加任何装饰块 —— 斜杠命令（/compact 等）要求消息
+    // 就是命令本身，多包一层 system 注入就不会被识别
+    const { displayText, blocks } = raw === true
+      ? { displayText: chat.trim(), blocks: [{ type: 'text', text: chat.trim() }] }
+      : await composeUserMessage(chat, attachments, pendingSummary, assetsSummary, sessionRoot);
 
     // 上传/附件诊断：NODESIGN_DEBUG_TURN=1 时打印 blocks 概况，定位 image 体积/媒体类型
     // 引发的 400/超 token 类问题（配合 binary-fixup-proxy 的 /tmp dump）

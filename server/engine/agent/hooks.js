@@ -49,6 +49,7 @@ import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
 import { resolveModelContextWindow } from './model-context.js';
+import { ensureSkillStarterFiles } from './skill.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -132,6 +133,20 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
     }, {
       matcher: 'Grep',
       hooks: [makePreToolUseGrepContentDefaultHandler()],
+    }, {
+      // Skill 加载 deskskill 时才拷起手文件（canvas.template.html 等）——
+      // 2026-07-27 起从 session-loop init 挪到这里：session ≠ 默认 deck 任务
+      matcher: 'Skill',
+      hooks: [makePreToolUseSkillStarterFilesCopier({ workspaceRoot })],
+    }, {
+      // 兜底：agent 没走 Skill 直接 cp canvas.template.html → 现场补拷
+      matcher: 'Bash',
+      hooks: [makePreToolUseBashStarterFilesFallback({ workspaceRoot })],
+    }, {
+      // get_pending_changes 首次调用时注入 DirectEdit 逐 kind 处理协议全文
+      // （prelude 只留流程骨架，~90 行细则挪到 prompts/tools/direct-edit-protocol.md）
+      matcher: 'mcp__nodesign__get_pending_changes',
+      hooks: [makePreToolUseGetPendingChangesProtocolInjector()],
     }, {
       // generate_image 两个 hook 串：先目标页提醒（已有），再首次注 cookbook 完整版
       matcher: 'mcp__nodesign__generate_image',
@@ -1130,6 +1145,80 @@ function makePreToolUseGenerateImageReadPageReminder() {
  * 触发：本 session 第 1 次调 generate_image；后续不再注入（避免 spam）。
  * 文件源：prompts/tools/generate-image-cookbook.md（模块加载时缓存）。
  */
+/**
+ * PreToolUse(Skill) — agent 加载 deskskill-engine-mini 时把 skill 起手文件
+ * （canvas.template.html 等）拷进 session cwd。
+ *
+ * 2026-07-27 工作台升级起，starter 拷贝从 session-loop init 挪到这里：
+ * session 不再默认等于 deck 任务（可能是便签 / 整理画布 / 收集参考），
+ * 非 deck 会话的 cwd 不再预置 deck 模板。ensureSkillStarterFiles 幂等 + fail-soft。
+ */
+function makePreToolUseSkillStarterFilesCopier({ workspaceRoot }) {
+  let done = false;
+  return async (input, _toolUseId, _options) => {
+    if (done || !workspaceRoot) return {};
+    try {
+      const raw = JSON.stringify(input?.tool_input || {});
+      if (!raw.includes('deskskill-engine-mini')) return {};
+      done = true;
+      const r = await ensureSkillStarterFiles(workspaceRoot, 'deskskill-engine-mini');
+      if (r.copied.length > 0) {
+        console.log(`[hooks] starter files copied on Skill load: ${r.copied.join(', ')}`);
+      }
+    } catch (err) {
+      console.warn('[hooks] starter files copy on Skill load failed:', err.message);
+    }
+    return {};
+  };
+}
+
+/**
+ * PreToolUse(Bash) 兜底 —— agent 没走 Skill 加载、直接按 prelude 的
+ * "起手 cp canvas.template.html" 动手时，命令里出现模板名就现场补拷，
+ * 避免 cp 报 No such file。
+ */
+function makePreToolUseBashStarterFilesFallback({ workspaceRoot }) {
+  let done = false;
+  return async (input, _toolUseId, _options) => {
+    if (done || !workspaceRoot) return {};
+    const command = String(input?.tool_input?.command || '');
+    if (!command.includes('canvas.template.html')) return {};
+    done = true;
+    try {
+      await ensureSkillStarterFiles(workspaceRoot, 'deskskill-engine-mini');
+    } catch (err) {
+      console.warn('[hooks] starter files fallback copy failed:', err.message);
+    }
+    return {};
+  };
+}
+
+/**
+ * PreToolUse(get_pending_changes) — 第一次调用时注入 DirectEdit 逐 kind
+ * 处理协议全文（字段结构 / pending-move 语义 / 邻居保护 / preDragLayout /
+ * constraint anchor 表）。prelude 常驻部分只留流程骨架 + 语义底线三条，
+ * ~90 行细则在 agent 真的要处理 pending changes 时才进 context。
+ */
+function makePreToolUseGetPendingChangesProtocolInjector() {
+  let alreadyInjected = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    alreadyInjected = true;
+    const protocol = loadToolPrompt('direct-edit-protocol');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[DirectEdit 逐 kind 处理协议 — 首次注入]\n\n'
+        + protocol
+        + '\n\n本协议每 session 只注入一次，后续处理 pending changes 直接按它做。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
 function makePreToolUseGenerateImageCookbookInjector() {
   let alreadyInjected = false;
   return async (_input, _toolUseId, _options) => {
