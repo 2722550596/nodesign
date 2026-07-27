@@ -28,6 +28,7 @@ import exportsRouter from './api/exports.js';
 import sessionsRouter from './api/sessions.js';
 import instructionRouter from './api/instruction.js';
 import memoryRouter from './api/memory.js';
+import boardRouter from './api/board.js';
 import pendingChangesRouter from './api/pending-changes.js';
 import recentRouter from './api/recent.js';
 import { userPluginsRouter, projectPluginsRouter } from './api/plugins.js';
@@ -75,6 +76,7 @@ app.use('/api/projects', exportsRouter);
 app.use('/api/projects', sessionsRouter);
 app.use('/api/projects', instructionRouter);
 app.use('/api/projects', memoryRouter);
+app.use('/api/projects', boardRouter);
 app.use('/api/projects', pendingChangesRouter);  // C4: 用户直接编辑 + 评论 buffer
 app.use('/api/projects', projectPluginsRouter);  // 2026-05-18: project 级 plugin 上传/卸载/列表
 // 跨项目聚合：/api/sessions/recent

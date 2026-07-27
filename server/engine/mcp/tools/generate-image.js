@@ -685,6 +685,27 @@ become part of the spec.json design history.`,
       }
       const thumbAgentRelPath = thumb ? path.posix.join('assets', 'generated', '.thumbnails', thumbName) : null;
 
+      // 语义 sidecar（2026-07-27 工作台）：.meta/<name>.json 记录物件来历，
+      // /api/.../artifacts 清单合并给产物墙显示（prompt / 角色 / 来源 run）。
+      // fail-soft：写不进不影响生图主流程。
+      try {
+        const metaDir = path.join(outDir, '.meta');
+        await fs.mkdir(metaDir, { recursive: true });
+        await fs.writeFile(path.join(metaDir, `${finalName}.json`), JSON.stringify({
+          prompt,
+          assetRole: assetRole || null,
+          aspectRatio,
+          provider,
+          model: provider === 'codex' ? 'codex' : model,
+          referenceImageCount: resolvedRefs.length,
+          sessionId: ctx?.sessionId || null,
+          runId: ctx?.runId || null,
+          ts: new Date().toISOString(),
+        }, null, 2));
+      } catch (err) {
+        console.warn(`[generate-image] meta sidecar write failed: ${err.message}`);
+      }
+
       // Path the agent sees relative to its cwd (sessions/<sid>/) — when
       // sharedRoot is in play, sessions/<sid>/assets is a softlink to
       // shared/assets, so relative path is the same either way.
