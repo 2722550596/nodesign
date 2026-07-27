@@ -11,6 +11,7 @@ import CommentOverview from './CommentOverview.jsx';
 import CommentMarkers from './CommentMarkers.jsx';
 import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
 import GrabHandle from './GrabHandle.jsx';
+import ArtifactBoard from './ArtifactBoard.jsx';
 import PostDragNotePanel from './PostDragNotePanel.jsx';
 import PendingEditsBar from './PendingEditsBar.jsx';
 import PendingMoveMarkers from './PendingMoveMarkers.jsx';
@@ -87,6 +88,9 @@ export default function CanvasFrame({
   onClearAllPending,      // () => void
   canUndoPending = false,
   isStreaming = false,
+  // 工作台产物墙（2026-07-27 v1）
+  onAddToContext,          // (item) => void —— 物件加入上下文托盘（inputs）
+  artifactRefreshToken,    // 变化时产物墙重拉（复用 reloadToken：image_generated / file_changed 都 bump）
 }) {
   // 直接 hook PanelManager 拿 tweaks 浮窗当前 visible 状态 + setter（用于 toggle）
   const { panels, setPanelVisible } = usePanelManager();
@@ -466,6 +470,15 @@ export default function CanvasFrame({
 
       {mode === 'code' && (
         <CodeCanvas value={sourceText} onChange={handleSourceChange} readOnly={false} />
+      )}
+
+      {mode === 'board' && (
+        <ArtifactBoard
+          projectId={projectId}
+          currentSessionId={sessionId}
+          refreshToken={artifactRefreshToken}
+          onAddToContext={onAddToContext}
+        />
       )}
 
       {a11yOpen && (

@@ -1,4 +1,4 @@
-import { Edit3, Eye, Code2, Move, Pin, Maximize2, Settings, Sliders, MessageSquare, RotateCcw } from 'lucide-react';
+import { Edit3, Eye, Code2, Move, Pin, Maximize2, Settings, Sliders, MessageSquare, RotateCcw, LayoutGrid } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, STAGE } from '../../lib/theme.js';
 
 const MODES = [
@@ -6,6 +6,9 @@ const MODES = [
   { id: 'drag',    label: 'Drag',    icon: Move },
   { id: 'preview', label: 'Preview', icon: Eye },
   { id: 'code',    label: 'Code',    icon: Code2 },
+  // 工作台（2026-07-27 v1）：产物墙 — agent 生成物 / 上传素材 / deck 草稿，
+  // 点击物件加入上下文托盘。Lovart 式工作台第一步。
+  { id: 'board',   label: '工作台',  icon: LayoutGrid },
 ];
 
 /**

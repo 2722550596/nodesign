@@ -352,6 +352,14 @@ export default function ProjectWorkspace() {
     setIsTweaksExposed(false);        // 切 session 时清，新 session 待 agent 重 expose
     useGlobalStore.getState().clearPlanForApproval();  // 清 plan 卡（如果切 session 时还在等 approval）
     useGlobalStore.getState().clearPlanModeRequest();  // 清 plan request banner（防跨 session 残留 → toggle 锁死）
+    // run 状态也要清（丢状态路径 P13）：旧 session 的 runId 留在 currentRunIdRef
+    // 会让新 session 的事件全被 stale guard 吞掉。清完由重连后 server 的
+    // ws.connected(activeRunId) + ws.live_turn 快照权威恢复（本 session 真在跑时
+    // 会立刻拉回 streaming 态，最多闪一下）。
+    setIsStreaming(false);
+    setCurrentRunId(null);
+    setActiveRun(null);
+    setTodos([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, currentSessionId]);
 
@@ -386,6 +394,10 @@ export default function ProjectWorkspace() {
       },
     });
     wsRef.current = ws;
+    // 记录本条 WS 是用哪个 sid 打开的 —— sid 变化判定的基准。
+    // 老逻辑用 null 当"首挂载"哨兵，导致 /work（sid=null）起新 session 后
+    // 跳过重连，WS 一直挂在 sid=null 上收不到 hydrate/快照（丢状态路径 P10）。
+    lastReconnectedSidRef.current = sessionIdRef.current ?? null;
     return () => {
       wsRef.current = null;
       ws.close();
@@ -393,18 +405,14 @@ export default function ProjectWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, hydrated, hydrateError, project?.id]);
 
-  // Phase A.4：currentSessionId 变化时重连 WS 让 server 用新 sid 推 hydrate
-  // （首挂载除外 — 那时 wsRef 刚 open，它已经用最新 sid）
+  // currentSessionId 变化（含 /work → 新建 session）时重连 WS，
+  // 让 server 按新 sid 走 hydrate + live_turn 快照协议
   const lastReconnectedSidRef = useRef(null);
   useEffect(() => {
     if (!wsRef.current) return;
     if (lastReconnectedSidRef.current === currentSessionId) return;
-    // 首次挂载（lastReconnectedSidRef.current === null && currentSessionId === null）
-    // 或 WS 刚 open 时 currentSessionId 已经是初值，不需要重连
-    if (lastReconnectedSidRef.current !== null) {
-      wsRef.current.reconnectForSession?.();
-    }
     lastReconnectedSidRef.current = currentSessionId;
+    wsRef.current.reconnectForSession?.();
   }, [currentSessionId]);
 
   // ── H4a: auto-send initialMessage from location.state（HubInput 入口）──
@@ -552,6 +560,37 @@ export default function ProjectWorkspace() {
           setCurrentRunId(null);
           setActiveRun(null);
           setMessages(prev => clearThinkingStreaming(prev));
+        }
+        break;
+      }
+
+      case 'ws.live_turn': {
+        // 进行中 turn 的物化快照（server live-turn.js 折叠）—— 排在 hydrate 之后到达。
+        // 覆盖"刷新 / 断线期间错过的全部流式内容"：文本、thinking、工具卡（含
+        // AskUserQuestion 的 toolInput，问题卡直接复原可答）。
+        if (evt.sessionId && liveSid && evt.sessionId !== liveSid) break;
+        const snapMessages = Array.isArray(evt.messages) ? evt.messages : [];
+        setMessages(prev => {
+          // 快照对本 turn 权威：清掉 prev 里同 runId 的 delta 累积（重连前已渲染的
+          // 部分，id 体系跟快照不同会重复）+ 同 id 的工具卡，再整体附加快照
+          const snapIds = new Set(snapMessages.map(m => m.id));
+          const base = prev.filter(m =>
+            !(m.runId && evt.runId && m.runId === evt.runId) && !snapIds.has(m.id)
+          );
+          return [...base, ...snapMessages];
+        });
+        if (evt.runId) {
+          setIsStreaming(true);
+          setCurrentRunId(evt.runId);
+          setActiveRun({ pid: id, runId: evt.runId });
+        }
+        if (Array.isArray(evt.todos) && evt.todos.length > 0) setTodos(evt.todos);
+        if (evt.contextUsage) mergeProjectContextUsage(id, evt.contextUsage);
+        if (evt.planForApproval?.toolUseId) {
+          useGlobalStore.getState().setPlanForApproval({
+            toolUseId: evt.planForApproval.toolUseId,
+            plan: evt.planForApproval.plan,
+          });
         }
         break;
       }
@@ -1097,6 +1136,11 @@ export default function ProjectWorkspace() {
         // agent 在 caption 邀请反馈，用户下一轮 chat 即天然 gate。
         const role = evt.assetRole ? `[${evt.assetRole}] ` : '';
         showToast(`${role}已生成图片：${evt.path}`, 'success');
+        // 图落盘后 reload iframe（2026-07-27）：骨架先行时 canvas 已引用了还没
+        // 生成完的图，iframe 早于图完成加载到 404 裂图；codex 生图 45-60s 让这个
+        // 窗口从"碰不到"变成"必碰"。file_changed 只在 canvas.html 写入时触发，
+        // 这里补上"图完成也刷"。
+        setReloadToken(t => t + 1);
         break;
       }
 
@@ -1678,6 +1722,13 @@ export default function ProjectWorkspace() {
             onClearAllPending={pendingEditsHook.clearAll}
             canUndoPending={pendingEditsHook.canUndo}
             isStreaming={isStreaming}
+            artifactRefreshToken={reloadToken}
+            onAddToContext={(item) => {
+              // 工作台物件 → 上下文托盘（同上传附件语义，下一条消息带给 agent）。
+              // 按 path 去重防重复点击堆积。
+              setInputs(prev => prev.some(it => it.path === item.path) ? prev : [...prev, item]);
+              showToast(`已加入上下文：${item.name}（发消息时一起带给 agent）`, 'success');
+            }}
           />
 
           {/* 浮窗层 —— bounds='parent' = 不出 canvas section
@@ -1770,6 +1821,7 @@ function appendTextDelta(messages, role, text, runId) {
   if (
     last
     && last.role === role
+    && !last.hydrated   // hydrate 历史消息不吸新 delta（跨 turn 粘连防护）
     && (!runId || !last.runId || last.runId === runId)
   ) {
     const merged = { ...last, content: (last.content || '') + text };

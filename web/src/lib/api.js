@@ -163,6 +163,19 @@ export const Assets = {
   list: (pid) => jsonRequest('GET', `/api/projects/${pid}/assets`),
   remove: (pid, filename) =>
     jsonRequest('DELETE', `/api/projects/${pid}/assets/${encodeURIComponent(filename)}`),
+
+  // ── 工作台产物墙（2026-07-27 v1）──
+  /** 产物清单（project 级：上传素材 + generated 生成图） */
+  artifacts: (pid) => jsonRequest('GET', `/api/projects/${pid}/artifacts`),
+  /**
+   * 产物文件 URL（project 级，不依赖 session）。
+   * relPath 是 artifacts 返回的 agent 视角路径（'assets/...'），
+   * artifact-file 路由的根就是 shared/assets/，所以去掉 'assets/' 前缀。
+   */
+  artifactFileUrl: (pid, relPath) => {
+    const sub = String(relPath || '').replace(/^assets\//, '');
+    return `/api/projects/${pid}/artifact-file/${sub.split('/').map(encodeURIComponent).join('/')}`;
+  },
 };
 
 // ── Exports（H3：session-scoped）──

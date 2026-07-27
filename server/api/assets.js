@@ -122,4 +122,103 @@ async function exists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
+// ── 工作台产物墙（2026-07-27 v1）──
+// 产物 = 目前是文件（上传素材 + generated 生成图）；未来扩展便签 / 关键帧 /
+// 文案 / 时序 / 视频时在这里加 kind。前端 ArtifactBoard 消费。
+
+const ARTIFACT_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg', '.zip': 'application/zip',
+};
+const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+
+/**
+ * GET /:pid/artifacts — 产物清单（project 级，跨 session）。
+ * 返回 { artifacts: [{ kind, name, path, size, mtime, ext, hasThumb }] }
+ *   kind: 'generated'（agent 生成图，assets/generated/）| 'upload'（用户上传，assets/ 顶层）
+ *   path: agent 视角相对路径（'assets/...'，session cwd 软链下直接可 Read / 引用）
+ */
+router.get('/:pid/artifacts', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+
+    const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
+    const artifacts = [];
+
+    const scanDir = async (dir, kind, relPrefix) => {
+      let entries;
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch (err) {
+        if (err.code === 'ENOENT') return;
+        throw err;
+      }
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        if (e.name.startsWith('.')) continue;
+        const ext = path.extname(e.name).toLowerCase();
+        const stat = await fs.stat(path.join(dir, e.name));
+        artifacts.push({
+          kind,
+          name: e.name,
+          path: `${relPrefix}/${e.name}`,
+          size: stat.size,
+          mtime: stat.mtime.toISOString(),
+          ext,
+          isImage: IMAGE_EXTS.has(ext),
+          hasThumb: kind === 'generated' && IMAGE_EXTS.has(ext)
+            ? await exists(path.join(dir, '.thumbnails', `${e.name.slice(0, -ext.length)}.thumb.jpg`))
+            : false,
+        });
+      }
+    };
+
+    await scanDir(assetsDir, 'upload', 'assets');
+    await scanDir(path.join(assetsDir, 'generated'), 'generated', 'assets/generated');
+
+    artifacts.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+    res.json({ artifacts });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /:pid/artifact-file/*subPath — project 级文件服务（shared/assets 子树）。
+ * 工作台缩略图 / 大图用，不依赖 session（canvas.js 的同款路由是 session 级的）。
+ * 防 traversal 同 canvas.js：resolve 后必须留在 shared/assets 下。
+ */
+router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+
+    const raw = req.params.subPath;
+    const subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
+    if (!subPath) return res.status(400).json({ error: 'file path required' });
+
+    const assetsRoot = path.resolve(getSharedDir(req.params.pid), 'assets');
+    const absPath = path.resolve(assetsRoot, subPath);
+    if (absPath !== assetsRoot && !absPath.startsWith(assetsRoot + path.sep)) {
+      return res.status(403).json({ error: 'path escapes assets/' });
+    }
+
+    let stat;
+    try {
+      stat = await fs.stat(absPath);
+    } catch (err) {
+      if (err.code === 'ENOENT') return res.status(404).json({ error: 'file not found' });
+      throw err;
+    }
+    if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+
+    const ext = path.extname(absPath).toLowerCase();
+    res.setHeader('Content-Type', ARTIFACT_MIME[ext] || 'application/octet-stream');
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.end(await fs.readFile(absPath));
+  } catch (err) { next(err); }
+});
+
 export default router;
