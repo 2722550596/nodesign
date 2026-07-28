@@ -601,7 +601,9 @@ export async function runSession({
       // 不指定则每个会话一座记忆孤岛；指定后全项目所有会话共享一套。
       ...(sharedRoot ? {
         autoMemoryEnabled: true,
-        autoMemoryDirectory: path.join(sharedRoot, 'agent-memory', 'auto'),
+        // 落在 .claude/agent-memory/auto —— 跟前端记忆卡读的是同一棵树
+        // （2026-07-28 修：之前指到 shared/agent-memory/auto，SDK 记了前端也看不到）
+        autoMemoryDirectory: path.join(sharedRoot, '.claude', 'agent-memory', 'auto'),
       } : {}),
     },
 

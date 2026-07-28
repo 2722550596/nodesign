@@ -259,11 +259,13 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
         matcher: 'Edit|Write',
         hooks: [makePostToolUseCanvasValidationHandler({ ctx, workspaceRoot })],
       },
-      // record_decision 后**不再**注 additionalContext —— 之前注的"继续主任务"
-      // 跟 SDK preset 'claude_code' 教的"工具调用不是任务结束"重复，agent 模型
-      // 自己已经懂。删除让 agent 行为更接近 SDK 默认（不"被牵着走"）。
-      // screenshot / export 那两条仍保留：截图后要求 3 条具体视觉问题、export
-      // 后防重复打包，都是 SDK 不知道的 NoDesign 业务约束。
+      // record_decision 一般**不注** additionalContext（"继续主任务"那种跟 SDK
+      // preset 重复，agent 自己懂）。唯一例外是"锚定风格"这一笔：那是项目级
+      // 长期资产该落盘的时刻，而品牌档案 / 项目指引这两处 SDK 不知道。
+      {
+        matcher: 'mcp__nodesign__record_decision',
+        hooks: [makePostToolUseStyleAnchorNudge({ sharedRoot })],
+      },
     ],
 
     // PostToolUseFailure —— 任意工具失败时统一处理：emit 事件 + 给 agent
@@ -1674,4 +1676,43 @@ async function bindTaskToSession(filePath, sharedRoot, sessionId) {
   } catch (err) {
     console.warn('[hooks] bind task→session failed:', err.message);
   }
+}
+
+
+/**
+ * PostToolUse(record_decision) —— 锚定风格那一笔之后提醒落两处长期资产
+ * （2026-07-28，配合"记忆归 SDK / 品牌归我们 / 指引归用户"的分工）
+ *
+ * 只在这一笔上注、每 session 一次：
+ *   - 品牌档案 `agent-memory/brand/memory.md` —— 前端 BrandCard 会把色板 /
+ *     字体渲染出来，是结构化资产，agent 不写就永远空着
+ *   - 项目指引 `.claude/CLAUDE.md` —— SDK 每次 session 自动读进 system prompt，
+ *     但只有用户能决定要不要固化，所以是"问一句"不是"直接写"
+ *
+ * 通用偏好不在这儿管：那是 SDK 自动记忆的活（autoMemoryDirectory 已指到
+ * .claude/agent-memory/auto，前端记忆卡直接显示）。
+ */
+function makePostToolUseStyleAnchorNudge({ sharedRoot }) {
+  let nudged = false;
+  const ANCHOR_RE = /(style-anchor|风格锚|锚定|视觉基调|palette|配色方案)/i;
+  return async (input, _toolUseId, _options) => {
+    if (nudged) return {};
+    const t = input?.tool_input || {};
+    const blob = `${t.topic || ''} ${t.title || ''} ${t.decision || ''} ${t.rationale || ''}`;
+    if (!ANCHOR_RE.test(blob)) return {};
+    nudged = true;
+    const guidePath = sharedRoot ? path.join(sharedRoot, '.claude', 'CLAUDE.md') : '.claude/CLAUDE.md';
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext:
+          '这一笔看起来是在锚定这个项目的视觉方向。顺手做两件事（都只做一次）：\n'
+        + '1. 把这版风格写进 `./agent-memory/brand/memory.md`（色号 / 字体链 / 版式语言 / 动效预算），'
+        + '前端品牌档案卡会把色板和字体渲染出来给用户看，不写就一直空着。\n'
+        + `2. 如果这次定下来的还包含**项目级约束**（不只这一个 deck 适用，比如"这个项目一律不用 emoji"），`
+        + `在收尾时问用户一句要不要写进项目指引（${guidePath}，SDK 每次 session 自动读它）。用户点头你再写。\n`
+        + '用户的通用偏好不用你手动记，系统的自动记忆会管。',
+      },
+    };
+  };
 }

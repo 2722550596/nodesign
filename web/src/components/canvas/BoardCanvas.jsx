@@ -237,7 +237,8 @@ export default function BoardCanvas({
 
   // 顶带四张卡的一行摘要
   const bandSummaries = useMemo(() => {
-    const mem = memoryDocs.find(d => d.agentType === null);
+    // SDK 自动记忆优先（它才是真的在长的那份），没有再退回手写偏好
+    const mem = memoryDocs.find(d => d.agentType === 'auto') || memoryDocs.find(d => d.agentType === null);
     const brand = memoryDocs.find(d => d.agentType === 'brand');
     return {
       memory: mem?.preview || '还没有内容，agent 会自己往里记',

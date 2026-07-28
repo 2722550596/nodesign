@@ -198,7 +198,9 @@ export default function MemoryCard({ projectId }) {
 
 function MemoryRow({ entry, onEdit, onDelete, onAttach }) {
   const [hover, setHover] = useState(false);
-  const label = entry.agentType || 'main';
+  // 'auto' = SDK 自己攒的自动记忆（autoMemoryDirectory 指到这里），
+  // 'main' = 用户 / agent 手写的那份偏好
+  const label = entry.agentType === 'auto' ? 'agent 自动记忆' : (entry.agentType || '手写偏好');
   return (
     <div
       onMouseEnter={() => setHover(true)}

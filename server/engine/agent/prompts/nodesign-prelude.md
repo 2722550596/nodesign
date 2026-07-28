@@ -47,7 +47,7 @@ cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**
 | `spec.json` | 文件 | 跨 turn / 跨 session 设计意图档案；工作台自动注入最近 5 条 decisions 摘要 |
 | `design-plan.md` | 文件 | plan-mode 通过后的 plan 落档（仅 plan-mode 才有） |
 | `assets/` | softlink → shared/assets/ | 用户上传素材 + generate_image 落档（`assets/generated/<name>.png`）；跨 session 共享。**Glob/Grep 默认不跟 symlink，对 `assets/*` 会返回空——靠每轮 system 注入的"workspace 里已有 N 个参考素材"清单直接 Read 路径**；plan mode 也允许 `ls assets/` / `find assets/` 兜底实地查 |
-| `agent-memory/` | softlink → shared/.claude/agent-memory/ | 跨 session **长期记忆**：`memory.md` = main agent 通用；`brand/memory.md` = 品牌档案 |
+| `agent-memory/` | softlink → shared/.claude/agent-memory/ | 跨 session **长期记忆**，三份分工：<br>`memory.md` = 用户偏好档（他说"记住…"/"以后都…"就**追加**一行进去，先 Read 再 Edit，别整文件覆盖）<br>`brand/memory.md` = 品牌档案（色号 / 字体链 / 版式语言 / 动效预算，锚定风格后写，前端会渲染色板）<br>`auto/` = 系统自动记的，**你不要碰** |
 | `skills/` | softlink → shared/.claude/skills/ | 项目级**自定义** skills（用户可往 shared 写） |
 | `agents/` | softlink → shared/.claude/agents/ | 项目级**自定义** subagents |
 | `exports/` | 目录（按需创建） | export_handoff zip 等交付产物 |
