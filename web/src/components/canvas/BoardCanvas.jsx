@@ -4,12 +4,15 @@ import ReactMarkdown from 'react-markdown';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput,
-  Presentation, PencilLine, ChevronsUpDown, Focus, Terminal,
+  Presentation, PencilLine, ChevronsUpDown, Focus,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas } from '../../lib/api.js';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
-import { stageKindOf, resolveObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
-import { AskUserQuestionView } from '../chat/Message.jsx';
+import {
+  DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, SIZES,
+  EASE, POP_IN, sizeOf, newStackedZoneRect,
+} from '../../lib/board-geometry.js';
+import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 
 /**
  * BoardCanvas —— 工作台空间画布（2026-07-27 分区版）
@@ -32,26 +35,6 @@ import { AskUserQuestionView } from '../chat/Message.jsx';
  * 布局从服务端重拉，服务端为准。
  */
 
-// 桌面化（2026-07-28）：无限画布退役。桌面逻辑宽度固定（跨端坐标稳定），
-// 视口更窄时整体等比缩小贴合（fitScale ≤ 1，非交互、无 zoom 控件）；
-// 内容纵向生长，普通滚动 —— 按需扩展只有这一维。
-const DESKTOP_W = 1360;
-const MARGIN_X = 48;                      // 桌面左右留白
-const ZONE_GAP_Y = 28;                    // 堆叠工作区之间的垂直间距
-const FOLDER_CARD_H = 88;                 // 收纳态文件夹卡占用的堆叠高度
-const DECK_EMBED_W = 640;                 // 内嵌渲染宽度（1920 → 1/3 缩放）
-const SIZES = {
-  doc:   { w: 200, h: 96 },
-  deck:  { w: 240, h: 88 },
-  deckExpanded: { w: DECK_EMBED_W, h: 28 + 360 },
-  image: { w: 200, h: 176 },
-  note:  { w: 200, h: 148 },
-  file:  { w: 224, h: 40 },
-};
-// 分区常数 —— 与 server/projects/board-store.js 的 ZONE_DEFAULTS 保持一致
-const ZONE = { w: 1120, h: 640, gap: 60, bandX: 320, bandY: 48, perRow: 3, header: 40, pad: 16, cellW: 244, cellH: 210 };
-// 舞台卡宽度（板内坐标系；相机跟随的取景也按它算）
-const STAGE_CARD_W = 560;
 const EXT_MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
@@ -108,16 +91,10 @@ export default function BoardCanvas({
   const [dropHint, setDropHint] = useState(null);
   const dropHintRef = useRef(null);
 
-  // ── 舞台层状态（agent 实时动作展示）──
-  // stageCards：{ [blockId]: { kind, tool, status, text, filePath, objectId, … } }
-  const [stageCards, setStageCards] = useState({});
-  // 物件"已更新"角标：{ [objectId]: ts }（file_changed 触发，短暂显示后自清）
-  const [stageBadges, setStageBadges] = useState({});
   // 跟随：agent 动作发生时平滑滚动过去；用户任何操作立即接管、静置后恢复
   const [follow, setFollow] = useState(true);
   const followRef = useRef(true); followRef.current = follow;
   const userHoldUntilRef = useRef(0);       // 用户接管截止时刻（pointerdown/wheel 后 +8s）
-  const followedBlocksRef = useRef(new Set());  // 每张舞台卡只滚一次
   // 拖拽期间关掉物件/工作区的 left/top 过渡（拖拽要逐帧跟手；agent 改布局要动画）
   const [dragActive, setDragActive] = useState(false);
 
@@ -447,26 +424,6 @@ export default function BoardCanvas({
   });
   const visibleZones = focusZone ? zoneView.filter(z => z.id === focusZone) : zoneView;
 
-  // 舞台卡分流：锚得到可见物件的贴物件渲染（板内坐标系跟着缩放），
-  // 锚不到 / 目标不可见的落 dock（屏幕坐标系，视口底部居中）
-  const visibleIdSet = new Set(visibleObjects.map(o => o.id));
-  const anchoredCards = [];
-  const dockPanels = [];
-  const dockChips = [];
-  for (const c of Object.values(stageCards)) {
-    if (c.kind === 'chip') { dockChips.push(c); continue; }
-    if (c.kind === 'image') {
-      const zid = currentSessionId || focusZone;
-      const zr = visibleZones.find(v => !v.collapsed && v.id === zid);
-      if (zr) { anchoredCards.push({ card: c, zoneRect: zr }); continue; }
-      dockPanels.push(c);
-      continue;
-    }
-    const o = c.objectId ? positioned.find(it => it.id === c.objectId) : null;
-    if (o && visibleIdSet.has(o.id)) anchoredCards.push({ card: c, obj: o });
-    else dockPanels.push(c);
-  }
-
   // ── 桌面滚动（无限画布退役：纵向滚动是唯一的"镜头"）──
 
   /** 用户接管：任何主动操作后 8s 内跟随不抢滚动 */
@@ -768,159 +725,21 @@ export default function BoardCanvas({
     }
   }, [positioned, tryAutoExpand]);
 
-  // ── 舞台层：run.* 事件 → 画布演出 ──
-  // ProjectWorkspace 的事件 switch 原样转发进来（stageRef），这里翻译成卡片
-  // 生命周期。代码卡的 text 由真流式 run.delta.tool_input 逐段喂，完整入参
-  // 快照（run.delta.tool_use）兜底补齐 —— 中途切进画布也能接上。
-  const removeStageCardLater = useCallback((blockId, ms) => {
-    setTimeout(() => {
-      setStageCards(prev => {
-        const c = prev[blockId];
-        if (!c || c.status === 'fail') return prev;   // 失败卡保留，用户点 × 关
-        const next = { ...prev };
-        delete next[blockId];
-        return next;
-      });
-    }, ms);
-  }, []);
+  // 舞台层的 file_changed 触发口：立刻试展开，deck 物件还没派生出来就挂起等布局
+  const requestAutoExpand = useCallback((sid) => {
+    if (!tryAutoExpand(sid)) pendingExpandRef.current.add(sid);
+  }, [tryAutoExpand]);
 
-  const newStageCard = (evt, kind) => ({
-    blockId: evt.blockId, kind, tool: evt.name, status: 'running',
-    text: '', filePath: null, objectId: null, oldString: null, startedAt: Date.now(),
+  // ── 舞台层（StageLayer.jsx 自治）：事件状态机 + 跟随触发 + deck 自动展开触发 ──
+  const { stageCards, stageBadges, dismissStageCard } = useStageState({
+    stageRef, currentSessionId, followToObject, tryAutoExpand: requestAutoExpand,
   });
 
-  const handleStageEvent = useCallback((evt) => {
-    switch (evt.type) {
-      case 'run.tool_use.started': {
-        const kind = stageKindOf(evt.name);
-        if (!kind || !evt.blockId) return;
-        setStageCards(prev => (prev[evt.blockId] ? prev : { ...prev, [evt.blockId]: newStageCard(evt, kind) }));
-        break;
-      }
-      case 'run.delta.tool_input': {
-        // 真流式：append = Edit.new_string / Write.content 的纯文本增量
-        if (!evt.blockId) return;
-        const oid = evt.filePath ? resolveObjectId(evt.filePath, currentSessionId) : null;
-        setStageCards(prev => {
-          const c = prev[evt.blockId] || newStageCard(evt, stageKindOf(evt.name) || 'code');
-          return {
-            ...prev,
-            [evt.blockId]: {
-              ...c,
-              filePath: c.filePath || evt.filePath || null,
-              objectId: c.objectId || oid,
-              text: c.text + (evt.append || ''),
-            },
-          };
-        });
-        if (oid && !followedBlocksRef.current.has(evt.blockId)) {
-          followedBlocksRef.current.add(evt.blockId);
-          followToObject(oid);
-        }
-        break;
-      }
-      case 'run.delta.tool_use': {
-        // 完整入参快照（工具执行前到达）
-        const kind = stageKindOf(evt.name);
-        if (!kind || !evt.blockId) return;
-        const input = evt.input || {};
-        const oid = typeof input.file_path === 'string' ? resolveObjectId(input.file_path, currentSessionId) : null;
-        setStageCards(prev => {
-          const c = prev[evt.blockId] || newStageCard(evt, kind);
-          const patch = {
-            filePath: c.filePath || input.file_path || null,
-            objectId: c.objectId || oid,
-          };
-          if (kind === 'code') {
-            if (typeof input.old_string === 'string' && input.old_string) patch.oldString = input.old_string;
-            const full = typeof input.new_string === 'string' ? input.new_string
-              : typeof input.content === 'string' ? input.content : null;
-            if (full != null && full.length > c.text.length) patch.text = full;
-          } else if (kind === 'terminal') {
-            patch.command = typeof input.command === 'string' ? input.command : '';
-          } else if (kind === 'image') {
-            patch.prompt = typeof input.prompt === 'string' ? input.prompt : '';
-          } else if (kind === 'question') {
-            patch.input = input;   // 完整 questions 给画布上的答题卡
-          } else {
-            patch.hint = chipHintOf(evt.name, input);
-          }
-          return { ...prev, [evt.blockId]: { ...c, ...patch } };
-        });
-        if (kind === 'code' && oid && !followedBlocksRef.current.has(evt.blockId)) {
-          followedBlocksRef.current.add(evt.blockId);
-          followToObject(oid);
-        }
-        break;
-      }
-      case 'run.delta.tool_result': {
-        if (!evt.blockId) return;
-        setStageCards(prev => {
-          const c = prev[evt.blockId];
-          if (!c) return prev;
-          const patch = { status: evt.ok ? 'ok' : 'fail', doneAt: Date.now() };
-          if (typeof evt.output === 'string' && evt.output) {
-            patch.output = evt.output.split('\n').slice(-8).join('\n').slice(-1200);
-          }
-          if (!evt.ok && typeof evt.error === 'string') patch.error = evt.error.slice(0, 600);
-          return { ...prev, [evt.blockId]: { ...c, ...patch } };
-        });
-        removeStageCardLater(evt.blockId, 1600);
-        break;
-      }
-      case 'run.file_changed': {
-        // 物件"已更新"角标（在板上才有意义）
-        const oid = resolveObjectId(evt.filePath, currentSessionId);
-        if (!oid) return;
-        // agent 正在写 deck → 自动展开内嵌渲染，工作过程直接在画布里看
-        if (oid.startsWith('deck:')) {
-          const sid = oid.slice(5);
-          if (!tryAutoExpand(sid)) pendingExpandRef.current.add(sid);
-        }
-        const ts = Date.now();
-        setStageBadges(prev => ({ ...prev, [oid]: ts }));
-        setTimeout(() => {
-          setStageBadges(prev => {
-            if (prev[oid] !== ts) return prev;
-            const next = { ...prev };
-            delete next[oid];
-            return next;
-          });
-        }, 2600);
-        break;
-      }
-      case 'run.done':
-      case 'run.error':
-      case 'run.cancelled': {
-        // 收场：残留 running/ok 卡淡出，失败卡留给用户看
-        setTimeout(() => {
-          setStageCards(prev => {
-            const next = {};
-            for (const [k, c] of Object.entries(prev)) if (c.status === 'fail') next[k] = c;
-            return next;
-          });
-        }, 900);
-        followedBlocksRef.current.clear();
-        break;
-      }
-      default: break;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId, followToObject, removeStageCardLater, tryAutoExpand]);
-
-  useEffect(() => {
-    if (!stageRef) return;
-    stageRef.current = { onEvent: handleStageEvent };
-    return () => { stageRef.current = null; };
-  }, [stageRef, handleStageEvent]);
-
-  const dismissStageCard = useCallback((blockId) => {
-    setStageCards(prev => {
-      const next = { ...prev };
-      delete next[blockId];
-      return next;
-    });
-  }, []);
+  // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock
+  const visibleIdSet = new Set(visibleObjects.map(o => o.id));
+  const { anchoredCards, dockPanels, dockChips } = splitStageCards({
+    stageCards, positioned, visibleIdSet, visibleZones, currentSessionId, focusZone,
+  });
 
   // ── 外层工具栏桥（工具栏合并：控件画在 CanvasToolbar，操作从这里走）──
   useEffect(() => {
@@ -1153,60 +972,21 @@ export default function BoardCanvas({
             />
           ))}
 
-          {/* 舞台层（板内坐标系）：物件"已更新"角标 + 贴物件的实时动作卡 */}
-          {Object.entries(stageBadges).map(([oid, ts]) => {
-            const o = positioned.find(it => it.id === oid);
-            if (!o || !visibleIdSet.has(oid)) return null;
-            const sz = sizeOf(o);
-            return (
-              <div key={`${oid}:${ts}`} data-stage="badge" style={{
-                position: 'absolute', left: o.pos.x + sz.w - 40, top: o.pos.y - 13,
-                zIndex: 55, pointerEvents: 'none', animation: POP_IN,
-                background: '#b08c4f', color: '#fff', borderRadius: 6,
-                fontFamily: FONT_MONO, fontSize: 9, padding: '2px 6px',
-              }}>已更新</div>
-            );
-          })}
-          {anchoredCards.map(({ card, obj, zoneRect }) => (
-            <StageCard
-              key={card.blockId}
-              card={card}
-              obj={obj}
-              zoneRect={zoneRect}
-              boardSize={boardSize}
-              onDismiss={() => dismissStageCard(card.blockId)}
-            />
-          ))}
+          {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）*/}
+          <StageBoardLayer
+            stageBadges={stageBadges}
+            anchoredCards={anchoredCards}
+            positioned={positioned}
+            visibleIdSet={visibleIdSet}
+            boardSize={boardSize}
+            onDismiss={dismissStageCard}
+          />
         </div>
         </div>
       </div>
 
-      {/* 舞台 dock（屏幕坐标系）：锚不到物件的动作卡 + 工具 chip 流 */}
-      {(dockPanels.length > 0 || dockChips.length > 0) && (
-        <div data-stage="dock" style={{
-          position: 'absolute', left: '50%', bottom: 14, transform: 'translateX(-50%)',
-          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-          zIndex: 80, pointerEvents: 'none', maxWidth: '74%',
-        }}>
-          {[...dockPanels.filter(c => c.kind !== 'question'), ...dockPanels.filter(c => c.kind === 'question')]
-            .slice(-3).map((card) => (
-              <div key={card.blockId} style={{ pointerEvents: 'auto', width: card.kind === 'question' ? 'min(640px, 62vw)' : 'min(560px, 56vw)' }}>
-                {card.kind === 'question'
-                  ? <QuestionStageCard card={card} onDismiss={() => dismissStageCard(card.blockId)} />
-                  : <StageCardBody card={card} onDismiss={() => dismissStageCard(card.blockId)} />}
-              </div>
-            ))}
-          {dockChips.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
-              {dockChips.map((card) => (
-                <StageChip key={card.blockId} card={card} onDismiss={() => dismissStageCard(card.blockId)} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 工具条已合并进外层 CanvasToolbar（apiRef / onUiState 桥），画布区不再叠浮层 */}
+      {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}
+      <StageDock dockPanels={dockPanels} dockChips={dockChips} onDismiss={dismissStageCard} />
 
       {/* 新建文件夹浮层 */}
       {folderDraft != null && (
@@ -1317,15 +1097,6 @@ export default function BoardCanvas({
       )}
     </div>
   );
-}
-
-/** 新工作区先在现有栈底占位（用存档矩形估算），堆叠 effect 下一拍精确归位 */
-function newStackedZoneRect(zones) {
-  let bottom = ZONE.bandY;
-  for (const z of Object.values(zones)) {
-    bottom = Math.max(bottom, (z.y || 0) + (z.collapsed ? FOLDER_CARD_H : (z.h || ZONE.h)));
-  }
-  return { x: MARGIN_X, y: bottom + ZONE_GAP_Y, w: DESKTOP_W - MARGIN_X * 2, h: ZONE.h };
 }
 
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
@@ -1516,217 +1287,6 @@ function BoardObject({
   );
 }
 
-/** 舞台卡（板内坐标系定位）：贴目标物件摆（右侧优先，放不下换左/下）；shimmer 贴工作区下沿 */
-function StageCard({ card, obj, zoneRect, boardSize, onDismiss }) {
-  if (card.kind === 'image' && zoneRect) {
-    const x = Math.max(8, Math.min(boardSize.w - 216, zoneRect.x + ZONE.pad));
-    const y = Math.max(8, Math.min(boardSize.h - 200, zoneRect.y + zoneRect.h - 196));
-    return (
-      <div style={{ position: 'absolute', left: x, top: y, width: 200, zIndex: 60 }}>
-        <ShimmerCard card={card} onDismiss={onDismiss} />
-      </div>
-    );
-  }
-  const sz = sizeOf(obj);
-  let x = obj.pos.x + sz.w + 24;
-  let y = obj.pos.y;
-  if (x + STAGE_CARD_W > boardSize.w - 12) x = obj.pos.x - STAGE_CARD_W - 24;
-  if (x < 12) {
-    x = Math.max(12, Math.min(boardSize.w - STAGE_CARD_W - 12, obj.pos.x));
-    y = obj.pos.y + sz.h + 20;
-  }
-  y = Math.max(12, Math.min(boardSize.h - 400, y));
-  return (
-    <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60 }}>
-      <StageCardBody card={card} onDismiss={onDismiss} />
-    </div>
-  );
-}
-
-/** 舞台卡内容体（代码直播 / 终端）—— 板内锚定与 dock 共用 */
-function StageCardBody({ card, onDismiss }) {
-  if (card.kind === 'image') return <ShimmerCard card={card} onDismiss={onDismiss} />;
-  const running = card.status === 'running';
-  const isTerm = card.kind === 'terminal';
-  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : 'rgba(176,140,79,0.65)';
-  const label = card.tool === 'Edit' ? '修改' : card.tool === 'Write' ? '写入' : toolLabelOf(card.tool);
-  return (
-    <div
-      data-stage="card" data-stage-kind={card.kind} data-stage-status={card.status}
-      style={{
-        borderRadius: 12, overflow: 'hidden', border: `1.5px solid ${border}`,
-        background: '#211e17', boxShadow: '0 10px 30px rgba(40,32,16,0.35)',
-        animation: card.status === 'ok'
-          ? `${POP_IN}, ndPulse 700ms ease-out, ndStageOut 380ms ease 1150ms forwards`
-          : POP_IN,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: 'rgba(255,255,255,0.06)' }}>
-        {isTerm ? <Terminal size={11} color="#c8b98c" /> : <PencilLine size={11} color="#c8b98c" />}
-        <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: '#e8e2d2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {isTerm ? (card.command || 'bash') : `${label} · ${fileNameOf(card.filePath) || '…'}`}
-        </span>
-        {running ? (
-          <span style={{ width: 10, height: 10, border: '1.5px solid rgba(232,226,210,0.35)', borderTopColor: '#e8e2d2', borderRadius: '50%', animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
-        ) : (
-          <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: card.status === 'ok' ? '#8fc79a' : '#e09a94', flexShrink: 0 }}>
-            {card.status === 'ok' ? '✓' : '✗'}
-          </span>
-        )}
-        {card.status === 'fail' && (
-          <button onClick={onDismiss} style={{ border: 0, background: 'transparent', color: '#e8e2d2', cursor: 'pointer', display: 'flex', padding: 2 }}>
-            <X size={10} />
-          </button>
-        )}
-      </div>
-      {card.kind === 'code' && card.oldString && (
-        <div style={{
-          padding: '4px 10px', background: 'rgba(176,85,79,0.16)', color: '#dba49f',
-          fontFamily: FONT_MONO, fontSize: 9.5, lineHeight: 1.5,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 64, overflow: 'hidden',
-          borderBottom: '1px solid rgba(255,255,255,0.05)',
-        }}>
-          {clampLines(card.oldString, 3)}
-        </div>
-      )}
-      <AutoScrollPre
-        text={isTerm ? (card.output || '') : card.text}
-        running={running}
-        color={isTerm ? '#cfe3cf' : '#d9e4c9'}
-        placeholder={running ? (isTerm ? '运行中…' : '正在生成…') : ''}
-      />
-      {card.status === 'fail' && card.error && (
-        <div style={{ padding: '5px 10px', fontFamily: FONT_MONO, fontSize: 9.5, color: '#e09a94', whiteSpace: 'pre-wrap', wordBreak: 'break-all', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          {card.error}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 代码/终端正文：文本追加时自动贴底滚动（直播视角永远看最新一行）*/
-function AutoScrollPre({ text, running, color, placeholder }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [text]);
-  if (!text && !running) return null;
-  return (
-    <div ref={ref} style={{ maxHeight: 280, overflowY: 'auto', padding: '8px 10px' }}>
-      <pre style={{ margin: 0, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.55, color, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-        {text || placeholder}
-        {running && (
-          <span style={{ display: 'inline-block', width: 6, height: 11, marginLeft: 2, verticalAlign: '-2px', background: '#e8e2d2', animation: 'ndCaret 900ms step-end infinite' }} />
-        )}
-      </pre>
-    </div>
-  );
-}
-
-/** 生图占位（shimmer 扫光），真图由 board.updated / 产物重拉落座 */
-function ShimmerCard({ card, onDismiss }) {
-  const running = card.status === 'running';
-  return (
-    <div
-      data-stage="card" data-stage-kind="image" data-stage-status={card.status}
-      style={{
-        width: 200, borderRadius: 10, overflow: 'hidden',
-        border: `1px solid ${card.status === 'fail' ? '#b0554f' : 'rgba(176,140,79,0.5)'}`,
-        background: COLOR.bgCard, boxShadow: '0 6px 18px rgba(60,48,20,0.18)',
-        animation: card.status === 'ok' ? `${POP_IN}, ndStageOut 380ms ease 1150ms forwards` : POP_IN,
-      }}
-    >
-      <div style={{
-        aspectRatio: '4 / 3',
-        background: 'linear-gradient(100deg, #ece7db 30%, #faf8f2 45%, #ece7db 60%)',
-        backgroundSize: '240% 100%',
-        animation: running ? 'ndShimmer 1.5s linear infinite' : 'none',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <ImageIcon size={22} color="#b3a58a" />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}>
-        <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {running ? '生成图片中…' : card.status === 'ok' ? '已生成' : '生成失败'}
-          {card.prompt ? ` · ${card.prompt}` : ''}
-        </span>
-        {card.status === 'fail' && (
-          <button onClick={onDismiss} style={{ border: 0, background: 'transparent', color: COLOR.sub, cursor: 'pointer', display: 'flex', padding: 2 }}>
-            <X size={10} />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** agent 提问直接在画布里答：复用聊天栏的 wizard 卡（同一个 /answer 端点，
- *  谁先答谁生效，另一张随 tool_result 变已答态）*/
-function QuestionStageCard({ card, onDismiss }) {
-  const status = card.status === 'ok' ? 'success' : card.status === 'fail' ? 'error' : 'running';
-  return (
-    <div
-      data-stage="card" data-stage-kind="question" data-stage-status={card.status}
-      style={{
-        borderRadius: 12, border: '1.5px solid rgba(176,140,79,0.65)', background: COLOR.bg,
-        boxShadow: '0 12px 34px rgba(40,32,16,0.28)', padding: GAP.md,
-        maxHeight: '52vh', overflowY: 'auto',
-        animation: card.status === 'ok' ? `${POP_IN}, ndStageOut 380ms ease 1150ms forwards` : POP_IN,
-      }}
-    >
-      {Array.isArray(card.input?.questions) && card.input.questions.length > 0 ? (
-        <AskUserQuestionView
-          toolInput={card.input}
-          toolOutput={card.output}
-          status={status}
-          toolUseId={card.blockId}
-        />
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
-          <span style={{ width: 9, height: 9, border: `1.5px solid ${COLOR.borderLt}`, borderTopColor: COLOR.text, borderRadius: '50%', animation: 'ndSpin 800ms linear infinite' }} />
-          agent 正在整理问题…
-        </div>
-      )}
-      {card.status === 'fail' && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: GAP.sm }}>
-          <button onClick={onDismiss} style={toolBtn}><X size={10} /> 关闭</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** 轻量工具 chip：检索 / 读文件 / 装技能这类不抢戏的动作 */
-function StageChip({ card, onDismiss }) {
-  const running = card.status === 'running';
-  return (
-    <span
-      data-stage="chip" data-stage-status={card.status}
-      onClick={card.status === 'fail' ? onDismiss : undefined}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px',
-        borderRadius: 999, background: 'rgba(33,30,23,0.88)', color: '#e8e2d2',
-        fontFamily: FONT_MONO, fontSize: 9.5, animation: POP_IN,
-        border: `1px solid ${card.status === 'fail' ? '#b0554f' : 'transparent'}`,
-        cursor: card.status === 'fail' ? 'pointer' : 'default',
-      }}
-    >
-      {running ? (
-        <span style={{ width: 8, height: 8, border: '1.5px solid rgba(232,226,210,0.3)', borderTopColor: '#e8e2d2', borderRadius: '50%', animation: 'ndSpin 800ms linear infinite' }} />
-      ) : (
-        <span style={{ color: card.status === 'ok' ? '#8fc79a' : '#e09a94' }}>{card.status === 'ok' ? '✓' : '✗'}</span>
-      )}
-      {toolLabelOf(card.tool)}{card.hint ? ` ${card.hint}` : ''}
-    </span>
-  );
-}
-
-function clampLines(s, n) {
-  const lines = String(s).split('\n');
-  return lines.length <= n ? s : `${lines.slice(0, n).join('\n')}\n…`;
-}
-
 function Overlay({ children, onClose }) {
   return (
     <div
@@ -1739,11 +1299,6 @@ function Overlay({ children, onClose }) {
       <div onClick={(e) => e.stopPropagation()} style={{ animation: POP_IN }}>{children}</div>
     </div>
   );
-}
-
-function sizeOf(o) {
-  if (o.type === 'deck') return o.pos?.expanded ? SIZES.deckExpanded : SIZES.deck;
-  return SIZES[o.type] || SIZES.file;
 }
 
 function thumbSrcOf(projectId, item) {
@@ -1761,9 +1316,6 @@ const toolBtn = {
   padding: `${GAP.xs}px ${GAP.sm + 2}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
 };
-
-const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
-const POP_IN = 'ndPopIn 260ms cubic-bezier(0.32, 0.72, 0, 1)';
 
 const winBtn = {
   border: 0, background: 'rgba(0,0,0,0.05)', borderRadius: 4,

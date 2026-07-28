@@ -1,7 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import BoardToolbar from './BoardToolbar.jsx';
 import BoardCanvas from './BoardCanvas.jsx';
-import DeckWindow from './DeckWindow.jsx';
+
+// 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
+// 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
+const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
 
 /**
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
@@ -97,6 +100,7 @@ export default function CanvasFrame({
         />
 
         {deckOpen && sessionId && (
+          <Suspense fallback={null}>
           <DeckWindow
             tab={deckTab}
             onTabChange={setDeckTab}
@@ -134,6 +138,7 @@ export default function CanvasFrame({
             canUndoPending={canUndoPending}
             isStreaming={isStreaming}
           />
+          </Suspense>
         )}
       </div>
     </div>

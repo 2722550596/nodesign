@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, XCircle, Focus } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
@@ -26,6 +26,7 @@ export default function ChatPanel({
   todos,
   sessionTitle,
   boardFocus = null,          // 工作台工作视图聚焦的工作区 { id, title, count, isSession }
+  subagents = {},             // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
   hasActiveSession = false,  // 有 currentSessionId 才显示"结束会话"入口
@@ -36,6 +37,21 @@ export default function ChatPanel({
   // V2：streaming 状态从 header 移到 Send 按钮，header 不再显示文字。
   // agentProgress 还保留——后续如果想加进度气泡（hover Send 看 last tool）可用。
   void agentProgress;
+
+  // ── 子代理时间轴（2026-07-28）：一个事件流两个投影 ——
+  // 「对话」= 主线（无 parentToolUseId）；每个子代理一个 tab，看它自己的流。
+  // 消息按 parentToolUseId 拆分（server forwardSubagentText 透传，
+  // lib/chat-stream.js 折叠时已隔离不互吸）。
+  const [chatTab, setChatTab] = useState('main');
+  useEffect(() => { setChatTab('main'); }, [sessionId]);
+  useEffect(() => {
+    if (chatTab !== 'main' && !subagents[chatTab]) setChatTab('main');
+  }, [chatTab, subagents]);
+  const shownMessages = useMemo(() => (
+    chatTab === 'main'
+      ? messages.filter(m => !m.parentToolUseId)
+      : messages.filter(m => m.parentToolUseId === chatTab)
+  ), [messages, chatTab]);
 
   // Header liveness dot：
   //   isStreaming + 距上次事件 < 2s → 绿色 pulse（agent 在产 output）
@@ -165,9 +181,31 @@ export default function ChatPanel({
         </div>
       )}
 
+      {/* 子代理时间轴 tabs：有子代理跑过才出现 */}
+      {Object.keys(subagents).length > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+          padding: `4px ${GAP.lg}px`,
+          borderBottom: `1px solid ${COLOR.borderLt}`,
+          background: 'rgba(0,0,0,0.02)',
+        }}>
+          <button onClick={() => setChatTab('main')} style={timelineTab(chatTab === 'main')}>对话</button>
+          {Object.entries(subagents).map(([tid, sa]) => (
+            <button key={tid} onClick={() => setChatTab(tid)} style={timelineTab(chatTab === tid)} title={sa.description}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                background: sa.status === 'running' ? '#b08c4f' : sa.status === 'completed' ? '#4f8f5b' : '#b0554f',
+                animation: sa.status === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none',
+              }} />
+              {(sa.description || sa.taskType || '子代理').slice(0, 14)}
+            </button>
+          ))}
+        </div>
+      )}
+
       <TodoPanel todos={todos} />
       <MessageList
-        messages={messages}
+        messages={shownMessages}
         isStreaming={isStreaming}
         projectId={projectId}
         sessionId={sessionId}
@@ -231,4 +269,17 @@ export default function ChatPanel({
       />
     </div>
   );
+}
+
+/** 子代理时间轴 tab 按钮（对话 / 各子代理）*/
+function timelineTab(active) {
+  return {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    padding: '3px 10px', borderRadius: 999, border: 0,
+    fontFamily: FONT_MONO, fontSize: 10, fontWeight: 500,
+    color: active ? COLOR.bg : COLOR.text,
+    background: active ? COLOR.text : 'rgba(0,0,0,0.05)',
+    cursor: 'pointer', transition: 'all 0.15s',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
+  };
 }

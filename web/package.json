@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -24,7 +25,8 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10"
   },
   "allowScripts": {
     "esbuild@0.25.12": true

@@ -37,6 +37,18 @@ import { serializeForAI } from '../lib/element-semantics.js';
 import { Canvas, Turn, Assets, Exports, Sessions, PendingChanges } from '../lib/api.js';
 import { openProjectWS } from '../lib/ws-client.js';
 import { sessionMessagesToDisplay } from '../lib/session-to-messages.js';
+import { reduceChatEvent, clearThinkingStreaming, mergeLiveTurnSnapshot, mergeHydrated } from '../lib/chat-stream.js';
+
+// 舞台旁路消费的事件（转发进 BoardCanvas 的 stageRef，见 handleEvent 管线 1 段）
+const STAGE_EVENTS = new Set([
+  'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
+  'run.delta.tool_result', 'run.file_changed', 'run.done', 'run.error', 'run.cancelled',
+]);
+// 聊天流折叠事件（lib/chat-stream.js reducer 接管，见管线 2 段）
+const CHAT_STREAM_EVENTS = new Set([
+  'run.delta.text', 'run.delta.thinking',
+  'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_result',
+]);
 import { usePendingEdits } from '../hooks/usePendingEdits.js';
 
 export default function ProjectWorkspace() {
@@ -100,6 +112,9 @@ export default function ProjectWorkspace() {
   const [boardUi, setBoardUi] = useState(null);
   // 舞台层（2026-07-28）：run.* 工具流原样转发进 BoardCanvas，画布演出 agent 实时动作
   const stageRef = useRef(null);
+  // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
+  const [subagents, setSubagents] = useState({});
+  useEffect(() => { setSubagents({}); }, [currentSessionId]);
   // 稳定引用让 ChatPanel/MessageList 下游 React.memo 生效；之前 inline 箭头每次
   // render 都 new function，子组件 props 浅比较永不命中。
   const handleCanvasReload = useCallback(() => setReloadToken(t => t + 1), []);
@@ -504,23 +519,22 @@ export default function ProjectWorkspace() {
       || (evt.sessionId && liveSid && evt.sessionId !== liveSid)
     );
 
-    // 舞台层旁路（2026-07-28）：工具流 / 文件变更 / 收场信号原样转发给工作台画布，
-    // 它把 agent 的实时动作演出来（代码直播 / 终端 / shimmer / chip / 角标）。
-    // BoardCanvas 未挂载（非 board 视图）时 stageRef.current 为 null，事件自然丢弃。
-    switch (evt.type) {
-      case 'run.tool_use.started':
-      case 'run.delta.tool_use':
-      case 'run.delta.tool_input':
-      case 'run.delta.tool_result':
-      case 'run.file_changed':
-      case 'run.done':
-      case 'run.error':
-      case 'run.cancelled':
-        if (!isStale) stageRef.current?.onEvent?.(evt);
-        break;
-      default: break;
+    // ── 1. 舞台旁路 ──：工具流 / 文件变更 / 收场信号原样转发给工作台画布
+    // （agent 实时动作演出）。BoardCanvas 未挂载时 stageRef.current 为 null，自然丢弃。
+    if (STAGE_EVENTS.has(evt.type) && !isStale) {
+      stageRef.current?.onEvent?.(evt);
     }
 
+    // ── 2. 聊天流折叠（lib/chat-stream.js 纯 reducer，语义有单测固化）──
+    // 这五类事件除了折 messages 只有一个副作用：正文开始流 = 思考段结束。
+    if (CHAT_STREAM_EVENTS.has(evt.type)) {
+      if (isStale) return;
+      if (evt.type === 'run.delta.text') setThinkingTokens(null);
+      setMessages(prev => reduceChatEvent(prev, evt));
+      return;
+    }
+
+    // ── 3. 其余：协议帧 / run 生命周期 / UI 副作用 ──
     switch (evt.type) {
       // ── Phase A.4：WS hydrate 协议（server 推完整 messages 让前端不依赖 HTTP Sessions.read）──
       case 'ws.hydrate.start':
@@ -543,22 +557,8 @@ export default function ProjectWorkspace() {
         const display = sessionMessagesToDisplay(buffer);
         // 防 wipe optimistic：hydrate 拿到空 messages（jsonl 还没 flush）但 current 有
         // 内容（用户刚 setMessages 的 user msg + 流式 delta）→ 信任 current 不替换
-        setMessages(prev => {
-          if (display.length === 0 && prev.length > 0) return prev;
-          // orphan merge：display 不空但缺乐观 user msg（server flush 了 metadata 但
-          // user msg 还在 inputQueue 没落 JSONL）—— 保留 prev 里 content 不匹配的 user msg
-          const displayUserContents = new Set(
-            display.filter(m => m.role === 'user').map(m => (m.content || '').trim())
-          );
-          const orphans = prev.filter(m =>
-            m.role === 'user' && !displayUserContents.has((m.content || '').trim())
-          );
-          if (orphans.length > 0) {
-            if (import.meta.env.DEV) console.warn(`[hydrate.end] kept ${orphans.length} orphan optimistic user msg(s) — JSONL flush race`);
-            return [...display, ...orphans];
-          }
-          return display;
-        });
+        // 防 wipe 乐观消息 / orphan 保留 —— 语义在 lib/chat-stream.js（有单测）
+        setMessages(prev => mergeHydrated(prev, display));
         break;
       }
       case 'ws.connected': {
@@ -593,16 +593,8 @@ export default function ProjectWorkspace() {
         // 覆盖"刷新 / 断线期间错过的全部流式内容"：文本、thinking、工具卡（含
         // AskUserQuestion 的 toolInput，问题卡直接复原可答）。
         if (evt.sessionId && liveSid && evt.sessionId !== liveSid) break;
-        const snapMessages = Array.isArray(evt.messages) ? evt.messages : [];
-        setMessages(prev => {
-          // 快照对本 turn 权威：清掉 prev 里同 runId 的 delta 累积（重连前已渲染的
-          // 部分，id 体系跟快照不同会重复）+ 同 id 的工具卡，再整体附加快照
-          const snapIds = new Set(snapMessages.map(m => m.id));
-          const base = prev.filter(m =>
-            !(m.runId && evt.runId && m.runId === evt.runId) && !snapIds.has(m.id)
-          );
-          return [...base, ...snapMessages];
-        });
+        // 快照对本 turn 权威 —— 合并语义在 lib/chat-stream.js（有单测）
+        setMessages(prev => mergeLiveTurnSnapshot(prev, evt.messages, evt.runId));
         if (evt.runId) {
           setIsStreaming(true);
           setCurrentRunId(evt.runId);
@@ -656,69 +648,6 @@ export default function ProjectWorkspace() {
       case 'run.todo.updated':
         if (isStale) break;
         setTodos(Array.isArray(evt.todos) ? evt.todos : []);
-        break;
-      case 'run.delta.text':
-        if (isStale) break;
-        setThinkingTokens(null); // 正文开始流 = 思考段结束
-        setMessages(prev => appendTextDelta(prev, 'assistant', evt.text, evt.runId));
-        break;
-      case 'run.delta.thinking':
-        if (isStale) break;
-        setMessages(prev => appendTextDelta(prev, 'thinking', evt.text, evt.runId));
-        break;
-      case 'run.tool_use.started':
-        if (isStale) break;
-        // 工具 streaming 起点（SDK content_block_start 触发）。立即推 icon + name
-        // 让用户看到"agent 在调 X 工具"，input 待 run.delta.tool_use 来时补。
-        setMessages(prev => {
-          // 防御：如果同 blockId 已经在（理论上不会，但 ws 重连重放可能），noop
-          if (prev.some(m => m.role === 'tool' && m.id === evt.blockId)) return prev;
-          return [...prev, {
-            id: evt.blockId,
-            role: 'tool',
-            toolName: evt.name,
-            toolInput: undefined,  // 还没流完
-            status: 'running',
-            runId: evt.runId,  // 用于 delta merge 时判断同一 turn 边界
-          }];
-        });
-        break;
-      case 'run.delta.tool_use':
-        if (isStale) break;
-        // assistant message 完成时 SDK 推完整 tool_use block 来。如果同 blockId
-        // 的 tool message 已存在（被 run.tool_use.started 推过），就 update input；
-        // 否则补 push（兼容 SDK 没出 content_block_start 的情况，如某些 stream 边界）。
-        setMessages(prev => {
-          const existingIdx = prev.findIndex(m => m.role === 'tool' && m.id === evt.blockId);
-          if (existingIdx >= 0) {
-            const updated = [...prev];
-            updated[existingIdx] = { ...updated[existingIdx], toolInput: evt.input };
-            return updated;
-          }
-          return [...prev, {
-            id: evt.blockId || newId('tool'),
-            role: 'tool',
-            toolName: evt.name,
-            toolInput: evt.input,
-            status: 'running',
-            runId: evt.runId,
-          }];
-        });
-        break;
-      case 'run.delta.tool_result':
-        if (isStale) break;
-        setMessages(prev => prev.map(m =>
-          m.role === 'tool' && m.id === evt.blockId
-            ? {
-                ...m,
-                status: evt.ok ? 'success' : 'error',
-                toolOutput: evt.output,
-                toolError: evt.error,
-                // C24：image content blocks（screenshot_canvas 等返回的图片）
-                toolImages: evt.images,
-              }
-            : m,
-        ));
         break;
       case 'run.done': {
         // Phase A.5：用 ref 拿最新 currentRunId（handleEvent 闭包持的 currentRunId
@@ -893,6 +822,11 @@ export default function ProjectWorkspace() {
                 }
               : m,
           ));
+          // 子代理时间轴：注册 tab（forwardSubagentText 的流按 parentToolUseId 归到它名下）
+          setSubagents(prev => ({
+            ...prev,
+            [evt.toolUseId]: { description: evt.description, taskType: evt.taskType, status: 'running' },
+          }));
         }
         break;
 
@@ -928,6 +862,9 @@ export default function ProjectWorkspace() {
                 }
               : m,
           ));
+          setSubagents(prev => (prev[evt.toolUseId]
+            ? { ...prev, [evt.toolUseId]: { ...prev[evt.toolUseId], status: evt.status } }
+            : prev));
         }
         if (evt.status === 'failed') {
           showToast(`子代理失败：${evt.summary || ''}`, 'error');
@@ -1737,6 +1674,7 @@ export default function ProjectWorkspace() {
             todos={todos}
             sessionTitle={currentSessionTitle}
             boardFocus={boardUi?.focus || null}
+            subagents={subagents}
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
             hasActiveSession={!!currentSessionId}
@@ -1874,50 +1812,6 @@ export default function ProjectWorkspace() {
 }
 
 // ── helpers ──
-
-/**
- * 同 role 连续 text delta 累加为一条消息；否则 push 新消息。
- * thinking 自带 isStreaming=true（用于尾部光标）；非 thinking 内容产生时
- * 自动关掉之前所有 thinking 的 isStreaming 标记（那段思考已经结束了）。
- */
-function appendTextDelta(messages, role, text, runId) {
-  if (!text) return messages;
-  const cleared = role === 'thinking' ? messages : clearThinkingStreaming(messages);
-  const last = cleared[cleared.length - 1];
-  // Phase A.5（2026-05-07）：merge 时加 runId 匹配检查 — 防 cross-turn 粘连
-  // 老逻辑：last.role === role 就 merge → 上一 turn 的 assistant text 会跟当前 turn
-  // 第一段 delta 粘到一起。新逻辑：role 同 + runId 同（或都没 runId）才 merge，
-  // 否则 push 新消息让两个 turn 自然分隔。
-  if (
-    last
-    && last.role === role
-    && !last.hydrated   // hydrate 历史消息不吸新 delta（跨 turn 粘连防护）
-    && (!runId || !last.runId || last.runId === runId)
-  ) {
-    const merged = { ...last, content: (last.content || '') + text };
-    if (role === 'thinking') merged.isStreaming = true;
-    // runId 用第一次创建时的（同一段连续 delta 共享一个 turn 的 runId）；若 last 还没 runId 而新 delta 带了，补上
-    if (runId && !last.runId) merged.runId = runId;
-    return [...cleared.slice(0, -1), merged];
-  }
-  const created = { id: newId('msg'), role, content: text };
-  if (role === 'thinking') created.isStreaming = true;
-  if (runId) created.runId = runId;  // 用于 delta merge 时判断同一 turn 边界
-  return [...cleared, created];
-}
-
-/** 关掉所有 thinking 消息的流式光标（run 结束 / 切到非 thinking 内容时调）*/
-function clearThinkingStreaming(messages) {
-  let changed = false;
-  const next = messages.map(m => {
-    if (m.role === 'thinking' && m.isStreaming) {
-      changed = true;
-      return { ...m, isStreaming: false };
-    }
-    return m;
-  });
-  return changed ? next : messages;
-}
 
 /** 工具错误对象 → 用户可读字符串 */
 function formatToolError(err) {
