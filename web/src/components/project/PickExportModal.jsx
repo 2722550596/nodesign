@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FileCode, Image as ImageIcon, FileText, Download } from 'lucide-react';
+import { FileCode, Image as ImageIcon, FileText, Download, Globe } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Exports } from '../../lib/api.js';
@@ -12,7 +12,7 @@ import { Exports } from '../../lib/api.js';
  * 勾选后单个文件直接下，多个自动打成一个 zip。
  */
 
-const KIND_ICON = { deck: FileCode, image: ImageIcon, file: FileText };
+const KIND_ICON = { deck: FileCode, 'site-page': Globe, image: ImageIcon, file: FileText };
 
 function sizeText(n) {
   if (n == null) return '';
@@ -32,11 +32,15 @@ export default function PickExportModal({ open, onClose, projectId, sessionId, o
     let cancelled = false;
     setLoading(true);
     Exports.items(projectId, sessionId)
-      .then(({ items: list = [] }) => {
+      .then(({ items: list = [], kind = null }) => {
         if (cancelled) return;
         setItems(list);
-        // 默认勾上 deck —— 最常见的意图就是"把这份 deck 给我"
-        setPicked(new Set(list.filter(i => i.kind === 'deck').map(i => i.path)));
+        // deck：默认勾 deck 本身（最常见意图＝"把这份 deck 给我"）。
+        // 站点：默认全勾 —— 只勾 .html 会漏掉 style.css 和图，用户下下来解压打开
+        // 是一张没有样式的白页，还查不出是导出漏了。
+        setPicked(new Set(
+          kind === 'site' ? list.map(i => i.path) : list.filter(i => i.kind === 'deck').map(i => i.path),
+        ));
       })
       .catch(err => { if (!cancelled) onToast?.(`读取产物失败：${err.message}`, 'error'); })
       .finally(() => { if (!cancelled) setLoading(false); });

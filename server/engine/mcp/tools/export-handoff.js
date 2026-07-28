@@ -21,7 +21,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { buildHandoffZip } from '../../../api/exports.js';
 import { getProject, listRunsForProject } from '../../../projects/store.js';
-import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/artifact-target.js';
 
 /**
  * @param {object} deps

@@ -12,7 +12,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { Events } from '../../agent/events.js';
-import { setActiveDeck } from '../../../lib/canvas-target.js';
+import { setActiveDeck } from '../../../lib/artifact-target.js';
 
 /**
  * @param {object} deps

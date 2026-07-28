@@ -25,6 +25,7 @@ import {
 } from '../projects/workspace.js';
 import { fitInjectionBlock } from './standalone-fit.js';
 import { resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
+import { kindOfPath } from '../lib/artifact-target.js';
 
 const router = express.Router();
 
@@ -226,10 +227,14 @@ router.get('/:pid/sessions/:sid/canvas/deck-meta', async (req, res, next) => {
     if (file === sessionRoot || file.startsWith(sessionRoot + path.sep)) {
       try { html = await fs.readFile(file, 'utf8'); } catch { /* canvas 还没生成 → 默认 16:9 fallback */ }
     }
+    // kind 一起返回：站点没有"比例"这回事（响应式、高度不定），前端拿到
+    // kind='site' 就别用下面这组数去套固定画框。不返 kind 的话前端只能拿到
+    // 静默 fallback 的 16:9，把一个网站塞进 1920×1080 的信箱框里。
+    const kind = await kindOfPath(sessionRoot, rel);
     const aspect = extractDeckAspect(html);
     const { width, height } = resolveDeckSize(aspect);
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ aspect, width, height });
+    res.json({ kind, aspect, width, height });
   } catch (err) { next(err); }
 });
 

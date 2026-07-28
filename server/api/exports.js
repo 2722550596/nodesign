@@ -27,7 +27,7 @@ import {
 import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml, inlineLocalImages } from './exports/build-standalone.js';
-import { resolveCanvasTarget } from '../lib/canvas-target.js';
+import { resolveCanvasTarget, KIND_SITE, ENTRY_FILE } from '../lib/artifact-target.js';
 
 const router = express.Router();
 
@@ -134,38 +134,61 @@ router.get('/:pid/sessions/:sid/exports/items', async (req, res, next) => {
       } catch { /* 读不到就不列 */ }
     };
 
-    // 任务目录里的东西（deck / 试作 / 说明 / plan）
+    // 任务目录里的东西（deck / 试作 / 说明 / plan；站点则含子目录里的全部页面与样式）
     const taskDir = target.ok ? path.dirname(target.relPath) : null;
+    const isSite = target.ok && target.kind === KIND_SITE;
     if (taskDir && taskDir !== '.') {
-      let names = [];
-      try { names = await fs.readdir(path.resolve(sessionRoot, taskDir)); } catch { /* 没有就算 */ }
-      for (const n of names) {
-        if (n.startsWith('.')) continue;
-        const rel = `${taskDir}/${n}`;
-        await add(rel, n.endsWith('.html') ? 'deck' : 'file');
-      }
-    } else if (target.ok) {
-      await add(target.relPath, 'deck');
-    }
-
-    // deck 引用到的图（相对 deck 目录解，落成 workspace 相对路径）
-    if (target.ok) {
-      try {
-        const html = await fs.readFile(target.absPath, 'utf8');
-        const base = path.dirname(target.absPath);
-        const refs = new Set();
-        for (const m of html.matchAll(/<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gi)) refs.add(m[1] || m[2]);
-        for (const m of html.matchAll(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)]+?))\s*\)/gi)) refs.add((m[1] || m[2] || m[3] || '').trim());
-        for (const r of refs) {
-          if (!r || /^(?:[a-z][a-z0-9+\-.]*:|\/\/)/i.test(r) || path.isAbsolute(r)) continue;
-          const abs = path.resolve(base, r);
-          if (!abs.startsWith(sessionRoot + path.sep)) continue;
-          await add(path.relative(sessionRoot, abs).split(path.sep).join('/'), 'image');
+      // 站点要递归：css/ images/ posts/ 这些子目录是站的一部分，漏了下下来打不开
+      const walk = async (relDir, depth) => {
+        let entries = [];
+        try {
+          entries = await fs.readdir(path.resolve(sessionRoot, relDir), { withFileTypes: true });
+        } catch { return; }
+        for (const e of entries) {
+          if (e.name.startsWith('.')) continue;
+          const rel = `${relDir}/${e.name}`;
+          if (e.isDirectory()) {
+            if (isSite && depth < 3) await walk(rel, depth + 1);
+            continue;
+          }
+          await add(rel, e.name.endsWith('.html') ? (isSite ? 'site-page' : 'deck') : 'file');
         }
-      } catch { /* deck 读不到就只列目录内容 */ }
+      };
+      await walk(taskDir, 1);
+    } else if (target.ok) {
+      await add(target.relPath, isSite ? 'site-page' : 'deck');
     }
 
-    res.json({ deck: target.ok ? target.relPath : null, items });
+    // 产物引用到的图（相对它自己的目录解，落成 workspace 相对路径）。
+    // 站点扫全部页面 —— 只扫入口页会漏掉子页独有的图，用户下下来是裂的。
+    if (target.ok) {
+      // 站点：所有 .html + .css 都可能引图；deck：就它自己那一份
+      const sources = isSite
+        ? items.filter(i => /\.(html?|css)$/i.test(i.path)).map(i => path.resolve(sessionRoot, i.path))
+        : [target.absPath];
+      for (const src of sources) {
+        try {
+          const html = await fs.readFile(src, 'utf8');
+          const base = path.dirname(src);
+          const refs = new Set();
+          for (const m of html.matchAll(/<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gi)) refs.add(m[1] || m[2]);
+          for (const m of html.matchAll(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)]+?))\s*\)/gi)) refs.add((m[1] || m[2] || m[3] || '').trim());
+          for (const r of refs) {
+            if (!r || /^(?:[a-z][a-z0-9+\-.]*:|\/\/)/i.test(r) || path.isAbsolute(r)) continue;
+            const abs = path.resolve(base, r);
+            if (!abs.startsWith(sessionRoot + path.sep)) continue;
+            await add(path.relative(sessionRoot, abs).split(path.sep).join('/'), 'image');
+          }
+        } catch { /* 读不到就跳过这一份 */ }
+      }
+    }
+
+    res.json({
+      deck: target.ok ? target.relPath : null,
+      kind: target.ok ? target.kind : null,
+      task: target.ok ? target.task : null,
+      items,
+    });
   } catch (err) { next(err); }
 });
 
@@ -207,8 +230,21 @@ router.post('/:pid/sessions/:sid/exports/pick', async (req, res, next) => {
       return res.end(buf);
     }
 
+    // 包内路径：剥掉所有勾选项的公共目录前缀。deck 场景（全在同一个任务目录里）
+    // 结果还是平铺的文件名；站点勾了子目录里的页面时保留 `css/style.css` 这层结构 ——
+    // 一律 basename 会让 `pages/a.html` 和 `posts/a.html` 在包里撞成一个。
+    const segs = files.map(f => f.rel.split('/').slice(0, -1));
+    let common = segs[0] || [];
+    for (const s of segs) {
+      let i = 0;
+      while (i < common.length && i < s.length && common[i] === s[i]) i++;
+      common = common.slice(0, i);
+    }
+    const strip = common.length ? common.join('/') + '/' : '';
     const zip = new JSZip();
-    for (const f of files) zip.file(path.basename(f.rel), await fs.readFile(f.abs));
+    for (const f of files) {
+      zip.file(f.rel.startsWith(strip) ? f.rel.slice(strip.length) : f.rel, await fs.readFile(f.abs));
+    }
     const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     const name = `${safeFilename(req.body?.filename || project.name)}.zip`;
     res.setHeader('Content-Type', 'application/zip');
@@ -236,19 +272,26 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
       throw err;
     }
 
+    // **fit script 只给 deck**（2026-07-28）：那段脚本把每个 section 包成
+    // 100vw×100vh 的 frame + scroll-snap，是幻灯片范式。站点是自然滚动的长页，
+    // 注进去等于把用户的网站改造成翻页器 —— 而且是导出物，坏了还带不回来。
+    // 顺带 stripFitScripts 也要跳过：它按启发式删"像 fit 的脚本"，站点里正当的
+    // `transform: scale(` 动画会被误删。
+    const injectFit = target.kind !== KIND_SITE;
+
     // Hybrid 文件 → 走自包含构建管道（CDN 全 inline，离线可双击打开）
     // 老 deck（无 babel script）→ 降级到 injectViewportFit 文本替换
     // 任一步骤失败也降级——保证用户至少拿到能用的 HTML
     if (isHybridHtml(html)) {
       try {
         // baseDir = deck 自己的目录：任务 deck 写的是 ../../assets/generated/x.png
-        html = await buildStandaloneHtml(html, { sessionRoot, baseDir: path.dirname(file) });
+        html = await buildStandaloneHtml(html, { sessionRoot, baseDir: path.dirname(file), injectFit });
       } catch (err) {
         // standalone 任何一步炸——管道里图片 inline 也不会跑，用户拿到的 HTML
         // 离开 session 目录后 <img src="assets/..."> 全 404。降级路径必须仍把
         // 图片 inline 一遍兜底，否则一次 esbuild 失败 = 整个 deck 图片全丢。
         console.warn('[exports/html] standalone build failed, falling back to viewport-fit:', err.message);
-        html = injectViewportFit(html);
+        if (injectFit) html = injectViewportFit(html);
         try {
           html = await inlineLocalImages(html, path.dirname(file), sessionRoot);
         } catch (e2) {
@@ -256,7 +299,7 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
         }
       }
     } else {
-      html = injectViewportFit(html);
+      if (injectFit) html = injectViewportFit(html);
       try {
         html = await inlineLocalImages(html, path.dirname(file), sessionRoot);
       } catch (e) {
@@ -290,6 +333,7 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
+    if (rejectSite(res, target, 'PDF')) return;
     const file = target.absPath;
 
     const { chromium } = await import('playwright');
@@ -397,6 +441,7 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
+    if (rejectSite(res, target, 'PDF')) return;
     const file = target.absPath;
 
     const { chromium } = await import('playwright');
@@ -469,6 +514,99 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * 分页导出（PDF / PPTX）对站点没有意义 —— 站点是自然滚动的长页，没有
+ * `<section data-page>`。以前会一路跑到 playwright 渲染完再因为找不到分页结构
+ * 400，白烧一次 esbuild + tailwind CLI，报错文案还写着 "canvas.html"。这里提前拦。
+ */
+function rejectSite(res, target, format) {
+  if (target.kind !== KIND_SITE) return false;
+  res.status(400).json({
+    error: `${target.relPath} 是站点，不是分页 deck —— ${format} 导出只适用于 deck。`
+      + '站点请用「整站打包」（/exports/site）或导出菜单里的站点 zip。',
+  });
+  return true;
+}
+
+/**
+ * GET /:pid/sessions/:sid/exports/site —— 整站打包
+ *
+ * 原样保留目录结构和文件名（相对链接才不会断），不注入 fit、不改写结构、不重命名。
+ * 唯一的改写是**素材路径归一**：站点引用项目素材写的是 `../../assets/x.png`（相对它
+ * 在 workspace 里的位置），包里没有 workspace 这层，所以把素材拷进 `site/assets/`
+ * 并按每个文件自己的深度重写前缀 —— 子目录里的页面要 `../assets/`，写死成 `assets/`
+ * 就又裂一次。
+ */
+router.get('/:pid/sessions/:sid/exports/site', async (req, res, next) => {
+  try {
+    const project = guard(req, res);
+    if (!project) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
+    if (!target.ok) return res.status(404).json({ error: target.message });
+    if (target.kind !== KIND_SITE) {
+      return res.status(400).json({ error: `${target.relPath} 是 deck，不是站点 —— 用 /exports/html 或 /exports/handoff。` });
+    }
+    if (!target.taskDir) return res.status(400).json({ error: 'site must live in a task folder' });
+
+    const zip = new JSZip();
+    const referenced = new Map();   // workspace 相对路径 → 包内相对 site/ 的落点
+
+    const addDir = async (dirAbs, prefix, depth) => {
+      let entries;
+      try { entries = await fs.readdir(dirAbs, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const abs = path.join(dirAbs, e.name);
+        if (e.isDirectory()) {
+          if (depth < 3) await addDir(abs, `${prefix}${e.name}/`, depth + 1);
+          continue;
+        }
+        if (!e.isFile()) continue;
+        if (!/\.(html?|css)$/i.test(e.name)) {
+          zip.file(`site/${prefix}${e.name}`, await fs.readFile(abs));
+          continue;
+        }
+        let text;
+        try { text = await fs.readFile(abs, 'utf8'); } catch { continue; }
+        // 先按原文收集引用（改写之后就找不回原路径了）
+        for (const r of localRefsOf(text)) {
+          const refAbs = path.resolve(dirAbs, r);
+          if (!refAbs.startsWith(sessionRoot + path.sep)) continue;
+          if (refAbs.startsWith(target.taskDir + path.sep)) continue;   // 站内文件整目录已经打包了
+          const wsRel = path.relative(sessionRoot, refAbs).split(path.sep).join('/');
+          if (wsRel.startsWith('assets/')) referenced.set(wsRel, wsRel);
+        }
+        // `../../assets/…` → 按本文件深度重算前缀（根层是 `assets/`，一层子目录是 `../assets/`）
+        const up = '../'.repeat(depth - 1);
+        zip.file(`site/${prefix}${e.name}`, text.replace(/(["'(])(?:\.\.\/)+assets\//g, `$1${up}assets/`));
+      }
+    };
+    await addDir(target.taskDir, '', 1);
+
+    for (const [wsRel, dst] of referenced) {
+      try {
+        zip.file(`site/${dst}`, await fs.readFile(path.resolve(sessionRoot, wsRel)));
+      } catch { /* 引用了不存在的文件：页面里本来就是裂的，不因此让打包失败 */ }
+    }
+
+    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    const filename = `${safeFilename(target.task || project.name)}-site.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) { next(err); }
+});
+
+/** html/css 里引用的本地相对路径（排除 http(s):// data: 和绝对路径） */
+function localRefsOf(text) {
+  const refs = new Set();
+  for (const m of text.matchAll(/<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gi)) refs.add(m[1] || m[2]);
+  for (const m of text.matchAll(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)]+?))\s*\)/gi)) refs.add((m[1] || m[2] || m[3] || '').trim());
+  return [...refs].filter(r => r && !/^(?:[a-z][a-z0-9+\-.]*:|\/\/)/i.test(r) && !path.isAbsolute(r));
+}
+
 router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
   try {
     const project = guard(req, res);
@@ -484,7 +622,8 @@ router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
       skillId: project.skillId,
       sessionId: req.params.sid,
       runs,
-      deckPath: target.ok ? target.relPath : 'canvas.html',
+      deckPath: target.ok ? target.relPath : ENTRY_FILE.deck,
+      kind: target.ok ? target.kind : null,
     });
 
     const filename = `${safeFilename(project.name)}-handoff.zip`;
@@ -501,20 +640,36 @@ router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
  * @param {string} sessionRoot  sessions/<sid>/ 绝对路径（canvas/spec 在这）
  * @param {string} sharedRoot   shared/ 绝对路径（assets 在这）
  */
-export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, projectName, skillId, sessionId, runs = [], deckPath = 'canvas.html' } = {}) {
+export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, projectName, skillId, sessionId, runs = [], deckPath = 'canvas.html', kind = null } = {}) {
   const zip = new JSZip();
+  const isSite = kind === KIND_SITE;
 
-  try {
-    // deckPath 相对 sessionRoot（任务模型下是 tasks/<任务>/canvas.html）
-    const raw = await fs.readFile(path.resolve(sessionRoot, deckPath), 'utf8');
-    // zip 里的布局是 design/canvas.html + design/assets/…，而任务 deck 写的是
-    // `../../assets/generated/x.png`（相对它在 workspace 里的位置）—— 不改写的话
-    // 解压出来图全裂。统一压成 `assets/…`。
-    const html = raw.replace(/(["'(])(?:\.\.\/)+assets\//g, '$1assets/');
-    zip.file('design/canvas.html', html);
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-    zip.file('design/canvas.html', '<!-- canvas.html not yet generated -->');
+  if (isSite) {
+    // 站点：整个任务目录进 design/，保留文件名与子目录 —— 只留入口页并改名叫
+    // canvas.html 的话，子页和 style.css 全丢，页间相对链接必然断。
+    const taskDirAbs = path.dirname(path.resolve(sessionRoot, deckPath));
+    await zipDirRecursive(zip, taskDirAbs, 'design', { skipDotfiles: true });
+    // 站内 html/css 的 `../../assets/` 归一（zip 布局是 design/<页面> + design/assets/）
+    for (const rel of Object.keys(zip.files)) {
+      if (zip.files[rel].dir || !/\.(html?|css)$/i.test(rel)) continue;
+      const depth = rel.split('/').length - 2;             // design/ 之下还有几层
+      const up = '../'.repeat(Math.max(0, depth));
+      const text = await zip.files[rel].async('string');
+      zip.file(rel, text.replace(/(["'(])(?:\.\.\/)+assets\//g, `$1${up}assets/`));
+    }
+  } else {
+    try {
+      // deckPath 相对 sessionRoot（任务模型下是 tasks/<任务>/canvas.html）
+      const raw = await fs.readFile(path.resolve(sessionRoot, deckPath), 'utf8');
+      // zip 里的布局是 design/canvas.html + design/assets/…，而任务 deck 写的是
+      // `../../assets/generated/x.png`（相对它在 workspace 里的位置）—— 不改写的话
+      // 解压出来图全裂。统一压成 `assets/…`。
+      const html = raw.replace(/(["'(])(?:\.\.\/)+assets\//g, '$1assets/');
+      zip.file('design/canvas.html', html);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      zip.file('design/canvas.html', '<!-- canvas.html not yet generated -->');
+    }
   }
 
   try {
@@ -534,7 +689,7 @@ export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, proj
   zip.file('chat-history.json', JSON.stringify({ projectId, sessionId, runs: chatHistory }, null, 2));
 
   zip.file('prompt.txt', '');
-  zip.file('README.md', renderReadme({ id: projectId, name: projectName, skillId, sessionId }));
+  zip.file('README.md', renderReadme({ id: projectId, name: projectName, skillId, sessionId, kind }));
 
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
@@ -543,7 +698,7 @@ export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, proj
  * 递归把 srcDir 下所有文件加进 zip（保留相对路径），dst 是 zip 内根前缀。
  * srcDir 不存在时静默 noop（fail-soft）。子目录中的 dotfile / 软链按需可扩展。
  */
-async function zipDirRecursive(zip, srcDir, dstPrefix) {
+async function zipDirRecursive(zip, srcDir, dstPrefix, { skipDotfiles = false } = {}) {
   let entries;
   try {
     entries = await fs.readdir(srcDir, { withFileTypes: true });
@@ -552,10 +707,11 @@ async function zipDirRecursive(zip, srcDir, dstPrefix) {
     throw err;
   }
   for (const e of entries) {
+    if (skipDotfiles && e.name.startsWith('.')) continue;
     const srcAbs = path.join(srcDir, e.name);
     const dstRel = `${dstPrefix}/${e.name}`;
     if (e.isDirectory()) {
-      await zipDirRecursive(zip, srcAbs, dstRel);
+      await zipDirRecursive(zip, srcAbs, dstRel, { skipDotfiles });
       continue;
     }
     if (!e.isFile()) continue;  // 跳软链 / fifo 等
@@ -571,16 +727,19 @@ NoDesign 工程交付包。
 
 ## 文件结构
 
-- \`design/canvas.html\` — 单文件 self-contained HTML，主产物
+${project.kind === 'site' ? `- \`design/\` — 站点全部文件（保留原目录结构与文件名）
+- \`design/${'index.html'}\` — 入口页
+- \`design/assets/\` — 站点引用到的项目素材` : `- \`design/canvas.html\` — 单文件 self-contained HTML，主产物
+- \`design/assets/\` — 项目共享素材`}
 - \`design/spec.json\` — 设计意图档案（agent 私域记忆）
-- \`design/assets/\` — 项目共享素材
 - \`chat-history.json\` — runs 摘要
 - \`prompt.txt\` — 占位
 
 ## 怎么用
 
-直接在浏览器打开 \`design/canvas.html\` 看 deck。
-导出 PDF：用浏览器打印（${DECK.width}×${DECK.height} 视口最佳）。
+${project.kind === 'site' ? `把 \`design/\` 整个目录当站点根目录发布（任何静态托管都行），或者直接双击
+\`design/index.html\` 在本地浏览 —— 页面之间是相对链接，不依赖服务器。` : `直接在浏览器打开 \`design/canvas.html\` 看 deck。
+导出 PDF：用浏览器打印（${'${DECK.width}'}×${'${DECK.height}'} 视口最佳）。`}
 
 ---
 导出时间：${new Date().toISOString()}

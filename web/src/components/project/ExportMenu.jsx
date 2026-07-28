@@ -1,12 +1,25 @@
 import { useEffect, useRef } from 'react';
-import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare } from 'lucide-react';
+import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare, Globe } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
-const ITEMS = [
+const DECK_ITEMS = [
   { id: 'html',     icon: FileCode,     label: 'Standalone HTML',    desc: '单文件，可双击打开' },
   { id: 'pdf',      icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）' },
   { id: 'pptx',     icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
   { id: 'handoff',  icon: Hammer,       label: '工程交付包',           desc: 'ZIP: HTML + spec + assets + README' },
+];
+
+/**
+ * 站点的格式跟 deck 不是同一套（2026-07-28）。
+ *
+ * PDF / PPTX 对站点没有意义 —— 它们的实现是"逐 `<section data-page>` 截图再拼"，
+ * 站点没有分页。留在菜单里只会让用户点了拿到一个 400，所以整型换掉而不是灰掉：
+ * 灰着还得解释为什么，换掉就没有这个问题。
+ */
+const SITE_ITEMS = [
+  { id: 'site',     icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 图，解压双击就能看' },
+  { id: 'html',     icon: FileCode,     label: '单页自包含 HTML',      desc: '只当前入口页，图片内联' },
+  { id: 'handoff',  icon: Hammer,       label: '工程交付包',           desc: 'ZIP: 整站 + spec + assets + README' },
 ];
 
 /**
@@ -17,7 +30,7 @@ const ITEMS = [
  *
  * PPTX 标灰禁点，留 P0+。
  */
-export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick }) {
+export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick, artifactKind = null }) {
   const ref = useRef(null);
 
   // 点外面关闭
@@ -48,7 +61,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
         zIndex: 50,
       }}
     >
-      {ITEMS.map(item => {
+      {(artifactKind === 'site' ? SITE_ITEMS : DECK_ITEMS).map(item => {
         const Icon = item.icon;
         return (
           <button

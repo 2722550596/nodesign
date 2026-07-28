@@ -18,7 +18,7 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
-import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/artifact-target.js';
 
 const MAX_RESULTS = 50;
 
@@ -73,7 +73,12 @@ Returns up to 50 matches; further results truncated with a hint.`,
       } catch {
         return { content: [{ type: 'text', text: `${target.relPath} not found in workspace.` }], isError: true };
       }
-      const dims = resolveDeckSize(extractDeckAspect(html));
+      // 站点没有 deck 比例：extractDeckAspect 找不到 __nd-deck-wrap 会静默回落到
+      // 16:9，于是按 1920x1080 量出来的盒子被当成真实布局报给 agent。站点按桌面档
+      // 1440 量，跟 screenshot_canvas 的 desktop 档一致。
+      const dims = target.kind === KIND_SITE
+        ? { width: 1440, height: 900 }
+        : resolveDeckSize(extractDeckAspect(html));
 
       const finalSelector = pageIndex
         ? `section[data-page="${pageIndex}"] ${selector}`

@@ -37,13 +37,32 @@ export const SIZES = {
   image: { w: 200, h: 176 },
   note:  { w: 200, h: 148 },
   file:  { w: 224, h: 40 },
+  // 站点：收起态是一张带页面数的条；展开态放一张桌面宽度的缩略预览
+  // （站点没有固定比例，取 16:10 一屏做取景框，够看出版式和配色）
+  site:  { w: 240, h: 88 },
+  siteExpanded: { w: DECK_EMBED_W, h: 28 + 400 },
 };
+
+/**
+ * 站点预览的视口档位。
+ *
+ * deck 用「比例」（16:9 / 9:16…），站点用「宽度」—— 这是两种东西：deck 的版面
+ * 是照着一个固定画布画死的，站点的版面是被视口宽度算出来的。所以这里给的是
+ * 真实设备宽度，iframe 的 CSS 像素宽就设成它，**不做整体缩放**，否则手机档只是
+ * 一张缩小的桌面版截图，看不出断点有没有生效。
+ */
+export const SITE_VIEWPORTS = [
+  { id: 'desktop', label: '桌面', w: 1440, icon: 'monitor' },
+  { id: 'tablet',  label: '平板', w: 834,  icon: 'tablet' },
+  { id: 'mobile',  label: '手机', w: 390,  icon: 'smartphone' },
+];
 
 export const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 export const POP_IN = 'ndPopIn 260ms cubic-bezier(0.32, 0.72, 0, 1)';
 
 export function sizeOf(o) {
   if (o.type === 'deck') return o.pos?.expanded ? SIZES.deckExpanded : SIZES.deck;
+  if (o.type === 'site') return o.pos?.expanded ? SIZES.siteExpanded : SIZES.site;
   return SIZES[o.type] || SIZES.file;
 }
 

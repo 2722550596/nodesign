@@ -131,6 +131,10 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
       id: itemId,
       kind,
       anchor,
+      // 这条改动是对**哪个文件**做的（2026-07-28）。一个任务可以有多份 deck，
+      // 站点更是天然多页 —— 不记路径的话 agent 只能把所有改动都套到它当前打开的
+      // 那一份上，改错了还看不出来（anchor 在别的文件里根本找不到，静默 no-op）。
+      ...(typeof body.path === 'string' && body.path ? { path: body.path } : {}),
       ...(body.aiContext ? { aiContext: body.aiContext } : {}),
       ...(body.reactMount === true ? { reactMount: true } : {}),
       ...(kind === 'edit' ? { diff: body.diff } : {}),

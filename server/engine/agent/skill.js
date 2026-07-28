@@ -97,21 +97,42 @@ export async function loadSkill(skillId) {
  *
  * **幂等**：文件已存在就不覆盖（agent 改过的、或上次 session init 拷过的不动）。
  *
- * 当前只拷一个 `canvas.template.html` 起手文件；未来若 skill 多个起手文件
- * 可加配置（frontmatter 加 `starter_files: [a, b]` 之类）。
+ * **起手文件是自动发现的**（2026-07-28 从硬编码 `['canvas.template.html']` 改来）：
+ * skill 目录里凡是文件名带 `.template.` 的都算起手文件。加第二个 skill
+ * （站点）时不必再回来改这里 —— 硬编码一个文件名意味着新 skill 的模板永远
+ * 拷不出来，而且是静默的：agent 只会 `Read` 失败然后凭空写。
  *
  * @param {string} sessionRoot - sessions/<sid>/ 绝对路径
  * @param {string} skillId    - 同 loadSkill 的 skillId
  * @returns {Promise<{ copied: string[], skipped: string[] }>}
  */
+/** 内置 plugin 里现有的 skill id（目录名即 id） */
+export async function listSkillIds() {
+  try {
+    const entries = await fs.readdir(SKILLS_ROOT, { withFileTypes: true });
+    return entries.filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name);
+  } catch { return []; }
+}
+
+export async function listSkillStarterFiles(skillId) {
+  if (!skillId) return [];
+  try {
+    const entries = await fs.readdir(path.join(SKILLS_ROOT, skillId), { withFileTypes: true });
+    return entries
+      .filter(e => e.isFile() && e.name.includes('.template.'))
+      .map(e => e.name)
+      .sort();
+  } catch { return []; }
+}
+
 export async function ensureSkillStarterFiles(sessionRoot, skillId) {
   const result = { copied: [], skipped: [] };
   if (!sessionRoot || !skillId) return result;
 
   const skillDir = path.join(SKILLS_ROOT, skillId);
-  const STARTER_FILES = ['canvas.template.html'];
+  const starterFiles = await listSkillStarterFiles(skillId);
 
-  for (const name of STARTER_FILES) {
+  for (const name of starterFiles) {
     const src = path.join(skillDir, name);
     const dst = path.join(sessionRoot, name);
 

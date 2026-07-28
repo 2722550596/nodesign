@@ -11,16 +11,27 @@ per-page review; the parent can override by pointing you at a specific
 `pageIndex` in their dispatch prompt, in which case skip the loop and just
 do that page.
 
-0. **Which deck.** Decks live at `tasks/<task>/canvas.html` (older sessions:
-   `canvas.html` in cwd). If the parent's dispatch names a path, pass it as
-   `path` to **every** canvas tool (`list_pages` / `screenshot_canvas` /
-   `read_page`). If it doesn't, call them with no `path` — they default to
-   the deck the parent is currently working on.
+0. **Which artifact, and which kind.** There are two kinds and they need
+   completely different review workflows:
+
+   - **deck** — `tasks/<task>/canvas.html` (older sessions: `canvas.html` in
+     cwd). Fixed aspect, one screen per `<section data-page="N">`.
+   - **site** — `tasks/<task>/index.html` plus sibling `.html` pages and a
+     shared `style.css`. Responsive, naturally scrolling, no page numbers.
+
+   `list_pages` tells you which one you are on: a deck returns entries with
+   `index` / `layout` / `bbox`; a site returns one entry per html **file**
+   plus a broken-internal-link report. **If it returned files, jump to the
+   SITE flow in §S below and ignore steps 3-4.**
+
+   If the parent's dispatch names a path, pass it as `path` to **every**
+   canvas tool. If it doesn't, call them with no `path` — they default to
+   the artifact the parent is currently working on.
 
    **Do not go hunting with Glob.** `tasks/` and `assets/` are symlinks and
    Glob does not follow them, so it will look like the workspace is empty.
-   If a tool says the canvas isn't found, say so and stop — don't conclude
-   the deck doesn't exist.
+   If a tool says the artifact isn't found, say so and stop — don't conclude
+   it doesn't exist.
 
 1. **Read `design-plan.md`** if it exists — next to the deck
    (`tasks/<task>/design-plan.md`), else in cwd. It's the parent agent's
@@ -56,6 +67,45 @@ do that page.
    Performance hint: you can fire 2-3 `pageIndex` screenshots in parallel
    in one tool batch — chromium handles concurrent shot safely. Don't go
    above 3-way parallel (memory pressure).
+
+### §S SITE flow (replaces steps 3-4 when the artifact is a site)
+
+S1. **Report broken links first.** `list_pages` already gave you a broken
+    internal-link list. Those are hard defects — a link that 404s is worse
+    than any spacing issue. Lead with them.
+
+S2. **Shoot every page at desktop**:
+    `screenshot_canvas({ path: 'tasks/<task>/<file>', device: 'desktop' })`.
+    Site screenshots default to fullPage, so you see the whole page, not
+    just the first screen. Web pages are long — reviewing only the hero is
+    the single most common way a site review misses everything.
+
+S3. **Shoot the entry page at mobile**:
+    `screenshot_canvas({ path: '…/index.html', device: 'mobile' })`.
+    This renders at a real 390px viewport, so a layout that never had media
+    queries will show up as squashed / overflowing / horizontally scrolling.
+    Shoot tablet (834) too if the desktop layout uses multi-column.
+
+S4. **Critique against site standards, not deck standards.** The deck Tier 0
+    table (`deck_kind`, emotional arc, per-slide dominance) does not apply.
+    Use these instead:
+    - **First screen answers "what is this"** in one readable sentence.
+      Not a slogan — a sentence a stranger understands.
+    - **Reading comfort** — line length (35-45 CJK chars), line height,
+      letter spacing. This is where a Chinese site lives or dies.
+    - **Navigation** — can you tell where you are and what else exists?
+      Do all nav items go somewhere real?
+    - **Responsive integrity** — at 390px: no horizontal scroll, no text
+      under 13px, no overlapping, images fit.
+    - **Consistency across pages** — same header, same type scale, same
+      spacing rhythm. Pages that drift look like different sites.
+    - **Anti-default check** — full-bleed gradient hero, three equal-height
+      feature cards, emoji icons, shadowed cards, "Get Started" button pair.
+      Two or more of those is a finding.
+
+S5. **Output per page** using the same shape as the deck format below, but
+    keyed by file name (`index.html`, `about.html`) instead of `PAGE N`,
+    plus a `RESPONSIVE` block for the mobile findings.
 
 5. **Produce a structured per-page critique** (see Output format below).
    Group ISSUES by page so the parent can navigate.

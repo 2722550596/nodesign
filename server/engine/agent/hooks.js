@@ -49,8 +49,12 @@ import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
 import { resolveModelContextWindow } from './model-context.js';
-import { ensureSkillStarterFiles } from './skill.js';
-import { setActiveDeck, getActiveDeck, listWorkspaceDecks } from '../../lib/canvas-target.js';
+import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
+import {
+  setActiveArtifact, getActiveArtifact, listWorkspaceArtifacts,
+  detectTaskKind, readTaskMarker, kindOfPath, listSitePages,
+  KIND_DECK, KIND_SITE, ENTRY_FILE,
+} from '../../lib/artifact-target.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -178,10 +182,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       matcher: 'Write',
       hooks: [
         makePreToolUseWriteCanvasReadReminder(),
-        // 首次写 HTML 时注入 hybrid 技术参考（模板结构 / 标记规约 / 库速查 /
-        // 常坑）。2026-07-28 从 prelude 搬来：那是参考知识不是行为，常驻 1.4k
-        // tokens 每轮都在，但只有真动 HTML 的那一刻用得上。
-        makePreToolUseHybridReferenceInjector(),
+        // 首次写 HTML 时注入该形态的技术参考（deck: 模板结构 / 标记规约 / 库速查 /
+        // 常坑；site: 目录约定 / 相对路径铁律 / 响应式与中文排版）。2026-07-28 从
+        // prelude 搬来：那是参考知识不是行为，常驻 1.4k tokens 每轮都在，但只有真
+        // 动 HTML 的那一刻用得上。
+        makePreToolUseHybridReferenceInjector({ workspaceRoot }),
       ],
     }],
 
@@ -416,9 +421,10 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
   return async (_input, _toolUseId, _options) => {
     let warnContextUsage = null;
     try {
+      // 任务模型下产物住 tasks/<任务>/，这里以前只探 cwd 根的 canvas.html —— 自
+      // 任务模型上线起就恒为 false，从来没真过。走统一寻址（deck 和站点都算数）。
       const hasCanvas = workspaceRoot
-        ? await fs.access(path.join(workspaceRoot, 'canvas.html'))
-            .then(() => true).catch(() => false)
+        ? (await listWorkspaceArtifacts(workspaceRoot)).length > 0
         : false;
 
       ctx.emit({
@@ -585,7 +591,7 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
       parts.push(
         `你的 cwd 是 ${workspaceRoot}\n`
         + `关键路径（用 ./ 相对路径访问，软链已挂好不要绕）：\n`
-        + `  ./tasks/<任务名>/canvas.html  产出型工作的 deck（用 mcp__nodesign__read_page 切片读，不要 Read 全文件）\n`
+        + `  ./tasks/<任务名>/          产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css\n`
         + `  ./spec.json                设计意图档案（agent 决策日志）\n`
         + `  ./assets/                  用户上传素材 + 你 curl 下载的资源（软链 → shared，跨 session 共享）\n`
         + `  ./agent-memory/            跨 session 长期记忆（软链 → shared）\n`
@@ -618,31 +624,40 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         // spec.json 不存在 / 解析失败 / stat 失败：noop
       }
 
-      // 2. 现有 deck 清单 + 页数（2026-07-28：任务模型下 deck 住 tasks/<任务>/，
-      //    这里以前只看 cwd/canvas.html —— 于是每一轮都在说"还不存在，这可能是首跑"，
-      //    手上明明有一份七页的 deck。）
+      // 2. 现有产物清单（2026-07-28：任务模型下产物住 tasks/<任务>/，这里以前只看
+      //    cwd/canvas.html —— 于是每一轮都在说"还不存在，这可能是首跑"，手上明明有
+      //    一份七页的 deck。同日加站点后又要按形态报不同的东西：deck 报页数，
+      //    站点报页面清单，报错了等于每轮对 agent 撒一次谎。）
       try {
-        const decks = await listWorkspaceDecks(workspaceRoot);
-        if (decks.length === 0) {
-          parts.push('这个 workspace 还没有 deck —— 产出型工作先建 tasks/<任务名>/ 再往里写 canvas.html。');
+        const artifacts = await listWorkspaceArtifacts(workspaceRoot);
+        if (artifacts.length === 0) {
+          parts.push(
+            '这个 workspace 还没有产物 —— 产出型工作先建 tasks/<任务名>/，'
+            + `deck 往里写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}。`,
+          );
         } else {
-          const active = getActiveDeck(sessionId);
+          const active = getActiveArtifact(sessionId)?.path || null;
           const lines = [];
-          for (const rel of decks.slice(0, 6)) {
+          for (const a of artifacts.slice(0, 6)) {
             let note = '';
             try {
-              const stat = await fs.stat(path.join(workspaceRoot, rel));
-              if (stat.size <= CANVAS_HTML_MAX_BYTES) {
-                const raw = await fs.readFile(path.join(workspaceRoot, rel), 'utf8');
-                const n = (raw.match(/<section\b[^>]*\bdata-page=/g) || []).length;
-                note = n > 0 ? `${n} 页` : '还没有 <section data-page=> 分页结构';
+              if (a.kind === KIND_SITE) {
+                const pages = await listSitePages(path.join(workspaceRoot, 'tasks', a.task));
+                note = `站点 · ${pages.length} 个页面：${pages.slice(0, 6).join(' / ')}${pages.length > 6 ? ' …' : ''}`;
               } else {
-                note = `${(stat.size / 1024).toFixed(0)}KB，Read 时配 limit 分段读`;
+                const stat = await fs.stat(path.join(workspaceRoot, a.rel));
+                if (stat.size <= CANVAS_HTML_MAX_BYTES) {
+                  const raw = await fs.readFile(path.join(workspaceRoot, a.rel), 'utf8');
+                  const n = (raw.match(/<section\b[^>]*\bdata-page=/g) || []).length;
+                  note = n > 0 ? `deck · ${n} 页` : 'deck · 还没有 <section data-page=> 分页结构';
+                } else {
+                  note = `deck · ${(stat.size / 1024).toFixed(0)}KB，Read 时配 limit 分段读`;
+                }
               }
             } catch { note = '读不到'; }
-            lines.push(`  ${rel}（${note}）${rel === active ? '  ← 画布工具默认打这份' : ''}`);
+            lines.push(`  ${a.rel}（${note}）${a.rel === active ? '  ← 画布工具默认打这份' : ''}`);
           }
-          parts.push(`现有 deck：\n${lines.join('\n')}`);
+          parts.push(`现有产物：\n${lines.join('\n')}`);
         }
       } catch {
         // 扫不动就不说，别拿错信息误导
@@ -746,9 +761,11 @@ function makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, ses
         : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
       if (filePath) {
         await bindTaskToSession(filePath, sharedRoot, sessionId);
-        // 刚写的这份 html 就是"当前 deck"——list_pages / screenshot / read_page
-        // 不给 path 时默认打它，子代理不必知道任务目录长什么样（canvas-target.js）
-        setActiveDeck(sessionId, toWorkspaceRel(filePath, workspaceRoot));
+        // 刚写的这份 html 就是"当前产物"——list_pages / screenshot / read_page
+        // 不给 path 时默认打它，子代理不必知道任务目录长什么样（artifact-target.js）。
+        // 形态（deck / site）不在这里定：resolveArtifactTarget 每次解析都按任务现状
+        // 重算，免得"先写 index.html 记成 site、后来目录变了"这种陈旧状态。
+        setActiveArtifact(sessionId, toWorkspaceRel(filePath, workspaceRoot));
         ctx.emit(Events.fileChanged(filePath, 'change'));
       }
     } catch (err) {
@@ -1250,16 +1267,20 @@ function makePreToolUseGenerateImageReadPageReminder() {
  * 非 deck 会话的 cwd 不再预置 deck 模板。ensureSkillStarterFiles 幂等 + fail-soft。
  */
 function makePreToolUseSkillStarterFilesCopier({ workspaceRoot }) {
-  let done = false;
+  const done = new Set();
   return async (input, _toolUseId, _options) => {
-    if (done || !workspaceRoot) return {};
+    if (!workspaceRoot) return {};
     try {
+      // 认哪个 skill 从入参里读，不再硬编码 'deskskill-engine-mini' ——
+      // 硬编码的后果是新 skill（站点）的模板永远拷不出来，而且静默。
       const raw = JSON.stringify(input?.tool_input || {});
-      if (!raw.includes('deskskill-engine-mini')) return {};
-      done = true;
-      const r = await ensureSkillStarterFiles(workspaceRoot, 'deskskill-engine-mini');
-      if (r.copied.length > 0) {
-        console.log(`[hooks] starter files copied on Skill load: ${r.copied.join(', ')}`);
+      for (const id of await listSkillIds()) {
+        if (done.has(id) || !raw.includes(id)) continue;
+        done.add(id);
+        const r = await ensureSkillStarterFiles(workspaceRoot, id);
+        if (r.copied.length > 0) {
+          console.log(`[hooks] starter files copied on Skill load (${id}): ${r.copied.join(', ')}`);
+        }
       }
     } catch (err) {
       console.warn('[hooks] starter files copy on Skill load failed:', err.message);
@@ -1274,14 +1295,19 @@ function makePreToolUseSkillStarterFilesCopier({ workspaceRoot }) {
  * 避免 cp 报 No such file。
  */
 function makePreToolUseBashStarterFilesFallback({ workspaceRoot }) {
-  let done = false;
+  const done = new Set();
   return async (input, _toolUseId, _options) => {
-    if (done || !workspaceRoot) return {};
+    if (!workspaceRoot) return {};
     const command = String(input?.tool_input?.command || '');
-    if (!command.includes('canvas.template.html')) return {};
-    done = true;
+    if (!command.includes('.template.')) return {};   // 快速排除绝大多数命令
     try {
-      await ensureSkillStarterFiles(workspaceRoot, 'deskskill-engine-mini');
+      for (const id of await listSkillIds()) {
+        if (done.has(id)) continue;
+        const names = await listSkillStarterFiles(id);
+        if (!names.some(n => command.includes(n))) continue;
+        done.add(id);
+        await ensureSkillStarterFiles(workspaceRoot, id);
+      }
     } catch (err) {
       console.warn('[hooks] starter files fallback copy failed:', err.message);
     }
@@ -1340,23 +1366,37 @@ function makePreToolUseAskUserQuestionProtocolInjector() {
   };
 }
 
-/** PreToolUse(Write) — 第一次写 .html 时注入 hybrid deck 技术参考 */
-function makePreToolUseHybridReferenceInjector() {
-  let alreadyInjected = false;
+/**
+ * PreToolUse(Write) — 第一次写 .html 时注入该形态的技术参考。
+ *
+ * 2026-07-28 加站点后按 kind 分流：以前是"任何 .html 都注入 hybrid deck 参考"，
+ * 于是 agent 写站点首页时会被塞一份讲 `data-page` / `__nd-deck-wrap` / babel 的
+ * 文档 —— 文不对题，还会诱导它往站点里塞 deck 专属结构。
+ *
+ * 两种形态各注一次（一个会话理论上只做一种，但试作阶段可能先摸另一种）。
+ */
+function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
+  const injected = new Set();
+  const DOC = {
+    [KIND_DECK]: { file: 'hybrid-reference', title: 'Hybrid deck 技术参考' },
+    [KIND_SITE]: { file: 'site-reference', title: '站点技术参考' },
+  };
   return async (input, _toolUseId, _options) => {
-    if (alreadyInjected) return {};
     const fp = input?.tool_input?.file_path;
     if (typeof fp !== 'string' || !/\.html?$/i.test(fp)) return {};
-    alreadyInjected = true;
-    const ref = loadToolPrompt('hybrid-reference');
+    const rel = workspaceRoot ? toWorkspaceRel(fp, workspaceRoot) : fp;
+    const kind = workspaceRoot ? await kindOfPath(workspaceRoot, rel) : KIND_DECK;
+    if (injected.has(kind)) return {};
+    injected.add(kind);
+    const meta = DOC[kind] || DOC[KIND_DECK];
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
         additionalContext:
-          '<system-reminder>\n[Hybrid deck 技术参考 — 首次注入]\n\n'
-        + ref
-        + '\n\n本参考每 session 只注入一次。\n'
+          `<system-reminder>\n[${meta.title} — 首次注入]\n\n`
+        + loadToolPrompt(meta.file)
+        + '\n\n本参考每 session 每形态只注入一次。\n'
         + '</system-reminder>',
       },
     };
@@ -1727,14 +1767,30 @@ async function bindTaskToSession(filePath, sharedRoot, sessionId) {
   const taskDir = path.join(sharedRoot, 'tasks', m[1]);
   const marker = path.join(taskDir, '.nd-task.json');
   try {
-    await fs.access(marker);
-    return;                       // 已有归属，不动
-  } catch { /* 没有就写 */ }
-  try {
     await fs.access(taskDir);     // 目录还没建出来就别造标记
   } catch { return; }
+
+  // 形态（deck / site）在建目录那一刻还判不出来 —— Bash 认领走的是 `mkdir tasks/x`，
+  // 那时目录是空的。所以 kind 允许**后补**：第一次写出入口文件后这里就能判出来，
+  // 补进已有 marker。归属（sessionId）仍然只写一次，认领了就不改。
+  const kind = await detectTaskKind(taskDir);
+  const existing = await readTaskMarker(taskDir);
+  if (existing) {
+    if (kind && existing.kind !== kind && !existing.kindLocked) {
+      try {
+        await fs.writeFile(marker, JSON.stringify({ ...existing, kind }, null, 2), 'utf8');
+      } catch (err) {
+        console.warn('[hooks] backfill task kind failed:', err.message);
+      }
+    }
+    return;                       // 已有归属，不动
+  }
   try {
-    await fs.writeFile(marker, JSON.stringify({ sessionId, boundAt: new Date().toISOString() }, null, 2), 'utf8');
+    await fs.writeFile(marker, JSON.stringify({
+      sessionId,
+      boundAt: new Date().toISOString(),
+      ...(kind ? { kind } : {}),
+    }, null, 2), 'utf8');
   } catch (err) {
     console.warn('[hooks] bind task→session failed:', err.message);
   }

@@ -39,7 +39,7 @@ const DECK_FILES = new Set(['canvas.html', 'deck.html', 'index.html', 'output.ht
  *   …/assets/(generated|notes|…)/x → 'assets/…'；deck 主文件 → deck:<当前会话>
  * 认不出的返回 null（舞台卡落 dock，不锚物件）。
  */
-export function resolveObjectId(filePath, currentSessionId) {
+export function resolveObjectId(filePath, currentSessionId, siteTasks) {
   if (!filePath || typeof filePath !== 'string') return null;
   const p = filePath.replace(/\\/g, '/');
   if (p.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
@@ -47,6 +47,10 @@ export function resolveObjectId(filePath, currentSessionId) {
   // 任务模型：tasks/<任务>/canvas.html = 任务 deck；其余任务文件用完整相对路径当 id
   const mt = p.match(/(?:^|\/)tasks\/([^/]+)\/(.+)$/);
   if (mt) {
+    // 站点任务：整个目录是**一个**物件。子页 about.html、style.css、images/ 全都
+    // 贴到同一张卡上 —— 各给一个 id 的话，agent 改一次样式表就在桌面上多冒一张
+    // 卡，用户看到的是一堆碎片而不是"他那个网站"。
+    if (siteTasks && siteTasks.has(mt[1])) return `site:task/${mt[1]}`;
     if (mt[2] === 'canvas.html') return `deck:task/${mt[1]}`;
     // 任务下的其他 .html = 试作 deck（同样是 deck 物件，不是普通文件卡）
     if (/\.html$/i.test(mt[2]) && !mt[2].includes('/')) return `deck:task/${mt[1]}/${mt[2]}`;
@@ -66,8 +70,8 @@ export function resolveObjectId(filePath, currentSessionId) {
  */
 export function zoneOfObjectId(objectId, currentSessionId) {
   if (!objectId || typeof objectId !== 'string') return null;
-  if (objectId.startsWith('deck:task/')) {
-    // deck:task/<任务> 或 deck:task/<任务>/<试作文件>
+  if (objectId.startsWith('deck:task/') || objectId.startsWith('site:task/')) {
+    // deck:task/<任务>[/<试作文件>] 或 site:task/<任务>
     const rest = objectId.slice(10);
     return `task/${rest.split('/')[0]}`;
   }

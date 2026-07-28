@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
+import { listWorkspaceArtifacts } from '../../lib/artifact-target.js';
 import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
 
 // NoDesign agent 通用 prelude —— append 在 SDK preset 'claude_code' 之后、
@@ -94,8 +95,9 @@ export const DEFAULT_TOOL_ALLOWLIST = [
   'ToolSearch',
 ];
 
-// 主产物候选 — canvas.html 列首位（P0 per-project workspace 主文件名），
-// 其余兼容 deec72d 之前的 e2e smoke / 旧 deskskill-engine 输出。
+// 旧式（cwd 根）产物候选 —— canvas.html 列首位，其余兼容 deec72d 之前的
+// e2e smoke / 旧 deskskill-engine 输出。任务模型下产物不在 cwd 根，走
+// listWorkspaceArtifacts（见 detectArtifact）。
 const ARTIFACT_CANDIDATES = ['canvas.html', 'deck.html', 'index.html', 'output.html'];
 
 // P0+ s1 C24：流式打字效果（text / thinking 逐 token 推送）。
@@ -587,7 +589,27 @@ function handleUserBlocks(ctx, content) {
 
 // ── 产物检测 ──
 
+/**
+ * 本轮的主产物是哪份（写进 run.metadata.artifactPath）。
+ *
+ * 2026-07-28 修：原来只探 cwd 根的四个候选文件名，而任务模型（2026-07-28 上线）
+ * 把产物搬进了 `tasks/<任务>/`，于是这个函数**自任务模型上线起恒返 null** ——
+ * artifactPath 一直是空的，没人发现，因为它不报错只是没值。
+ */
 export async function detectArtifact(ctx) {
+  const root = typeof ctx?.workspace?.root === 'function' ? ctx.workspace.root() : null;
+  if (root) {
+    try {
+      const artifacts = await listWorkspaceArtifacts(root);
+      if (artifacts.length > 0) {
+        // 本会话名下那个任务的优先；没有就取第一份
+        const bound = ctx.sessionId
+          ? artifacts.find(a => a.rel.startsWith('tasks/'))
+          : null;
+        return (bound || artifacts[0]).rel;
+      }
+    } catch { /* 扫不动就回落到旧式探测 */ }
+  }
   for (const candidate of ARTIFACT_CANDIDATES) {
     if (await ctx.workspace.exists(candidate)) return candidate;
   }

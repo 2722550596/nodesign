@@ -82,6 +82,9 @@ export function isHybridHtml(html) {
  * @param {string} [opts.sessionRoot]   sessions/<sid>/ 绝对路径；用来 resolve 图片
  *                                       相对路径（assets/generated/...）。不给则
  *                                       跳过图片 inline（导出仍能用，但 <img> 会断）
+ * @param {boolean} [opts.injectFit=true] 是否注入分页 fit script。**站点必须传 false**：
+ *                                       那段脚本把每个 section 包成整屏 frame + scroll-snap，
+ *                                       是幻灯片范式，注进网站等于把长页改造成翻页器
  * @returns {Promise<string>} 自包含 HTML（CDN + 图片全 inline，可离线打开）
  * @throws 任一步骤失败抛——调用方应降级到 injectViewportFit 文本替换
  */
@@ -109,6 +112,7 @@ export async function buildStandaloneHtml(rawHtml, opts = {}) {
     parsed,
     bundledJs,
     tailwindCss,
+    injectFit: opts.injectFit !== false,
   });
 
   // 8. inline 本地图片（<img src="assets/..."> + background-image: url(...))。
@@ -534,7 +538,7 @@ export async function extractTailwindCss(rawHtml, agentFontFamily = null) {
  * }} args
  * @returns {string} 自包含 HTML
  */
-export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss }) {
+export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss, injectFit = true }) {
   let html = rawHtml;
 
   // ⚠️ 关键：用 split+join 而不是 string.replace，因为 minified JS bundle 里
@@ -582,13 +586,19 @@ export function assembleStandaloneHtml({ rawHtml, parsed, bundledJs, tailwindCss
     html = tailwindStyleTag + '\n' + html;
   }
 
-  // 6. 去重 fit script —— agent 偶尔会自己写一个 fit script（譬如 letterbox 风格的
+  // 6-7. fit script（**只给 deck**，2026-07-28）——
+  //    去重：agent 偶尔会自己写一个 fit script（譬如 letterbox 风格的
   //    Math.min(vw/W, vh/H)），跟服务端注入的 frame-snap fit 叠加导致 scale 双重缩放或
   //    DOM 层级冲突。strategy：识别所有"看起来像 fit script"的 inline script 段全删，
   //    再注入一个权威 standard fit script，保证只有一份在跑。
-  html = stripFitScripts(html);
-  // 7. 注入唯一权威 fit script（每 section 自动包 100vw×100vh frame + scroll-snap）
-  html = injectStandardFitScript(html);
+  //
+  //    站点（injectFit=false）两步都跳过：注入会把自然滚动的长页改造成翻页器；
+  //    stripFitScripts 的启发式（含 `transform: scale(` 写法）会误删站点里正当的
+  //    hero 缩放动画。删了还查不出来 —— 导出物打开只是"动画没了"，没人会怀疑导出。
+  if (injectFit) {
+    html = stripFitScripts(html);
+    html = injectStandardFitScript(html);
+  }
 
   return html;
 }

@@ -29,7 +29,7 @@ const SHIMMER_MIN_H = 84;        // 再挤也不低于这个高度
 
 // ── 状态机 ──
 
-export function useStageState({ stageRef, currentSessionId, followToObject, tryAutoExpand, onStageTarget, onPreviewRequest }) {
+export function useStageState({ stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand, onStageTarget, onPreviewRequest }) {
   const [stageCards, setStageCards] = useState({});
   const [stageBadges, setStageBadges] = useState({});
   const followedBlocksRef = useRef(new Set());   // 每张舞台卡只推一次镜头
@@ -62,7 +62,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
       case 'run.delta.tool_input': {
         // 真流式：append = Edit.new_string / Write.content 的纯文本增量
         if (!evt.blockId) return;
-        const oid = evt.filePath ? resolveObjectId(evt.filePath, currentSessionId) : null;
+        const oid = evt.filePath ? resolveObjectId(evt.filePath, currentSessionId, siteTasks) : null;
         setStageCards(prev => {
           const c = prev[evt.blockId] || newStageCard(evt, stageKindOf(evt.name) || 'code');
           return {
@@ -87,7 +87,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
         const kind = stageKindOf(evt.name);
         if (!kind || !evt.blockId) return;
         const input = evt.input || {};
-        const oid = typeof input.file_path === 'string' ? resolveObjectId(input.file_path, currentSessionId) : null;
+        const oid = typeof input.file_path === 'string' ? resolveObjectId(input.file_path, currentSessionId, siteTasks) : null;
         setStageCards(prev => {
           const c = prev[evt.blockId] || newStageCard(evt, kind);
           const patch = {
@@ -119,7 +119,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
       }
       case 'run.deck_preview': {
         // preview_deck 工具：agent 把 deck 摊到用户眼前（= 用户双击那张卡）
-        const oid = evt.path ? resolveObjectId(evt.path, currentSessionId) : (currentSessionId ? `deck:${currentSessionId}` : null);
+        const oid = evt.path ? resolveObjectId(evt.path, currentSessionId, siteTasks) : (currentSessionId ? `deck:${currentSessionId}` : null);
         if (oid) onPreviewRequest?.(oid);
         break;
       }
@@ -140,7 +140,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
       }
       case 'run.file_changed': {
         // 物件"已更新"角标（在板上才有意义）
-        const oid = resolveObjectId(evt.filePath, currentSessionId);
+        const oid = resolveObjectId(evt.filePath, currentSessionId, siteTasks);
         if (!oid) return;
         // agent 正在写 deck → 自动展开内嵌渲染，工作过程直接在画布里看
         if (oid.startsWith('deck:')) tryAutoExpand?.(oid.slice(5));
@@ -173,7 +173,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
       default: break;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId, followToObject, removeStageCardLater, tryAutoExpand, onStageTarget, onPreviewRequest]);
+  }, [currentSessionId, siteTasks, followToObject, removeStageCardLater, tryAutoExpand, onStageTarget, onPreviewRequest]);
 
   useEffect(() => {
     if (!stageRef) return;

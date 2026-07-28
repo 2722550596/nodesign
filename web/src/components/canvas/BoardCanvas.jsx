@@ -4,13 +4,13 @@ import ReactMarkdown from 'react-markdown';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
-  Presentation, PencilLine, ChevronsUpDown, Focus,
+  Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import {
   DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H, SIZES,
-  EASE, POP_IN, sizeOf, newStackedZoneRect,
+  SITE_VIEWPORTS, EASE, POP_IN, sizeOf, newStackedZoneRect,
 } from '../../lib/board-geometry.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
@@ -211,6 +211,20 @@ export default function BoardCanvas({
     // 任务 deck：canvas.html = 主 deck（id `deck:task/<任务>`），其余 .html 是
     // 试作 / 备选（id `deck:task/<任务>/<文件>`），并排摆在同一块任务区里
     for (const t of tasks) {
+      // 站点任务：一个任务 = 一个站点物件。子页和样式表不各自上墙 ——
+      // 用户要的是"我那个网站"，不是 index/about/style 三张互不相干的卡。
+      if (t.kind === 'site') {
+        out.push({
+          id: `site:task/${t.id}`,
+          type: 'site',
+          task: t.id,
+          entry: t.site?.entry || 'index.html',
+          pages: t.site?.pages || [],
+          title: t.title,
+          mtime: t.mtime,
+        });
+        continue;
+      }
       const decks = Array.isArray(t.decks) && t.decks.length
         ? t.decks
         : (t.hasDeck ? [{ file: 'canvas.html', main: true }] : []);
@@ -837,7 +851,10 @@ export default function BoardCanvas({
   };
 
   const focusDeck = (o) => {
-    if (o.task) {
+    if (o.type === 'site') {
+      // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态
+      onFocusDeck?.({ kind: 'site', task: o.task, entry: o.entry || 'index.html', title: o.title, pages: o.pages });
+    } else if (o.task) {
       // 任务 deck：与会话解绑，原地开最大化编辑窗
       onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title });
     } else if (o.sid === currentSessionId) {
@@ -854,7 +871,7 @@ export default function BoardCanvas({
     if (o.type === 'doc' || o.type === 'note') openViewer(o);
     else if (o.type === 'image') setDetail(o);
     else if (o.type === 'file') openFile(o);
-    else if (o.type === 'deck') {
+    else if (o.type === 'deck' || o.type === 'site') {
       if (o.pos.expanded) focusDeck(o);
       else patchLayout(o.id, { expanded: true });
     }
@@ -954,16 +971,20 @@ export default function BoardCanvas({
 
   const tryAutoExpand = useCallback((sid) => {
     if (!sid || autoExpandedRef.current.has(sid)) return true;
-    const deckId = `deck:${sid}`;
-    const entry = layoutRef.current[deckId];
-    if (entry && entry.expanded !== undefined) {
+    // 站点任务的产物物件是 site:task/<名>，不是 deck:task/<名> —— 只认 deck 前缀
+    // 的话站点永远等不到物件，pending 集合会一直攒着白试。
+    const candidates = [`deck:${sid}`, `site:${sid}`];
+    const targetId = candidates.find(id => layoutRef.current[id]?.expanded !== undefined)
+      || candidates.find(id => positionedRef.current.some(it => it.id === id));
+    if (!targetId) return false;          // 产物物件还没派生出来，等布局更新再试
+    if (layoutRef.current[targetId]?.expanded !== undefined) {
       autoExpandedRef.current.add(sid);   // 用户碰过展开态，尊重
       return true;
     }
-    const o = positionedRef.current.find(it => it.id === deckId);
-    if (!o) return false;                 // deck 物件还没派生出来，等布局更新再试
+    const o = positionedRef.current.find(it => it.id === targetId);
+    if (!o) return false;
     autoExpandedRef.current.add(sid);
-    patchLayout(deckId, { x: o.pos.x, y: o.pos.y, expanded: true });
+    patchLayout(targetId, { x: o.pos.x, y: o.pos.y, expanded: true });
     return true;
   }, [patchLayout]);
 
@@ -1035,8 +1056,13 @@ export default function BoardCanvas({
   }, [positioned, followToObject]);
 
   // ── 舞台层（StageLayer.jsx 自治）：事件状态机 + 跟随触发 + deck 自动展开触发 ──
+  // 哪些任务是站点 —— 舞台寻址要用它把 index/about/style.css 收敛到同一张站点卡
+  const siteTasks = useMemo(
+    () => new Set(tasks.filter(t => t.kind === 'site').map(t => t.id)),
+    [tasks],
+  );
   const { stageCards, stageBadges, dismissStageCard } = useStageState({
-    stageRef, currentSessionId, followToObject, tryAutoExpand: requestAutoExpand,
+    stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand: requestAutoExpand,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
   });
 
@@ -1084,16 +1110,20 @@ export default function BoardCanvas({
   useEffect(() => {
     const fz = viewMode === 'work' ? (focusZoneId || currentSessionId) : null;
     const zv = fz ? zoneView.find(z => z.id === fz) : null;
+    // artifactKind：当前聚焦的任务做的是 deck 还是站点 —— 导出菜单据此换格式表。
+    // 不上报的话顶栏只能默认按 deck 给 PDF/PPTX，用户点了拿到 400。
+    const focusTask = fz && fz.startsWith('task/') ? fz.slice(5) : null;
     const ui = {
       viewMode,
       focus: zv ? { id: zv.id, title: zv.title, count: zv.memberCount, isSession: sessionTitles.has(zv.id) } : null,
+      artifactKind: focusTask ? (tasks.find(t => t.id === focusTask)?.kind || null) : null,
     };
     // zoneView 每次布局变更都换新引用（拖拽期间逐帧）—— 序列化对比，内容没变不上报
     const key = JSON.stringify(ui);
     if (key === lastUiRef.current) return;
     lastUiRef.current = key;
     onUiState?.(ui);
-  }, [onUiState, viewMode, focusZoneId, currentSessionId, zoneView, sessionTitles]);
+  }, [onUiState, viewMode, focusZoneId, currentSessionId, zoneView, sessionTitles, tasks]);
 
   // ── 渲染 ──
   return (
@@ -1583,6 +1613,63 @@ function BoardObject({
               style={{
                 width: 1920, height: 1080, border: 0,
                 transform: `scale(${DECK_EMBED_W / 1920})`, transformOrigin: '0 0',
+                pointerEvents: 'none',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {o.type === 'site' && !o.pos.expanded && (
+        <div style={{ padding: GAP.md }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <Globe size={13} color={COLOR.sub} />
+            <span style={{
+              fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+            }}>{o.title}</span>
+            <button data-board-action title="打开站点（响应式预览 + 编辑）" onClick={onFocus} style={winBtn}>
+              <PencilLine size={11} />
+            </button>
+            <button data-board-action title="内嵌预览" onClick={onToggleExpand} style={winBtn}>
+              <ChevronsUpDown size={11} />
+            </button>
+          </div>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+            {`站点 · ${o.pages?.length || 1} 个页面 · 双击预览`}
+          </div>
+        </div>
+      )}
+
+      {o.type === 'site' && o.pos.expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
+          <div style={{
+            height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: `0 ${GAP.sm}px`,
+            borderBottom: `1px solid ${COLOR.borderLt}`,
+          }}>
+            <Globe size={12} color={COLOR.sub} />
+            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {o.title}
+            </span>
+            <button data-board-action title="打开站点" onClick={onFocus} style={winBtn}>
+              <PencilLine size={11} />
+            </button>
+            <button data-board-action title="收起" onClick={onToggleExpand} style={winBtn}>
+              <ChevronsUpDown size={11} />
+            </button>
+          </div>
+          <div style={{ width: DECK_EMBED_W, height: 400, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px' }}>
+            {/* 站点缩略：按桌面宽度渲染再等比缩。**不套 1920×1080 固定画框** ——
+                站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿" */}
+            <iframe
+              title={`site-${o.task}`}
+              src={`${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.entry || 'index.html'}`)}?v=${refreshToken || 0}`}
+              sandbox="allow-scripts allow-same-origin"
+              style={{
+                width: SITE_VIEWPORTS[0].w,
+                height: Math.round(400 / (DECK_EMBED_W / SITE_VIEWPORTS[0].w)),
+                border: 0,
+                transform: `scale(${DECK_EMBED_W / SITE_VIEWPORTS[0].w})`, transformOrigin: '0 0',
                 pointerEvents: 'none',
               }}
             />

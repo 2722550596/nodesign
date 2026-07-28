@@ -5,6 +5,7 @@ import BoardCanvas from './BoardCanvas.jsx';
 // 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
 // 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
 const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
+const SiteWindow = lazy(() => import('./SiteWindow.jsx'));
 
 /**
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
@@ -77,8 +78,18 @@ export default function CanvasFrame({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // BoardCanvas ✏️ 入口：desc = { kind:'session' } | { kind:'task', task, title }
+  // 站点窗（站点跟 deck 是两种取景方式，不是同一扇窗的两个模式）
+  const [siteSrc, setSiteSrc] = useState(null);
+
+  // BoardCanvas ✏️ 入口：
+  //   { kind:'session' } | { kind:'task', task, file, title } | { kind:'site', task, entry, title }
   const openDeck = (desc) => {
+    if (desc?.kind === 'site') {
+      setSiteSrc(desc);
+      setDeckOpen(false);
+      return;
+    }
+    setSiteSrc(null);
     setDeckTaskSrc(desc?.kind === 'task' ? desc : null);
     setDeckTab('edit');
     setDeckOpen(true);
@@ -116,7 +127,7 @@ export default function CanvasFrame({
           stageRef={stageRef}
           onEditNav={() => { editNavRef.current = true; }}
           onFocusDeck={openDeck}
-          deckOpen={deckOpen}
+          deckOpen={deckOpen || !!siteSrc}
         />
 
         {deckOpen && (sessionId || deckTaskSrc) && (
@@ -158,6 +169,20 @@ export default function CanvasFrame({
             canUndoPending={canUndoPending}
             isStreaming={isStreaming}
           />
+          </Suspense>
+        )}
+
+        {siteSrc && (
+          <Suspense fallback={null}>
+            <SiteWindow
+              projectId={projectId}
+              task={siteSrc.task}
+              entry={siteSrc.entry}
+              title={siteSrc.title}
+              pages={siteSrc.pages}
+              refreshToken={artifactRefreshToken}
+              onClose={() => setSiteSrc(null)}
+            />
           </Suspense>
         )}
       </div>

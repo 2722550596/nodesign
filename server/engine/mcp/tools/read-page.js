@@ -23,7 +23,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/artifact-target.js';
 
 /**
  * Thumbnail hint：检测 sectionHtml 是否含 `assets/generated/` 图 + thumbnails 目录存在
@@ -199,14 +199,26 @@ When NOT to use:
           const allPages = [...raw.matchAll(/<section\b[^>]*\bdata-page\s*=\s*['"]?(\d+)/gi)]
             .map(m => m[1])
             .filter((v, i, arr) => arr.indexOf(v) === i);
+          // 站点：分页读根本不适用，直说该怎么做，别丢一句"没有分页结构"让 agent
+          // 自己猜（它多半会改用 Read 全文件，把整份站点灌进上下文）
+          if (target.kind === KIND_SITE) {
+            return {
+              content: [{
+                type: 'text',
+                text: `${target.relPath} 是站点页面，没有 <section data-page="N"> 分页，read_page 的页码语义不适用。\n`
+                  + '站点这样读：先 list_pages 看站点结构（每页的标题 / 小标题 / 站内链接 / 断链），'
+                  + '要看某一页的实际内容用 query_elements 按 selector 取，或者直接 Read 那个文件（站点页面通常不大）。',
+              }],
+              isError: true,
+            };
+          }
           const pagesList = allPages.length > 0
             ? `Available pages: ${allPages.join(', ')}`
-            : 'canvas.html has no <section data-page="N"> structure '
-              + '(might be a non-deck artifact).';
+            : `${target.relPath} has no <section data-page="N"> structure.`;
           return {
             content: [{
               type: 'text',
-              text: `Page ${page} not found in canvas.html. ${pagesList}`,
+              text: `Page ${page} not found in ${target.relPath}. ${pagesList}`,
             }],
             isError: true,
           };

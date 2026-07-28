@@ -245,7 +245,9 @@ export default function ProjectWorkspace() {
     const count = pendingEditsHook.edits.length;
     if (count === 0) return;
     const summary = describeEditsForChat(pendingEditsHook.edits);
-    const message = `应用我刚在画布上做的 ${count} 处调整（${summary}）。请用 get_pending_changes 拉详情后按 anchor 改 canvas.html，处理完调 clear_pending_changes。`;
+    // 不点名文件：站点任务没有 canvas.html，写死会让 agent 去找一个不存在的文件。
+    // pending change 自己带着 path，让 agent 从那里读。
+    const message = `应用我刚在画布上做的 ${count} 处调整（${summary}）。请用 get_pending_changes 拉详情，按每条自带的路径和 anchor 改对应文件，处理完调 clear_pending_changes。`;
     handleSendRef.current?.(message);
   }, [pendingEditsHook.edits]);
 
@@ -717,8 +719,10 @@ export default function ProjectWorkspace() {
         // 2026-07-28 起事件源=PostToolUse 直发（agent 每写完一笔就来一发）。
         // html → deck iframe 即时 reload；assets/（生成图/便签）→ 产物墙即时重拉。
         // 其他文件（spec.json / .git/*）忽略。
+        // 站点加进来之后 .css / .js 也必须算（2026-07-28）：agent 改一次样式表
+        // 不 bump token 的话 iframe 的 ?v= 不变，浏览器给缓存，用户看着"改了没反应"。
         if (typeof evt.filePath === 'string'
-            && (evt.filePath.endsWith('.html') || /(^|\/)assets\//.test(evt.filePath))) {
+            && (/\.(html?|css|js)$/i.test(evt.filePath) || /(^|\/)assets\//.test(evt.filePath))) {
           setReloadToken(t => t + 1);
         }
         break;
@@ -1465,6 +1469,7 @@ export default function ProjectWorkspace() {
         await PendingChanges.push(id, currentSessionId, {
           kind: 'edit',
           anchor: info.anchor,
+          ...(info.deckPath ? { path: info.deckPath } : {}),
           aiContext,
           diff: { oldText: info.oldText, newText: info.newText },
         });
@@ -1719,6 +1724,7 @@ export default function ProjectWorkspace() {
               onExport={handleExport}
               onOpenList={() => setExportsListOpen(true)}
               onPick={() => setPickExportOpen(true)}
+              artifactKind={boardUi?.artifactKind || null}
               anchorRef={exportBtnRef}
             />
           </div>

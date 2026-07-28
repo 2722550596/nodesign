@@ -18,6 +18,9 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
+import {
+  detectTaskKind, readTaskMarker, listSitePages, ENTRY_FILE, KIND_SITE, KIND_DECK,
+} from '../lib/artifact-target.js';
 
 const router = express.Router();
 
@@ -205,10 +208,13 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     await scanDir(path.join(assetsDir, 'notes'), 'note', 'assets/notes');
 
     // 任务模型（2026-07-28）：任务=shared/tasks/ 下的目录（agent 按需自建）。
-    // 目录名即任务名；canvas.html 存在 = 该任务有 deck；其余文件作为任务产物
-    // 上墙（path 'tasks/<任务>/<文件>'，前端按路径前缀派生归属到任务工作区）
+    // 目录名即任务名。**任务有形态**（2026-07-28 加站点起）：
+    //   deck —— canvas.html 是主 deck，同目录其余 .html 是试作，各自一张卡
+    //   site —— index.html 是入口，整个目录是**一个**站点物件，子页和 style.css
+    //           不各自上墙（否则用户看到的是一堆卡而不是一个站）
     const tasks = [];
     const tasksDir = path.join(getSharedDir(req.params.pid), 'tasks');
+    const siteTaskNames = new Set();
     try {
       const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
       for (const t of taskEntries) {
@@ -216,37 +222,53 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         const tDir = path.join(tasksDir, t.name);
         const tStat = await fs.stat(tDir);
         // 任务=会话一对一：.nd-task.json 是 PostToolUse 落的归属标记
-        let boundSession = null;
-        try {
-          const raw = await fs.readFile(path.join(tDir, '.nd-task.json'), 'utf8');
-          const parsed = JSON.parse(raw);
-          if (typeof parsed?.sessionId === 'string') boundSession = parsed.sessionId;
-        } catch { /* 没标记就是旧任务，前端按无归属处理 */ }
-        // 一个任务可以有多份 deck（2026-07-28）：canvas.html 是主 deck，
-        // 其余 .html 是试作 / 备选（风格原型探索阶段并排放着让用户挑）
-        let decks = [];
-        try {
-          const inner = await fs.readdir(tDir, { withFileTypes: true });
-          decks = inner
-            .filter(f => f.isFile() && f.name.toLowerCase().endsWith('.html') && !f.name.startsWith('.'))
-            .map(f => ({ file: f.name, main: f.name === 'canvas.html' }))
-            .sort((a, b) => (b.main - a.main) || a.file.localeCompare(b.file));
-        } catch { /* 目录读不到就当没 deck */ }
-        tasks.push({
+        const marker = await readTaskMarker(tDir);
+        const boundSession = typeof marker?.sessionId === 'string' ? marker.sessionId : null;
+        const kind = await detectTaskKind(tDir);
+
+        const task = {
           id: t.name,
           title: t.name,
-          hasDeck: decks.some(d => d.main),
-          decks,
+          kind,                       // 'deck' | 'site' | null（还没写出产物）
           sessionId: boundSession,
           mtime: tStat.mtime.toISOString(),
-        });
+        };
+
+        if (kind === KIND_SITE) {
+          siteTaskNames.add(t.name);
+          const pages = await listSitePages(tDir);
+          task.site = { entry: ENTRY_FILE[KIND_SITE], pages };
+          task.hasDeck = false;
+          task.decks = [];
+        } else {
+          // 一个任务可以有多份 deck：canvas.html 是主 deck，
+          // 其余 .html 是试作 / 备选（风格原型探索阶段并排放着让用户挑）
+          let decks = [];
+          try {
+            const inner = await fs.readdir(tDir, { withFileTypes: true });
+            decks = inner
+              .filter(f => f.isFile() && f.name.toLowerCase().endsWith('.html') && !f.name.startsWith('.'))
+              .map(f => ({ file: f.name, main: f.name === ENTRY_FILE[KIND_DECK] }))
+              .sort((a, b) => (b.main - a.main) || a.file.localeCompare(b.file));
+          } catch { /* 目录读不到就当没 deck */ }
+          task.hasDeck = decks.some(d => d.main);
+          task.decks = decks;
+        }
+
+        tasks.push(task);
         await scanDir(tDir, 'task-file', `tasks/${t.name}`);
       }
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
     }
-    // 任务里的 .html 不当普通文件卡上墙（它们由 tasks[].decks 派生成 deck 物件）
-    const filtered = artifacts.filter(a => !(a.kind === 'task-file' && a.name.toLowerCase().endsWith('.html')));
+    // deck 任务里的 .html 不当普通文件卡上墙（由 tasks[].decks 派生成 deck 物件）；
+    // 站点任务整个目录都不散着上墙（由 tasks[].site 派生成一个站点物件）
+    const filtered = artifacts.filter((a) => {
+      if (a.kind !== 'task-file') return true;
+      const owner = a.path.split('/')[1];
+      if (siteTaskNames.has(owner)) return false;
+      return !a.name.toLowerCase().endsWith('.html');
+    });
 
     filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
     tasks.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
@@ -402,19 +424,31 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     }
 
     let stat;
+    let servePath = absPath;
     try {
-      stat = await fs.stat(absPath);
+      stat = await fs.stat(servePath);
     } catch (err) {
       if (err.code === 'ENOENT') return res.status(404).json({ error: 'file not found' });
       throw err;
     }
+    // 目录 → 找 index.html（站点常见的 `href="about/"` 写法；deck 场景用不到但无害）
+    if (stat.isDirectory()) {
+      const indexPath = path.join(servePath, ENTRY_FILE[KIND_SITE]);
+      try {
+        const s = await fs.stat(indexPath);
+        if (s.isFile()) { servePath = indexPath; stat = s; }
+      } catch { /* 没有 index.html 就按下面的 not a file 处理 */ }
+    }
     if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
 
-    const ext = path.extname(absPath).toLowerCase();
+    const ext = path.extname(servePath).toLowerCase();
     res.setHeader('Content-Type', ARTIFACT_MIME[ext] || 'application/octet-stream');
     res.setHeader('Content-Length', stat.size);
-    res.setHeader('Cache-Control', 'private, max-age=300');
-    res.end(await fs.readFile(absPath));
+    // 站点在编辑中要看到最新的那一份：deck 的图片可以缓存 5 分钟，html/css/js
+    // 不能 —— agent 改完 style.css 用户按刷新还是旧样式，会以为改动没生效。
+    const editable = ext === '.html' || ext === '.htm' || ext === '.css' || ext === '.js';
+    res.setHeader('Cache-Control', editable ? 'no-cache' : 'private, max-age=300');
+    res.end(await fs.readFile(servePath));
   } catch (err) { next(err); }
 });
 

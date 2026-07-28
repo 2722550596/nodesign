@@ -32,7 +32,7 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
-import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/artifact-target.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -42,6 +42,9 @@ const RASTER_SCALE = 0.6;
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
+/** 站点断点档位（跟前端 web/src/lib/board-geometry.js 的 SITE_VIEWPORTS 对齐）*/
+const SITE_DEVICE_W = { desktop: 1440, tablet: 834, mobile: 390 };
+
 export function makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }) {
   return tool(
     'screenshot_canvas',
@@ -49,10 +52,16 @@ export function makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }) {
 as an image content block. Use this to visually inspect the design you wrote
 — check spacing, contrast, hierarchy, layout, alignment.
 
-The screenshot uses headless chromium at the given viewport (default = the
-deck-aspect declared on canvas wrap, i.e. 16:9 → 1920×1080, 9:16 → 1080×1920,
-16:10 → 1920×1200, 4:3 → 1440×1080). Output is rendered at deviceScaleFactor=2
-→ 4K-ready bitmap.
+Works for both artifact kinds; the tool detects which one you are on.
+
+DECK — default viewport = the deck-aspect declared on canvas wrap (16:9 → 1920×1080,
+9:16 → 1080×1920, 16:10 → 1920×1200, 4:3 → 1440×1080). Target one page with pageIndex.
+
+SITE — there is no fixed aspect. Default viewport is desktop 1440×900 and the whole
+page is captured (fullPage). Use the device param to check a breakpoint: desktop=1440,
+tablet=834, mobile=390. **Checking mobile means rendering AT 390px wide**, not shrinking
+a desktop shot — that is the only way to see whether your media queries actually fire.
+pageIndex does not apply to sites; pass path to screenshot a specific page file.
 
 **Targeting (cheapest → most expensive)**:
 - pageIndex: capture only section[data-page="N"] — **prefer this for per-page checks** (~30-50KB image)
@@ -102,13 +111,17 @@ Do NOT use this tool when:
         .int()
         .min(1)
         .optional()
-        .describe('If given, capture only section[data-page="N"] (overrides fullPage)'),
+        .describe('DECK ONLY. If given, capture only section[data-page="N"] (overrides fullPage)'),
+      device: z
+        .enum(['desktop', 'tablet', 'mobile'])
+        .optional()
+        .describe('SITE ONLY. Render at a real device width to check responsive behaviour: desktop=1440, tablet=834, mobile=390. Ignored for decks.'),
       path: z
         .string()
         .optional()
         .describe(CANVAS_PATH_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, path: relPath }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -124,13 +137,33 @@ Do NOT use this tool when:
         };
       }
 
-      // 默认 viewport = canvas wrap 声明的 deck 比例尺寸（4 档预设），caller 显式给则用 caller 的
-      const dims = resolveDeckSize(extractDeckAspect(html));
-      const vp = viewport || { width: dims.width, height: dims.height };
+      const isSite = target.kind === KIND_SITE;
+
+      // 站点没有"比例"这回事：版面是被视口宽度算出来的，所以档位给的是真实设备
+      // 宽度，直接当 viewport 用、不缩放。拿 deck 那套 1920×1080 去截站点，会得到
+      // 一张"看起来还行"但跟任何真实设备都对不上的图 —— 断点有没有生效看不出来。
+      const vp = viewport
+        || (isSite
+          ? { width: SITE_DEVICE_W[device || 'desktop'], height: 900 }
+          : (() => { const d = resolveDeckSize(extractDeckAspect(html)); return { width: d.width, height: d.height }; })());
+
+      if (isSite && pageIndex) {
+        return {
+          content: [{
+            type: 'text',
+            text: `${target.relPath} 是站点页面，没有 <section data-page="N"> 分页。`
+              + '站点的"页"是独立文件：用 path 指定要截哪个页面（先 list_pages 看清单），'
+              + '用 device 切换 desktop / tablet / mobile 检查断点。',
+          }],
+          isError: true,
+        };
+      }
+
       // 默认 false：fullPage 截图体积是 viewport 的 N× (N=页数)，且会留在 context
       // 多 turn 直到 autoCompact。agent 不显式传就走 viewport 单屏（cheapest），
       // 真要 deck-wide overview 显式 fullPage:true 或派 vision-checker。
-      const fp = fullPage === true;
+      // 站点相反：默认整页 —— 网页本来就是长的，只截首屏等于没看过下面那些。
+      const fp = fullPage !== undefined ? fullPage === true : isSite;
 
       let browser;
       try {
@@ -176,7 +209,9 @@ Do NOT use this tool when:
           captureMode = `selector="${targetSelector}"`;
         } else {
           buf = await page.screenshot({ fullPage: fp, type: 'png' });
-          captureMode = `fullPage=${fp}`;
+          captureMode = isSite
+            ? `site ${device || 'desktop'} ${vp.width}px, fullPage=${fp}`
+            : `fullPage=${fp}`;
         }
 
         // emit 让前端可见 agent 在自检
@@ -193,7 +228,7 @@ Do NOT use this tool when:
           content: [
             {
               type: 'text',
-              text: `Screenshot of canvas.html (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
+              text: `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
             },
             {
               type: 'image',

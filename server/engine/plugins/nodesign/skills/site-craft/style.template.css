@@ -1,0 +1,86 @@
+/*
+  NoDesign · 站点起手样式（site-craft）
+
+  拷进 tasks/<任务名>/style.css 后改写。全站共用这一份。
+
+  改的顺序：先定 :root 里那三个数（字距 / 行高 / 正文宽），它们决定气质；
+  再定颜色。反过来做的话，配色调半天也不对味。
+*/
+
+:root {
+  /* ── 气质根基：先动这三个 ── */
+  --tracking: 0.06em;      /* 中文正文字距，0.05~0.08em */
+  --leading: 1.85;         /* 中文正文行高，1.75~1.95 */
+  --measure: 820px;        /* 正文宽，一行 35~45 字最舒服 */
+
+  /* ── 颜色：通篇一个主色，只用在细线和链接上 ── */
+  --ink: #2c2f33;          /* 正文 */
+  --ink-mid: #6b7076;      /* 辅助（日期 / 说明 / meta） */
+  --ink-light: #a8adb3;    /* 装饰 */
+  --bg: #fbfbfa;
+  --accent: #3a6ea5;
+
+  --sans: 'Inter', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
+  --serif: 'Songti SC', 'Noto Serif SC', serif;
+
+  --gap-section: 5rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 400;            /* 不要用 300：细体在小号汉字上糊笔画 */
+  line-height: var(--leading);
+  letter-spacing: var(--tracking);
+  -webkit-font-smoothing: antialiased;
+}
+
+main,
+.site-head,
+.site-foot { max-width: var(--measure); margin: 0 auto; padding: 0 24px; }
+
+/* ── 页头 ── */
+.site-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 24px; padding-top: 40px; padding-bottom: 40px;
+}
+.site-title { font-weight: 600; color: var(--ink); text-decoration: none; }
+.site-nav { display: flex; gap: 20px; }
+.site-nav a { color: var(--ink-mid); text-decoration: none; font-size: 14px; }
+.site-nav a:hover { color: var(--ink); border-bottom: 1px solid var(--accent); }
+
+/* ── 正文 ── */
+main section { margin-bottom: var(--gap-section); }
+
+h1 { font-size: 27px; font-weight: 600; line-height: 1.5; margin: 0 0 20px; }
+h2 { font-size: 19px; font-weight: 600; line-height: 1.6; margin: 0 0 14px; }
+p  { margin: 0 0 18px; }
+
+a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--accent); }
+a:hover { color: var(--accent); }
+
+img { max-width: 100%; height: auto; display: block; }
+
+.lede p { color: var(--ink-mid); }
+
+/* ── 页脚 ── */
+.site-foot {
+  padding-top: 40px; padding-bottom: 60px;
+  border-top: 1px solid rgba(0, 0, 0, 0.07);
+  color: var(--ink-light); font-size: 13px;
+}
+
+/* ── 断点：一到两个就够 ──
+   改完必须用 screenshot_canvas { device: 'mobile' } 真的按 390px 看一眼，
+   缩小的桌面截图看不出媒体查询有没有生效。 */
+@media (max-width: 860px) {
+  :root { --gap-section: 3.5rem; }
+  body { font-size: 15px; }
+  .site-head { flex-direction: column; gap: 10px; padding-top: 28px; padding-bottom: 28px; }
+  h1 { font-size: 23px; }
+}
