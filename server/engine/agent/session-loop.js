@@ -594,6 +594,10 @@ export async function runSession({
     },
 
     includePartialMessages: STREAMING_ENABLED,
+    // 子代理时间轴（2026-07-28）：转发子代理完整对话（text/thinking 也带
+    // parent_tool_use_id），前端按它拆「对话」主线和每个子代理的独立时间轴。
+    // 默认只透传 tool_use/tool_result（心跳级），不够渲染嵌套 transcript。
+    forwardSubagentText: true,
 
     thinking: modelOverride.thinking || pickThinkingConfig(model),
     effort: modelOverride.effort || 'medium',

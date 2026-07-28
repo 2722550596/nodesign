@@ -96,16 +96,17 @@ function fold(evt) {
 
   switch (evt.type) {
     case 'run.delta.text':
-      if (runMatches) appendText(st, 'assistant', evt.text);
+      if (runMatches) appendText(st, 'assistant', evt.text, evt.parentToolUseId);
       break;
     case 'run.delta.thinking':
-      if (runMatches) appendText(st, 'thinking', evt.text);
+      if (runMatches) appendText(st, 'thinking', evt.text, evt.parentToolUseId);
       break;
     case 'run.tool_use.started':
       if (runMatches && evt.blockId && !st.messages.some(m => m.id === evt.blockId)) {
         st.messages.push({
           id: evt.blockId, role: 'tool', toolName: evt.name,
           toolInput: undefined, status: 'running', runId: st.runId,
+          ...(evt.parentToolUseId ? { parentToolUseId: evt.parentToolUseId } : {}),
         });
       }
       break;
@@ -117,6 +118,7 @@ function fold(evt) {
         st.messages.push({
           id: evt.blockId, role: 'tool', toolName: evt.name,
           toolInput: evt.input, status: 'running', runId: st.runId,
+          ...(evt.parentToolUseId ? { parentToolUseId: evt.parentToolUseId } : {}),
         });
       }
       break;
@@ -158,15 +160,17 @@ function fold(evt) {
   if (typeof evt.seq === 'number' && evt.seq > st.seq) st.seq = evt.seq;
 }
 
-function appendText(st, role, text) {
+function appendText(st, role, text, parentToolUseId = null) {
   if (!text) return;
   const last = st.messages[st.messages.length - 1];
-  if (last && last.role === role) {
+  // 子代理时间轴：不同 parent 的流不互吸（跟前端 lib/chat-stream.js 同构）
+  if (last && last.role === role && (last.parentToolUseId || null) === (parentToolUseId || null)) {
     last.content = (last.content || '') + text;
     return;
   }
   st.messages.push({
     id: `${st.runId || 'live'}:m${st._msgCounter++}`,
+    ...(parentToolUseId ? { parentToolUseId } : {}),
     role,
     content: text,
     runId: st.runId,

@@ -149,11 +149,30 @@ export function handleSDKMessage(ctx, msg) {
   // 首条 message 含 session_id，记下
   if (msg.session_id) ctx.recordSdkSession(msg.session_id);
 
+  // 子代理时间轴（2026-07-28）：forwardSubagentText 开启后，子代理的消息带
+  // parent_tool_use_id 流进主 query。用原型链派生一个 emit 装饰过的 ctx——
+  // 该 message 产生的所有事件都盖上 parentToolUseId，前端据此拆时间轴。
+  // Object.create 保 AgentContext 的原型方法与共享状态（counters 等）原样可用。
+  if (msg.parent_tool_use_id) {
+    const parent = msg.parent_tool_use_id;
+    // 先确保流式入参 map 已挂在真 ctx 上 —— 否则首次访问发生在派生对象上，
+    // map 会写成派生对象的 own property，随派生对象丢弃（原型链只読共享）
+    toolInputStreams(ctx);
+    // ⚠️ 必须捕获 base 快照：闭包若直接引用 ctx 变量，下面 ctx = child 之后
+    // ctx.emit 会解析回 child 自己 → 无限递归（真机爆过 Maximum call stack）
+    const base = ctx;
+    const child = Object.create(base);
+    child.emit = (evt) => base.emit({ parentToolUseId: parent, ...evt });
+    ctx = child;
+  }
+
   switch (msg.type) {
     case 'assistant':
       // BetaMessage 含 content[] (text / thinking / tool_use blocks)
-      // STREAMING_ENABLED 时 text/thinking 已从 stream_event 推完，跳过避免双推
-      handleAssistantBlocks(ctx, msg.message?.content || [], STREAMING_ENABLED);
+      // STREAMING_ENABLED 时 text/thinking 已从 stream_event 推完，跳过避免双推。
+      // 例外：子代理消息（forwardSubagentText 转发）没有对应 stream_event，
+      // 跳过会把子代理正文整段吞掉（时间轴就空了）—— 不跳。
+      handleAssistantBlocks(ctx, msg.message?.content || [], STREAMING_ENABLED && !msg.parent_tool_use_id);
       break;
 
     case 'user':
@@ -443,10 +462,16 @@ function pumpToolInputStream(ctx, st, flush) {
 function handleStreamEvent(ctx, msg) {
   const evt = msg.event;
   if (!evt) return;
+  // 主线与子代理的 stream 可能并行交错，block index 各自归零 —— 加 parent 前缀区分
+  const streamScope = msg.parent_tool_use_id || 'main';
+  const streamKey = `${streamScope}:${evt.index}`;
 
-  // 新 assistant message 开始 —— block index 归零，残留的流式入参条目作废
+  // 新 assistant message 开始 —— 该 scope 的 block index 归零，残留流式入参条目作废
   if (evt.type === 'message_start') {
-    toolInputStreams(ctx).clear();
+    const streams = toolInputStreams(ctx);
+    for (const key of [...streams.keys()]) {
+      if (key.startsWith(`${streamScope}:`)) streams.delete(key);
+    }
     return;
   }
 
@@ -460,7 +485,7 @@ function handleStreamEvent(ctx, msg) {
       ctx.emit(Events.toolUseStarted(ctx.counters.turns, cb.id, cb.name));
       const field = TOOL_INPUT_STREAM_FIELDS[cb.name];
       if (field && Number.isInteger(evt.index)) {
-        toolInputStreams(ctx).set(evt.index, {
+        toolInputStreams(ctx).set(streamKey, {
           id: cb.id, name: cb.name, field,
           buf: '', sent: 0, lastEmit: 0, filePathSent: false,
         });
@@ -471,10 +496,10 @@ function handleStreamEvent(ctx, msg) {
 
   // 跟踪中的 tool_use block 收尾：最后一次 flush + 带 done 标记，清条目
   if (evt.type === 'content_block_stop') {
-    const st = toolInputStreams(ctx).get(evt.index);
+    const st = toolInputStreams(ctx).get(streamKey);
     if (st) {
       pumpToolInputStream(ctx, st, true);
-      toolInputStreams(ctx).delete(evt.index);
+      toolInputStreams(ctx).delete(streamKey);
     }
     return;
   }
@@ -489,7 +514,7 @@ function handleStreamEvent(ctx, msg) {
   } else if (delta.type === 'thinking_delta' && delta.thinking) {
     ctx.emit(Events.deltaThinking(ctx.counters.turns, delta.thinking));
   } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
-    const st = toolInputStreams(ctx).get(evt.index);
+    const st = toolInputStreams(ctx).get(streamKey);
     if (st) {
       st.buf += delta.partial_json;
       pumpToolInputStream(ctx, st, false);
