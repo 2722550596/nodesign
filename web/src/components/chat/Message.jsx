@@ -396,7 +396,8 @@ function ToolPendingNode({ toolName }) {
   );
 }
 
-function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
+// export：工作台画布的舞台层也渲染这张卡（agent 提问直接在画布里答）
+export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
   const showToast = useGlobalStore(s => s.showToast);
   const activeRun = useGlobalStore(s => s.activeRun);
   // collected: { [questionText]: answerString }；submitted 后等 status 推回

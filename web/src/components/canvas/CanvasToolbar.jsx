@@ -1,14 +1,14 @@
-import { Edit3, Eye, Code2, Move, Pin, Maximize2, Settings, Sliders, MessageSquare, RotateCcw, LayoutGrid, Focus, StickyNote, FolderPlus, SquarePen } from 'lucide-react';
+import { Edit3, Eye, Code2, Move, Pin, Maximize2, Settings, Sliders, MessageSquare, RotateCcw, X } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, STAGE } from '../../lib/theme.js';
 
+// 桌面化（2026-07-28）：工作台不再是"模式"—— 它是唯一顶层曲面（BoardToolbar 管）。
+// 这条工具栏降级为 DeckWindow（画布内最大化编辑窗口）的窗口头：
+// Edit/Drag/Preview/Code 是窗口内部标签页，右端多一个关闭钮（onClose）。
 const MODES = [
   { id: 'edit',    label: 'Edit',    icon: Edit3 },
   { id: 'drag',    label: 'Drag',    icon: Move },
   { id: 'preview', label: 'Preview', icon: Eye },
   { id: 'code',    label: 'Code',    icon: Code2 },
-  // 工作台（2026-07-27 v1）：产物墙 — agent 生成物 / 上传素材 / deck 草稿，
-  // 点击物件加入上下文托盘。Lovart 式工作台第一步。
-  { id: 'board',   label: '工作台',  icon: LayoutGrid },
 ];
 
 /**
@@ -38,13 +38,9 @@ export default function CanvasToolbar({
   onReload,
   onSystemClick, systemBtnRef, systemActive = false,
   isStreaming = false,  // 协作 lock：agent run 期间 Drag mode 不可点
-  // 工具栏合并（2026-07-27）：board 模式的控件也画在这一条 —— { ui, api }
-  // ui = BoardCanvas 上报的 { viewMode, zoom, canWork }，api = 操作入口 ref。
-  // deck 专属工具（deck zoom / Tweaks / Comment / iframe reload）board 模式下隐藏。
-  board = null,
+  onClose,              // 桌面化：窗口关闭钮（落回画布内嵌预览态）
 }) {
-  const isBoard = mode === 'board';
-  const boardApi = () => board?.api?.current;
+  const isBoard = false;
   return (
     <div style={{
       height: 44,
@@ -124,72 +120,7 @@ export default function CanvasToolbar({
         </button>
       )}
 
-      {/* board 模式：整理/工作视图切换 + 便签 + 文件夹（画布区不再叠浮条）*/}
-      {isBoard && board && (
-        <>
-          <div style={{
-            display: 'inline-flex',
-            background: 'rgba(0,0,0,0.04)',
-            borderRadius: 6,
-            padding: 2,
-          }}>
-            <button
-              onClick={() => boardApi()?.switchView('arrange')}
-              style={boardSegBtn(board.ui?.viewMode === 'arrange')}
-            ><LayoutGrid size={11} /> 整理</button>
-            <button
-              onClick={() => boardApi()?.switchView('work')}
-              disabled={!board.ui?.canWork}
-              title={board.ui?.canWork ? '只看聚焦任务的工作区' : '进入会话或聚焦某个工作区后可用'}
-              style={{ ...boardSegBtn(board.ui?.viewMode === 'work'), opacity: board.ui?.canWork ? 1 : 0.4, cursor: board.ui?.canWork ? 'pointer' : 'not-allowed' }}
-            ><Focus size={11} /> 工作</button>
-          </div>
-          <button onClick={() => boardApi()?.newNote()} style={boardActionBtn} title="新建灵感便签">
-            <StickyNote size={11} /> 便签
-          </button>
-          <button onClick={() => boardApi()?.newFolder()} style={boardActionBtn} title="新建文件夹工作区（收纳一类内容）">
-            <FolderPlus size={11} /> 文件夹
-          </button>
-          <button
-            onClick={() => boardApi()?.newTask()}
-            disabled={!board.ui?.hasSession}
-            title={board.ui?.hasSession
-              ? '开新任务：回到新对话（当前会话保留，随时从画布回来）'
-              : '左栏已是新对话，直接输入 brief 开始'}
-            style={{ ...boardActionBtn, ...(board.ui?.hasSession ? {} : { opacity: 0.4, cursor: 'not-allowed' }) }}
-          >
-            <SquarePen size={11} /> 新任务
-          </button>
-        </>
-      )}
-
       <div style={{ flex: 1 }} />
-
-      {/* board 模式：画布缩放 + 适应内容 + 产物墙刷新 */}
-      {isBoard && board && (
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-        }}>
-          <button
-            onClick={() => boardApi()?.fitContent()}
-            title="适应全部内容"
-            style={{
-              ...zoomBtnStyle,
-              width: 'auto', padding: `0 ${GAP.sm}px`,
-              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-            }}
-          ><Maximize2 size={10} /> Fit</button>
-          <button onClick={() => boardApi()?.zoomBy(1 / 1.2)} style={zoomBtnStyle}>−</button>
-          <span style={{ minWidth: 36, textAlign: 'center' }}>{Math.round((board.ui?.zoom ?? 1) * 100)}%</span>
-          <button onClick={() => boardApi()?.zoomBy(1.2)} style={zoomBtnStyle}>+</button>
-          <button
-            onClick={() => boardApi()?.reload()}
-            title="刷新产物墙"
-            style={{ ...zoomBtnStyle, background: 'transparent' }}
-          ><RotateCcw size={11} /></button>
-        </div>
-      )}
 
       {/* Zoom（deck 模式）*/}
       {!isBoard && onZoomChange && (
@@ -332,6 +263,27 @@ export default function CanvasToolbar({
           <Settings size={11} />
         </button>
       )}
+
+      {/* 关闭窗口 → 落回画布内嵌预览态（桌面化：编辑是画布上开的窗，不是另一个世界）*/}
+      {onClose && (
+        <button
+          onClick={onClose}
+          title="关闭编辑窗口（回到工作台，deck 保持内嵌预览）"
+          style={{
+            padding: `${GAP.xs + 1}px ${GAP.sm + 1}px`,
+            marginLeft: GAP.xs,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+            color: COLOR.text,
+            background: 'rgba(0,0,0,0.05)',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            borderRadius: 4,
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.1)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
+        >
+          <X size={12} />
+        </button>
+      )}
     </div>
   );
 }
@@ -377,28 +329,3 @@ const zoomBtnStyle = {
   borderRadius: 4,
 };
 
-/** board 模式：整理/工作 segment 内按钮（与 Mode segment 同视觉语言） */
-function boardSegBtn(active) {
-  return {
-    display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-    padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
-    fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
-    color: active ? COLOR.text : COLOR.sub,
-    background: active ? '#fff' : 'transparent',
-    borderRadius: 4,
-    boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
-    transition: 'all 0.15s',
-    cursor: 'pointer',
-  };
-}
-
-const boardActionBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-  padding: `${GAP.xs + 1}px ${GAP.md}px`,
-  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
-  color: COLOR.text2 || COLOR.text,
-  background: 'rgba(0,0,0,0.04)',
-  borderRadius: 4,
-  border: 'none',
-  cursor: 'pointer',
-};

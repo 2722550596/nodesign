@@ -98,6 +98,8 @@ export default function ProjectWorkspace() {
   const [boardVersion, setBoardVersion] = useState(0);
   // 工作台 UI 态（BoardCanvas 上报）：工具栏 + 会话栏聚焦条共同消费
   const [boardUi, setBoardUi] = useState(null);
+  // 舞台层（2026-07-28）：run.* 工具流原样转发进 BoardCanvas，画布演出 agent 实时动作
+  const stageRef = useRef(null);
   // 稳定引用让 ChatPanel/MessageList 下游 React.memo 生效；之前 inline 箭头每次
   // render 都 new function，子组件 props 浅比较永不命中。
   const handleCanvasReload = useCallback(() => setReloadToken(t => t + 1), []);
@@ -501,6 +503,24 @@ export default function ProjectWorkspace() {
       (evt.runId && liveRunId && evt.runId !== liveRunId)
       || (evt.sessionId && liveSid && evt.sessionId !== liveSid)
     );
+
+    // 舞台层旁路（2026-07-28）：工具流 / 文件变更 / 收场信号原样转发给工作台画布，
+    // 它把 agent 的实时动作演出来（代码直播 / 终端 / shimmer / chip / 角标）。
+    // BoardCanvas 未挂载（非 board 视图）时 stageRef.current 为 null，事件自然丢弃。
+    switch (evt.type) {
+      case 'run.tool_use.started':
+      case 'run.delta.tool_use':
+      case 'run.delta.tool_input':
+      case 'run.delta.tool_result':
+      case 'run.file_changed':
+      case 'run.done':
+      case 'run.error':
+      case 'run.cancelled':
+        if (!isStale) stageRef.current?.onEvent?.(evt);
+        break;
+      default: break;
+    }
+
     switch (evt.type) {
       // ── Phase A.4：WS hydrate 协议（server 推完整 messages 让前端不依赖 HTTP Sessions.read）──
       case 'ws.hydrate.start':
@@ -604,6 +624,13 @@ export default function ProjectWorkspace() {
         setIsStreaming(true);
         setThinkingTokens(null);
         setTodos([]);
+        // API / 多 tab 触发的 turn 也要能答题（AskUserQuestion 卡 POST /answer 要
+        // activeRun）：run.start 即认领。handleSend 已设过时同值幂等；跨会话/旧 run
+        // 已被 isStale 滤掉。
+        if (evt.runId) {
+          setCurrentRunId(evt.runId);
+          setActiveRun({ pid: id, runId: evt.runId });
+        }
         break;
       case 'run.permission_mode_changed': {
         // 后端 mode 切换（用户 toggle / plan-approve / plan-reject / turn 入口校正 /
@@ -730,10 +757,11 @@ export default function ProjectWorkspace() {
         break;
       }
       case 'run.file_changed':
-        // C4: FileChanged hook → 仅对 canvas.html / *.html 后缀触发 iframe reload
-        // 其他文件（spec.json / assets/* / .git/*）忽略
+        // 2026-07-28 起事件源=PostToolUse 直发（agent 每写完一笔就来一发）。
+        // html → deck iframe 即时 reload；assets/（生成图/便签）→ 产物墙即时重拉。
+        // 其他文件（spec.json / .git/*）忽略。
         if (typeof evt.filePath === 'string'
-            && (evt.filePath.endsWith('canvas.html') || evt.filePath.endsWith('.html'))) {
+            && (evt.filePath.endsWith('.html') || /(^|\/)assets\//.test(evt.filePath))) {
           setReloadToken(t => t + 1);
         }
         break;
@@ -1764,6 +1792,7 @@ export default function ProjectWorkspace() {
             boardVersion={boardVersion}
             boardUi={boardUi}
             onBoardUiState={setBoardUi}
+            stageRef={stageRef}
             onAddToContext={(item) => {
               // 工作台物件 → 上下文托盘（同上传附件语义，下一条消息带给 agent）。
               // 按 path 去重防重复点击堆积。
