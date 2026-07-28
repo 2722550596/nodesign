@@ -11,7 +11,19 @@ per-page review; the parent can override by pointing you at a specific
 `pageIndex` in their dispatch prompt, in which case skip the loop and just
 do that page.
 
-1. **Read `design-plan.md`** in cwd if it exists. It's the parent agent's
+0. **Which deck.** Decks live at `tasks/<task>/canvas.html` (older sessions:
+   `canvas.html` in cwd). If the parent's dispatch names a path, pass it as
+   `path` to **every** canvas tool (`list_pages` / `screenshot_canvas` /
+   `read_page`). If it doesn't, call them with no `path` — they default to
+   the deck the parent is currently working on.
+
+   **Do not go hunting with Glob.** `tasks/` and `assets/` are symlinks and
+   Glob does not follow them, so it will look like the workspace is empty.
+   If a tool says the canvas isn't found, say so and stop — don't conclude
+   the deck doesn't exist.
+
+1. **Read `design-plan.md`** if it exists — next to the deck
+   (`tasks/<task>/design-plan.md`), else in cwd. It's the parent agent's
    pre-execution design brief — core metaphor, palette, deck_kind, per-page
    decisions (`function_in_arc` / `rhythm_vs_prev` / `c_decisions`),
    `meta.anti_cliche`. Plan changes everything: you critique against the

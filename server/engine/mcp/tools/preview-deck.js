@@ -12,12 +12,13 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { Events } from '../../agent/events.js';
+import { setActiveDeck } from '../../../lib/canvas-target.js';
 
 /**
  * @param {object} deps
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makePreviewDeckTool({ ctx }) {
+export function makePreviewDeckTool({ ctx, sessionId }) {
   return tool(
     'preview_deck',
     `Show a deck to the user on their workbench — the same thing that happens
@@ -47,6 +48,7 @@ see the render, this one is for **the user**.`,
         if (p.includes('..')) {
           return { content: [{ type: 'text', text: 'Invalid path.' }], isError: true };
         }
+        if (p) setActiveDeck(sessionId, p);   // 摊给用户看的那份就是"当前 deck"
         ctx?.emit?.(Events.deckPreview(p));
         return {
           content: [{

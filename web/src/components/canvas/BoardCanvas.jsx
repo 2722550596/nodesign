@@ -15,6 +15,7 @@ import {
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
 import ProjectBand from './ProjectBand.jsx';
+import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
 import InstructionsCard from '../project/InstructionsCard.jsx';
 import BrandCard from '../project/BrandCard.jsx';
@@ -911,6 +912,34 @@ export default function BoardCanvas({
     scheduleSave();
   }, [scheduleSave]);
 
+  /**
+   * 删任务（2026-07-28）：任务和会话一对一，删任务连它的会话一起删。
+   * 会话区（还没建任务的）不给删钮 —— 那种走左栏会话列表删。
+   */
+  const handleDeleteTask = useCallback(async (zid, title) => {
+    if (!zid.startsWith('task/')) return;
+    const name = zid.slice(5);
+    const ok = await useGlobalStore.getState().confirm({
+      title: '删除任务',
+      message: `删除任务「${title}」？文件夹里的全部产出，以及它绑定的那次对话，会一起删掉。此操作不可撤销。`,
+      confirmLabel: '删除',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const r = await Assets.removeTask(projectId, name);
+      if (focusZoneRef.current === zid) exitToProjectRef.current?.();
+      else reload();
+      useGlobalStore.getState().showToast(
+        r?.removedSession ? '任务和它的会话已删除' : '任务已删除', 'info');
+      if (r?.removedSession && r.removedSession === currentSessionId) {
+        navigate(`/projects/${projectId}/work`);
+      }
+    } catch (err) {
+      useGlobalStore.getState().showToast(`删除失败：${err.message}`, 'error');
+    }
+  }, [projectId, currentSessionId, navigate, reload]);
+
   const focusZoneAction = (zid) => {
     if (zones[zid]?.collapsed) patchZone(zid, { collapsed: false });
     enterZone(zid);
@@ -1013,8 +1042,20 @@ export default function BoardCanvas({
 
   // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock
   const visibleIdSet = new Set(visibleObjects.map(o => o.id));
+  // 区内已占的矩形：生图占位卡据此避开已经摆好的图（跟物件之间的防遮盖同一套判定）
+  const stageOccupancy = new Map();
+  for (const o of visibleObjects) {
+    if (!o.zoneId) continue;
+    const sz = sizeOf(o);
+    const arr = stageOccupancy.get(o.zoneId) || [];
+    arr.push({ x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h });
+    stageOccupancy.set(o.zoneId, arr);
+  }
   const { anchoredCards, dockPanels, dockChips } = splitStageCards({
-    stageCards, positioned, visibleIdSet, visibleZones, currentSessionId, focusZone,
+    stageCards, positioned, visibleIdSet, visibleZones, focusZone, occupancy: stageOccupancy,
+    // 会话绑了任务就用任务区当落点 —— 会话区那会儿已经被任务区取代，
+    // 拿 sessionId 去找区找不到，卡片会全掉进 dock 叠成一摞。
+    currentSessionId: sessionZone.get(currentSessionId) || currentSessionId,
   });
 
   // agent 此刻在动谁：橙色光圈套在目标外圈（物件还没上墙就套它落脚的工作区）。
@@ -1112,10 +1153,10 @@ export default function BoardCanvas({
               }}
               title="点击展开"
               style={{
-                position: 'absolute', left: z.x, top: z.y, width: z.w, height: FOLDER_CARD_H - 12,
-                zIndex: 1, borderRadius: 12,
-                display: 'flex', alignItems: 'center', gap: 10,
-                padding: `0 ${GAP.md}px`,
+                position: 'absolute', left: z.x, top: z.y, width: z.w, height: FOLDER_CARD_H - 16,
+                zIndex: 1, borderRadius: 14,
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: `0 ${GAP.lg}px`,
                 background: dropHint?.kind === 'folder' && dropHint.id === z.id ? '#fff8e8' : 'rgba(255,255,255,0.55)',
                 border: `1px ${dropHint?.kind === 'folder' && dropHint.id === z.id ? 'solid #b08c4f' : `dashed ${COLOR.borderLt}`}`,
                 boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
@@ -1132,9 +1173,9 @@ export default function BoardCanvas({
                   ? '#fff8e8' : 'rgba(255,255,255,0.55)';
               }}
             >
-              <Folder size={15} color="#8a7a5c" style={{ flexShrink: 0 }} />
+              <Folder size={17} color="#8a7a5c" style={{ flexShrink: 0 }} />
               <span style={{
-                fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text,
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '52%',
               }}>{z.title}</span>
               <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLOR.sub, flexShrink: 0 }}>
@@ -1157,11 +1198,19 @@ export default function BoardCanvas({
                   onClick={() => !wasDrag() && focusZoneAction(z.id)}
                   style={zoneHeaderBtn}
                 ><FolderOpen size={13} /></button>
+                {z.id.startsWith('task/') && (
+                  <button
+                    data-zone-action title="删除任务（连同它的对话）"
+                    onClick={() => !wasDrag() && handleDeleteTask(z.id, z.title)}
+                    style={{ ...zoneHeaderBtn, color: COLOR.error }}
+                  ><Trash2 size={13} /></button>
+                )}
               </span>
             </div>
           ) : (
             <div
               key={z.id}
+              data-zone-id={z.id}
               style={{
                 position: 'absolute', left: z.x, top: z.y, width: z.w, height: z.h,
                 borderRadius: 14, zIndex: 0, pointerEvents: 'none',
@@ -1233,6 +1282,13 @@ export default function BoardCanvas({
                       style={zoneHeaderBtn}
                     ><FolderInput size={13} /></button>
                   )}
+                  {z.id.startsWith('task/') && (
+                    <button
+                      data-zone-action title="删除任务（连同它的对话）"
+                      onClick={() => { if (!wasDrag()) handleDeleteTask(z.id, z.title); }}
+                      style={{ ...zoneHeaderBtn, color: COLOR.error }}
+                    ><Trash2 size={13} /></button>
+                  )}
                 </span>
               </div>
               {z.memberCount === 0 && (
@@ -1281,15 +1337,20 @@ export default function BoardCanvas({
             />
           ))}
 
-          {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）*/}
-          <StageBoardLayer
-            stageBadges={stageBadges}
-            anchoredCards={anchoredCards}
-            positioned={positioned}
-            visibleIdSet={visibleIdSet}
-            boardSize={stageBounds}
-            onDismiss={dismissStageCard}
-          />
+          {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）
+              单独一层浮在所有物件之上 —— 物件的 z 是会长的（pin_to_board 每次
+              置顶都 zMax+1），跟舞台卡比大小早晚会盖住 agent 正在写的那个框。
+              这层自己不吃事件，卡片各自开 pointerEvents。 */}
+          <div style={{ position: 'absolute', inset: 0, zIndex: 300, pointerEvents: 'none' }}>
+            <StageBoardLayer
+              stageBadges={stageBadges}
+              anchoredCards={anchoredCards}
+              positioned={positioned}
+              visibleIdSet={visibleIdSet}
+              boardSize={stageBounds}
+              onDismiss={dismissStageCard}
+            />
+          </div>
         </div>
         </div>
       </div>
@@ -1438,6 +1499,8 @@ function BoardObject({
 
   return (
     <div
+      data-board-object={o.id}
+      data-board-type={o.type}
       onPointerDown={onPointerDown}
       onDoubleClick={(e) => {
         if (e.target.closest('[data-board-action]')) return;

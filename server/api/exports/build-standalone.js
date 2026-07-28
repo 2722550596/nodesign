@@ -115,7 +115,9 @@ export async function buildStandaloneHtml(rawHtml, opts = {}) {
   // 单文件 self-contained 必须做这一步——脱离 sessions/<sid>/ 后相对路径都失效。
   // sessionRoot 不给时跳过（fail-soft，调用方可能不知道 sessionRoot）
   if (opts.sessionRoot) {
-    html = await inlineLocalImages(html, opts.sessionRoot);
+    // baseDir：相对路径以 deck 文件所在目录为基准（任务 deck 写的是
+    // `../../assets/generated/x.png`，按 sessionRoot 解会跳出 workspace → 全裂图）
+    html = await inlineLocalImages(html, opts.baseDir || opts.sessionRoot, opts.sessionRoot);
   }
 
   // 9. inline Google Fonts → @font-face data URL。
@@ -678,7 +680,7 @@ const BROKEN_PLACEHOLDER_DATA_URL =
     + '</svg>',
   );
 
-async function inlineOneAsset(srcPath, sessionRoot, cache) {
+async function inlineOneAsset(srcPath, baseDir, rootGuard, cache) {
   if (cache.has(srcPath)) return cache.get(srcPath);
 
   // 路径白名单：scheme/protocol-relative/data url 一律放过
@@ -699,10 +701,11 @@ async function inlineOneAsset(srcPath, sessionRoot, cache) {
     return srcPath;
   }
 
-  const abs = path.resolve(sessionRoot, srcPath);
-  // traversal 防御：resolve 后必须仍在 sessionRoot 之下
-  // （sessions/<sid>/assets 是 softlink，path.resolve 不解链，所以 startsWith 校验仍 OK）
-  if (abs !== sessionRoot && !abs.startsWith(sessionRoot + path.sep)) {
+  // 相对 deck 自己的目录解（`../../assets/...` 正是从 tasks/<任务>/ 往上两级），
+  // 越界判定仍以 workspace 根为准
+  const abs = path.resolve(baseDir, srcPath);
+  const root = rootGuard || baseDir;
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
     console.warn(`[build-standalone] image path escapes session: ${srcPath}`);
     cache.set(srcPath, BROKEN_PLACEHOLDER_DATA_URL);
     return BROKEN_PLACEHOLDER_DATA_URL;
@@ -726,10 +729,11 @@ async function inlineOneAsset(srcPath, sessionRoot, cache) {
  * 扫 HTML 把所有本地 <img src> 和 url(...) 引用替换成 data URL。
  *
  * @param {string} html
- * @param {string} sessionRoot  绝对路径，相对路径从这里 resolve
+ * @param {string} baseDir     绝对路径，HTML 里的相对路径从这里 resolve（deck 自己的目录）
+ * @param {string} [rootGuard] 越界判定根（缺省 = baseDir）
  * @returns {Promise<string>}
  */
-export async function inlineLocalImages(html, sessionRoot) {
+export async function inlineLocalImages(html, baseDir, rootGuard = null) {
   const cache = new Map();  // 同一图被多次引用只读一次盘 + base64 一次
 
   // ── 收集所有候选 src（先收集再异步批量替换）──
@@ -752,7 +756,7 @@ export async function inlineLocalImages(html, sessionRoot) {
 
   // 去重 + 并行 inline
   const uniq = [...new Set(tasks)];
-  await Promise.all(uniq.map((s) => inlineOneAsset(s, sessionRoot, cache)));
+  await Promise.all(uniq.map((s) => inlineOneAsset(s, baseDir, rootGuard || baseDir, cache)));
 
   // ── 替换：用 cache 拿到的 data URL 替换原 src ──
   // 注：split+join literal 替换避免 base64 里的 $ 被当 backreference

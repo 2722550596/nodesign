@@ -23,6 +23,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
 
 /**
  * Thumbnail hint：检测 sectionHtml 是否含 `assets/generated/` 图 + thumbnails 目录存在
@@ -113,7 +114,7 @@ function extractReactMountSources(raw, sectionHtml) {
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeReadPageTool({ workspaceRoot, ctx: _ctx }) {
+export function makeReadPageTool({ workspaceRoot, sessionId, ctx: _ctx }) {
   return tool(
     'read_page',
     `Read a specific page (a single \`<section data-page="N">\`) from canvas.html.
@@ -145,8 +146,9 @@ When NOT to use:
         .int()
         .min(1)
         .describe('Page number (1-based, matches data-page="N" attribute)'),
+      path: z.string().optional().describe(CANVAS_PATH_DESC),
     },
-    async ({ page }) => {
+    async ({ page, path: relPath }) => {
       try {
         if (!workspaceRoot) {
           return {
@@ -155,7 +157,9 @@ When NOT to use:
           };
         }
 
-        const canvasPath = path.join(workspaceRoot, 'canvas.html');
+        const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+        if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+        const canvasPath = target.absPath;
         let raw;
         try {
           raw = await fs.readFile(canvasPath, 'utf8');

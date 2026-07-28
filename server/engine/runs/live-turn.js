@@ -24,11 +24,19 @@
  *   run.todo.updated                → todos 覆盖
  *   run.context_usage               → contextUsage 覆盖
  *   run.plan_for_approval           → planForApproval（等待用户审批的 plan 卡）
- *   run.done / error / cancelled    → 清（runId 匹配才清，防 stale 事件清掉新 turn）
+ *   run.done / error / cancelled    → 标记 ended（保留 GRACE 毫秒，见下），不再折叠
  *   run.query.end                   → 清
+ *
+ * turn 结束后为什么还留一小会（2026-07-28）：jsonl 是 SDK 子进程按 block 逐条写的，
+ * 我们读 jsonl 与 turn 收尾之间有几百毫秒的错位窗口。这段时间内重连，若快照已经
+ * 没了，尾随订阅会把已经落进 jsonl 的那几条 delta 再放一遍 → 正文重复。留 GRACE
+ * 毫秒让"本轮由快照权威、hydrate 裁掉本轮"这条规则在收尾瞬间同样成立。
  */
 
 const MAX_TOOL_TEXT = 16_000;
+// 3s：够盖住"读 jsonl 的几百毫秒"这个错位窗口，又短到收尾后的重连基本不会
+// 落在里面（快照不带 tool_result 的图片，长时间用快照顶替 hydrate 会丢缩略图）。
+const ENDED_GRACE_MS = 3_000;
 
 /** @type {Map<string, object>} sessionId → live turn state */
 const liveTurns = new Map();
@@ -49,16 +57,24 @@ export function attachLiveTurnTracker(bus) {
 }
 
 /**
- * 取 session 当前进行中 turn 的快照；无进行中 turn 返 null。
+ * 取 session 当前 turn 的快照；没有在跑、且上一轮已过 grace 期 → null。
  * 返回值直接可作 ws.live_turn 帧 payload（messages 是前端 display 形态）。
+ *
+ * running=false 表示这是刚结束那一轮的尾巴（grace 期内），前端据此**只合并消息、
+ * 不把自己切回 streaming 态**。
  */
 export function getLiveTurnSnapshot(sessionId) {
   const st = liveTurns.get(sessionId);
   if (!st) return null;
+  if (st.endedAt && Date.now() - st.endedAt > ENDED_GRACE_MS) {
+    liveTurns.delete(sessionId);
+    return null;
+  }
   return {
     runId: st.runId,
     seq: st.seq,
     startedAt: st.startedAt,
+    running: !st.endedAt,
     messages: st.messages,
     todos: st.todos,
     contextUsage: st.contextUsage,
@@ -83,6 +99,7 @@ function fold(evt) {
       todos: [],
       contextUsage: null,
       planForApproval: null,
+      endedAt: null,
       _msgCounter: 0,
     });
     return;
@@ -90,6 +107,18 @@ function fold(evt) {
 
   const st = liveTurns.get(sid);
   if (!st) return;
+
+  // 已收尾的那一轮只留着给 grace 期内的重连当权威快照，不再吸新事件
+  // （新一轮由上面的 run.start 整块换掉）。seq 照常推进，免得尾随订阅从旧游标
+  // 起把这轮已经放过的事件再放一遍。
+  if (st.endedAt) {
+    if (evt.type === 'run.query.end' || Date.now() - st.endedAt > ENDED_GRACE_MS) {
+      liveTurns.delete(sid);
+      return;
+    }
+    if (typeof evt.seq === 'number' && evt.seq > st.seq) st.seq = evt.seq;
+    return;
+  }
 
   // stale 事件（老 turn 的尾巴）不折叠也不清新 turn 的状态
   const runMatches = !evt.runId || !st.runId || evt.runId === st.runId;
@@ -134,6 +163,13 @@ function fold(evt) {
       }
       break;
     }
+    case 'run.tool_use_summary': {
+      if (!runMatches || !evt.summary) break;
+      const ids = Array.isArray(evt.blockIds) ? evt.blockIds : [];
+      const hit = st.messages.find(m => m.role === 'tool' && ids.includes(m.id));
+      if (hit) hit.groupSummary = evt.summary;
+      break;
+    }
     case 'run.todo.updated':
       if (runMatches && Array.isArray(evt.todos)) st.todos = evt.todos;
       break;
@@ -146,7 +182,11 @@ function fold(evt) {
     case 'run.done':
     case 'run.error':
     case 'run.cancelled':
-      if (runMatches) liveTurns.delete(sid);
+      // 不立刻删：留 grace 期给"收尾瞬间重连"当权威快照（见文件头说明）
+      if (runMatches) {
+        st.endedAt = Date.now();
+        if (typeof evt.seq === 'number' && evt.seq > st.seq) st.seq = evt.seq;
+      }
       return;
     case 'run.query.end':
       liveTurns.delete(sid);

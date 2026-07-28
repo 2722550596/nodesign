@@ -65,6 +65,7 @@ import {
   handleSDKMessage,
   detectArtifact,
 } from './agent-shared.js';
+import { autoNameProjectFromSession } from '../../projects/auto-name.js';
 
 /**
  * Plan-mode 硬 deny 列表（canUseTool 钩子拦）。Allowlist 反过来推：
@@ -728,6 +729,13 @@ export async function runSession({
       mergeRunMetadata(runId, { sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters });
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
       sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
+      // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
+      // 正名一次（只一次，用户改过名就不动）。失败不影响 turn。
+      autoNameProjectFromSession(projectId, sessionId)
+        .then((name) => {
+          if (name) sharedCtx.emit({ type: 'project.renamed', projectId, name });
+        })
+        .catch((err) => console.warn('[auto-name]', err.message));
     } else if (status === 'cancelled') {
       mergeRunMetadata(runId, { aborted: true, abortReason: info?.reason || 'user_cancel' });
       try { markRunFailed(runId, `cancelled: ${info?.reason || 'user_cancel'}`); } catch { /* */ }

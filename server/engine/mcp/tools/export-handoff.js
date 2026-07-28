@@ -21,6 +21,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { buildHandoffZip } from '../../../api/exports.js';
 import { getProject, listRunsForProject } from '../../../projects/store.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
 
 /**
  * @param {object} deps
@@ -28,7 +29,7 @@ import { getProject, listRunsForProject } from '../../../projects/store.js';
  * @param {string} [deps.projectId]
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeExportHandoffTool({ workspaceRoot, projectId, ctx }) {
+export function makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }) {
   return tool(
     'export_handoff',
     `Build a handoff zip package containing the current design, spec, assets,
@@ -52,8 +53,9 @@ Do NOT use this tool when:
         .string()
         .optional()
         .describe('Optional notes about why exporting now (gets logged but not in the zip)'),
+      path: z.string().optional().describe(CANVAS_PATH_DESC),
     },
-    async ({ notes }) => {
+    async ({ notes, path: relPath }) => {
       try {
         let projectMeta = null;
         let runs = [];
@@ -64,34 +66,53 @@ Do NOT use this tool when:
           } catch { /* DB not available 或 project 已删 */ }
         }
 
-        const buf = await buildHandoffZip(workspaceRoot, {
+        // 2026-07-28：这里以前少传了 sharedRoot（签名是 (sessionRoot, sharedRoot, opts)），
+        // opts 被当成 sharedRoot —— 导出的 zip 里 assets 全空、元数据全 unknown。
+        const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+        if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+        const buf = await buildHandoffZip(workspaceRoot, sharedRoot || workspaceRoot, {
           projectId: projectMeta?.id || projectId || 'unknown',
           projectName: projectMeta?.name || 'design',
           skillId: projectMeta?.skillId,
+          sessionId,
           runs,
+          deckPath: target.relPath,
         });
 
         const exportDir = path.join(workspaceRoot, 'exports');
         await fs.mkdir(exportDir, { recursive: true });
         const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const relPath = `exports/handoff-${stamp}.zip`;
-        const absPath = path.join(workspaceRoot, relPath);
+        // 名字不能再叫 relPath：它会遮蔽入参 relPath，而上面 resolveCanvasTarget
+        // 已经读过那个入参 —— 同一个块里先读后声明 = TDZ，整个工具每次调用必炸
+        const zipRel = `exports/handoff-${stamp}.zip`;
+        const absPath = path.join(workspaceRoot, zipRel);
         await fs.writeFile(absPath, buf);
 
         try {
           ctx?.emit?.({
             type: 'run.export_built',
             format: 'handoff',
-            path: relPath,
+            path: zipRel,
             sizeBytes: buf.length,
             notes: notes || null,
+          });
+          // 打完包直接进用户的下载列表，不用他再去导出菜单里翻（2026-07-28）
+          ctx?.emit?.({
+            type: 'run.download_ready',
+            url: `/api/projects/${encodeURIComponent(projectId || '')}`
+              + `/sessions/${encodeURIComponent(sessionId || '')}`
+              + `/exports/file/${encodeURIComponent(path.basename(zipRel))}`,
+            filename: path.basename(zipRel),
+            sizeBytes: buf.length,
+            count: 1,
+            note: notes || '工程交付包',
           });
         } catch { /* emit fail-safe */ }
 
         return {
           content: [{
             type: 'text',
-            text: `Handoff zip built: ${relPath} (${(buf.length / 1024).toFixed(1)} KB). `
+            text: `Handoff zip built: ${zipRel} (${(buf.length / 1024).toFixed(1)} KB), deck = ${target.relPath}. `
               + `Tell the user the package is ready — they can download it from the UI's export menu.`,
           }],
         };

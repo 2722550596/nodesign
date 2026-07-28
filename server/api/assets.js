@@ -15,8 +15,9 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { validateProjectId, getProject } from '../projects/store.js';
 import {
-  getSharedDir, ensureProjectWorkspace,
+  getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
+import { setActiveSession } from '../projects/store.js';
 
 const router = express.Router();
 
@@ -325,6 +326,57 @@ router.delete('/:pid/notes/:filename', async (req, res, next) => {
  * 工作台缩略图 / 大图用，不依赖 session（canvas.js 的同款路由是 session 级的）。
  * 防 traversal 同 canvas.js：resolve 后必须留在 shared/assets 下。
  */
+/**
+ * DELETE /:pid/tasks/:name —— 删任务文件夹
+ *
+ * 任务和会话一对一：删任务连它的会话一起删（.nd-task.json 记着 sessionId）。
+ * 反过来删会话也会连带删任务（server/api/sessions.js）。两者不独立存在。
+ * 返回 { removedTask, removedSession }。
+ */
+router.delete('/:pid/tasks/:name', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    const name = String(req.params.name || '');
+    if (!name || name.includes('/') || name.includes('..') || name.startsWith('.')) {
+      return res.status(400).json({ error: 'invalid task name' });
+    }
+    const taskDir = path.join(getSharedDir(req.params.pid), 'tasks', name);
+    let boundSession = null;
+    try {
+      boundSession = JSON.parse(await fs.readFile(path.join(taskDir, '.nd-task.json'), 'utf8'))?.sessionId || null;
+    } catch { /* 旧任务没标记 */ }
+
+    try {
+      await fs.rm(taskDir, { recursive: true, force: true });
+    } catch (err) {
+      if (err.code === 'ENOENT') return res.status(404).json({ error: 'task not found' });
+      throw err;
+    }
+
+    // 连带删会话：走 sessions 路由同一条实现（HTTP self-call 太绕，直接复用逻辑）
+    let removedSession = null;
+    if (boundSession) {
+      try {
+        await removeSessionByTask(req.params.pid, boundSession);
+        removedSession = boundSession;
+      } catch (err) {
+        console.warn('[delete task] 连带删会话失败:', err.message);
+      }
+    }
+    res.json({ removedTask: name, removedSession });
+  } catch (err) { next(err); }
+});
+
+/** 删任务时连带删它的会话目录（SDK jsonl 由 sessions 路由那条负责，这里只清工作区）*/
+async function removeSessionByTask(pid, sid) {
+  await removeSessionWorkspace(pid, sid);
+  const project = getProject(pid);
+  if (project?.activeSessionId === sid) {
+    try { setActiveSession(pid, null); } catch { /* ignore */ }
+  }
+}
+
 router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
   try {
     validateProjectId(req.params.pid);

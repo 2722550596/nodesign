@@ -74,6 +74,14 @@ if (!projectsColNames.has('kind')) {
   console.log('[projects/store] projects.kind column added (default project)');
 }
 
+// 首页入口重构（2026-07-28）：主页大输入框不再建"闪聊"，直接建真项目，
+// 名字先用用户那句话垫着，第一轮跑完再用 SDK helper 写的会话摘要改名一次。
+// auto_named=1 表示"这名字是系统垫的，可以被摘要覆盖"；用户一改名就清零。
+if (!projectsColNames.has('auto_named')) {
+  db.exec('ALTER TABLE projects ADD COLUMN auto_named INTEGER NOT NULL DEFAULT 0');
+  console.log('[projects/store] projects.auto_named column added');
+}
+
 // ── ID ──
 
 export function newProjectId() {
@@ -100,6 +108,7 @@ function rowToProject(row) {
     skillId: row.skill_id,
     description: row.description || null,
     kind: row.kind || 'project',
+    autoNamed: !!row.auto_named,
     activeSessionId: row.active_session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -140,6 +149,7 @@ export function createProject({
   skillId = 'deskskill-engine-mini',
   description = null,
   kind = 'project',
+  autoNamed = false,
 }) {
   if (!name || typeof name !== 'string') throw new Error('createProject: name 必填');
   if (kind !== 'project' && kind !== 'quick') {
@@ -148,14 +158,16 @@ export function createProject({
   const id = newProjectId();
   const desc = (typeof description === 'string' && description.trim()) ? description.trim() : null;
   db.prepare(
-    `INSERT INTO projects (id, name, skill_id, description, kind) VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, name.trim(), skillId, desc, kind);
+    `INSERT INTO projects (id, name, skill_id, description, kind, auto_named) VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(id, name.trim(), skillId, desc, kind, autoNamed ? 1 : 0);
   return getProject(id);
 }
 
-/** 更新（仅允许 name / skill_id / description / active_session_id / kind） */
+/** 更新（仅允许 name / skill_id / description / active_session_id / kind / autoNamed） */
 export function updateProject(id, patch) {
   validateProjectId(id);
+  // 用户显式改名 = 这名字他自己定了，系统不再拿摘要覆盖
+  if ('name' in patch && !('autoNamed' in patch)) patch = { ...patch, autoNamed: false };
   // kind 只允许枚举值（升级闪聊用 PATCH { kind: 'project' }）
   if ('kind' in patch && patch.kind !== 'project' && patch.kind !== 'quick') {
     throw new Error(`updateProject: kind 非法 (${patch.kind})`);
@@ -166,13 +178,14 @@ export function updateProject(id, patch) {
     description: 'description',
     activeSessionId: 'active_session_id',
     kind: 'kind',
+    autoNamed: 'auto_named',
   };
   const sets = [];
   const args = [];
   for (const [camelK, sqlK] of Object.entries(map)) {
     if (camelK in patch) {
       sets.push(`${sqlK} = ?`);
-      args.push(patch[camelK]);
+      args.push(camelK === 'autoNamed' ? (patch[camelK] ? 1 : 0) : patch[camelK]);
     }
   }
   if (sets.length === 0) return getProject(id);

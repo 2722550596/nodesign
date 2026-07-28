@@ -25,6 +25,7 @@ import PlanReviewCard from '../components/project/PlanReviewCard.jsx';
 import PlanRequestBanner from '../components/project/PlanRequestBanner.jsx';
 import ContextUsageBar from '../components/project/ContextUsageBar.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
+import PickExportModal from '../components/project/PickExportModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
 import ElicitationModal from '../components/run/ElicitationModal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO, STAGE } from '../lib/theme.js';
@@ -47,7 +48,7 @@ const STAGE_EVENTS = new Set([
 ]);
 // 聊天流折叠事件（lib/chat-stream.js reducer 接管，见管线 2 段）
 const CHAT_STREAM_EVENTS = new Set([
-  'run.delta.text', 'run.delta.thinking',
+  'run.delta.text', 'run.delta.thinking', 'run.tool_use_summary',
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_result',
 ]);
 import { usePendingEdits } from '../hooks/usePendingEdits.js';
@@ -162,6 +163,7 @@ export default function ProjectWorkspace() {
   const [shareOpen, setShareOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportsListOpen, setExportsListOpen] = useState(false);
+  const [pickExportOpen, setPickExportOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
@@ -311,7 +313,11 @@ export default function ProjectWorkspace() {
   // 修法 ①：新建 session 路径（prevHydrateSidRef=null + prev 已含乐观 msg）跳过
   //   hydrate，信任前端 state + WS run.delta.* 流式更新。
   // 修法 ②：display 缺的乐观 user msg（按 content 匹配）保留——server 慢一拍 flush 时不丢。
+  // 修法 ③（2026-07-28）：这条 HTTP 通道只是 WS hydrate 的兜底。WS 那条已经把
+  // 「历史 + 进行中 turn 快照」按边界拼好了，这条慢一拍回来会整体替换 messages，
+  // 把进行中 turn 的正文洗掉（"漏传"）。WS hydrate 已落地同一个 sid → 直接放弃。
   const prevHydrateSidRef = useRef(null);
+  const wsHydratedSidRef = useRef(null);
   useEffect(() => {
     if (!currentSessionId) {
       // /work 路径 = 新会话 → 空 chat 让用户从头开始
@@ -326,6 +332,10 @@ export default function ProjectWorkspace() {
         if (cancelled) return;
         const display = sessionMessagesToDisplay(sessionMsgs);
         setMessages(prev => {
+          if (wsHydratedSidRef.current === currentSessionId) {
+            if (import.meta.env.DEV) console.info('[H1] WS hydrate 已接管，跳过 HTTP 兜底');
+            return prev;
+          }
           // 修法 ①：新建 session navigate 路径（null → 真 sid，prev 已乐观插入）
           // → streamInput user msg 在 inputQueue 不在 JSONL，hydrate 拿到空数组
           // 会把乐观插入吞掉。直接信任 prev 不替换。
@@ -381,9 +391,11 @@ export default function ProjectWorkspace() {
     // ws.connected(activeRunId) + ws.live_turn 快照权威恢复（本 session 真在跑时
     // 会立刻拉回 streaming 态，最多闪一下）。
     setIsStreaming(false);
+    currentRunIdRef.current = null;
     setCurrentRunId(null);
     setActiveRun(null);
     setTodos([]);
+    wsHydratedSidRef.current = null;   // 换 session = 重新等这条 sid 的 WS hydrate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, currentSessionId]);
 
@@ -393,6 +405,8 @@ export default function ProjectWorkspace() {
   const wsRef = useRef(null);
   // Phase A.4：hydrate 缓冲 — chunks 累积到 end 一次性 setMessages
   const hydrateBufferRef = useRef([]);
+  // agent 已推过的下载 url（WS 重放/多 tab 时不重复触发浏览器下载）
+  const deliveredRef = useRef(new Set());
   useEffect(() => {
     if (!hydrated || hydrateError || !project) return;
     const ws = openProjectWS({
@@ -557,6 +571,7 @@ export default function ProjectWorkspace() {
       case 'ws.hydrate.end': {
         const buffer = hydrateBufferRef.current;
         hydrateBufferRef.current = [];
+        wsHydratedSidRef.current = evt.sessionId || sessionIdRef.current || null;
         const display = sessionMessagesToDisplay(buffer);
         // 防 wipe optimistic：hydrate 拿到空 messages（jsonl 还没 flush）但 current 有
         // 内容（用户刚 setMessages 的 user msg + 流式 delta）→ 信任 current 不替换
@@ -579,11 +594,13 @@ export default function ProjectWorkspace() {
         if (serverRunId) {
           setIsStreaming(true);
           if (serverRunId !== localRunId) {
+            currentRunIdRef.current = serverRunId;
             setCurrentRunId(serverRunId);
             setActiveRun({ pid: id, runId: serverRunId });
           }
         } else if (localRunId) {
           setIsStreaming(false);
+          currentRunIdRef.current = null;
           setCurrentRunId(null);
           setActiveRun(null);
           setMessages(prev => clearThinkingStreaming(prev));
@@ -598,8 +615,11 @@ export default function ProjectWorkspace() {
         if (evt.sessionId && liveSid && evt.sessionId !== liveSid) break;
         // 快照对本 turn 权威 —— 合并语义在 lib/chat-stream.js（有单测）
         setMessages(prev => mergeLiveTurnSnapshot(prev, evt.messages, evt.runId));
-        if (evt.runId) {
+        // running=false = 刚收尾那轮的尾巴（server 留了几秒 grace 防收尾瞬间重连
+        // 内容重复）。只认消息，不要把界面切回"正在跑"。
+        if (evt.runId && evt.running !== false) {
           setIsStreaming(true);
+          currentRunIdRef.current = evt.runId;   // 同步落 ref：紧跟其后的 delta 不被 stale guard 吞
           setCurrentRunId(evt.runId);
           setActiveRun({ pid: id, runId: evt.runId });
         }
@@ -623,6 +643,10 @@ export default function ProjectWorkspace() {
         // activeRun）：run.start 即认领。handleSend 已设过时同值幂等；跨会话/旧 run
         // 已被 isStale 滤掉。
         if (evt.runId) {
+          // ref 同步落地：setCurrentRunId 的 useEffect 要等 React 提交后才写 ref，
+          // 而 delta 可能在同一拍就到 —— 那时 ref 还是上一轮的 runId，isStale 会把
+          // 新一轮开头的正文整段吞掉（"漏传"）。
+          currentRunIdRef.current = evt.runId;
           setCurrentRunId(evt.runId);
           setActiveRun({ pid: id, runId: evt.runId });
         }
@@ -910,11 +934,41 @@ export default function ProjectWorkspace() {
         showToast('agent 正在视觉自检', 'info');
         break;
 
+      case 'project.renamed': {
+        // 首轮跑完服务端用会话摘要给项目正名（首页大输入框建的项目）
+        if (evt.projectId && evt.projectId !== id) break;
+        if (!evt.name) break;
+        useProjectStore.getState().patchLocal?.(id, { name: evt.name });
+        hydrateOne(id).catch(() => { /* 拉不到就等下次 */ });
+        break;
+      }
+
       case 'run.export_built':
         if (isStale) break;
         // MCP export_handoff 调用成功 —— agent 主动打了交付包
         showToast(`已生成交付包：${evt.path || ''}`, 'success');
         break;
+
+      case 'run.download_ready': {
+        // agent 交付（deliver_files / export_handoff）：直接进浏览器下载列表，
+        // 用户不用再去导出菜单里翻。同一个 url 只触发一次（WS 重放会重复推）。
+        if (isStale) break;
+        if (!evt.url) break;
+        if (deliveredRef.current.has(evt.url)) break;
+        deliveredRef.current.add(evt.url);
+        try {
+          const a = document.createElement('a');
+          a.href = evt.url;
+          a.download = evt.filename || '';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          showToast(`agent 交付了 ${evt.filename}${evt.note ? ` · ${evt.note}` : ''}`, 'success');
+        } catch (err) {
+          showToast(`交付文件下载失败：${err.message}`, 'error');
+        }
+        break;
+      }
 
       case 'run.decision_recorded':
         if (isStale) break;
@@ -1401,7 +1455,7 @@ export default function ProjectWorkspace() {
         showToast('请先开始一个会话再编辑 canvas', 'error');
         return;
       }
-      await Canvas.write(id, currentSessionId, html, 'user');
+      await Canvas.write(id, currentSessionId, html, 'user', info.deckPath || null);
       showToast(`已保存：「${info.newText.slice(0, 20)}」`, 'success');
 
       // C4：push 进 pending-changes buffer，下次发 chat 时 agent 主动拉
@@ -1616,8 +1670,13 @@ export default function ProjectWorkspace() {
               title: '退出任务，回到项目区（会话一起退出，ESC 同效）',
             }
           : { label: project.name, title: '项目区：记忆 / 指引 / 品牌 / 文件 + 全部工作区' },
+        // 工作区那一级：名字跟项目名撞了就只写「工作区」——首页建的项目由会话摘要
+        // 正名，单会话项目里这两个名字天然一样，重复写两遍纯噪音。
         ...(boardUi?.focus
-          ? [{ label: boardUi.focus.title, hint: `${boardUi.focus.count} 项` }]
+          ? [{
+              label: boardUi.focus.title === project.name ? '工作区' : boardUi.focus.title,
+              hint: `${boardUi.focus.count} 项`,
+            }]
           : []),
       ]}
       actions={
@@ -1659,6 +1718,7 @@ export default function ProjectWorkspace() {
               onClose={() => setExportOpen(false)}
               onExport={handleExport}
               onOpenList={() => setExportsListOpen(true)}
+              onPick={() => setPickExportOpen(true)}
               anchorRef={exportBtnRef}
             />
           </div>
@@ -1802,6 +1862,14 @@ export default function ProjectWorkspace() {
       </div>
 
       <ShareModal show={shareOpen} onClose={() => setShareOpen(false)} project={project} />
+      <PickExportModal
+        open={pickExportOpen}
+        onClose={() => setPickExportOpen(false)}
+        projectId={id}
+        sessionId={currentSessionId}
+        onToast={showToast}
+      />
+
       <ExportsListModal
         show={exportsListOpen}
         onClose={() => setExportsListOpen(false)}

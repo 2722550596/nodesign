@@ -88,6 +88,14 @@ export default function CanvasFrame({
   const deckHtmlSrc = deckTaskSrc
     ? `${Assets.artifactFileUrl(projectId, `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`)}?v=${artifactRefreshToken || 0}`
     : htmlSrc;
+  // 用户在画布上直接改字时，改的是哪一份要跟着走 —— 不带路径会写回会话的
+  // canvas.html，前端显示"已保存"而用户看的那份纹丝不动（2026-07-28）
+  const deckRelPath = deckTaskSrc
+    ? `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`
+    : null;
+  const handleTextEditWithPath = onTextEdit
+    ? (info) => onTextEdit({ ...info, deckPath: deckRelPath })
+    : undefined;
 
   return (
     <div style={{
@@ -121,7 +129,7 @@ export default function CanvasFrame({
             htmlContent={htmlContent}
             selectedAnchor={selectedAnchor}
             onSelectChange={onSelectChange}
-            onTextEdit={onTextEdit}
+            onTextEdit={handleTextEditWithPath}
             onIframeReady={onIframeReady}
             candidates={candidates}
             activeCandidateId={activeCandidateId}

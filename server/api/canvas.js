@@ -219,9 +219,13 @@ router.get('/:pid/sessions/:sid/canvas/deck-meta', async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const file = path.join(sessionRoot, 'canvas.html');
+    // ?path= 让任务 deck 也能问自己的比例（缺省旧式 cwd/canvas.html）
+    const rel = typeof req.query.path === 'string' && req.query.path ? req.query.path : 'canvas.html';
+    const file = path.resolve(sessionRoot, rel);
     let html = '';
-    try { html = await fs.readFile(file, 'utf8'); } catch { /* canvas 还没生成 → 默认 16:9 fallback */ }
+    if (file === sessionRoot || file.startsWith(sessionRoot + path.sep)) {
+      try { html = await fs.readFile(file, 'utf8'); } catch { /* canvas 还没生成 → 默认 16:9 fallback */ }
+    }
     const aspect = extractDeckAspect(html);
     const { width, height } = resolveDeckSize(aspect);
     res.setHeader('Cache-Control', 'no-store');
@@ -229,10 +233,17 @@ router.get('/:pid/sessions/:sid/canvas/deck-meta', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * PUT /:pid/sessions/:sid/canvas —— 落库用户在画布上的直接编辑
+ *
+ * body.path（2026-07-28）：任务模型下 deck 住 tasks/<任务>/canvas.html，
+ * 不带这个字段就会把用户的改动写进 sessions/<sid>/canvas.html —— 前端显示
+ * "已保存"，用户看的那份却纹丝不动。缺省仍是旧式 cwd/canvas.html。
+ */
 router.put('/:pid/sessions/:sid/canvas', async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const { html, source = 'user' } = req.body || {};
+    const { html, source = 'user', path: relPath } = req.body || {};
     if (typeof html !== 'string' || html.length === 0) {
       return res.status(400).json({ error: 'html string required' });
     }
@@ -241,7 +252,14 @@ router.put('/:pid/sessions/:sid/canvas', async (req, res, next) => {
     }
 
     const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
-    const file = path.join(sessionRoot, 'canvas.html');
+    const file = path.resolve(sessionRoot, typeof relPath === 'string' && relPath ? relPath : 'canvas.html');
+    if (file !== sessionRoot && !file.startsWith(sessionRoot + path.sep)) {
+      return res.status(400).json({ error: 'path escapes workspace' });
+    }
+    if (!file.endsWith('.html')) {
+      return res.status(400).json({ error: 'path must be an .html file' });
+    }
+    await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, html, 'utf8');
 
     const ts = new Date().toISOString();

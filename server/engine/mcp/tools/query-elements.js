@@ -18,6 +18,7 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
 
 const MAX_RESULTS = 50;
 
@@ -26,7 +27,7 @@ const MAX_RESULTS = 50;
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeQueryElementsTool({ workspaceRoot, ctx: _ctx }) {
+export function makeQueryElementsTool({ workspaceRoot, sessionId, ctx: _ctx }) {
   return tool(
     'query_elements',
     `Query elements in canvas.html via CSS selector. Returns a list of
@@ -54,23 +55,23 @@ Returns up to 50 matches; further results truncated with a hint.`,
         .min(1)
         .optional()
         .describe('Optional: scope query to a specific page (prepends section[data-page="N"] to selector)'),
+      path: z.string().optional().describe(CANVAS_PATH_DESC),
     },
-    async ({ selector, page: pageIndex }) => {
+    async ({ selector, page: pageIndex, path: relPath }) => {
       if (!workspaceRoot) {
         return {
           content: [{ type: 'text', text: 'No workspace bound; cannot query.' }],
           isError: true,
         };
       }
-      const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+      if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const canvasPath = target.absPath;
       let html;
       try {
         html = await fs.readFile(canvasPath, 'utf8');
       } catch {
-        return {
-          content: [{ type: 'text', text: 'canvas.html not found in workspace.' }],
-          isError: true,
-        };
+        return { content: [{ type: 'text', text: `${target.relPath} not found in workspace.` }], isError: true };
       }
       const dims = resolveDeckSize(extractDeckAspect(html));
 

@@ -13,13 +13,14 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
 
 /**
  * @param {object} deps
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeListPagesTool({ workspaceRoot, ctx: _ctx }) {
+export function makeListPagesTool({ workspaceRoot, sessionId, ctx: _ctx }) {
   return tool(
     'list_pages',
     `List all pages in canvas.html — for each <section data-page="N"> returns
@@ -32,24 +33,23 @@ Use when:
 
 Lighter than read_page (which returns full outerHTML of one page).`,
     {
-      _placeholder: z.string().optional().describe('Unused; reserved for future filters'),
+      path: z.string().optional().describe(CANVAS_PATH_DESC),
     },
-    async () => {
+    async ({ path: relPath }) => {
       if (!workspaceRoot) {
         return {
           content: [{ type: 'text', text: 'No workspace bound; cannot list pages.' }],
           isError: true,
         };
       }
-      const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+      if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const canvasPath = target.absPath;
       let html;
       try {
         html = await fs.readFile(canvasPath, 'utf8');
       } catch {
-        return {
-          content: [{ type: 'text', text: 'canvas.html not found in workspace.' }],
-          isError: true,
-        };
+        return { content: [{ type: 'text', text: `${target.relPath} not found in workspace.` }], isError: true };
       }
       const dims = resolveDeckSize(extractDeckAspect(html));
 

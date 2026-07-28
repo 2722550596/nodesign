@@ -53,25 +53,49 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, get
     return sid ? `${base}?sid=${encodeURIComponent(sid)}` : base;
   }
 
+  /**
+   * 关掉一条连接并**摘干净 handler**。
+   *
+   * 不摘会出幽灵连接（2026-07-28 真机复现的"正文重复"根因之一）：老 socket 的
+   * onclose 是异步的，等它触发时 connect() 早就把新 socket 挂上了 —— 老 handler
+   * 里那句 `ws = null` 清掉的是新 socket 的引用，紧接着 scheduleReconnect() 又开
+   * 第三条。第二条没人引用但还开着，两条连接各推一份事件，前端就把同一段正文
+   * 收两遍。每次切 session 都会踩一次。
+   */
+  function teardown(socket) {
+    if (!socket) return;
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try { socket.close(); } catch { /* ignore */ }
+  }
+
   function connect() {
     if (stopped) return;
 
     emitStatus(hasConnected ? 'reconnecting' : 'connecting');
+    let socket;
     try {
-      ws = new WebSocket(buildUrl());
+      socket = new WebSocket(buildUrl());
     } catch (err) {
       console.warn('[ws] WebSocket ctor threw:', err.message);
       scheduleReconnect();
       return;
     }
+    ws = socket;
 
-    ws.onopen = () => {
+    // 所有 handler 先认领身份：socket !== ws 说明这条已经被换掉了，闭嘴
+    // （teardown 摘 handler 之外的第二道保险，覆盖 close 事件已在队列里的情况）。
+    socket.onopen = () => {
+      if (socket !== ws) return;
       backoff = MIN_BACKOFF_MS;
       hasConnected = true;
       emitStatus('open');
     };
 
-    ws.onmessage = (evt) => {
+    socket.onmessage = (evt) => {
+      if (socket !== ws) return;
       let data;
       try {
         data = JSON.parse(evt.data);
@@ -85,7 +109,8 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, get
       }
     };
 
-    ws.onclose = (e) => {
+    socket.onclose = (e) => {
+      if (socket !== ws) return;
       ws = null;
       try { onClose?.(e); } catch { /* ignore */ }
       if (stopped) return;
@@ -99,7 +124,7 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, get
       scheduleReconnect();
     };
 
-    ws.onerror = (err) => {
+    socket.onerror = (err) => {
       // onclose 会跟进；这里不重复重连
       console.warn('[ws] error:', err?.message || 'unknown');
     };
@@ -123,10 +148,9 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, get
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-      if (ws) {
-        try { ws.close(); } catch { /* ignore */ }
-        ws = null;
-      }
+      const old = ws;
+      ws = null;
+      teardown(old);
     },
     /**
      * session 切换时重连 WS（让 server 用新 sid 推 hydrate + live_turn 快照）。
@@ -136,10 +160,9 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, get
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
-      if (ws) {
-        try { ws.close(); } catch { /* ignore */ }
-        ws = null;
-      }
+      const old = ws;
+      ws = null;
+      teardown(old);
       backoff = MIN_BACKOFF_MS;
       connect();
     },

@@ -143,7 +143,7 @@ export function pickThinkingConfig(model) {
  * 翻译策略：
  * - 主流程消息（assistant / user / result）：走 handleAssistantBlocks / handleUserBlocks
  * - SDK system subtype 多达 14 种：分派到对应 Events 构造器
- * - 旁路类型（stream_event / tool_use_summary / keep_alive）：noop（前端不需要）
+ * - 旁路类型（stream_event / keep_alive）：noop（前端不需要）
  */
 export function handleSDKMessage(ctx, msg) {
   // 首条 message 含 session_id，记下
@@ -191,7 +191,12 @@ export function handleSDKMessage(ctx, msg) {
       break;
 
     case 'tool_use_summary':
-      // SDKToolUseSummaryMessage —— 工具调用摘要（旁路审计），不入 EventBus
+      // SDKToolUseSummaryMessage —— SDK 的 helper model 对刚才那批工具调用写的
+      // 一句话总结（Claude Code 侧栏折叠标题就是它）。以前当旁路审计丢掉了，
+      // 于是前端只能自己切 thinking 头 60 字当标题。现在转发给前端当分组标题。
+      if (msg.summary) {
+        ctx.emit(Events.toolUseSummary(msg.summary, msg.preceding_tool_use_ids || []));
+      }
       break;
 
     case 'tool_progress':

@@ -32,6 +32,7 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -41,7 +42,7 @@ const RASTER_SCALE = 0.6;
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeScreenshotCanvasTool({ workspaceRoot, ctx }) {
+export function makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }) {
   return tool(
     'screenshot_canvas',
     `Take a screenshot of the current canvas.html in this workspace and return it
@@ -105,25 +106,20 @@ Do NOT use this tool when:
       path: z
         .string()
         .optional()
-        .describe('Relative path of the html to capture (e.g. "tasks/<task>/canvas.html" for a task deck). Defaults to cwd canvas.html (legacy single-deck flow).'),
+        .describe(CANVAS_PATH_DESC),
     },
     async ({ viewport, fullPage, selector, pageIndex, detail, path: relPath }) => {
-      // 任务模型（2026-07-28）：任务 deck 住 tasks/<任务>/canvas.html —— path 参数
-      // 指定目标；缺省仍是旧式 cwd/canvas.html。防穿越：解析后必须留在 workspace 内
-      // （tasks/ 是 workspace 下的软链，resolve 不出根）
-      const canvasPath = path.resolve(workspaceRoot, relPath || 'canvas.html');
-      if (canvasPath !== path.resolve(workspaceRoot) && !canvasPath.startsWith(path.resolve(workspaceRoot) + path.sep)) {
-        return { content: [{ type: 'text', text: 'path escapes workspace' }], isError: true };
-      }
+      // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
+      // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
+      const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+      if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const canvasPath = target.absPath;
       let html;
       try {
         html = await fs.readFile(canvasPath, 'utf8');
       } catch {
         return {
-          content: [{
-            type: 'text',
-            text: `${relPath || 'canvas.html'} not found. Write it first (with the Write tool) before screenshotting.`,
-          }],
+          content: [{ type: 'text', text: `${target.relPath} not found. Write it first before screenshotting.` }],
           isError: true,
         };
       }

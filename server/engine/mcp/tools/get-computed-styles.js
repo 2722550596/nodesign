@@ -17,6 +17,7 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/canvas-target.js';
 
 const DEFAULT_PROPS = [
   'color', 'backgroundColor',
@@ -34,7 +35,7 @@ const MAX_RESULTS = 30;
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeGetComputedStylesTool({ workspaceRoot, ctx: _ctx }) {
+export function makeGetComputedStylesTool({ workspaceRoot, sessionId, ctx: _ctx }) {
   return tool(
     'get_computed_styles',
     `Get the actual rendered computed styles for elements matching a CSS
@@ -62,23 +63,23 @@ Returns up to 30 elements.`,
         .min(1)
         .optional()
         .describe('Optional: scope to a specific page (prepends section[data-page="N"])'),
+      path: z.string().optional().describe(CANVAS_PATH_DESC),
     },
-    async ({ selector, props, page: pageIndex }) => {
+    async ({ selector, props, page: pageIndex, path: relPath }) => {
       if (!workspaceRoot) {
         return {
           content: [{ type: 'text', text: 'No workspace bound; cannot read computed styles.' }],
           isError: true,
         };
       }
-      const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+      if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const canvasPath = target.absPath;
       let html;
       try {
         html = await fs.readFile(canvasPath, 'utf8');
       } catch {
-        return {
-          content: [{ type: 'text', text: 'canvas.html not found in workspace.' }],
-          isError: true,
-        };
+        return { content: [{ type: 'text', text: `${target.relPath} not found in workspace.` }], isError: true };
       }
       const dims = resolveDeckSize(extractDeckAspect(html));
 

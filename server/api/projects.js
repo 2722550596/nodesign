@@ -42,7 +42,7 @@ const DESCRIPTION_MAX = 2000;
 
 router.post('/', async (req, res, next) => {
   try {
-    const { name, skillId, description, kind } = req.body || {};
+    const { name, skillId, description, kind, autoNamed } = req.body || {};
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ error: 'name required' });
     }
@@ -55,7 +55,7 @@ router.post('/', async (req, res, next) => {
     if (kind != null && !KIND_VALUES.has(kind)) {
       return res.status(400).json({ error: `kind must be project|quick (got ${kind})` });
     }
-    const project = createProject({ name, skillId, description, kind });
+    const project = createProject({ name, skillId, description, kind, autoNamed: !!autoNamed });
     await ensureProjectWorkspace(project.id);
     res.status(201).json({ project });
   } catch (err) { next(err); }

@@ -5,6 +5,12 @@ import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, t
 import { ZONE, STAGE_CARD_W, POP_IN, sizeOf } from '../../lib/board-geometry.js';
 import { AskUserQuestionView } from '../chat/Message.jsx';
 
+// 生图占位卡的身位（4:3 图区 + 一行说明），铺坑位时按它算行列
+const SHIMMER_W = 200;
+const SHIMMER_H = 196;
+const SHIMMER_LABEL_H = 22;      // 底部那行说明
+const SHIMMER_MIN_H = 84;        // 再挤也不低于这个高度
+
 /**
  * StageLayer — 舞台层（2026-07-28 重构 3 从 BoardCanvas 抽出）
  *
@@ -198,27 +204,96 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
  * ② 是这次补的：以前 ①失败直接掉 dock，于是"写新文件"的代码卡整场都钉在屏幕
  * 底部，等写完 file_changed 触发产物重拉、物件出现，才突然跳到文件旁边。
  */
-export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZones, currentSessionId, focusZone }) {
+const hitRect = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+
+/**
+ * 生图占位卡的落点：沿工作区下沿从左往右铺，一行放不下往上翻行，**跳过已被占的位置**
+ * （区里已有的图片 / 已经摆好的其他占位卡）。跟物件之间的防遮盖是同一套判定。
+ *
+ * 工作区矮到装不下整张卡时把卡压扁 —— 宁可矮一点也不要探出工作区外面。
+ */
+function placeImageCard(zoneRect, taken) {
+  const avail = zoneRect.h - ZONE.header - ZONE.pad * 2;
+  const h = Math.max(SHIMMER_MIN_H, Math.min(SHIMMER_H, avail));
+  const SLOT_W = SHIMMER_W + 12;
+  const SLOT_H = h + 12;
+  const perRow = Math.max(1, Math.floor((zoneRect.w - ZONE.pad * 2) / SLOT_W));
+  const rows = Math.max(1, Math.floor((zoneRect.h - ZONE.header - ZONE.pad * 2 + 12) / SLOT_H));
+  const at = (col, row) => ({
+    x: zoneRect.x + ZONE.pad + col * SLOT_W,
+    y: Math.max(
+      zoneRect.y + ZONE.header + ZONE.pad,
+      zoneRect.y + zoneRect.h - ZONE.pad - h - row * SLOT_H,
+    ),
+    w: SHIMMER_W,
+    h,
+  });
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < perRow; col++) {
+      const r = at(col, row);
+      if (!taken.some(t => hitRect(t, r))) return r;
+    }
+  }
+  return at(0, 0);   // 全满了就压在左下角（它是浮层，盖住也看得见）
+}
+
+/**
+ * 落点三级兜底（2026-07-28）：
+ *   ① 目标物件已经在墙上且可见 → 贴着它摆
+ *   ② 物件还没上墙（新文件正在写，产物列表要等这次写完才知道它存在）
+ *      → 贴到它天然归属的那块工作区里（zone id 由路径派生）
+ *   ③ 连工作区都定位不到（路径认不出 / 那块区被收纳了）→ 落 dock
+ *
+ * ② 是这次补的：以前 ①失败直接掉 dock，于是"写新文件"的代码卡整场都钉在屏幕
+ * 底部，等写完 file_changed 触发产物重拉、物件出现，才突然跳到文件旁边。
+ *
+ * occupancy：zoneId → 该区内已有物件的矩形。生图占位卡据此避开已有的图。
+ */
+export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZones, currentSessionId, focusZone, occupancy }) {
   const anchoredCards = [];
   const dockPanels = [];
   const dockChips = [];
   const visibleZoneOf = (zid) => (zid ? visibleZones.find(v => !v.collapsed && v.id === zid) : null);
+  // 同一块区里并发的同类卡各占一个坑位，不要叠在同一个点上（生图经常一次发好几张）
+  const slots = new Map();
+  const takeSlot = (zid, kind) => {
+    const k = `${zid}|${kind}`;
+    const n = slots.get(k) || 0;
+    slots.set(k, n + 1);
+    return n;
+  };
+  // 每块区已占的矩形：区内物件打底，摆一张占位卡就往里加一张
+  const takenOf = (zid) => {
+    if (!slots.has(`rects|${zid}`)) {
+      const base = (occupancy && (occupancy.get ? occupancy.get(zid) : occupancy[zid])) || [];
+      slots.set(`rects|${zid}`, [...base]);
+    }
+    return slots.get(`rects|${zid}`);
+  };
   for (const c of Object.values(stageCards)) {
     if (c.kind === 'chip') { dockChips.push(c); continue; }
-    if (c.kind === 'image') {
-      const zr = visibleZoneOf(currentSessionId || focusZone);
-      if (zr) { anchoredCards.push({ card: c, zoneRect: zr }); continue; }
-      dockPanels.push(c);
-      continue;
-    }
     if (c.kind === 'question') { dockPanels.push(c); continue; }
-    const o = c.objectId ? positioned.find(it => it.id === c.objectId) : null;
-    if (o && visibleIdSet.has(o.id)) { anchoredCards.push({ card: c, obj: o }); continue; }
-    // 物件不在（或不可见）→ 退到工作区。目标未知的（file_path 还没流出来）
-    // 就贴当前工作区，反正 agent 正在这里干活。
-    const zr = visibleZoneOf(zoneOfObjectId(c.objectId, currentSessionId) || focusZone || currentSessionId);
-    if (zr) anchoredCards.push({ card: c, zoneRect: zr });
-    else dockPanels.push(c);
+    if (c.kind !== 'image') {
+      const o = c.objectId ? positioned.find(it => it.id === c.objectId) : null;
+      if (o && visibleIdSet.has(o.id)) { anchoredCards.push({ card: c, obj: o }); continue; }
+    }
+    // 物件不在（或不可见，生图更是压根还没有物件）→ 退到工作区。
+    // 目标未知的（file_path 还没流出来）就贴当前工作区，反正 agent 正在这里干活。
+    //
+    // 兜底顺序里 focusZone 必须排在 currentSessionId 前面（2026-07-28）：任务绑了
+    // 会话之后，会话区被任务区取代、id 是 `task/<名字>` —— 拿 sessionId 去找区永远
+    // 找不到，生图卡就全掉进屏幕底部的 dock 叠成一摞，看着像"没放进工作文件夹"。
+    const zid = zoneOfObjectId(c.objectId, currentSessionId) || focusZone || currentSessionId;
+    const zr = visibleZoneOf(zid);
+    if (!zr) { dockPanels.push(c); continue; }
+    if (c.kind === 'image') {
+      const taken = takenOf(zr.id);
+      const pos = placeImageCard(zr, taken);
+      taken.push(pos);
+      anchoredCards.push({ card: c, zoneRect: zr, pos });
+    } else {
+      anchoredCards.push({ card: c, zoneRect: zr, slot: takeSlot(zr.id, c.kind) });
+    }
   }
   return { anchoredCards, dockPanels, dockChips };
 }
@@ -241,12 +316,14 @@ export function StageBoardLayer({ stageBadges, anchoredCards, positioned, visibl
           }}>已更新</div>
         );
       })}
-      {anchoredCards.map(({ card, obj, zoneRect }) => (
+      {anchoredCards.map(({ card, obj, zoneRect, slot, pos }) => (
         <StageCard
           key={card.blockId}
           card={card}
           obj={obj}
           zoneRect={zoneRect}
+          slot={slot}
+          pos={pos}
           boardSize={boardSize}
           onDismiss={() => onDismiss(card.blockId)}
         />
@@ -287,24 +364,27 @@ export function StageDock({ dockPanels, dockChips, onDismiss }) {
 // ── 卡片组件 ──
 
 /** 舞台卡（板内坐标系定位）：贴目标物件摆（右侧优先，放不下换左/下）；shimmer 贴工作区下沿 */
-function StageCard({ card, obj, zoneRect, boardSize, onDismiss }) {
-  // 物件还没上墙：贴在工作区右上（标题栏下面），跟着这块区一起动
+function StageCard({ card, obj, zoneRect, slot = 0, pos, boardSize, onDismiss }) {
+  // 物件还没上墙：贴在工作区右上（标题栏下面），跟着这块区一起动。
+  // 同区并发多张时逐张往左下错开，免得后来的把前面那张完全盖住。
   if (!obj && zoneRect && card.kind !== 'image') {
+    const step = Math.min(slot, 3) * 18;
     const x = Math.max(12, Math.min(boardSize.w - STAGE_CARD_W - 12,
-      zoneRect.x + zoneRect.w - STAGE_CARD_W - ZONE.pad));
-    const y = zoneRect.y + ZONE.header + ZONE.pad;
+      zoneRect.x + zoneRect.w - STAGE_CARD_W - ZONE.pad - step));
+    const y = zoneRect.y + ZONE.header + ZONE.pad + step;
     return (
-      <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60 }}>
+      <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60 + slot, pointerEvents: 'auto' }}>
         <StageCardBody card={card} onDismiss={onDismiss} />
       </div>
     );
   }
-  if (card.kind === 'image' && zoneRect) {
-    const x = Math.max(8, Math.min(boardSize.w - 216, zoneRect.x + ZONE.pad));
-    const y = Math.max(8, Math.min(boardSize.h - 200, zoneRect.y + zoneRect.h - 196));
+  // 生图占位：沿工作区下沿从左往右铺，一行放不下就往上翻一行 —— 一次发好几张
+  // 是常态（风格探索的九宫格），全叠在同一个点上会看成"没放进工作区"。
+  // 生图占位：落点由 splitStageCards 算好（避开区内已有的图和别的占位卡）
+  if (card.kind === 'image' && pos) {
     return (
-      <div style={{ position: 'absolute', left: x, top: y, width: 200, zIndex: 60 }}>
-        <ShimmerCard card={card} onDismiss={onDismiss} />
+      <div style={{ position: 'absolute', left: pos.x, top: pos.y, width: pos.w, zIndex: 60, pointerEvents: 'auto' }}>
+        <ShimmerCard card={card} height={pos.h} onDismiss={onDismiss} />
       </div>
     );
   }
@@ -318,7 +398,7 @@ function StageCard({ card, obj, zoneRect, boardSize, onDismiss }) {
   }
   y = Math.max(12, Math.min(boardSize.h - 400, y));
   return (
-    <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60 }}>
+    <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60, pointerEvents: 'auto' }}>
       <StageCardBody card={card} onDismiss={onDismiss} />
     </div>
   );
@@ -406,20 +486,22 @@ function AutoScrollPre({ text, running, color, placeholder }) {
 }
 
 /** 生图占位（shimmer 扫光），真图由 board.updated / 产物重拉落座 */
-function ShimmerCard({ card, onDismiss }) {
+function ShimmerCard({ card, height, onDismiss }) {
   const running = card.status === 'running';
+  // height 由落点给（工作区矮的时候压扁）；dock 里没人给就走默认身位
+  const imgH = height ? Math.max(28, height - SHIMMER_LABEL_H) : null;
   return (
     <div
       data-stage="card" data-stage-kind="image" data-stage-status={card.status}
       style={{
-        width: 200, borderRadius: 10, overflow: 'hidden',
+        width: SHIMMER_W, borderRadius: 10, overflow: 'hidden',
         border: `1px solid ${card.status === 'fail' ? '#b0554f' : 'rgba(176,140,79,0.5)'}`,
         background: COLOR.bgCard, boxShadow: '0 6px 18px rgba(60,48,20,0.18)',
         animation: card.status === 'ok' ? `${POP_IN}, ndStageOut 380ms ease 1150ms forwards` : POP_IN,
       }}
     >
       <div style={{
-        aspectRatio: '4 / 3',
+        ...(imgH ? { height: imgH } : { aspectRatio: '4 / 3' }),
         background: 'linear-gradient(100deg, #ece7db 30%, #faf8f2 45%, #ece7db 60%)',
         backgroundSize: '240% 100%',
         animation: running ? 'ndShimmer 1.5s linear infinite' : 'none',

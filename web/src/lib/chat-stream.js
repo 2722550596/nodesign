@@ -72,6 +72,19 @@ export function reduceChatEvent(messages, evt) {
     case 'run.delta.thinking':
       return appendTextDelta(messages, 'thinking', evt.text, evt.runId, evt.parentToolUseId);
 
+    case 'run.tool_use_summary': {
+      // SDK helper 对一批工具调用的一句话总结 —— 贴到这批里第一条工具消息上，
+      // TimelineGroup 拿它当折叠标题（比本地切 thinking 头几十字准得多）。
+      const ids = Array.isArray(evt.blockIds) ? evt.blockIds : [];
+      if (!evt.summary || ids.length === 0) return messages;
+      const idx = messages.findIndex(m => m.role === 'tool' && ids.includes(m.id));
+      if (idx < 0) return messages;
+      if (messages[idx].groupSummary === evt.summary) return messages;
+      const next = [...messages];
+      next[idx] = { ...next[idx], groupSummary: evt.summary };
+      return next;
+    }
+
     case 'run.tool_use.started': {
       // 工具 streaming 起点：立即显示 icon + name，input 等 delta.tool_use 补。
       // 同 blockId 已在（WS 重连重放）→ noop

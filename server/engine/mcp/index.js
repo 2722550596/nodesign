@@ -46,6 +46,7 @@ import { makeGenerateImageTool } from './tools/generate-image.js';
 import { makeRemoveBackgroundTool } from './tools/remove-background.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
+import { makeDeliverFilesTool } from './tools/deliver-files.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -79,10 +80,13 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     version: '0.1.0',
     tools: [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
-      makeScreenshotCanvasTool({ workspaceRoot, ctx }),
+      makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }),
+
+      // deliver_files — agent 挑好的产物直接进用户浏览器下载列表（emit run.download_ready）
+      makeDeliverFilesTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // C10 export_handoff — 复用 exports.js 的 buildHandoffZip，写到 workspace/exports/
-      makeExportHandoffTool({ workspaceRoot, projectId, ctx }),
+      makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
 
       // C11 record_decision — 写入 spec.json decisions[] 设计意图档案
       makeRecordDecisionTool({ workspaceRoot, ctx }),
@@ -96,20 +100,20 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // S1c canvas 焕新升级 — read_page 让 agent 精确读 canvas.html 任意页
       // （`<section data-page="N">` 一段），不必 Read 整文件 + Grep + offset/limit。
       // 解 2026-05-02 用户观察"agent 只看第一页"痛点。
-      makeReadPageTool({ workspaceRoot, ctx }),
+      makeReadPageTool({ workspaceRoot, sessionId, ctx }),
 
       // ── Canvas 焕新 C1（2026-05-02）：完整 agent "感知 + 操作" 工具链 ──
       // 感知层：list_pages / query_elements / get_computed_styles —— playwright
       // headless 跑出来真实 render 后的元数据，agent 不再盲改
-      makeListPagesTool({ workspaceRoot, ctx }),
-      makeQueryElementsTool({ workspaceRoot, ctx }),
-      makeGetComputedStylesTool({ workspaceRoot, ctx }),
+      makeListPagesTool({ workspaceRoot, sessionId, ctx }),
+      makeQueryElementsTool({ workspaceRoot, sessionId, ctx }),
+      makeGetComputedStylesTool({ workspaceRoot, sessionId, ctx }),
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI
       makeNavigateToPageTool({ ctx }),
       makeHighlightTool({ ctx }),
       // 把 deck 摊到用户眼前（= 用户双击那张卡）：收起态→内嵌渲染，展开态→最大化窗
-      makePreviewDeckTool({ ctx }),
+      makePreviewDeckTool({ ctx, sessionId }),
 
       // 反馈层：用户在 canvas 上的直接编辑 + 评论 buffer
       // 前端在 chat 时由 turn.js 注入 system 提示，agent 主动调下面两个工具读 + 清

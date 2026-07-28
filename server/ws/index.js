@@ -168,60 +168,72 @@ export function setupWS(httpServer) {
 }
 
 /**
+ * 读 jsonl 历史（异步，几百 ms）。发帧是另一个纯同步函数 —— 读完到发出之间不能
+ * 再有 await，否则"读到的历史"与"当时的 live turn 快照"会错位（见 handleProjectWS）。
+ */
+async function loadHydrate(pid, sid) {
+  const sessionRoot = getSessionWorkspace(pid, sid);
+  return withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
+    getSessionMessages(sid, { dir: sessionRoot, includeSystemMessages: false }),
+  );
+}
+
+/**
+ * 本轮由快照权威：jsonl 里属于当前 turn 的 assistant 条目全部裁掉。
+ *
+ * SDK 按 block 逐条写 jsonl（thinking / text / tool_use 各一行），一个 turn 跑到
+ * 一半时前面几条已经落盘 —— 那些内容同时也在 live_turn 快照里（快照从 run.start
+ * 折叠整轮）。两边 id 体系不同（jsonl 是 `<uuid>:text:<n>`，快照是 `<runId>:mN`），
+ * 前端去不了重，正文就渲染两遍。这是用户报的"重复传"的根因，100% 复现。
+ *
+ * 只裁 assistant：user 条目（用户自己那句话）快照里没有，裁了就真丢了。掉队的
+ * tool_result 会因为找不到对应 tool_use 被 sessionMessagesToDisplay 自然跳过。
+ */
+function dropInFlightTurn(messages, startedAt) {
+  if (!startedAt) return messages;
+  const cut = Date.parse(startedAt);
+  if (Number.isNaN(cut)) return messages;
+  return messages.filter(m => !(
+    m?.type === 'assistant' && m.timestamp && Date.parse(m.timestamp) >= cut
+  ));
+}
+
+/**
  * Phase A.4：推 ws.hydrate.start/chunk/end 帧把 jsonl 历史 messages 同步给前端。
  * 必须在 subscribeFromSeq 之前发，确保前端先 hydrate 后 apply replay/live events。
- *
- * 失败 fail-soft：发 ws.hydrate.start 带 kind:'error'，让前端兜底用 HTTP Sessions.read。
- *
- * @returns {Promise<void>}
+ * 纯同步。
  */
-async function sendHydrate(ws, pid, sid, asOfSeq) {
+function sendHydrateFrames(ws, sid, messages, asOfSeq) {
   if (ws.readyState !== ws.OPEN) return;
-  const t0 = Date.now();
-  try {
-    const sessionRoot = getSessionWorkspace(pid, sid);
-    const messages = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-      getSessionMessages(sid, { dir: sessionRoot, includeSystemMessages: false }),
-    );
-    if (ws.readyState !== ws.OPEN) return;
-    const total = messages.length;
-    console.info(`[ws] hydrate sid=${sid.slice(0, 8)} loaded ${total} messages in ${Date.now() - t0}ms`);
-    ws.send(JSON.stringify({
-      type: 'ws.hydrate.start',
-      sessionId: sid,
-      total,
-      asOfSeq,
-      ts: new Date().toISOString(),
-    }));
-    for (let i = 0; i < total; i += HYDRATE_CHUNK_SIZE) {
-      if (ws.readyState !== ws.OPEN) return;
-      const chunk = messages.slice(i, i + HYDRATE_CHUNK_SIZE);
-      ws.send(JSON.stringify({
-        type: 'ws.hydrate.chunk',
-        sessionId: sid,
-        chunkIdx: Math.floor(i / HYDRATE_CHUNK_SIZE),
-        messages: chunk,
-      }));
-    }
+  const total = messages.length;
+  ws.send(JSON.stringify({
+    type: 'ws.hydrate.start',
+    sessionId: sid,
+    total,
+    asOfSeq,
+    ts: new Date().toISOString(),
+  }));
+  for (let i = 0; i < total; i += HYDRATE_CHUNK_SIZE) {
     if (ws.readyState !== ws.OPEN) return;
     ws.send(JSON.stringify({
-      type: 'ws.hydrate.end',
+      type: 'ws.hydrate.chunk',
       sessionId: sid,
-      total,
+      chunkIdx: Math.floor(i / HYDRATE_CHUNK_SIZE),
+      messages: messages.slice(i, i + HYDRATE_CHUNK_SIZE),
     }));
-  } catch (err) {
-    console.warn(`[ws] hydrate failed for ${pid}/${sid}:`, err.message);
-    if (ws.readyState === ws.OPEN) {
-      try {
-        ws.send(JSON.stringify({
-          type: 'ws.hydrate.start',
-          sessionId: sid,
-          kind: 'error',
-          error: err.message,
-        }));
-      } catch { /* ignore */ }
-    }
   }
+  if (ws.readyState !== ws.OPEN) return;
+  ws.send(JSON.stringify({ type: 'ws.hydrate.end', sessionId: sid, total }));
+}
+
+/** hydrate 读失败 fail-soft：前端收到后兜底走 HTTP Sessions.read */
+function sendHydrateError(ws, sid, message) {
+  if (ws.readyState !== ws.OPEN) return;
+  try {
+    ws.send(JSON.stringify({
+      type: 'ws.hydrate.start', sessionId: sid, kind: 'error', error: message,
+    }));
+  } catch { /* ignore */ }
 }
 
 async function handleProjectWS(ws, pid, since = 0, sid = null) {
@@ -250,14 +262,34 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
   // hydrate.end 整体替换 messages 把刚渲染的内容洗掉。新协议 hydrate 永远先发，
   // 快照覆盖 ring 之外的一切，ring 只需覆盖"读 jsonl 的几百 ms"同步窗口。
   // `since` 参数保留解析但忽略（旧前端兼容）。
+  //
+  // 两份历史的边界（2026-07-28）：jsonl 与快照对"进行中的 turn"是重叠的 ——
+  // 读 jsonl 与取快照必须在**同一个同步区**里完成并一起发出，中间不能 await，
+  // 否则 turn 在缝里结束会让两边错位。规则：本轮由快照权威，hydrate 裁掉本轮。
   const seqAtHydrateStart = bus._seq || 0;
+  let loaded = null;
+  let loadErr = null;
+  const t0 = Date.now();
   if (sid) {
-    await sendHydrate(ws, pid, sid, seqAtHydrateStart);
+    try { loaded = await loadHydrate(pid, sid); }
+    catch (err) { loadErr = err; }
   }
 
-  // 进行中 turn 快照（无进行中 turn 时 null）。折叠是 publish 时同步执行的，
-  // 此刻 snapshot.seq 即本 session 最后一条事件的 seq —— 从它起订阅无缝衔接。
+  // ↓↓↓ 同步区开始（不要在这里插 await）↓↓↓
   const snapshot = sid ? getLiveTurnSnapshot(sid) : null;
+  if (sid) {
+    if (loadErr) {
+      console.warn(`[ws] hydrate failed for ${pid}/${sid}:`, loadErr.message);
+      sendHydrateError(ws, sid, loadErr.message);
+    } else {
+      const trimmed = snapshot ? dropInFlightTurn(loaded, snapshot.startedAt) : loaded;
+      console.info(
+        `[ws] hydrate sid=${sid.slice(0, 8)} loaded ${loaded.length} messages in ${Date.now() - t0}ms`
+        + (snapshot ? ` (本轮 ${loaded.length - trimmed.length} 条交给快照)` : ''),
+      );
+      sendHydrateFrames(ws, sid, trimmed, seqAtHydrateStart);
+    }
+  }
   if (snapshot && ws.readyState === ws.OPEN) {
     try {
       ws.send(JSON.stringify({ type: 'ws.live_turn', sessionId: sid, ...snapshot }));
@@ -265,6 +297,7 @@ async function handleProjectWS(ws, pid, since = 0, sid = null) {
       console.warn(`[ws] live_turn send failed for ${pid}:`, err.message);
     }
   }
+  // ↑↑↑ 同步区结束 ↑↑↑
 
   // sid 过滤：projectBuses per-project 共享，只推本 session 事件 + 无 sessionId
   // 的全局事件。sid=null（/work 路径）时 session-scoped 事件全部不推 ——

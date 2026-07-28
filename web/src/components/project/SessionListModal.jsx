@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, GitBranch, Edit2, Tag as TagIcon, Trash2, MoreHorizontal, Check } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
@@ -123,7 +124,7 @@ export default function SessionListModal({
     const title = s.customTitle || s.summary || s.sessionId.slice(0, 8);
     if (!(await confirm({
       title: '删除会话',
-      message: `删除会话「${title}」？此操作不可撤销。`,
+      message: `删除会话「${title}」？它的任务文件夹和里面的产出会一起删掉（任务和会话一对一，不单独存在）。此操作不可撤销。`,
       confirmLabel: '删除',
       danger: true,
     }))) return;
@@ -211,13 +212,41 @@ export default function SessionListModal({
 
 function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, onSwitch, onFork, onRename, onTag, onDelete }) {
   const [hover, setHover] = useState(false);
+  // 菜单曾经是 absolute 挂在行里 → 被列表的 overflow 裁掉，得滚动才看得见，
+  // 而一滚鼠标离开行菜单又关了。改成 fixed + 按钮实际坐标（2026-07-28）
+  const menuRef = useRef(null);
+  const [menuPos, setMenuPos] = useState(null);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const close = () => onMenuClose?.();
+    const onDown = (e) => { if (!e.target.closest?.('[data-session-menu]')) close(); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', onDown, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+    };
+  }, [menuOpen, onMenuClose]);
+
+  useEffect(() => { if (!menuOpen) setMenuPos(null); }, [menuOpen]);
+
+  // 渲染出来再按真实高度夹回视口内（估高度容易估错，量一次最准）
+  useEffect(() => {
+    if (!menuOpen || !menuPos || !menuRef.current) return;
+    const h = menuRef.current.getBoundingClientRect().height;
+    const maxTop = window.innerHeight - h - 8;
+    if (menuPos.top > maxTop) setMenuPos(prev => ({ ...prev, top: Math.max(8, maxTop) }));
+  }, [menuOpen, menuPos]);
   const title = session.customTitle || session.summary || session.firstPrompt || session.sessionId.slice(0, 8);
   const ts = session.lastModified ? timeAgo(new Date(session.lastModified).toISOString()) : '';
 
   return (
     <div
       onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => { setHover(false); onMenuClose?.(); }}
+      onMouseLeave={() => { setHover(false); if (!menuOpen) onMenuClose?.(); }}
       style={{ position: 'relative', borderBottom: `1px solid ${COLOR.borderLt}` }}
     >
       <button
@@ -272,7 +301,14 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
       </button>
       {hover && (
         <button
-          onClick={(e) => { e.stopPropagation(); onMenuToggle(); }}
+          data-session-menu
+          onClick={(e) => {
+            e.stopPropagation();
+            // 用点击点定位：菜单渲染在 body 坐标系（fixed），躲开列表的 overflow 裁剪
+            const r = e.currentTarget.getBoundingClientRect();
+            setMenuPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+            onMenuToggle();
+          }}
           title="操作"
           style={{
             position: 'absolute',
@@ -289,26 +325,28 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
           <MoreHorizontal size={13} />
         </button>
       )}
-      {menuOpen && (
+      {menuOpen && menuPos && createPortal((
         <div
+          data-session-menu
+          ref={menuRef}
           onMouseDown={e => e.stopPropagation()}
           style={{
-            position: 'absolute',
-            top: 40, right: GAP.md,
+            position: 'fixed',
+            top: menuPos.top, right: menuPos.right,
             minWidth: 140,
             background: '#fff',
             border: `1px solid ${COLOR.borderMd}`,
             borderRadius: 6,
             boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
             padding: 4,
-            zIndex: 5,
+            zIndex: 1200,
           }}>
           <MenuItem icon={<GitBranch size={12} />} label="Fork" onClick={onFork} />
           <MenuItem icon={<Edit2 size={12} />} label="重命名" onClick={onRename} />
           <MenuItem icon={<TagIcon size={12} />} label="设置标签" onClick={onTag} />
           <MenuItem icon={<Trash2 size={12} />} label="删除" onClick={onDelete} danger />
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }

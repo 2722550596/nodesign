@@ -10,7 +10,7 @@
 export const DESKTOP_W = 1360;
 export const MARGIN_X = 48;               // 桌面左右留白
 export const ZONE_GAP_Y = 28;             // 堆叠工作区之间的垂直间距
-export const FOLDER_CARD_H = 60;          // 收纳态整宽窄条占用的堆叠高度
+export const FOLDER_CARD_H = 84;          // 收纳态整宽窄条占用的堆叠高度
 export const DECK_EMBED_W = 640;          // deck 内嵌渲染宽度（1920 → 1/3 缩放）
 export const STAGE_CARD_W = 560;          // 舞台卡宽度（板内坐标系）
 

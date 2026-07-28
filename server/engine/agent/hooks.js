@@ -50,6 +50,7 @@ import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
 import { resolveModelContextWindow } from './model-context.js';
 import { ensureSkillStarterFiles } from './skill.js';
+import { setActiveDeck, getActiveDeck, listWorkspaceDecks } from '../../lib/canvas-target.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -175,7 +176,13 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // <div class="__nd-deck-wrap"> 两块，省 verbatim 搬运。详见 memory
       // idea_canvas_write_flow_redesign.md
       matcher: 'Write',
-      hooks: [makePreToolUseWriteCanvasReadReminder()],
+      hooks: [
+        makePreToolUseWriteCanvasReadReminder(),
+        // 首次写 HTML 时注入 hybrid 技术参考（模板结构 / 标记规约 / 库速查 /
+        // 常坑）。2026-07-28 从 prelude 搬来：那是参考知识不是行为，常驻 1.4k
+        // tokens 每轮都在，但只有真动 HTML 的那一刻用得上。
+        makePreToolUseHybridReferenceInjector(),
+      ],
     }],
 
     // Stop —— agent 准备结束 query 时触发，发自检事件给前端
@@ -200,7 +207,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // canvas.html 当前页数。把 SKILL.md 软约束（"agent 自己 turn 开头 Read
     // spec.json"）变成 SDK 硬注入 —— agent 不必每次都自觉，hook 直接喂上下文。
     UserPromptSubmit: [{
-      hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot })],
+      hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId })],
     }],
 
     // PostToolUse —— 按 MCP 工具名分别注 additionalContext，引导 agent 利用
@@ -219,7 +226,14 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // （FileChanged watcher hook 从未真正触发过，见上方 FileChanged 注释）
       {
         matcher: 'Write|Edit|MultiEdit|NotebookEdit',
-        hooks: [makePostToolUseFileChangedEmitter({ ctx, sharedRoot, sessionId })],
+        hooks: [makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, sessionId })],
+      },
+      // Bash 里 mkdir tasks/<名> 也算认领任务 —— agent 常用 mkdir 起手，
+      // 如果那一轮被打断（没写成文件），任务目录会变成没主的孤儿，
+      // 桌面上就会同时出现"会话区 + 无主任务区"两块（2026-07-28 实测踩到）
+      {
+        matcher: 'Bash',
+        hooks: [makePostToolUseBashTaskBinder({ sharedRoot, sessionId })],
       },
       // Canvas 焕新升级 S1d — Edit/Write canvas.html 时检测改动落在哪些 page →
       // emit run.canvas_focus_page（前端 SlideNavigator 跳页 + pulse 高亮）。
@@ -557,7 +571,7 @@ function makeSessionStartHandler({ ctx }) {
  *   - additionalContext?: string      注入后续 prompt（标记成 system 提示）
  *   - sessionTitle?: string           覆盖 session 标题（不用）
  */
-function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
+function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
   return async (_input, _toolUseId, _options) => {
     try {
       if (!workspaceRoot) return {};
@@ -571,7 +585,7 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
       parts.push(
         `你的 cwd 是 ${workspaceRoot}\n`
         + `关键路径（用 ./ 相对路径访问，软链已挂好不要绕）：\n`
-        + `  ./canvas.html              主产物 deck（用 mcp__nodesign__read_page 切片读，不要 Read 全文件）\n`
+        + `  ./tasks/<任务名>/canvas.html  产出型工作的 deck（用 mcp__nodesign__read_page 切片读，不要 Read 全文件）\n`
         + `  ./spec.json                设计意图档案（agent 决策日志）\n`
         + `  ./assets/                  用户上传素材 + 你 curl 下载的资源（软链 → shared，跨 session 共享）\n`
         + `  ./agent-memory/            跨 session 长期记忆（软链 → shared）\n`
@@ -604,25 +618,34 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
         // spec.json 不存在 / 解析失败 / stat 失败：noop
       }
 
-      // 2. canvas.html：数页数（grep <section data-page=）
+      // 2. 现有 deck 清单 + 页数（2026-07-28：任务模型下 deck 住 tasks/<任务>/，
+      //    这里以前只看 cwd/canvas.html —— 于是每一轮都在说"还不存在，这可能是首跑"，
+      //    手上明明有一份七页的 deck。）
       try {
-        const canvasPath = path.join(workspaceRoot, 'canvas.html');
-        const stat = await fs.stat(canvasPath);
-        if (stat.size <= CANVAS_HTML_MAX_BYTES) {
-          const raw = await fs.readFile(canvasPath, 'utf8');
-          const matches = raw.match(/<section\b[^>]*\bdata-page=/g);
-          const pageCount = matches ? matches.length : 0;
-          if (pageCount > 0) {
-            parts.push(`canvas.html 当前 ${pageCount} 页。`);
-          } else {
-            parts.push('canvas.html 已存在但没找到 <section data-page=> 分页结构。');
-          }
+        const decks = await listWorkspaceDecks(workspaceRoot);
+        if (decks.length === 0) {
+          parts.push('这个 workspace 还没有 deck —— 产出型工作先建 tasks/<任务名>/ 再往里写 canvas.html。');
         } else {
-          parts.push(`canvas.html 比较大（${(stat.size / 1024).toFixed(0)}KB）—— 用 Read 工具配 limit 分段读。`);
+          const active = getActiveDeck(sessionId);
+          const lines = [];
+          for (const rel of decks.slice(0, 6)) {
+            let note = '';
+            try {
+              const stat = await fs.stat(path.join(workspaceRoot, rel));
+              if (stat.size <= CANVAS_HTML_MAX_BYTES) {
+                const raw = await fs.readFile(path.join(workspaceRoot, rel), 'utf8');
+                const n = (raw.match(/<section\b[^>]*\bdata-page=/g) || []).length;
+                note = n > 0 ? `${n} 页` : '还没有 <section data-page=> 分页结构';
+              } else {
+                note = `${(stat.size / 1024).toFixed(0)}KB，Read 时配 limit 分段读`;
+              }
+            } catch { note = '读不到'; }
+            lines.push(`  ${rel}（${note}）${rel === active ? '  ← 画布工具默认打这份' : ''}`);
+          }
+          parts.push(`现有 deck：\n${lines.join('\n')}`);
         }
       } catch {
-        // canvas.html 不存在 = 首跑
-        parts.push('canvas.html 还不存在 —— 这可能是首跑，按 brief 用 Write 工具创建。');
+        // 扫不动就不说，别拿错信息误导
       }
 
       // 3. design-plan.md：仅检查存在性，不读内容
@@ -714,7 +737,7 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
  * 不再等 run.done。PostToolUse 只在工具成功后触发（失败走 PostToolUseFailure），
  * 不会把写坏的半成品刷给用户。
  */
-function makePostToolUseFileChangedEmitter({ ctx, sharedRoot, sessionId }) {
+function makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, sessionId }) {
   // eslint-disable-next-line no-unused-vars
   return async (input, _toolUseId, _options) => {
     try {
@@ -723,6 +746,9 @@ function makePostToolUseFileChangedEmitter({ ctx, sharedRoot, sessionId }) {
         : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
       if (filePath) {
         await bindTaskToSession(filePath, sharedRoot, sessionId);
+        // 刚写的这份 html 就是"当前 deck"——list_pages / screenshot / read_page
+        // 不给 path 时默认打它，子代理不必知道任务目录长什么样（canvas-target.js）
+        setActiveDeck(sessionId, toWorkspaceRel(filePath, workspaceRoot));
         ctx.emit(Events.fileChanged(filePath, 'change'));
       }
     } catch (err) {
@@ -871,20 +897,17 @@ function makePostToolUseExitPlanModeHandler(_deps) {
  * 它接下来该做什么，不替换 image。
  */
 /**
- * 单轮截图预算（2026-07-28 上下文瘦身）
+ * 截图后的引导（2026-07-28；硬上限已撤销）
  *
- * 实测：一个真实会话 9-33 张截图，1-7MB base64，≈14-50k vision tokens，而且
- * **永久留在上下文里**（SDK 不支持回改历史，PostToolUse 只能改当前这一次的输出）。
- * 所以只能在"进上下文之前"卡：
- *   1-3 张   放行（正常自检节奏）
- *   4 张起   注提示：往后的视觉检查派 vision-checker 子代理（它的截图在隔离
- *            上下文里，主线只收文字 critique）
- *   >HARD    直接把图换成文字（updatedMCPToolOutput），主线上下文不再增长
+ * 实测：一个真实会话 9-33 张截图，每张 0.6 倍光栅后 ≈1k vision tokens，且
+ * **永久留在上下文里**（SDK 不能回改历史工具输出）。
+ *
+ * 曾经加过"整会话超 12 张就把图换成文字"的硬闸，撤掉了：那等于在 agent 检查
+ * 自己作品的时候把它的眼睛蒙上，而且蒙得悄无声息 —— 它只会以为"看起来 OK"。
+ * 省下来的几十 k 换不来这个代价。现在只报数、给建议，看不看由它自己判断；
+ * 真正的省是 0.6 倍光栅（每张 1.85k→1.0k）和压缩阈值，不是拦着不让看。
  */
-// 软上限按轮算（提醒），硬上限按会话算（真拦）：上下文是整个会话累积的，
-// 只按轮限制挡不住"每轮 3 张 × 15 轮"。
-const SCREENSHOT_SOFT_CAP = 3;      // 单轮：超了开始提醒派子代理
-const SCREENSHOT_HARD_CAP = 12;     // 整会话：超了图不再进上下文（≈12k tokens 封顶）
+const SCREENSHOT_BUSY_HINT_AT = 6;   // 累到这个数开始提醒"大面积检查交给子代理"
 
 function makePostToolUseScreenshotHandler({ ctx }) {
   let takenInSession = 0;
@@ -902,25 +925,6 @@ function makePostToolUseScreenshotHandler({ ctx }) {
     takenInTurn += 1;
     takenInSession += 1;
 
-    // 超硬上限：图不再进上下文，只回文字（agent 想继续看就得派子代理）
-    if (takenInSession > SCREENSHOT_HARD_CAP) {
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'PostToolUse',
-          updatedMCPToolOutput: {
-            content: [{
-              type: 'text',
-              text: `[截图已省略] 这个会话主线已经看了 ${SCREENSHOT_HARD_CAP} 张图，`
-                + `再堆下去上下文会被图片占满（每张约 1k tokens 且不会释放）。`
-                + `\n继续做视觉检查请派 \`vision-checker\` 子代理（Task 工具）：它自己截图、`
-                + `自己看，只把文字 critique 交回主线。`
-                + `\n如果只是想确认刚才那处改动生效了，直接相信 Edit 的结果，或者问用户。`,
-            }],
-          },
-        },
-      };
-    }
-
     // fullPage 截图体积是 viewport 的 N×（N=页数），且会留在 context 多 turn
     // 直到 autoCompact。push agent 下次整 deck 自检走 vision-checker subagent，
     // subagent context 是隔离的，主线只收文字 critique，几 K vs 几百 K 的差距。
@@ -937,10 +941,10 @@ function makePostToolUseScreenshotHandler({ ctx }) {
           '你刚才截图了。基于这张图，简短点出 3 个具体的视觉问题（对比度/留白/对齐/层级/字号节奏 任选），每条 1-2 句。'
           + '\n如果整体看起来 OK，就直接跟用户说"看起来 OK"，不要再重复截图。'
           + hint
-          + (takenInTurn > SCREENSHOT_SOFT_CAP
-            ? `\n\n**上下文预算**：本轮已经截了 ${takenInTurn} 张、本会话累计 ${takenInSession} 张`
-              + `（每张约 1k tokens，进了上下文就不会释放，还剩 ${Math.max(0, SCREENSHOT_HARD_CAP - takenInSession)} 张额度）。`
-              + '继续大面积检查请派 `vision-checker` 子代理，它的截图不占主线。'
+          + (takenInSession >= SCREENSHOT_BUSY_HINT_AT
+            ? `\n\n**上下文提示**：本轮 ${takenInTurn} 张、本会话累计 ${takenInSession} 张`
+              + '（每张约 1k tokens，进了上下文不会释放）。没有额度上限，该看就看；'
+              + '只是大面积逐页检查交给 `vision-checker` 子代理更划算——它的截图在隔离上下文里，主线只收文字。'
             : ''),
       },
     };
@@ -1336,6 +1340,29 @@ function makePreToolUseAskUserQuestionProtocolInjector() {
   };
 }
 
+/** PreToolUse(Write) — 第一次写 .html 时注入 hybrid deck 技术参考 */
+function makePreToolUseHybridReferenceInjector() {
+  let alreadyInjected = false;
+  return async (input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    const fp = input?.tool_input?.file_path;
+    if (typeof fp !== 'string' || !/\.html?$/i.test(fp)) return {};
+    alreadyInjected = true;
+    const ref = loadToolPrompt('hybrid-reference');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[Hybrid deck 技术参考 — 首次注入]\n\n'
+        + ref
+        + '\n\n本参考每 session 只注入一次。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
 function makePreToolUseGenerateImageCookbookInjector() {
   let alreadyInjected = false;
   return async (_input, _toolUseId, _options) => {
@@ -1615,7 +1642,10 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
       if (!fp || !/(?:^|[/\\])canvas\.html$/i.test(fp)) return {};
       if (!workspaceRoot) return {};
 
-      const canvasPath = path.join(workspaceRoot, 'canvas.html');
+      // 校验刚写的那份（2026-07-28）：任务模型下 deck 在 tasks/<任务>/canvas.html，
+      // 这里以前固定读 cwd/canvas.html —— 文件不存在直接 ENOENT return，
+      // 于是整套一致性校验在任务模型下从来没跑过。
+      const canvasPath = path.resolve(workspaceRoot, fp);
       let html;
       try {
         const stat = await fs.stat(canvasPath);
@@ -1642,7 +1672,7 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
       const body = issues.map((i, idx) => `${idx + 1}. ${i.title}\n   ${i.detail}`).join('\n\n');
       return {
         systemMessage:
-          `<system-reminder>\n[canvas-validate] 你刚改完 canvas.html，系统检测到 ${issues.length} 项可疑：\n\n`
+          `<system-reminder>\n[canvas-validate] 你刚改完 ${fp}，系统检测到 ${issues.length} 项可疑：\n\n`
         + body
         + `\n\n如果有意为之（custom mode / 故意命名重复 等）忽略；否则在下一轮主动修。每次 Edit/Write 后都跑这套校验。\n`
         + `</system-reminder>`,
@@ -1655,6 +1685,25 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
 }
 
 
+/** PostToolUse(Bash) —— 命令里出现 tasks/<名> 就把它认领给当前会话 */
+function makePostToolUseBashTaskBinder({ sharedRoot, sessionId }) {
+  return async (input, _toolUseId, _options) => {
+    try {
+      const cmd = input?.tool_input?.command;
+      if (typeof cmd !== 'string') return {};
+      const seen = new Set();
+      for (const m of cmd.matchAll(/tasks\/([^\s/'"`;|&]+)/g)) {
+        if (seen.has(m[1])) continue;
+        seen.add(m[1]);
+        await bindTaskToSession(`tasks/${m[1]}/.probe`, sharedRoot, sessionId);
+      }
+    } catch (err) {
+      console.warn('[hooks/PostToolUse:bash-task-bind]', err.message);
+    }
+    return {};
+  };
+}
+
 /**
  * 任务=会话（2026-07-28 定死的一对一）：会话第一次往 tasks/<任务>/ 里写东西时，
  * 在任务目录里落一个 .nd-task.json 记住是谁的家。前端据此把"进任务"翻译成
@@ -1662,15 +1711,28 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
  *
  * 只写一次（已有 marker 不覆盖）—— 任务的归属在它被建出来那一刻就定了。
  */
+/** 工具入参给的可能是绝对路径，也可能是相对 cwd 的 —— 统一成 workspace 相对 */
+function toWorkspaceRel(filePath, workspaceRoot) {
+  const p = String(filePath).replace(/\\/g, '/');
+  if (!workspaceRoot) return p;
+  const root = path.resolve(workspaceRoot);
+  const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
+  return abs.startsWith(root + path.sep) ? abs.slice(root.length + 1) : p;
+}
+
 async function bindTaskToSession(filePath, sharedRoot, sessionId) {
   if (!sharedRoot || !sessionId) return;
   const m = String(filePath).replace(/\\/g, '/').match(/(?:^|\/)tasks\/([^/]+)\//);
   if (!m) return;
-  const marker = path.join(sharedRoot, 'tasks', m[1], '.nd-task.json');
+  const taskDir = path.join(sharedRoot, 'tasks', m[1]);
+  const marker = path.join(taskDir, '.nd-task.json');
   try {
     await fs.access(marker);
     return;                       // 已有归属，不动
   } catch { /* 没有就写 */ }
+  try {
+    await fs.access(taskDir);     // 目录还没建出来就别造标记
+  } catch { return; }
   try {
     await fs.writeFile(marker, JSON.stringify({ sessionId, boundAt: new Date().toISOString() }, null, 2), 'utf8');
   } catch (err) {

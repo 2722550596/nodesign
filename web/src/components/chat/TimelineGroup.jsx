@@ -4,6 +4,7 @@ import Message from './Message.jsx';
 import TimelineNode from './TimelineNode.jsx';
 import { TimelinePositionProvider } from './TimelineGroupContext.js';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { toolLabelOf, fileNameOf } from '../../lib/stage.js';
 
 /**
  * TimelineGroup —— 把连续的 thinking + tool 节点包成一个可折叠的"思考片段"
@@ -23,24 +24,73 @@ import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js'
 const SUMMARY_MAX = 60;
 
 /**
- * 从第一段 thinking 提取 summary 给 group 标题用。简单截取第一段（按双换行分），
- * 折叠空白，截前 SUMMARY_MAX 字符。失败 / 没 thinking 返 null（让上层用占位）。
+ * 给"思考片段"起个标题。
  *
- * 不调 LLM —— Claude 的 thinking 通常以"用户在问 X..." / "I'm going to..." /
- * "我要 X..."开头，截前 60 字符已经能近似 native UI 那种"Architecting X" 风格。
- * 如果将来想要更精确的标题（句法清理 / 名词短语提取），把 summary prop 显式
- * 传进来覆盖。
+ * 老做法是把 thinking 头 60 个字符硬切下来当标题，结果长这样：
+ *   "I'm setting up a straightforward image generation te…"
+ * 英文原文、从句子中间断开、还全是"I'm going to…"这种没信息量的开场白。
+ *
+ * 现在按人读得懂的顺序来（全部本地算，不调 LLM）：
+ *   ① 这段里真动了什么 —— 有工具就用工具说话（"改 canvas.html · 截图"），
+ *      这是用户真正关心的，也天然是中文
+ *   ② 没工具就退回 thinking 的**第一句**，先剥掉开场白，再按词边界截
  */
-function extractSummary(messages) {
+const OPENERS = [
+  /^(?:okay|ok|alright|so|now|first|let me|let's|i'?m going to|i'?ll|i need to|i should|i want to|i will|we need to|we should)\b[,:]?\s*/i,
+  /^(?:好的?|那么|现在|首先|接下来|我需要|我要|我先|我来|我应该|让我|我们需要)[，,、：:]?\s*/,
+  /^the user (?:is )?(?:asking|wants|said|needs)\b[,:]?\s*/i,
+  /^用户(?:在)?(?:问|想要|说|需要)[，,：:]?\s*/,
+];
+
+function stripOpener(s) {
+  let out = s;
+  for (const re of OPENERS) {
+    const next = out.replace(re, '');
+    if (next !== out) { out = next; break; }
+  }
+  return out.trim();
+}
+
+/** 按词边界截断（中文没有空格，直接切；英文回退到最后一个空格）*/
+function clip(s, max) {
+  if (s.length <= max) return s;
+  const head = s.slice(0, max);
+  const sp = head.lastIndexOf(' ');
+  return (sp > max * 0.6 ? head.slice(0, sp) : head).trimEnd() + '…';
+}
+
+/** 这段思考里真动过的工具 → "改 canvas.html · 截图" */
+function summaryFromTools(messages) {
+  const parts = [];
+  for (const m of messages) {
+    if (m.role !== 'tool' || !m.toolName) continue;
+    const label = toolLabelOf(m.toolName);
+    const file = m.toolInput?.file_path ? fileNameOf(m.toolInput.file_path) : null;
+    const one = file ? `${label} ${file}` : label;
+    if (!parts.includes(one)) parts.push(one);
+    if (parts.length >= 3) break;
+  }
+  return parts.length ? clip(parts.join(' · '), SUMMARY_MAX) : null;
+}
+
+function summaryFromThinking(messages) {
   const firstThinking = messages.find(m => m.role === 'thinking' && m.content);
   if (!firstThinking) return null;
-  const text = String(firstThinking.content).trim();
+  const text = String(firstThinking.content).trim().split(/\n{2,}/)[0].replace(/\s+/g, ' ').trim();
   if (!text) return null;
-  const firstPara = text.split(/\n{2,}/)[0].replace(/\s+/g, ' ').trim();
-  if (!firstPara) return null;
-  return firstPara.length > SUMMARY_MAX
-    ? firstPara.slice(0, SUMMARY_MAX) + '…'
-    : firstPara;
+  // 第一句：中英标点都算句号
+  const sentence = (text.match(/^[\s\S]*?(?:[。！？!?]|\.\s|$)/) || [text])[0]
+    .replace(/[。！？!?.]\s*$/, '')
+    .trim();
+  const body = stripOpener(sentence || text);
+  if (!body) return null;
+  return clip(body, SUMMARY_MAX);
+}
+
+function extractSummary(messages) {
+  // SDK helper 写的那句 > 工具说话 > thinking 第一句
+  const fromSdk = messages.find(m => m.groupSummary)?.groupSummary;
+  return fromSdk || summaryFromTools(messages) || summaryFromThinking(messages);
 }
 
 function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload }) {
@@ -53,7 +103,7 @@ function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanv
   );
   const stepCount = messages.length;
 
-  // 优先级：显式 prop > 自动提取 thinking 首段截 60 字 > 占位
+  // 优先级：显式 prop > SDK helper 摘要 / 工具 / thinking 首句 > 占位
   const title = summary
     || extractSummary(messages)
     || (isActive ? 'Agent 思考中…' : `Agent 思考过程（${stepCount} 步）`);

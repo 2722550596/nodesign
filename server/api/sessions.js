@@ -264,6 +264,13 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
     // 2. rm 整个 sessions/<sid>/ 目录（产物 + git + 软链）
     await removeSessionWorkspace(req.params.pid, req.params.sid);
 
+    // 2.5 连带删掉绑定的任务文件夹（2026-07-28：任务和会话一对一，不独立存在）
+    //     归属记在 tasks/<任务>/.nd-task.json，PostToolUse 写的。
+    const removedTasks = await removeBoundTaskDirs(req.params.pid, req.params.sid);
+    if (removedTasks.length) {
+      console.log(`[delete session] 连带删任务文件夹: ${removedTasks.join(', ')}`);
+    }
+
     // 3. 清 active_session_id 如果指向被删的
     if (project.activeSessionId === req.params.sid) {
       try { setActiveSession(req.params.pid, null); } catch { /* ignore */ }
@@ -272,6 +279,34 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
     res.status(204).end();
   } catch (err) { next(err); }
 });
+
+/**
+ * 删掉归属于某会话的任务文件夹（一对一模型：会话没了，它的任务也就没有家了）。
+ * 归属看 tasks/<任务>/.nd-task.json 里的 sessionId；没有标记的旧任务不动。
+ */
+async function removeBoundTaskDirs(pid, sid) {
+  const tasksDir = path.join(getProjectWorkspace(pid), 'shared', 'tasks');
+  const removed = [];
+  let entries;
+  try {
+    entries = await fs.readdir(tasksDir, { withFileTypes: true });
+  } catch { return removed; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    const marker = path.join(tasksDir, e.name, '.nd-task.json');
+    try {
+      const raw = await fs.readFile(marker, 'utf8');
+      if (JSON.parse(raw)?.sessionId !== sid) continue;
+    } catch { continue; }        // 无标记 / 读不了 → 不认领，不删
+    try {
+      await fs.rm(path.join(tasksDir, e.name), { recursive: true, force: true });
+      removed.push(e.name);
+    } catch (err) {
+      console.warn(`[delete session] 删任务文件夹失败 ${e.name}:`, err.message);
+    }
+  }
+  return removed;
+}
 
 // ── POST /:pid/sessions/:sid/rewind ──
 // SDK Query.rewindFiles(userMessageId) 控制方法 —— 把 session 内文件回滚到该

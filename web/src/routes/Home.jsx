@@ -15,7 +15,7 @@ import { timeAgo } from '../lib/helpers.js';
  * Home 页 — 入口流程重构
  *
  * 两条通道：
- *   1. 闪聊（QuickEntry）— 大输入框 + 一句话进入 Workspace（隐式建 kind=quick 项目 + Turn.send）
+ *   1. 大输入框（QuickEntry）— 一句话直接建真项目并进 Workspace（名字先垫后由会话摘要正名）
  *   2. 标准项目（CreateProjectModal）— 顶栏「+ 新建项目」 → Modal → Hub
  *
  * 三块内容（从上到下）：
@@ -189,11 +189,13 @@ function QuickEntry() {
     if (!v || submitting) return;
     setSubmitting(true);
     try {
-      // 1. 创建闪聊项目（kind=quick）—— 项目名取首句前 30 字
-      const projName = v.slice(0, 30) + (v.length > 30 ? '…' : '');
+      // 1. 直接建**真项目**（2026-07-28：首页不再有"闪聊"这个二等公民）。
+      //    名字先用用户这句话垫着，标 autoNamed —— 第一轮跑完服务端会用 SDK helper
+      //    写的会话摘要正名一次，用户之后随时可以在项目里「⋯ → 重命名」改。
+      const projName = v.slice(0, 24) + (v.length > 24 ? '…' : '');
       const proj = await createProject({
-        name: projName || '未命名对话',
-        kind: 'quick',
+        name: projName || '新项目',
+        autoNamed: true,
       });
       // 2. 上传暂存的附件到新 project（单文件失败不阻塞其他，让用户看到 toast 自决）
       const ready = [];
@@ -381,7 +383,7 @@ function RecentQuickSection() {
           color: COLOR.text2, letterSpacing: '-0.01em', margin: 0,
         }}>最近对话</h2>
         <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-          没归到项目里的临时对话
+          早期的临时对话（现在从上面输入框开始 = 直接建项目）
         </span>
       </div>
       <div style={{

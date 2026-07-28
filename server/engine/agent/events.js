@@ -12,6 +12,7 @@
  *   run.round.start            { round }
  *   run.round.end              { round, stopReason, usage? }
  *   run.delta.text             { round, text }
+ *   run.tool_use_summary       { summary, blockIds }  SDK helper 对一批工具调用的一句话总结
  *   run.delta.thinking         { round, text }
  *   run.delta.tool_use         { round, blockId, name, input }
  *   run.delta.tool_input       { round, blockId, name, filePath?, append?, done? }  Edit/Write 入参真流式（节流后的字段尾巴增量，工作台舞台层直播代码用）
@@ -179,6 +180,8 @@ export const Events = {
   roundStart: (round) => ({ type: 'run.round.start', round }),
   roundEnd: (round, stopReason, usage) => ({ type: 'run.round.end', round, stopReason, usage }),
   deltaText: (round, text) => ({ type: 'run.delta.text', round, text }),
+  // SDK helper 生成的一句话工具批摘要（Claude Code 侧栏那种折叠标题）
+  toolUseSummary: (summary, blockIds) => ({ type: 'run.tool_use_summary', summary, blockIds }),
   deltaThinking: (round, text) => ({ type: 'run.delta.thinking', round, text }),
   deltaToolUse: (round, blockId, name, input) => ({ type: 'run.delta.tool_use', round, blockId, name, input }),
   // 真流式工具入参（2026-07-28）：patch = { filePath?, append?, done? }。

@@ -98,8 +98,8 @@ export const useProjectStore = create((set, get) => ({
 
   getProject: (id) => get().projects.find((p) => p.id === id) || null,
 
-  createProject: async ({ name, skillId, description, kind }) => {
-    const { project } = await Projects.create({ name, skillId, description, kind });
+  createProject: async ({ name, skillId, description, kind, autoNamed }) => {
+    const { project } = await Projects.create({ name, skillId, description, kind, autoNamed });
     const e = enrich(project);
     // 闪聊（kind=quick）也写入 store，方便首跑后 Workspace 能从 store 读到 project；
     // Home 网格用 hydrate({ kind:'project' }) 过滤，不会显示 quick。

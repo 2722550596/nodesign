@@ -27,6 +27,7 @@ import {
 import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml, inlineLocalImages } from './exports/build-standalone.js';
+import { resolveCanvasTarget } from '../lib/canvas-target.js';
 
 const router = express.Router();
 
@@ -83,8 +84,9 @@ router.get('/:pid/sessions/:sid/exports/file/:filename', async (req, res, next) 
     if (!guard(req, res)) return;
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
 
+    // 文件名只禁路径分隔与上跳；中文名要能下（agent 交付的包常叫「终焉之莉莉-交付.zip」）
     const filename = req.params.filename;
-    if (!/^[A-Za-z0-9._-]+$/.test(filename)) {
+    if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
       return res.status(400).json({ error: 'invalid filename' });
     }
     const filePath = path.join(sessionRoot, 'exports', filename);
@@ -107,12 +109,125 @@ router.get('/:pid/sessions/:sid/exports/file/:filename', async (req, res, next) 
   } catch (err) { next(err); }
 });
 
+/**
+ * GET /:pid/sessions/:sid/exports/items —— 当前任务里可以单独导出的东西
+ *
+ * 用户视角的"这次任务做出来的内容"：任务目录下的文件 + deck 真正引用到的图。
+ * 不做整包，让用户勾选（?path= 指定别的 deck；缺省走统一寻址）。
+ */
+router.get('/:pid/sessions/:sid/exports/items', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
+    const items = [];
+    const seen = new Set();
+    const add = async (rel, kind) => {
+      if (seen.has(rel)) return;
+      const abs = path.resolve(sessionRoot, rel);
+      if (abs !== sessionRoot && !abs.startsWith(sessionRoot + path.sep)) return;
+      try {
+        const st = await fs.stat(abs);
+        if (!st.isFile()) return;
+        seen.add(rel);
+        items.push({ path: rel, name: path.basename(rel), size: st.size, kind });
+      } catch { /* 读不到就不列 */ }
+    };
+
+    // 任务目录里的东西（deck / 试作 / 说明 / plan）
+    const taskDir = target.ok ? path.dirname(target.relPath) : null;
+    if (taskDir && taskDir !== '.') {
+      let names = [];
+      try { names = await fs.readdir(path.resolve(sessionRoot, taskDir)); } catch { /* 没有就算 */ }
+      for (const n of names) {
+        if (n.startsWith('.')) continue;
+        const rel = `${taskDir}/${n}`;
+        await add(rel, n.endsWith('.html') ? 'deck' : 'file');
+      }
+    } else if (target.ok) {
+      await add(target.relPath, 'deck');
+    }
+
+    // deck 引用到的图（相对 deck 目录解，落成 workspace 相对路径）
+    if (target.ok) {
+      try {
+        const html = await fs.readFile(target.absPath, 'utf8');
+        const base = path.dirname(target.absPath);
+        const refs = new Set();
+        for (const m of html.matchAll(/<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')/gi)) refs.add(m[1] || m[2]);
+        for (const m of html.matchAll(/url\(\s*(?:"([^"]+)"|'([^']+)'|([^)]+?))\s*\)/gi)) refs.add((m[1] || m[2] || m[3] || '').trim());
+        for (const r of refs) {
+          if (!r || /^(?:[a-z][a-z0-9+\-.]*:|\/\/)/i.test(r) || path.isAbsolute(r)) continue;
+          const abs = path.resolve(base, r);
+          if (!abs.startsWith(sessionRoot + path.sep)) continue;
+          await add(path.relative(sessionRoot, abs).split(path.sep).join('/'), 'image');
+        }
+      } catch { /* deck 读不到就只列目录内容 */ }
+    }
+
+    res.json({ deck: target.ok ? target.relPath : null, items });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /:pid/sessions/:sid/exports/pick —— 下载勾选的东西
+ * body: { paths: string[], filename?: string }
+ * 单个文件直接流回；多个打成 zip。
+ */
+router.post('/:pid/sessions/:sid/exports/pick', async (req, res, next) => {
+  try {
+    const project = guard(req, res);
+    if (!project) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter(p => typeof p === 'string') : [];
+    if (paths.length === 0) return res.status(400).json({ error: 'paths required' });
+
+    const files = [];
+    for (const rel of paths) {
+      const abs = path.resolve(sessionRoot, rel);
+      if (abs !== sessionRoot && !abs.startsWith(sessionRoot + path.sep)) {
+        return res.status(400).json({ error: `path escapes workspace: ${rel}` });
+      }
+      try {
+        const st = await fs.stat(abs);
+        if (st.isFile()) files.push({ rel, abs, size: st.size });
+      } catch {
+        return res.status(404).json({ error: `not found: ${rel}` });
+      }
+    }
+    if (files.length === 0) return res.status(404).json({ error: 'nothing to export' });
+
+    if (files.length === 1) {
+      const only = files[0];
+      const buf = await fs.readFile(only.abs);
+      const name = path.basename(only.rel);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+      res.setHeader('Content-Length', buf.length);
+      return res.end(buf);
+    }
+
+    const zip = new JSZip();
+    for (const f of files) zip.file(path.basename(f.rel), await fs.readFile(f.abs));
+    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    const name = `${safeFilename(req.body?.filename || project.name)}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) { next(err); }
+});
+
 router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const file = path.join(sessionRoot, 'canvas.html');
+    // 导出哪一份走统一寻址（?path= 显式 → 本会话当前 deck → 本会话名下的任务 deck
+    // → cwd/canvas.html）。任务模型下 deck 不在 cwd，写死 cwd 会永远导出空（2026-07-28）
+    const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
+    if (!target.ok) return res.status(404).json({ error: target.message });
+    const file = target.absPath;
     let html;
     try {
       html = await fs.readFile(file, 'utf8');
@@ -126,8 +241,8 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
     // 任一步骤失败也降级——保证用户至少拿到能用的 HTML
     if (isHybridHtml(html)) {
       try {
-        // 传 sessionRoot 让 build-standalone 能 inline 本地图片（assets/generated/...）
-        html = await buildStandaloneHtml(html, { sessionRoot });
+        // baseDir = deck 自己的目录：任务 deck 写的是 ../../assets/generated/x.png
+        html = await buildStandaloneHtml(html, { sessionRoot, baseDir: path.dirname(file) });
       } catch (err) {
         // standalone 任何一步炸——管道里图片 inline 也不会跑，用户拿到的 HTML
         // 离开 session 目录后 <img src="assets/..."> 全 404。降级路径必须仍把
@@ -135,7 +250,7 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
         console.warn('[exports/html] standalone build failed, falling back to viewport-fit:', err.message);
         html = injectViewportFit(html);
         try {
-          html = await inlineLocalImages(html, sessionRoot);
+          html = await inlineLocalImages(html, path.dirname(file), sessionRoot);
         } catch (e2) {
           console.warn('[exports/html] image inline fallback also failed:', e2.message);
         }
@@ -143,7 +258,7 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
     } else {
       html = injectViewportFit(html);
       try {
-        html = await inlineLocalImages(html, sessionRoot);
+        html = await inlineLocalImages(html, path.dirname(file), sessionRoot);
       } catch (e) {
         console.warn('[exports/html] image inline (legacy path) failed:', e.message);
       }
@@ -173,12 +288,9 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
     const project = guard(req, res);
     if (!project) return;
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const file = path.join(sessionRoot, 'canvas.html');
-    try {
-      await fs.access(file);
-    } catch {
-      return res.status(404).json({ error: 'canvas.html not yet generated' });
-    }
+    const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
+    if (!target.ok) return res.status(404).json({ error: target.message });
+    const file = target.absPath;
 
     const { chromium } = await import('playwright');
     let browser;
@@ -213,19 +325,22 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
       }
       pageInfos.sort((a, b) => a.pageNum - b.pageNum);
 
-      // 每页截 PNG（pageSize 已被 prepareExportPage 中和掉 fit transform，原坐标）
+      // 每页截图（pageSize 已被 prepareExportPage 中和掉 fit transform，原坐标）。
+      // 用 JPEG 不用 PNG：图片自包含之后每页都是整幅照片级画面，PNG 无损一页
+      // 就 5-8MB，7 页的 PDF 能到 60MB —— 发不出去的东西等于没导出。
+      // q=88 的 JPEG 在同画面下小一个数量级，肉眼看不出差别（deck 本来就是看的）。
       const pngs = [];
       for (const { handle, bbox } of pageInfos) {
         const clipOpts = bbox
           ? { clip: { x: bbox.x, y: bbox.y, width: pageSize.w, height: pageSize.h } }
           : {};
-        const buf = await handle.screenshot({ type: 'png', ...clipOpts });
+        const buf = await handle.screenshot({ type: 'jpeg', quality: 88, ...clipOpts });
         pngs.push(buf);
       }
 
       // 拼成多页 HTML：每页一个 .slide 容器 + img 满铺，page-break 控制分页
       const slidesHtml = pngs.map((buf) =>
-        `<div class="slide"><img src="data:image/png;base64,${buf.toString('base64')}"/></div>`,
+        `<div class="slide"><img src="data:image/jpeg;base64,${buf.toString('base64')}"/></div>`,
       ).join('\n');
 
       const composeHtml = `<!DOCTYPE html>
@@ -280,12 +395,9 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
     const project = guard(req, res);
     if (!project) return;
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const file = path.join(sessionRoot, 'canvas.html');
-    try {
-      await fs.access(file);
-    } catch {
-      return res.status(404).json({ error: 'canvas.html not yet generated' });
-    }
+    const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
+    if (!target.ok) return res.status(404).json({ error: target.message });
+    const file = target.absPath;
 
     const { chromium } = await import('playwright');
     const PptxGenJS = (await import('pptxgenjs')).default;
@@ -332,10 +444,11 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
         const clipOpts = bbox
           ? { clip: { x: bbox.x, y: bbox.y, width: pageSize.w, height: pageSize.h } }
           : {};
-        const buf = await handle.screenshot({ type: 'png', ...clipOpts });
+        // 同 PDF：JPEG 不用 PNG，否则一份 7 页 deck 的 pptx 能到几十 MB
+        const buf = await handle.screenshot({ type: 'jpeg', quality: 88, ...clipOpts });
         const slide = pres.addSlide();
         slide.addImage({
-          data: `data:image/png;base64,${buf.toString('base64')}`,
+          data: `data:image/jpeg;base64,${buf.toString('base64')}`,
           x: 0, y: 0, w: slideW, h: slideH,
         });
         slide.addNotes(`Page ${pageNum} — exported from NoDesign canvas.html`);
@@ -363,6 +476,7 @@ router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const sharedRoot = getSharedDir(req.params.pid);
     const runs = listRunsForProject(req.params.pid);
+    const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
 
     const zipBuffer = await buildHandoffZip(sessionRoot, sharedRoot, {
       projectId: project.id,
@@ -370,6 +484,7 @@ router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
       skillId: project.skillId,
       sessionId: req.params.sid,
       runs,
+      deckPath: target.ok ? target.relPath : 'canvas.html',
     });
 
     const filename = `${safeFilename(project.name)}-handoff.zip`;
@@ -386,11 +501,16 @@ router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
  * @param {string} sessionRoot  sessions/<sid>/ 绝对路径（canvas/spec 在这）
  * @param {string} sharedRoot   shared/ 绝对路径（assets 在这）
  */
-export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, projectName, skillId, sessionId, runs = [] } = {}) {
+export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, projectName, skillId, sessionId, runs = [], deckPath = 'canvas.html' } = {}) {
   const zip = new JSZip();
 
   try {
-    const html = await fs.readFile(path.join(sessionRoot, 'canvas.html'), 'utf8');
+    // deckPath 相对 sessionRoot（任务模型下是 tasks/<任务>/canvas.html）
+    const raw = await fs.readFile(path.resolve(sessionRoot, deckPath), 'utf8');
+    // zip 里的布局是 design/canvas.html + design/assets/…，而任务 deck 写的是
+    // `../../assets/generated/x.png`（相对它在 workspace 里的位置）—— 不改写的话
+    // 解压出来图全裂。统一压成 `assets/…`。
+    const html = raw.replace(/(["'(])(?:\.\.\/)+assets\//g, '$1assets/');
     zip.file('design/canvas.html', html);
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
@@ -494,7 +614,7 @@ async function prepareExportPage(browser, filePath, opts = {}) {
   let cleanup = async () => {};
   if (isHybridHtml(html)) {
     try {
-      const baked = await buildStandaloneHtml(html, { sessionRoot: opts.sessionRoot });
+      const baked = await buildStandaloneHtml(html, { sessionRoot: opts.sessionRoot, baseDir: path.dirname(filePath) });
       const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-export-'));
       const tmpFile = path.join(tmpDir, 'baked.html');
       await fs.writeFile(tmpFile, baked, 'utf8');

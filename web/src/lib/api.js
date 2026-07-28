@@ -46,8 +46,8 @@ export const Projects = {
   },
   get: (pid) => jsonRequest('GET', `/api/projects/${pid}`),
   /** create：name 必填；description / kind 可选（kind 默认 'project'） */
-  create: ({ name, skillId, description, kind }) =>
-    jsonRequest('POST', '/api/projects', { name, skillId, description, kind }),
+  create: ({ name, skillId, description, kind, autoNamed }) =>
+    jsonRequest('POST', '/api/projects', { name, skillId, description, kind, autoNamed }),
   update: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}`, patch),
   remove: (pid) => jsonRequest('DELETE', `/api/projects/${pid}`),
 };
@@ -68,8 +68,9 @@ export const Canvas = {
     }
     return res.text();
   },
-  write: (pid, sid, html, source = 'user') =>
-    jsonRequest('PUT', `/api/projects/${pid}/sessions/${sid}/canvas`, { html, source }),
+  // path：任务 deck 是 tasks/<任务>/canvas.html；不传写会话自己的 canvas.html
+  write: (pid, sid, html, source = 'user', deckPath = null) =>
+    jsonRequest('PUT', `/api/projects/${pid}/sessions/${sid}/canvas`, { html, source, ...(deckPath ? { path: deckPath } : {}) }),
   history: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/history`),
   revert: (pid, sid, commit) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/canvas/revert`, { commit }),
@@ -80,8 +81,8 @@ export const Canvas = {
   artifactUrl: (pid, sid, version) =>
     `/api/projects/${pid}/sessions/${sid}/canvas${version ? `?v=${encodeURIComponent(version)}` : ''}`,
   /** deck 比例信息（前端缩略图按比例设容器尺寸 + iframe size 用） */
-  deckMeta: (pid, sid) =>
-    jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/deck-meta`),
+  deckMeta: (pid, sid, deckPath = null) =>
+    jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/deck-meta${deckPath ? `?path=${encodeURIComponent(deckPath)}` : ''}`),
 };
 
 // ── Spec（设计意图档案，session-scoped）──
@@ -188,10 +189,30 @@ export const Assets = {
     const sub = String(relPath || '');
     return `/api/projects/${pid}/artifact-file/${sub.split('/').map(encodeURIComponent).join('/')}`;
   },
+  /** 删任务文件夹 —— 连它绑定的会话一起删（一对一，不独立存在）*/
+  removeTask: (pid, name) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/tasks/${encodeURIComponent(name)}`),
 };
 
 // ── Exports（H3：session-scoped）──
 export const Exports = {
+  /** 当前任务里可以单独导出的东西（deck / 图 / 其它产物）*/
+  items: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/exports/items`),
+
+  /** 挑几样下载：单个原样、多个打 zip。返回 { blob, filename } */
+  pick: async (pid, sid, paths, filename) => {
+    const res = await fetch(`/api/projects/${pid}/sessions/${sid}/exports/pick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths, filename }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+    }
+    return { blob: await res.blob(), filename: parseFilenameFromDisposition(res.headers.get('content-disposition')) };
+  },
+
   /** 下载文件，返回 { blob, filename }，调用方自行触发 a.click() */
   download: async (pid, sid, format) => {
     const res = await fetch(`/api/projects/${pid}/sessions/${sid}/exports/${format}`);
