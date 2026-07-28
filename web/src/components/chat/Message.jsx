@@ -65,8 +65,11 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
       return <ToolPendingNode toolName="AskUserQuestion" />;
     }
     if (toolName === 'AskUserQuestion') {
+      // 2026-07-28：问题面板的主场在工作台画布（StageLayer 的 QuestionStageCard）。
+      // 侧边栏只留一张摘要卡——同一个 /answer 端点两处都能答，但聊天栏默认不再
+      // 铺一整个 wizard 抢戏；画布卡被关掉 / 刷新丢了时点"在这里答"展开兜底。
       return (
-        <AskUserQuestionView
+        <AskUserQuestionBrief
           toolInput={toolInput}
           toolOutput={toolOutput}
           status={status}
@@ -96,7 +99,7 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
   }
 
   if (role === 'system') {
-    return <SystemMessage variant={message.variant} content={content} />;
+    return <SystemMessage variant={message.variant} content={content} pending={!!message.pending} />;
   }
 
   // assistant
@@ -392,6 +395,127 @@ function ToolPendingNode({ toolName }) {
       >
         {displayName}
       </span>
+    </TimelineNode>
+  );
+}
+
+/**
+ * tool_result 里捞 { 问题: 答案 }。SDK 的回填是一句自由文本：
+ *   Your questions have been answered: "问题"="答案". You can now continue…
+ * 先按这个形状抠引号对，抠不出再当 JSON 试一次，都不行就返 null（卡片退回整段回显）。
+ */
+function answerMapOf(toolOutput) {
+  let v = toolOutput;
+  if (typeof v === 'string') {
+    const pairs = {};
+    const re = /"([^"]+)"\s*=\s*"([^"]*)"/g;
+    let m;
+    while ((m = re.exec(v))) pairs[m[1]] = m[2];
+    if (Object.keys(pairs).length) return pairs;
+    try { v = JSON.parse(v); } catch { return null; }
+  }
+  if (!v || typeof v !== 'object') return null;
+  const src = (v.answers && typeof v.answers === 'object') ? v.answers : v;
+  const out = {};
+  for (const [k, val] of Object.entries(src)) {
+    if (typeof val === 'string' && val) out[k] = val;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * AskUserQuestionBrief —— 聊天栏的问题摘要卡（2026-07-28）
+ *
+ * 作答面板已经常驻工作台画布，侧边栏再铺一整个 wizard 是重复的。这里只报
+ * "问了什么 / 答了什么"，需要时点开兜底 wizard（画布卡关掉、刷新丢了、
+ * 或者用户就想在聊天栏答）。两处走同一个 /answer，谁先答谁生效。
+ */
+function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
+  const [expanded, setExpanded] = useState(false);
+  const questions = Array.isArray(toolInput?.questions) ? toolInput.questions : [];
+  const answered = (status === 'success' && toolOutput) || status === 'error';
+  const answers = answered ? answerMapOf(toolOutput) : null;
+  // 一条都对不上题（SDK 文案改了 / 问题文本被裁过）→ 退一步整段回显一行
+  const matched = answers ? questions.filter(q => answers[q.question]).length : 0;
+  const flatEcho = (answered && matched === 0 && typeof toolOutput === 'string')
+    ? toolOutput.trim().replace(/\s+/g, ' ').slice(0, 160) : '';
+
+  if (expanded) {
+    return (
+      <AskUserQuestionView
+        toolInput={toolInput}
+        toolOutput={toolOutput}
+        status={status}
+        toolUseId={toolUseId}
+      />
+    );
+  }
+  if (questions.length === 0) {
+    return <SystemMessage variant="error" content="Agent 调用了 AskUserQuestion 但 input.questions 为空（SDK schema 违规）" />;
+  }
+
+  const TlIcon = status === 'success' ? CheckCircle2 : status === 'error' ? AlertCircle : HelpCircle;
+  const tlIconColor = status === 'success' ? COLOR.success : status === 'error' ? COLOR.error : COLOR.warn;
+
+  return (
+    <TimelineNode icon={TlIcon} iconColor={tlIconColor}>
+      <div style={{
+        padding: `${GAP.sm}px ${GAP.md}px`,
+        border: `1px solid ${answered ? COLOR.borderLt : COLOR.borderMd}`,
+        borderRadius: 8,
+        background: '#fff',
+        opacity: answered ? 0.7 : 1,
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub, letterSpacing: '0.04em',
+        }}>
+          <span style={{ color: COLOR.text2 }}>AGENT 问</span>
+          <span>·</span>
+          <span>{questions.length} 题</span>
+          <span style={{ marginLeft: 'auto' }}>
+            {status === 'error' ? '已取消' : answered ? '已回答' : '面板在画布上'}
+          </span>
+        </div>
+
+        <div style={{ marginTop: GAP.xs + 1, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {questions.map((q, i) => {
+            const a = answers?.[q.question];
+            return (
+              <div key={i} style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, lineHeight: 1.5 }}>
+                <span style={{
+                  color: COLOR.text,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  display: 'block',
+                }}>{q.header ? `${q.header}：` : ''}{q.question}</span>
+                {a && (
+                  <span style={{
+                    display: 'block', color: COLOR.sub, fontSize: 11,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>→ {a}</span>
+                )}
+              </div>
+            );
+          })}
+          {flatEcho && (
+            <span style={{
+              color: COLOR.sub, fontFamily: FONT_SANS, fontSize: 11,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>→ {flatEcho}</span>
+          )}
+        </div>
+
+        {!answered && (
+          <button
+            onClick={() => setExpanded(true)}
+            style={{
+              marginTop: GAP.sm, border: `1px solid ${COLOR.borderMd}`, borderRadius: 6,
+              background: '#fff', color: COLOR.text2, cursor: 'pointer',
+              padding: `3px ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: 10,
+            }}
+          >在这里答</button>
+        )}
+      </div>
     </TimelineNode>
   );
 }
@@ -883,7 +1007,7 @@ function NavBtn({ onClick, disabled, icon: Icon, label, variant = 'default', ico
  *   - 'error'       : 红色 - 系统错误
  *   - 'success'     : 绿色 - decision recorded / export built
  */
-function SystemMessage({ variant = 'warn', content }) {
+function SystemMessage({ variant = 'warn', content, pending = false }) {
   const config = {
     warn:    { icon: ShieldAlert, color: COLOR.warn,    bgRgba: 'rgba(255, 193, 7, 0.08)',  border: 'rgba(255, 193, 7, 0.35)' },
     info:    { icon: Info,        color: COLOR.btn,     bgRgba: 'rgba(45, 36, 24, 0.05)',   border: 'rgba(45, 36, 24, 0.18)' },
@@ -908,7 +1032,18 @@ function SystemMessage({ variant = 'warn', content }) {
         color: COLOR.text2,
         lineHeight: 1.5,
       }}>
-        <Icon size={14} color={config.color} style={{ flexShrink: 0, marginTop: 1 }} />
+        {pending
+          ? (
+            <>
+            <style>{'@keyframes ndSpin{to{transform:rotate(360deg)}}'}</style>
+            <span style={{
+              width: 12, height: 12, flexShrink: 0, marginTop: 2, borderRadius: '50%',
+              border: `1.5px solid ${COLOR.borderLt}`, borderTopColor: config.color,
+              animation: 'ndSpin 800ms linear infinite',
+            }} />
+            </>
+          )
+          : <Icon size={14} color={config.color} style={{ flexShrink: 0, marginTop: 1 }} />}
         <div style={{ flex: 1, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {content}
         </div>

@@ -214,10 +214,29 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         if (!t.isDirectory() || t.name.startsWith('.')) continue;
         const tDir = path.join(tasksDir, t.name);
         const tStat = await fs.stat(tDir);
+        // 任务=会话一对一：.nd-task.json 是 PostToolUse 落的归属标记
+        let boundSession = null;
+        try {
+          const raw = await fs.readFile(path.join(tDir, '.nd-task.json'), 'utf8');
+          const parsed = JSON.parse(raw);
+          if (typeof parsed?.sessionId === 'string') boundSession = parsed.sessionId;
+        } catch { /* 没标记就是旧任务，前端按无归属处理 */ }
+        // 一个任务可以有多份 deck（2026-07-28）：canvas.html 是主 deck，
+        // 其余 .html 是试作 / 备选（风格原型探索阶段并排放着让用户挑）
+        let decks = [];
+        try {
+          const inner = await fs.readdir(tDir, { withFileTypes: true });
+          decks = inner
+            .filter(f => f.isFile() && f.name.toLowerCase().endsWith('.html') && !f.name.startsWith('.'))
+            .map(f => ({ file: f.name, main: f.name === 'canvas.html' }))
+            .sort((a, b) => (b.main - a.main) || a.file.localeCompare(b.file));
+        } catch { /* 目录读不到就当没 deck */ }
         tasks.push({
           id: t.name,
           title: t.name,
-          hasDeck: await exists(path.join(tDir, 'canvas.html')),
+          hasDeck: decks.some(d => d.main),
+          decks,
+          sessionId: boundSession,
           mtime: tStat.mtime.toISOString(),
         });
         await scanDir(tDir, 'task-file', `tasks/${t.name}`);
@@ -225,8 +244,8 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
     }
-    // canvas.html 本体不当普通文件上墙（deck 物件由 tasks[] 派生）
-    const filtered = artifacts.filter(a => !(a.kind === 'task-file' && a.name === 'canvas.html'));
+    // 任务里的 .html 不当普通文件卡上墙（它们由 tasks[].decks 派生成 deck 物件）
+    const filtered = artifacts.filter(a => !(a.kind === 'task-file' && a.name.toLowerCase().endsWith('.html')));
 
     filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
     tasks.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));

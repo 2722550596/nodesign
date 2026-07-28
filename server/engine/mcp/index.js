@@ -6,7 +6,7 @@
  *   感知层（playwright headless 跑出真实渲染元数据）：
  *     screenshot_canvas / list_pages / read_page / query_elements / get_computed_styles
  *   控制层（emit 事件让前端同步）：
- *     navigate_to_page / highlight
+ *     navigate_to_page / highlight / preview_deck
  *   反馈层（用户在 canvas 上的直接编辑 + 评论 buffer）：
  *     get_pending_changes / clear_pending_changes
  *   产物层（NoDesign 差异化能力）：
@@ -38,6 +38,7 @@ import { makeQueryElementsTool } from './tools/query-elements.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
+import { makePreviewDeckTool } from './tools/preview-deck.js';
 import { makeExposeTweaksTool } from './tools/expose-tweaks.js';
 import { makeGetPendingChangesTool } from './tools/get-pending-changes.js';
 import { makeClearPendingChangesTool } from './tools/clear-pending-changes.js';
@@ -68,7 +69,7 @@ import { makePinToBoardTool } from './tools/pin-to-board.js';
 // （kimi 时代曾全局 alwaysLoad —— kimi 不认 ToolSearch；claude 系模型原生受训，可放心 defer）
 const ALWAYS_LOAD_TOOLS = new Set([
   'screenshot_canvas', 'read_page', 'list_pages', 'query_elements',
-  'get_computed_styles', 'navigate_to_page', 'highlight',
+  'get_computed_styles', 'navigate_to_page', 'highlight', 'preview_deck',
   'record_decision', 'get_pending_changes', 'clear_pending_changes',
 ]);
 
@@ -107,6 +108,8 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI
       makeNavigateToPageTool({ ctx }),
       makeHighlightTool({ ctx }),
+      // 把 deck 摊到用户眼前（= 用户双击那张卡）：收起态→内嵌渲染，展开态→最大化窗
+      makePreviewDeckTool({ ctx }),
 
       // 反馈层：用户在 canvas 上的直接编辑 + 评论 buffer
       // 前端在 chat 时由 turn.js 注入 system 提示，agent 主动调下面两个工具读 + 清

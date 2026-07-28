@@ -33,6 +33,9 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 
+// 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
+const RASTER_SCALE = 0.6;
+
 /**
  * @param {object} deps
  * @param {string} deps.workspaceRoot
@@ -89,6 +92,10 @@ Do NOT use this tool when:
         .string()
         .optional()
         .describe('If given, capture only the first element matching this CSS selector (overrides fullPage)'),
+      detail: z
+        .enum(['normal', 'high'])
+        .optional()
+        .describe("Raster detail. 'normal' (default) renders at 0.6x pixels — ~45% cheaper in context, enough for layout/spacing/palette checks. 'high' = full resolution, use only when you must read small text."),
       pageIndex: z
         .number()
         .int()
@@ -100,7 +107,7 @@ Do NOT use this tool when:
         .optional()
         .describe('Relative path of the html to capture (e.g. "tasks/<task>/canvas.html" for a task deck). Defaults to cwd canvas.html (legacy single-deck flow).'),
     },
-    async ({ viewport, fullPage, selector, pageIndex, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, path: relPath }) => {
       // 任务模型（2026-07-28）：任务 deck 住 tasks/<任务>/canvas.html —— path 参数
       // 指定目标；缺省仍是旧式 cwd/canvas.html。防穿越：解析后必须留在 workspace 内
       // （tasks/ 是 workspace 下的软链，resolve 不出根）
@@ -134,7 +141,12 @@ Do NOT use this tool when:
         // 动态 import：playwright 启动慢，模块顶部 import 会拖累其他工具
         const { chromium } = await import('playwright');
         browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage({ viewport: vp });
+        // 位图缩放（2026-07-28 上下文瘦身）：布局仍按 deck 逻辑尺寸排（1920 宽），
+        // 但光栅按 RASTER_SCALE 出图。vision token 按像素算（≈ w*h/750），
+        // 1920×1080 一张 ≈1.85k tokens，0.6 倍后 ≈1.0k，排版检查完全够看。
+        // 要读小字（版权行 / 数据标签）显式传 detail:'high' 走 1.0。
+        const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
+        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale });
 
         // 用 file:// scheme 加载 canvas.html
         // waitUntil: 'networkidle' 等所有外部 fetch（CDN 字体 / 图片）完成
@@ -185,7 +197,7 @@ Do NOT use this tool when:
           content: [
             {
               type: 'text',
-              text: `Screenshot of canvas.html (${vp.width}x${vp.height}, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
+              text: `Screenshot of canvas.html (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
             },
             {
               type: 'image',

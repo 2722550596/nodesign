@@ -105,7 +105,7 @@ function loadToolPrompt(name) {
  * @param {string} [deps.projectId]
  * @returns {Partial<Record<string, Array<{ matcher?: string, hooks: Function[], timeout?: number }>>>}
  */
-export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) {
+export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId: _projectId } = {}) {
   return {
     // ── P0+ stage 1（不动）──
 
@@ -158,6 +158,11 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
         makePreToolUseGenerateImageReadPageReminder(),
         makePreToolUseGenerateImageCookbookInjector(),
       ],
+    }, {
+      // AskUserQuestion 首次调用时注入 NoDesign 的 preview 协议（2026-07-28 从
+      // prelude 挪来：常驻 1.2k tokens，但只有真要问用户时才用得上）
+      matcher: 'AskUserQuestion',
+      hooks: [makePreToolUseAskUserQuestionProtocolInjector()],
     }, {
       // expose_tweaks 首次调用时注入完整语法
       matcher: 'mcp__nodesign__expose_tweaks',
@@ -214,7 +219,7 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
       // （FileChanged watcher hook 从未真正触发过，见上方 FileChanged 注释）
       {
         matcher: 'Write|Edit|MultiEdit|NotebookEdit',
-        hooks: [makePostToolUseFileChangedEmitter({ ctx })],
+        hooks: [makePostToolUseFileChangedEmitter({ ctx, sharedRoot, sessionId })],
       },
       // Canvas 焕新升级 S1d — Edit/Write canvas.html 时检测改动落在哪些 page →
       // emit run.canvas_focus_page（前端 SlideNavigator 跳页 + pulse 高亮）。
@@ -707,14 +712,17 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
  * 不再等 run.done。PostToolUse 只在工具成功后触发（失败走 PostToolUseFailure），
  * 不会把写坏的半成品刷给用户。
  */
-function makePostToolUseFileChangedEmitter({ ctx }) {
+function makePostToolUseFileChangedEmitter({ ctx, sharedRoot, sessionId }) {
   // eslint-disable-next-line no-unused-vars
   return async (input, _toolUseId, _options) => {
     try {
       const t = input?.tool_input;
       const filePath = typeof t?.file_path === 'string' ? t.file_path
         : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
-      if (filePath) ctx.emit(Events.fileChanged(filePath, 'change'));
+      if (filePath) {
+        await bindTaskToSession(filePath, sharedRoot, sessionId);
+        ctx.emit(Events.fileChanged(filePath, 'change'));
+      }
     } catch (err) {
       console.warn('[hooks/PostToolUse:file-changed] emit failed:', err.message);
     }
@@ -860,7 +868,26 @@ function makePostToolUseExitPlanModeHandler(_deps) {
  * additionalContext 时已经能"看到"图（multimodal）—— 我们只是用文字提示
  * 它接下来该做什么，不替换 image。
  */
-function makePostToolUseScreenshotHandler({ ctx: _ctx }) {
+/**
+ * 单轮截图预算（2026-07-28 上下文瘦身）
+ *
+ * 实测：一个真实会话 9-33 张截图，1-7MB base64，≈14-50k vision tokens，而且
+ * **永久留在上下文里**（SDK 不支持回改历史，PostToolUse 只能改当前这一次的输出）。
+ * 所以只能在"进上下文之前"卡：
+ *   1-3 张   放行（正常自检节奏）
+ *   4 张起   注提示：往后的视觉检查派 vision-checker 子代理（它的截图在隔离
+ *            上下文里，主线只收文字 critique）
+ *   >HARD    直接把图换成文字（updatedMCPToolOutput），主线上下文不再增长
+ */
+// 软上限按轮算（提醒），硬上限按会话算（真拦）：上下文是整个会话累积的，
+// 只按轮限制挡不住"每轮 3 张 × 15 轮"。
+const SCREENSHOT_SOFT_CAP = 3;      // 单轮：超了开始提醒派子代理
+const SCREENSHOT_HARD_CAP = 12;     // 整会话：超了图不再进上下文（≈12k tokens 封顶）
+
+function makePostToolUseScreenshotHandler({ ctx }) {
+  let takenInSession = 0;
+  let takenInTurn = 0;
+  let lastTurn = -1;
   // 不 emit run.screenshot_taken —— mcp/tools/screenshot.js:114 已经 emit
   // 完整字段（sizeBytes / viewport / fullPage）。hook 只负责注 additionalContext
   // 引导 agent 行为，业务事件由 MCP 工具内部负责。
@@ -868,6 +895,29 @@ function makePostToolUseScreenshotHandler({ ctx: _ctx }) {
     const args = input?.tool_input || {};
     const wasFullPage = args.fullPage === true;
     const wasPerPage = typeof args.pageIndex === 'number';
+    const turn = ctx?.counters?.turns ?? 0;
+    if (turn !== lastTurn) { lastTurn = turn; takenInTurn = 0; }
+    takenInTurn += 1;
+    takenInSession += 1;
+
+    // 超硬上限：图不再进上下文，只回文字（agent 想继续看就得派子代理）
+    if (takenInSession > SCREENSHOT_HARD_CAP) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PostToolUse',
+          updatedMCPToolOutput: {
+            content: [{
+              type: 'text',
+              text: `[截图已省略] 这个会话主线已经看了 ${SCREENSHOT_HARD_CAP} 张图，`
+                + `再堆下去上下文会被图片占满（每张约 1k tokens 且不会释放）。`
+                + `\n继续做视觉检查请派 \`vision-checker\` 子代理（Task 工具）：它自己截图、`
+                + `自己看，只把文字 critique 交回主线。`
+                + `\n如果只是想确认刚才那处改动生效了，直接相信 Edit 的结果，或者问用户。`,
+            }],
+          },
+        },
+      };
+    }
 
     // fullPage 截图体积是 viewport 的 N×（N=页数），且会留在 context 多 turn
     // 直到 autoCompact。push agent 下次整 deck 自检走 vision-checker subagent，
@@ -884,7 +934,12 @@ function makePostToolUseScreenshotHandler({ ctx: _ctx }) {
         additionalContext:
           '你刚才截图了。基于这张图，简短点出 3 个具体的视觉问题（对比度/留白/对齐/层级/字号节奏 任选），每条 1-2 句。'
           + '\n如果整体看起来 OK，就直接跟用户说"看起来 OK"，不要再重复截图。'
-          + hint,
+          + hint
+          + (takenInTurn > SCREENSHOT_SOFT_CAP
+            ? `\n\n**上下文预算**：本轮已经截了 ${takenInTurn} 张、本会话累计 ${takenInSession} 张`
+              + `（每张约 1k tokens，进了上下文就不会释放，还剩 ${Math.max(0, SCREENSHOT_HARD_CAP - takenInSession)} 张额度）。`
+              + '继续大面积检查请派 `vision-checker` 子代理，它的截图不占主线。'
+            : ''),
       },
     };
   };
@@ -1254,6 +1309,31 @@ function makePreToolUseGetPendingChangesProtocolInjector() {
   };
 }
 
+/**
+ * PreToolUse(AskUserQuestion) — 第一次问用户时注入 NoDesign 的问法协议
+ * （何时用卡片 vs chat、schema、写选项的诀窍、preview 字段的两种形态与限制）。
+ * 常驻在 prelude 里是 1.2k tokens，但一次会话里可能一次都用不上。
+ */
+function makePreToolUseAskUserQuestionProtocolInjector() {
+  let alreadyInjected = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    alreadyInjected = true;
+    const protocol = loadToolPrompt('ask-user-question-protocol');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[AskUserQuestion 协议 — 首次注入]\n\n'
+        + protocol
+        + '\n\n本协议每 session 只注入一次，后续问用户直接按它写。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
 function makePreToolUseGenerateImageCookbookInjector() {
   let alreadyInjected = false;
   return async (_input, _toolUseId, _options) => {
@@ -1570,4 +1650,28 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
       return {};
     }
   };
+}
+
+
+/**
+ * 任务=会话（2026-07-28 定死的一对一）：会话第一次往 tasks/<任务>/ 里写东西时，
+ * 在任务目录里落一个 .nd-task.json 记住是谁的家。前端据此把"进任务"翻译成
+ * "进那个会话"，把"退出任务"翻译成"退出会话"，不用再各处对表。
+ *
+ * 只写一次（已有 marker 不覆盖）—— 任务的归属在它被建出来那一刻就定了。
+ */
+async function bindTaskToSession(filePath, sharedRoot, sessionId) {
+  if (!sharedRoot || !sessionId) return;
+  const m = String(filePath).replace(/\\/g, '/').match(/(?:^|\/)tasks\/([^/]+)\//);
+  if (!m) return;
+  const marker = path.join(sharedRoot, 'tasks', m[1], '.nd-task.json');
+  try {
+    await fs.access(marker);
+    return;                       // 已有归属，不动
+  } catch { /* 没有就写 */ }
+  try {
+    await fs.writeFile(marker, JSON.stringify({ sessionId, boundAt: new Date().toISOString() }, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[hooks] bind task→session failed:', err.message);
+  }
 }

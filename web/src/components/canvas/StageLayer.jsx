@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Image as ImageIcon, PencilLine, Terminal, X } from 'lucide-react';
 import { COLOR, GAP, FONT_MONO } from '../../lib/theme.js';
-import { stageKindOf, resolveObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
+import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
 import { ZONE, STAGE_CARD_W, POP_IN, sizeOf } from '../../lib/board-geometry.js';
 import { AskUserQuestionView } from '../chat/Message.jsx';
 
@@ -23,7 +23,7 @@ import { AskUserQuestionView } from '../chat/Message.jsx';
 
 // ── 状态机 ──
 
-export function useStageState({ stageRef, currentSessionId, followToObject, tryAutoExpand }) {
+export function useStageState({ stageRef, currentSessionId, followToObject, tryAutoExpand, onStageTarget, onPreviewRequest }) {
   const [stageCards, setStageCards] = useState({});
   const [stageBadges, setStageBadges] = useState({});
   const followedBlocksRef = useRef(new Set());   // 每张舞台卡只推一次镜头
@@ -71,6 +71,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
         });
         if (oid && !followedBlocksRef.current.has(evt.blockId)) {
           followedBlocksRef.current.add(evt.blockId);
+          onStageTarget?.(oid);
           followToObject?.(oid);
         }
         break;
@@ -105,8 +106,15 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
         });
         if (kind === 'code' && oid && !followedBlocksRef.current.has(evt.blockId)) {
           followedBlocksRef.current.add(evt.blockId);
+          onStageTarget?.(oid);
           followToObject?.(oid);
         }
+        break;
+      }
+      case 'run.deck_preview': {
+        // preview_deck 工具：agent 把 deck 摊到用户眼前（= 用户双击那张卡）
+        const oid = evt.path ? resolveObjectId(evt.path, currentSessionId) : (currentSessionId ? `deck:${currentSessionId}` : null);
+        if (oid) onPreviewRequest?.(oid);
         break;
       }
       case 'run.delta.tool_result': {
@@ -159,7 +167,7 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
       default: break;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId, followToObject, removeStageCardLater, tryAutoExpand]);
+  }, [currentSessionId, followToObject, removeStageCardLater, tryAutoExpand, onStageTarget, onPreviewRequest]);
 
   useEffect(() => {
     if (!stageRef) return;
@@ -181,24 +189,35 @@ export function useStageState({ stageRef, currentSessionId, followToObject, tryA
 // ── 渲染分流 ──
 
 /**
- * 锚得到可见物件的贴物件渲染（板内坐标系跟着缩放），
- * 锚不到 / 目标不可见的落 dock（屏幕坐标系，视口底部居中）
+ * 落点三级兜底（2026-07-28）：
+ *   ① 目标物件已经在墙上且可见 → 贴着它摆
+ *   ② 物件还没上墙（新文件正在写，产物列表要等这次写完才知道它存在）
+ *      → 贴到它天然归属的那块工作区里（zone id 由路径派生）
+ *   ③ 连工作区都定位不到（路径认不出 / 那块区被收纳了）→ 落 dock
+ *
+ * ② 是这次补的：以前 ①失败直接掉 dock，于是"写新文件"的代码卡整场都钉在屏幕
+ * 底部，等写完 file_changed 触发产物重拉、物件出现，才突然跳到文件旁边。
  */
 export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZones, currentSessionId, focusZone }) {
   const anchoredCards = [];
   const dockPanels = [];
   const dockChips = [];
+  const visibleZoneOf = (zid) => (zid ? visibleZones.find(v => !v.collapsed && v.id === zid) : null);
   for (const c of Object.values(stageCards)) {
     if (c.kind === 'chip') { dockChips.push(c); continue; }
     if (c.kind === 'image') {
-      const zid = currentSessionId || focusZone;
-      const zr = visibleZones.find(v => !v.collapsed && v.id === zid);
+      const zr = visibleZoneOf(currentSessionId || focusZone);
       if (zr) { anchoredCards.push({ card: c, zoneRect: zr }); continue; }
       dockPanels.push(c);
       continue;
     }
+    if (c.kind === 'question') { dockPanels.push(c); continue; }
     const o = c.objectId ? positioned.find(it => it.id === c.objectId) : null;
-    if (o && visibleIdSet.has(o.id)) anchoredCards.push({ card: c, obj: o });
+    if (o && visibleIdSet.has(o.id)) { anchoredCards.push({ card: c, obj: o }); continue; }
+    // 物件不在（或不可见）→ 退到工作区。目标未知的（file_path 还没流出来）
+    // 就贴当前工作区，反正 agent 正在这里干活。
+    const zr = visibleZoneOf(zoneOfObjectId(c.objectId, currentSessionId) || focusZone || currentSessionId);
+    if (zr) anchoredCards.push({ card: c, zoneRect: zr });
     else dockPanels.push(c);
   }
   return { anchoredCards, dockPanels, dockChips };
@@ -269,6 +288,17 @@ export function StageDock({ dockPanels, dockChips, onDismiss }) {
 
 /** 舞台卡（板内坐标系定位）：贴目标物件摆（右侧优先，放不下换左/下）；shimmer 贴工作区下沿 */
 function StageCard({ card, obj, zoneRect, boardSize, onDismiss }) {
+  // 物件还没上墙：贴在工作区右上（标题栏下面），跟着这块区一起动
+  if (!obj && zoneRect && card.kind !== 'image') {
+    const x = Math.max(12, Math.min(boardSize.w - STAGE_CARD_W - 12,
+      zoneRect.x + zoneRect.w - STAGE_CARD_W - ZONE.pad));
+    const y = zoneRect.y + ZONE.header + ZONE.pad;
+    return (
+      <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60 }}>
+        <StageCardBody card={card} onDismiss={onDismiss} />
+      </div>
+    );
+  }
   if (card.kind === 'image' && zoneRect) {
     const x = Math.max(8, Math.min(boardSize.w - 216, zoneRect.x + ZONE.pad));
     const y = Math.max(8, Math.min(boardSize.h - 200, zoneRect.y + zoneRect.h - 196));

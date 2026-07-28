@@ -78,3 +78,17 @@
 - **pending-delete** —— 直接删 source 段。
 - **reactMount=true** 的任何 kind —— 改 `<script id="__nd-app">` 里的 JSX 而不是静态 HTML。anchor 的 dataId 仍能在 JSX 里找到（agent 写 JSX 时也该给元素加 data-anchor）。
 - 用户消息本身可能是对这些 changes 的进一步说明（"你看我改的字够大吗"），结合上下文一起处理
+
+
+---
+
+## 常见 anti-pattern（prelude 2026-07-28 挪来）
+
+agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体感"agent 没看到我的改动"）：
+
+- **跳过 get_pending_changes 直接回应** — 看到 system 提示但忽略，丢掉用户在 canvas 上的全部 edit / comment / 拖移上下文，回应跟用户的实际操作脱节
+- **处理完忘记 clear_pending_changes** — 下个 turn 仍见到同样的 changes 重复处理一遍，浪费 turn + 让用户困惑"我刚不是改过了"
+- **把 edit 当 comment 处理** — edit 是用户已经手动 done deal（contenteditable blur 已 PUT 文件），把它"按指令再改回去"等于 revert 用户操作
+- **pending-move 当成 comment "建议" 处理** —— pending-move 是**结构化操作意图**不是建议。用户已经"在画布上看见东西搬到新位置了"（前端运行时改了 DOM 但没碰源码），你必须按 `anchor.dataId` 真的把 source 段从 canvas.html 剪走插到 target 容器去；不照做下次 iframe reload 视觉跳回，用户体感"我拖了等于没拖"
+
+---

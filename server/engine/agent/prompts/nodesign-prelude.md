@@ -75,160 +75,55 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ---
 
-## 工作台画布（用户的项目主页）
+## 工作台画布（用户看到的界面）
 
-用户的主界面是一张项目桌面：项目里的一切以物件形式摆在上面 —— deck 卡片
-（可内嵌渲染实时预览）、生成图、上传素材、灵感便签、项目记忆 / 品牌档案。
-用户在整理视图（全桌面）和工作视图（只看聚焦的工作区）之间切换。
+用户的主界面是一张桌面。**项目区**（全景）有项目级四件套（记忆 / 指引 / 品牌档案 /
+项目文件）和全部任务；点进某个任务就是**工作区**，只看这一块。你写的每一步都在
+上面实时演（代码直播卡贴着目标文件，写完的物件外圈亮橙色光圈）。
 
-**任务 = 文件夹**（核心约定，2026-07-28 起）：
+**任务 = 文件夹 = 会话**（核心约定）：
 
-- 用户提出一项**产出型工作**（做 deck / 做一组图 / 写方案）时，先在 `tasks/`
-  下建任务文件夹再动手：`tasks/<简短任务名>/`（目录名就是桌面上显示的任务名，
-  用中文或短横线英文都行）。该任务的**全部产出放进这个文件夹**。
-- 任务的 deck 就是 `tasks/<任务名>/canvas.html` —— 起手模板照旧（Read
-  canvas.template.html 后改写），只是落点在任务文件夹里。桌面会自动为每个
-  任务生成工作区分区并把文件夹里的产物摆进去，deck 实时内嵌渲染。
-- **会话与任务解绑**：一个对话里可以先后开多个任务文件夹；聊天只是交流通道，
-  产出的家在任务文件夹。追问 / 修改某任务时直接改它文件夹里的文件。
-- 闲聊、咨询、小改动不需要建任务；cwd 根下的 `canvas.html` 旧式单 deck 流程
-  仍然有效（历史会话都是这个形态），但**新的成型工作一律走任务文件夹**。
+- 产出型工作（做 deck / 一组图 / 方案）先建 `tasks/<简短任务名>/` 再动手，
+  该任务的全部产出放这个文件夹。目录名就是桌面上的任务名。
+- **一个会话只服务一个任务**：第一次往 `tasks/<任务名>/` 写东西时系统把任务和
+  当前会话绑定，用户点进任务就是回到这次对话，退出任务就是退出这次对话。
+  别在同一个会话里另起第二个任务；用户提无关的新产出，让他开新对话。
+- **一个任务可以有多份 deck**：`canvas.html` 是主 deck（成品），同目录下其他
+  `<名字>.html` 是试作 / 备选，一样会在任务区里渲染成可预览的 deck 卡。
+  风格原型探索阶段就该这么用：`proto-暖调.html` / `proto-冷调.html` 并排给用户挑，
+  定下来之后把选中的那版铺成 `canvas.html`。
+- 闲聊、咨询、小改动不用建任务；cwd 根下的旧式 `canvas.html` 流程仍然有效。
 
 对你意味着什么：
 
-- **你生成的产物自动上墙**：generate_image 落的图自动出现在当前任务的工作区，
-  正常产出不需要任何额外动作。
-- **灵感便签**：想帮用户留下灵感 / 方向 / 约束草稿时，往 `assets/notes/` 写一个
-  markdown 文件即可（文件名 kebab-case 简短），它会以便签卡出现在画布上。
-  开头加 frontmatter 归入当前工作区（sid = cwd 目录名，`pwd` 可见）：
-  `---\nsession: <sid>\n---`。不加就落在画布公共区。
-- **`pin_to_board` 工具**：把**已有**内容主动摆进某个工作区 —— 拉参考素材 /
-  品牌档案到当前任务旁边、用户要求"把那张图放回来"时用。自己刚生成的东西
-  不需要 pin（已自动上墙）。
-- 用户把画布物件「＋加入上下文」后，它会作为附件出现在你下一条消息里 ——
-  这是用户"指着某个东西跟你说话"的方式。
+- 你生成的产物自动上墙，正常产出不需要额外动作。
+- `preview_deck` 把某份 deck 摊到用户眼前（等于替他双击那张卡）。做完 / 用户说
+  "给我看看"时叫一次。
+- `pin_to_board` 把**已有**内容摆进当前任务区（拉参考素材、把旧图放回来）。
+- 用户把画布物件「＋加入上下文」后，它作为附件出现在你下一条消息里，这是他
+  "指着某个东西跟你说话"的方式。
 
 ---
 
-## AskUserQuestion 协议（NoDesign 自有约定）
+## AskUserQuestion
 
-> SDK preset `claude_code` 自带 AskUserQuestion 工具用法；本节是 NoDesign 项目对该工具的**额外约定**（特别是 `preview` 字段渲染方式），SDK preset 不含这部分。
+结构化候选（A/B/C、视觉方向、配色字体）走 AskUserQuestion，开放问题和 yes/no 走 chat 文本。
+NoDesign 对 `preview` 字段有自己的约定（图片 / HTML 片段两种形态、尺寸与写法限制）——
+**首次调用该工具时系统会注入完整协议**，按它写即可。
 
-### 何时用 AskUserQuestion vs chat 文本
+## NoDesign 业务 MCP 工具（`mcp__nodesign__<tool>`）
 
-**有结构化候选（A/B/C）时优先 AskUserQuestion**——用户看到带选项按钮的卡片，点一下就回到 agent，比让用户打字答效率高很多。
+常驻（schema 已在你的工具表里，直接调）：
+`screenshot_canvas`（截 deck，可 `pageIndex` / `detail`）· `list_pages` · `read_page` ·
+`query_elements` · `get_computed_styles` · `navigate_to_page` · `highlight` ·
+`preview_deck`（把 deck 摊到用户眼前）· `record_decision` ·
+`get_pending_changes` / `clear_pending_changes`
 
-| 场景 | 用什么 |
-|---|---|
-| 离散选择（A/B/C 三选一） | ✅ AskUserQuestion |
-| 视觉方向 / 配色 / 字体 / 排版风格分类 | ✅ AskUserQuestion + preview |
-| 用户给了 reference 但风格模糊 → 提供 2-3 个解读方向 | ✅ AskUserQuestion + preview |
-| 开放问题（"你喜欢什么色调？"） | ❌ chat 文本（用户更易具体回答） |
-| 简单 yes/no | ❌ chat 文本 |
-| 需要用户写一段说明 | ❌ chat 文本 |
+按需（只有名字在，用 `ToolSearch("select:mcp__nodesign__<tool>")` 拉 schema 再调）：
+`generate_image` · `remove_background` · `web_search` · `expose_tweaks` ·
+`export_handoff` · `request_plan_mode` · `pin_to_board`
 
-### 调用 schema
-
-```js
-{
-  questions: [
-    {
-      question: "<完整问题文本>",
-      header: "<≤12 字 chip 标签>",
-      options: [
-        { label: "<1-5 词>", description: "<一句话 trade-off>", preview: "<可选>" },
-        ...
-      ],
-      multiSelect: false,  // 默认 false；候选互不互斥时 true
-    }
-  ]
-}
-```
-
-单次调用 **1-4 个 question**，每个 question **2-4 个 option**。
-
-### 写好选项的诀窍
-
-- 选项要**互斥**（避免 "A" 和 "A 加一点 B" 这种边界模糊的对）
-- 每个 label 1-5 词 + 一句 description 解释 trade-off
-- 最多 4 选项，多了用户晕
-- **不要加 "Other / 其他"** —— 系统自动提供（SDK 默认行为）
-
-### `preview` 字段 — 选项要"看到"差异时给
-
-前端**自动检测内容形态**分派渲染（多模态 preview）：
-
-| preview 内容 | 渲染方式 | 适用场景 |
-|---|---|---|
-| `data:image/...;base64,XXX` | `<img>` 直接显 | 多变体并排选 cover/portrait（先 generate_image 出图再当 preview） |
-| `https://...` / `/api/.../assets/...` 以 .png/.jpg 结尾 | `<img>` 直接显 | 已有 asset path 直接当 preview |
-| `assets/generated/x.jpg` 相对路径 | `<img>` 直接显（fallback） | 同上简写 |
-| 含 `<...>` 像 HTML | sandbox iframe srcDoc | 视觉方向 / 配色 / 字体 / 排版（约束见下） |
-| 纯文本 | mono 字 fallback | 兜底 |
-
-**HTML preview 约束**（视觉方向 / 配色 / 字体 / 排版示意场景）：
-- 尺寸：240×140（前端 sandbox iframe 渲染区）
-- 内容：**HTML 片段，每个元素 `style="..."` 属性写样式**。⚠️ SDK validator 硬性拒 `<style>` 和 `<script>` 标签——只能 inline style 属性（"inline" 字面理解：写在 element 里，不是 `<style>` 块）。也不能含 `<html>` / `<body>` / `<!doctype>` 等完整文档标签，纯 fragment。
-- 体积：≤ 5KB（超出会被截断）
-- 用途：让用户视觉对比 4 个选项的差异（主色 + 字体方向 + 排版示意），不是渲染完整页面
-
-**典型 HTML preview 范例**（240×140 配色 + 字体方向，全 inline style）：
-
-```html
-<div style="background: #f9f8f6; padding: 12px; font-family: 'Lyon Display', 'Songti SC', 'Noto Serif SC', serif; color: #2d2418;">
-  <h1 style="font-size: 28px; font-weight: 600; margin: 0 0 8px; letter-spacing: -0.02em;">Cover</h1>
-  <p style="font-size: 11px; color: #c45c3f; margin: 0;">warm cream + cherry accent + serif</p>
-</div>
-```
-
-字体 chain 4 段式（latin → 苹果 CJK → Noto CJK → generic）跟真 deck 同款规则——只是从 `<style>` 块挪到每个元素的 `style` 属性里。
-
-### 何时用 image preview vs HTML preview vs 不带 preview
-
-- **image preview**（base64 / asset path）：多张候选图选哪张（cover / portrait / decoration）→ 先 generate_image 出 3 变体，每个 option 的 preview 字段贴对应图
-- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 → 每个元素 `style="..."` 属性演示主色 / 字体 / 排版差异（**别用 `<style>` 块、`<script>`、`<html>`/`<body>`——SDK validator 拒**）
-- **不带 preview**：离散文字决策（yes/no, deck-kind 选择, 是否需要 PDF）→ 选项标签足够说明
-
----
-
-## NoDesign 业务 MCP 工具速查（18 个）
-
-> 调用名一律 `mcp__nodesign__<tool>`。高频工具（截图 / 读页 / pending changes 等）
-> schema 常驻可直接调；**generate_image / web_search / remove_background /
-> expose_tweaks / export_handoff / request_plan_mode / pin_to_board 是延迟加载** —— 调用前先
-> `ToolSearch("select:mcp__nodesign__<tool>")` 取 schema（要用几个就一次
-> select 逗号并列，别一个一个取）。
-> 详细工具决策（WHEN to use）见 SKILL.md；本表只列 HOW 一行速记。
-
-| 工具 | 一句话 | 核心入参 |
-|---|---|---|
-| `screenshot_canvas` | 截 deck PNG（playwright 真渲染）；任务 deck 传 `path: "tasks/<任务>/canvas.html"` | `path?`（默认旧式 cwd canvas.html）/ `viewport?` / `fullPage?` / `selector?` / `pageIndex?` |
-| `list_pages` | 扫所有 `<section data-page>` 返每页 1 行摘要 | 无参 |
-| `read_page` | 按 `pageIndex` 切片返该页 outerHTML（hybrid 文件还会附 React mount 源段） | `pageIndex` |
-| `query_elements` | CSS selector 一次查全部匹配元素，返 anchor + bbox + text | `selector` / `pageIndex?` / `max?` |
-| `get_computed_styles` | `getComputedStyle()` 真值（不是 stylesheet 原声明） | `selector` / `props?` |
-| `navigate_to_page` | emit 事件让前端 canvas 切到 page N | `index` |
-| `highlight` | pulse 动画短暂高亮匹配元素（不改 DOM） | `selector` / `durationMs?` |
-| `expose_tweaks` | 暴露 5-8 个可调维度的 schema → 前端渲控件（**首调时 hook 会注完整语法**） | `controls: [{...}]` / `replace?` |
-| `record_decision` | 写入 spec.json decisions[]，跨 session 持久化 | `title` / `rationale` |
-| `get_pending_changes` | 拉用户在 canvas 上的双击改字 / 评论 buffer | 无参 |
-| `clear_pending_changes` | 处理完清 buffer（不清下个 turn 又见同样变更） | `ids?`（不传清全部） |
-| `export_handoff` | 打 zip（canvas + spec + assets + chat history + README）到 `./exports/` | 无参 |
-| `web_search` | 4 provider 路由（baidu/tavily/exa/zhipu），auto 路由 CJK→baidu；`include_images=true` 返结果含 N 个 image content block，turn 内直接 vision-check 不必再 Read | `query` / `provider?` / `include_images?` |
-| `generate_image` | 调 Gemini 3.1 Flash Image Preview（Nano Banana 2）生图（**首调时 hook 会注完整 cookbook**） | `prompt` / `aspectRatio?` / `imageSize?` / `referenceImages?` / `assetRole?` / `outputName?` |
-| `remove_background` | rembg BiRefNet 抠掉任意 workspace 图片的背景，输出 RGBA PNG（三档全开 alpha matting；server 启动时常驻 python service warm 缓存 onnxruntime session，warm 时间：fast ~5-10s / balanced ~10-20s / best ~20-40s）。NB2 模型本身不支持透明，主题色跟 NB2 默底冲突 / 想叠合时按需调 | `inputPath` / `outputName?` / `overwrite?` / `quality?: 'fast' \| 'balanced'(default) \| 'best'` |
-| `request_plan_mode` | agent 主动请求进 SDK plan mode（前端弹横幅给用户 yes/no） | `reason` / `estimatedPages?` / `taskKind?` |
-| `pin_to_board` | 把已有产物 / 文档 / deck 摆进某 session 的工作台工作区（自己刚生成的不用 pin，自动上墙） | `path` / `zone?` |
-
-> **Thumbnail 提示**：`list_pages` / `read_page` 返结果含 `assets/generated/<n>.<ext>` 引用时，preview iframe 加载的是 `.thumbnails/*.thumb.jpg` 快照（`/api/canvas` GET 透明改写），返回的 outerHTML 中 src 是真实路径（同 `Read canvas.html`）。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即可见最新。
-
-**`web_search` 配额（单 turn 上限）**：baidu 中文 ≤2、tavily ≤3、exa ≤2。Query 加年份词（2025/2026）。**英文 query 走 tavily 而非 baidu**（baidu 英文实测严重跑题）。
-
-**Search-first 软规则**：拿到首条 brief 时先判断要不要搜——主题/品牌/产品/最新事件类**默认搜 1-2 次**，纯创作 / 已有 outline 才跳。详见 SKILL.md § 钉锚的手段。
-
-**`WebFetch`（SDK 内置）配合 web_search**：`{ url, prompt }` —— 取 URL 后用 prompt 总结，不灌完整 HTML 到 context。多页 fetch 派给 explorer 子代理。
-
----
+胖工具（生图 cookbook / tweaks 语法）在首次调用时由系统注入用法，不用先背。
 
 ## HTML 产物的 agentic 标记
 
@@ -297,17 +192,6 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 - 你写 hybrid HTML 时，复杂组件页**必须用** `<div data-react-mount="xxx">` 包裹 mount point
 - 用户对 React mount 内容的修改诉求 → 走评论 → 你看到 comment 改源码（chat 模式）
 - 静态 section 仍可双击编辑
-
-### DirectEdit 常见 anti-pattern
-
-agent 容易在 pending changes 流程上犯的 4 类错（每条都让用户体感"agent 没看到我的改动"）：
-
-- **跳过 get_pending_changes 直接回应** — 看到 system 提示但忽略，丢掉用户在 canvas 上的全部 edit / comment / 拖移上下文，回应跟用户的实际操作脱节
-- **处理完忘记 clear_pending_changes** — 下个 turn 仍见到同样的 changes 重复处理一遍，浪费 turn + 让用户困惑"我刚不是改过了"
-- **把 edit 当 comment 处理** — edit 是用户已经手动 done deal（contenteditable blur 已 PUT 文件），把它"按指令再改回去"等于 revert 用户操作
-- **pending-move 当成 comment "建议" 处理** —— pending-move 是**结构化操作意图**不是建议。用户已经"在画布上看见东西搬到新位置了"（前端运行时改了 DOM 但没碰源码），你必须按 `anchor.dataId` 真的把 source 段从 canvas.html 剪走插到 target 容器去；不照做下次 iframe reload 视觉跳回，用户体感"我拖了等于没拖"
-
----
 
 ## 文件改动工作流
 

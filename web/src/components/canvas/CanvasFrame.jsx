@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { Assets } from '../../lib/api.js';
-import BoardToolbar from './BoardToolbar.jsx';
 import BoardCanvas from './BoardCanvas.jsx';
 
 // 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
@@ -11,7 +10,8 @@ const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
  *
  * 工作台（桌面）是唯一顶层曲面，"模式"概念退役：
- *   - 桌面（BoardCanvas）永远渲染，全局工具槽只有画布控制（BoardToolbar）
+ *   - 桌面（BoardCanvas）永远渲染；画布层级（项目区 / 工作区）并进顶栏面包屑，
+ *     画布自己不再有工具条（2026-07-28）
  *   - 编辑 deck = 在桌面上开一扇最大化窗口（DeckWindow）：铺满视口绝大部分、
  *     桌面压暗在底、窗口头部自带 Edit/Drag/Preview/Code 标签 + 关闭钮，
  *     关掉落回画布的内嵌预览态
@@ -49,6 +49,7 @@ export default function CanvasFrame({
   artifactRefreshToken,
   boardVersion,
   boardUi = null,
+  boardApiRef: boardApiRefProp = null,
   onBoardUiState,
   stageRef = null,
 }) {
@@ -56,8 +57,9 @@ export default function CanvasFrame({
   const [deckOpen, setDeckOpen] = useState(false);
   const [deckTab, setDeckTab] = useState('edit');
   const [deckTaskSrc, setDeckTaskSrc] = useState(null);
-  // BoardCanvas 经 apiRef 暴露操作给 BoardToolbar
-  const boardApiRef = useRef(null);
+  // BoardCanvas 经 apiRef 暴露操作（顶栏面包屑 / 刷新用；外面给了就用外面那个）
+  const ownBoardApiRef = useRef(null);
+  const boardApiRef = boardApiRefProp || ownBoardApiRef;
   // ✏️ 跨会话编辑：切会话后再开窗（同会话的 ✏️ 直接 openDeck）
   const editNavRef = useRef(false);
   useEffect(() => {
@@ -84,7 +86,7 @@ export default function CanvasFrame({
 
   // 任务 deck 的 htmlSrc：直接走 artifact-file（tasks/<任务>/canvas.html）
   const deckHtmlSrc = deckTaskSrc
-    ? `${Assets.artifactFileUrl(projectId, `tasks/${deckTaskSrc.task}/canvas.html`)}?v=${artifactRefreshToken || 0}`
+    ? `${Assets.artifactFileUrl(projectId, `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`)}?v=${artifactRefreshToken || 0}`
     : htmlSrc;
 
   return (
@@ -94,8 +96,6 @@ export default function CanvasFrame({
       background: '#fff',
       overflow: 'hidden',
     }}>
-      <BoardToolbar board={{ ui: boardUi, api: boardApiRef }} />
-
       <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
         <BoardCanvas
           projectId={projectId}
@@ -108,6 +108,7 @@ export default function CanvasFrame({
           stageRef={stageRef}
           onEditNav={() => { editNavRef.current = true; }}
           onFocusDeck={openDeck}
+          deckOpen={deckOpen}
         />
 
         {deckOpen && (sessionId || deckTaskSrc) && (

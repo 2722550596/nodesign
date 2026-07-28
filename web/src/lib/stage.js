@@ -46,11 +46,38 @@ export function resolveObjectId(filePath, currentSessionId) {
   if (p.endsWith('agent-memory/memory.md')) return 'doc:_root';
   // 任务模型：tasks/<任务>/canvas.html = 任务 deck；其余任务文件用完整相对路径当 id
   const mt = p.match(/(?:^|\/)tasks\/([^/]+)\/(.+)$/);
-  if (mt) return mt[2] === 'canvas.html' ? `deck:task/${mt[1]}` : `tasks/${mt[1]}/${mt[2]}`;
+  if (mt) {
+    if (mt[2] === 'canvas.html') return `deck:task/${mt[1]}`;
+    // 任务下的其他 .html = 试作 deck（同样是 deck 物件，不是普通文件卡）
+    if (/\.html$/i.test(mt[2]) && !mt[2].includes('/')) return `deck:task/${mt[1]}/${mt[2]}`;
+    return `tasks/${mt[1]}/${mt[2]}`;
+  }
   if (DECK_FILES.has(fileNameOf(p)) && currentSessionId) return `deck:${currentSessionId}`;
   const m = p.match(/(?:^|\/)assets\/(.+)$/);
   if (m) return `assets/${m[1]}`;
   return null;
+}
+
+/**
+ * 物件 id → 它天然属于哪块工作区（与 BoardCanvas 的 naturalZoneOf 同一套规则）。
+ *
+ * 舞台卡的落点用它兜底：物件还没上墙（新文件正在写，产物列表下一次重拉才知道
+ * 它存在）时，卡至少能贴到正确的工作区，而不是掉进屏幕底部的 dock。
+ */
+export function zoneOfObjectId(objectId, currentSessionId) {
+  if (!objectId || typeof objectId !== 'string') return null;
+  if (objectId.startsWith('deck:task/')) {
+    // deck:task/<任务> 或 deck:task/<任务>/<试作文件>
+    const rest = objectId.slice(10);
+    return `task/${rest.split('/')[0]}`;
+  }
+  if (objectId.startsWith('deck:')) return objectId.slice(5);
+  if (objectId.startsWith('doc:')) return null;
+  if (objectId.startsWith('tasks/')) {
+    const parts = objectId.split('/');
+    return parts.length >= 3 ? `task/${parts[1]}` : null;
+  }
+  return currentSessionId || null;
 }
 
 export function fileNameOf(filePath) {

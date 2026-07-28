@@ -10,14 +10,25 @@
 export const DESKTOP_W = 1360;
 export const MARGIN_X = 48;               // 桌面左右留白
 export const ZONE_GAP_Y = 28;             // 堆叠工作区之间的垂直间距
-export const FOLDER_CARD_H = 88;          // 收纳态文件夹卡占用的堆叠高度
+export const FOLDER_CARD_H = 60;          // 收纳态整宽窄条占用的堆叠高度
 export const DECK_EMBED_W = 640;          // deck 内嵌渲染宽度（1920 → 1/3 缩放）
 export const STAGE_CARD_W = 560;          // 舞台卡宽度（板内坐标系）
 
+// 项目区顶带（2026-07-28）：项目级四件套（记忆 / 指引 / 品牌 / 文件）常驻桌面顶部，
+// 工作区往下排。ProjectHub 那个二级页由此退役 —— 项目级东西回到同一张桌面上。
+export const PROJECT_BAND_Y = 16;
+export const PROJECT_CARD_W = 232;
+export const PROJECT_CARD_H = 84;
+export const PROJECT_BAND_H = PROJECT_CARD_H + 28;
+
 export const ZONE = {
-  w: 1120, h: 640, gap: 60, bandX: 320, bandY: 48, perRow: 3,
-  header: 40, pad: 16, cellW: 244, cellH: 210,
+  w: 1120, h: 640, gap: 60, bandX: 320, bandY: PROJECT_BAND_Y + PROJECT_BAND_H, perRow: 3,
+  header: 56, pad: 16, cellW: 244, cellH: 210,
 };
+
+// 工作区实际高度贴内容走（ZONE.h 只是创建时的估算矩形）；这是空区的最小身位：
+// 标题栏 + 一格边距 + 够接住一次拖放的空地。空工作区不再占大半屏空画幅。
+export const ZONE_MIN_H = ZONE.header + ZONE.pad * 2 + 120;
 
 export const SIZES = {
   doc:   { w: 200, h: 96 },

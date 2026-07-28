@@ -673,7 +673,7 @@ export async function runSession({
       askUserQuestion: { previewFormat: 'html' },
     },
 
-    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot }),
+    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId }),
 
     mcpServers: {
       nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx }),

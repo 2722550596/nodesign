@@ -319,6 +319,10 @@ export const Events = {
   // （SlideNavigator setActivePage / iframe 内 scrollIntoView section[data-page="N"]）
   canvasNavigate: (page) => ({ type: 'run.canvas_navigate', page }),
 
+  // preview_deck 工具触发：前端把这张 deck 卡"替用户双击一下"
+  //（收起态→内嵌渲染；已展开→画布内最大化窗）。path 为 null = 当前会话的 deck
+  deckPreview: (filePath) => ({ type: 'run.deck_preview', path: filePath || null }),
+
   // highlight 工具触发，前端在 InspectFloatingCard 同层挂 pulse overlay
   canvasHighlight: (selector, durationMs = 1500) => ({
     type: 'run.canvas_highlight', selector, durationMs,

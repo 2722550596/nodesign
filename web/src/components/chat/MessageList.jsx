@@ -2,7 +2,9 @@ import { useMemo, useRef } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import Message from './Message.jsx';
 import TimelineGroup from './TimelineGroup.jsx';
-import { COLOR, GAP, FONT_SANS, FONT_SIZE } from '../../lib/theme.js';
+import { History } from 'lucide-react';
+import { COLOR, GAP, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * groupMessages —— thinking + tool 进 timeline group；中间穿插的 assistant
@@ -99,28 +101,14 @@ export default function MessageList({
   projectId,
   sessionId,
   onCanvasReload,
+  onOpenSessionList,
 }) {
   const virtuosoRef = useRef(null);
   const groups = useMemo(() => groupMessages(messages, isStreaming), [messages, isStreaming]);
 
   // 空态：没有 message 时不渲染 Virtuoso（避免 height 0 时它的内部测量警告）
   if (messages.length === 0) {
-    return (
-      <div style={{
-        flex: 1,
-        minHeight: 0,
-        overflow: 'auto',
-        padding: GAP.page,
-        textAlign: 'center',
-        fontFamily: FONT_SANS,
-        fontSize: FONT_SIZE.sm,
-        color: COLOR.sub,
-        lineHeight: 1.6,
-      }}>
-        输入 brief 开始 ——<br />
-        描述你想做什么、给谁看、传达什么。
-      </div>
-    );
+    return <EmptyState onOpenSessionList={onOpenSessionList} />;
   }
 
   return (
@@ -136,5 +124,80 @@ export default function MessageList({
         ? <TimelineGroup messages={g.items} closed={g.closed} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />
         : <Message message={g.message} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />}
     />
+  );
+}
+
+
+// ── 空态（2026-07-28）：新对话时左栏不再只有一行提示 ──
+//
+// 三件事讲清楚：怎么开头（可点的起手式，点了填进输入框）、agent 在这儿能干什么、
+// 之前的对话去哪找。文案克制，不做成说明书。
+const STARTERS = [
+  '做一份产品介绍演示文稿，给投资人看',
+  '把这组图排成一张竖版海报',
+  '梳理一下项目的视觉风格，写进品牌档案',
+];
+
+function EmptyState({ onOpenSessionList }) {
+  const setChatDraft = useGlobalStore(s => s.setChatDraft);
+  return (
+    <div style={{
+      flex: 1, minHeight: 0, overflow: 'auto',
+      padding: `${GAP.xxl}px ${GAP.lg}px`,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.lg,
+      fontFamily: FONT_SANS, color: COLOR.sub, textAlign: 'center',
+    }}>
+      <div style={{ fontSize: FONT_SIZE.sm, lineHeight: 1.7 }}>
+        输入 brief 开始<br />
+        描述你想做什么、给谁看、传达什么。
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', maxWidth: 300 }}>
+        {STARTERS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setChatDraft(t)}
+            title="填进输入框，可以改了再发"
+            style={{
+              textAlign: 'left',
+              padding: `${GAP.sm}px ${GAP.md}px`,
+              border: `1px solid ${COLOR.borderLt}`,
+              borderRadius: 8,
+              background: '#fff',
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
+              cursor: 'pointer', lineHeight: 1.5,
+              transition: 'background 0.15s, border-color 0.15s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.03)'; e.currentTarget.style.borderColor = COLOR.borderHv; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = COLOR.borderLt; }}
+          >{t}</button>
+        ))}
+      </div>
+
+      <div style={{
+        maxWidth: 300, fontSize: 11, lineHeight: 1.7, color: COLOR.sub,
+        borderTop: `1px solid ${COLOR.borderLt}`, paddingTop: GAP.md,
+      }}>
+        agent 会在项目里建一个任务文件夹放产出，写的每一步都在右边画布上实时演。
+        它能生成图片、联网查资料、自己截图检查排版、按元素微调。
+      </div>
+
+      {onOpenSessionList && (
+        <button
+          onClick={onOpenSessionList}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: `${GAP.xs}px ${GAP.md}px`,
+            border: 'none', background: 'transparent',
+            fontFamily: FONT_MONO, fontSize: 11, color: COLOR.text2,
+            cursor: 'pointer', borderRadius: 6,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <History size={12} /> 之前的对话都在这
+        </button>
+      )}
+    </div>
   );
 }

@@ -11,6 +11,7 @@ import CommentOverview from './CommentOverview.jsx';
 import CommentMarkers from './CommentMarkers.jsx';
 import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
 import GrabHandle from './GrabHandle.jsx';
+import PagePager from './PagePager.jsx';
 import PostDragNotePanel from './PostDragNotePanel.jsx';
 import PendingEditsBar from './PendingEditsBar.jsx';
 import PendingMoveMarkers from './PendingMoveMarkers.jsx';
@@ -331,6 +332,8 @@ export default function DeckWindow({
               iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
               zoom={effectiveZoom}
             />
+            {/* 预览态左右翻页（2026-07-28）：看成品就该像看幻灯片一样翻 */}
+            <PagePager iframeDoc={iframeDoc} active={tab === 'preview'} />
             <GrabHandle
               active={tab === 'drag' && !isDragging}
               iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}

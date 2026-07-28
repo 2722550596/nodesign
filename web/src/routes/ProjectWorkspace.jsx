@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Share2, Download, MoreHorizontal, FoldVertical } from 'lucide-react';
+import { Share2, Download, MoreHorizontal, FoldVertical, RotateCcw } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 // 主区两栏固定（左 chat + 右 canvas 占满）；5 个次级 UI = 浮窗 bounds=parent
 // 限制在 canvas section 内（chat / canvas 不再可拖动 — PLAN.md:431 旧决策回归）。
@@ -42,7 +42,8 @@ import { reduceChatEvent, clearThinkingStreaming, mergeLiveTurnSnapshot, mergeHy
 // 舞台旁路消费的事件（转发进 BoardCanvas 的 stageRef，见 handleEvent 管线 1 段）
 const STAGE_EVENTS = new Set([
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
-  'run.delta.tool_result', 'run.file_changed', 'run.done', 'run.error', 'run.cancelled',
+  'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
+  'run.done', 'run.error', 'run.cancelled',
 ]);
 // 聊天流折叠事件（lib/chat-stream.js reducer 接管，见管线 2 段）
 const CHAT_STREAM_EVENTS = new Set([
@@ -110,6 +111,8 @@ export default function ProjectWorkspace() {
   const [boardVersion, setBoardVersion] = useState(0);
   // 工作台 UI 态（BoardCanvas 上报）：工具栏 + 会话栏聚焦条共同消费
   const [boardUi, setBoardUi] = useState(null);
+  // 画布操作句柄（顶栏面包屑退回项目区 / 刷新产物墙都从这里走）
+  const boardApiRef = useRef(null);
   // 舞台层（2026-07-28）：run.* 工具流原样转发进 BoardCanvas，画布演出 agent 实时动作
   const stageRef = useRef(null);
   // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
@@ -650,6 +653,7 @@ export default function ProjectWorkspace() {
         setTodos(Array.isArray(evt.todos) ? evt.todos : []);
         break;
       case 'run.done': {
+        dropPendingCompactCard();
         // Phase A.5：用 ref 拿最新 currentRunId（handleEvent 闭包持的 currentRunId
         // 可能 stale）。stale run.done（WS 重放 / 后端慢推上一 turn 的 result）来时
         // 如果当前已是新 turn，不能清 state（会让用户的新 turn 假死）。
@@ -695,6 +699,7 @@ export default function ProjectWorkspace() {
         }
         break;
       case 'run.error': {
+        dropPendingCompactCard();
         // Phase A.5：stale event guard，同 run.done
         const liveRunId = currentRunIdRef.current;
         if (liveRunId && evt.runId && evt.runId !== liveRunId) {
@@ -716,6 +721,7 @@ export default function ProjectWorkspace() {
         break;
       }
       case 'run.cancelled': {
+        dropPendingCompactCard();
         // Phase A.5：stale event guard，同 run.done
         const liveRunId = currentRunIdRef.current;
         if (liveRunId && evt.runId && evt.runId !== liveRunId) {
@@ -765,7 +771,8 @@ export default function ProjectWorkspace() {
         if (evt.status === 'thinking') {
           setThinkingTokens(evt.tokens || 0);
         } else if (evt.status === 'compacting') {
-          showToast('正在压缩上下文...', 'info');
+          // SDK 自动压缩也走这条（手动 /compact 已在 handleCompact 里插过卡，这里幂等覆盖）
+          upsertCompactCard('正在压缩上下文…\n历史会换成一份摘要，产物、任务文件和档案都不受影响。', true);
         }
         break;
 
@@ -1022,6 +1029,7 @@ export default function ProjectWorkspace() {
           msg = `上下文已${trigger}压缩 ${preK}k → ${postK}k tokens`;
         }
         showToast(msg, 'info');
+        upsertCompactCard(`${msg}。历史已换成摘要，产物和档案不受影响。`, false);
         // reset 预警 flag，下一段再次接近阈值时可以重新提示
         compactWarnedRef.current = false;
         break;
@@ -1270,6 +1278,29 @@ export default function ProjectWorkspace() {
 
   /** 手动压缩上下文：raw 模式发 /compact 斜杠命令直达 SDK（跳过消息装饰，
       多包一层 system 注入 SDK 就不认命令了）。压缩过程走正常 run 生命周期。 */
+  /**
+   * 压缩提示卡（2026-07-28）：固定 id 的 system 消息，进行中转圈、结束换结果，
+   * run 收尾时如果还挂着（压缩失败 / 没走到 boundary）就撤掉，不留一个转不停的圈。
+   */
+  // 注意：函数声明不是 hook —— 组件里有 loading / 未找到两处早返，
+  // 用 useCallback 写在早返之后会让两次 render 的 hook 数不一致（React #310 白屏）。
+  function upsertCompactCard(content, pending) {
+    setMessages(prev => {
+      const card = { id: 'compacting', role: 'system', variant: 'info', content, pending };
+      const idx = prev.findIndex(m => m.id === 'compacting');
+      if (idx === -1) return [...prev, card];
+      const next = [...prev];
+      next[idx] = card;
+      return next;
+    });
+  }
+
+  function dropPendingCompactCard() {
+    setMessages(prev => (prev.some(m => m.id === 'compacting' && m.pending)
+      ? prev.filter(m => m.id !== 'compacting')
+      : prev));
+  }
+
   const handleCompact = async () => {
     if (!currentSessionId || isStreaming) return;
     try {
@@ -1277,7 +1308,8 @@ export default function ProjectWorkspace() {
       setCurrentRunId(r.runId);
       setActiveRun({ runId: r.runId });
       setIsStreaming(true);
-      showToast('开始压缩上下文（历史将被摘要替换，产物和档案不受影响）', 'info');
+      // 左栏插一张进行中的卡：压缩要跑十几秒，只给一条 toast 用户会以为卡住了
+      upsertCompactCard('正在压缩上下文…\n历史会换成一份摘要，产物、任务文件和档案都不受影响。', true);
     } catch (err) {
       showToast(`压缩失败：${err.message}`, 'error');
     }
@@ -1575,14 +1607,29 @@ export default function ProjectWorkspace() {
     <AppShell
       breadcrumb={[
         { label: '项目', to: '/' },
-        { label: project.name, to: `/projects/${id}` },
-        { label: currentSessionTitle || '新会话' },
+        // 项目名这一级就是项目区（点它 = 退回全景），不再单列一个「项目区」——
+        // 两个标签指向同一个地方，重复。在工作区里时它可点，已经在项目区时是当前位置。
+        boardUi?.focus
+          ? {
+              label: project.name,
+              onClick: () => boardApiRef.current?.exitToProject(),
+              title: '退出任务，回到项目区（会话一起退出，ESC 同效）',
+            }
+          : { label: project.name, title: '项目区：记忆 / 指引 / 品牌 / 文件 + 全部工作区' },
+        ...(boardUi?.focus
+          ? [{ label: boardUi.focus.title, hint: `${boardUi.focus.count} 项` }]
+          : []),
       ]}
       actions={
         <>
           {(systemInfo || contextUsage) && (
             <ContextUsageBar info={systemInfo} liveUsage={contextUsage} />
           )}
+          <button
+            style={iconBtnStyle}
+            onClick={() => boardApiRef.current?.reload()}
+            title="刷新产物墙"
+          ><RotateCcw size={13} /></button>
           {currentSessionId && (
             <button
               style={{ ...iconBtnStyle, ...(isStreaming ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
@@ -1673,10 +1720,10 @@ export default function ProjectWorkspace() {
             onStop={currentRunId ? handleStop : null}
             todos={todos}
             sessionTitle={currentSessionTitle}
-            boardFocus={boardUi?.focus || null}
             subagents={subagents}
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
+            onNewChat={() => navigate(`/projects/${id}/work`)}
             hasActiveSession={!!currentSessionId}
             projectId={id}
             sessionId={currentSessionId}
@@ -1729,6 +1776,7 @@ export default function ProjectWorkspace() {
             artifactRefreshToken={reloadToken}
             boardVersion={boardVersion}
             boardUi={boardUi}
+            boardApiRef={boardApiRef}
             onBoardUiState={setBoardUi}
             stageRef={stageRef}
             onAddToContext={(item) => {

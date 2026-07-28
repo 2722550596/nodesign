@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, XCircle, Focus } from 'lucide-react';
+import { ChevronDown, XCircle, SquarePen, History } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import TodoPanel from './TodoPanel.jsx';
@@ -13,6 +13,15 @@ import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
  * S4：header 显示当前 session 标题（来自 SDK SDKSessionInfo.summary /
  * customTitle / firstPrompt），点击触发 SessionListModal 切换/fork/rename/tag/delete。
  */
+const headerBtn = {
+  display: 'inline-flex', alignItems: 'center', gap: 4,
+  padding: '3px 6px',
+  fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+  background: 'transparent', border: 'none', borderRadius: 4,
+  cursor: 'pointer', letterSpacing: '0.04em',
+  transition: 'background 0.15s, color 0.15s',
+};
+
 export default function ChatPanel({
   messages = [], onSend, isStreaming = false,
   queueDepth = 0,
@@ -25,10 +34,10 @@ export default function ChatPanel({
   onStop,
   todos,
   sessionTitle,
-  boardFocus = null,          // 工作台工作视图聚焦的工作区 { id, title, count, isSession }
   subagents = {},             // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
+  onNewChat,                 // 开新对话（原画布工具槽的"新任务"，本质是对话通道操作）
   hasActiveSession = false,  // 有 currentSessionId 才显示"结束会话"入口
   projectId,                   // Phase B 批次 2：rewindFiles 走 /api/projects/:pid/sessions/:sid/rewind
   sessionId,
@@ -77,26 +86,36 @@ export default function ChatPanel({
         alignItems: 'center',
         gap: GAP.md,
       }}>
+        {/* 会话切换器：原来是一行裸标题，看不出能点。2026-07-28 做成带框的
+            下拉块（历史图标 + 标题 + ⌄），一眼看出"对话历史从这进" */}
         <button
           onClick={onOpenSessionList}
           disabled={!onOpenSessionList}
-          title={onOpenSessionList ? '切换 / 管理会话' : ''}
+          title={onOpenSessionList ? '切换会话 / 翻历史对话（重命名、复刻、删除也在这）' : ''}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             padding: `${GAP.xs}px ${GAP.sm}px`,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
             color: COLOR.text,
             background: 'transparent',
-            border: 'none',
-            borderRadius: 4,
+            border: `1px solid ${COLOR.borderLt}`,
+            borderRadius: 6,
             cursor: onOpenSessionList ? 'pointer' : 'default',
             maxWidth: '60%',
             minWidth: 0,
-            transition: 'background 0.15s',
+            transition: 'background 0.15s, border-color 0.15s',
           }}
-          onMouseEnter={e => { if (onOpenSessionList) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          onMouseEnter={e => {
+            if (!onOpenSessionList) return;
+            e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+            e.currentTarget.style.borderColor = COLOR.borderHv;
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = 'transparent';
+            e.currentTarget.style.borderColor = COLOR.borderLt;
+          }}
         >
+          <History size={11} strokeWidth={1.75} color={COLOR.sub} style={{ flexShrink: 0 }} />
           <span style={{
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             minWidth: 0,
@@ -133,6 +152,21 @@ export default function ChatPanel({
           </span>
         )}
 
+        {/* 开新对话：原来在画布工具槽叫"新任务"（名不副实——它开的是对话通道，
+            不是任务文件夹）。2026-07-28 挪到会话头，跟结束会话并排 */}
+        {hasActiveSession && onNewChat && (
+          <button
+            onClick={onNewChat}
+            title="开新对话（当前会话保留，随时从会话列表回来）"
+            style={headerBtn}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; e.currentTarget.style.color = COLOR.text2; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.sub; }}
+          >
+            <SquarePen size={12} strokeWidth={1.75} />
+            新对话
+          </button>
+        )}
+
         {/* 结束本会话：streamInput query 终结 + URL 跳回 /work（前端 state 由 effect reset）
             仅当有 active session 时显示，避免 /work 路径误触 */}
         {hasActiveSession && onCloseSession && (
@@ -163,24 +197,6 @@ export default function ChatPanel({
         )}
       </div>
 
-      {/* 工作台聚焦条：工作视图锁定某工作区时提示当前上下文场域。
-          session 工作区 = 对话就是它；自建文件夹 = 内容用画布「＋」带进来 */}
-      {boardFocus && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: `4px ${GAP.lg}px`,
-          borderBottom: `1px solid ${COLOR.borderLt}`,
-          background: 'rgba(176,140,79,0.07)',
-          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
-        }}>
-          <Focus size={10} style={{ flexShrink: 0 }} />
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            聚焦工作区：{boardFocus.title} · {boardFocus.count} 项
-            {!boardFocus.isSession && ' · 任务/收纳（内容用画布「＋」带进对话）'}
-          </span>
-        </div>
-      )}
-
       {/* 子代理时间轴 tabs：有子代理跑过才出现 */}
       {Object.keys(subagents).length > 0 && (
         <div style={{
@@ -205,6 +221,7 @@ export default function ChatPanel({
 
       <TodoPanel todos={todos} />
       <MessageList
+        onOpenSessionList={onOpenSessionList}
         messages={shownMessages}
         isStreaming={isStreaming}
         projectId={projectId}
