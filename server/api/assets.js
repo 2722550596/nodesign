@@ -85,7 +85,10 @@ router.get('/:pid/assets', async (req, res, next) => {
     const assets = [];
     for (const e of entries) {
       if (!e.isFile()) continue;
-      const stat = await fs.stat(path.join(assetsDir, e.name));
+      let stat;
+      try {
+        stat = await fs.stat(path.join(assetsDir, e.name));
+      } catch { continue; }   // 同上：单个文件读不到不该让整份列表失败
       assets.push({
         path: `../../shared/assets/${e.name}`,
         name: e.name,
@@ -166,7 +169,13 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         if (!e.isFile()) continue;
         if (e.name.startsWith('.')) continue;
         const ext = path.extname(e.name).toLowerCase();
-        const stat = await fs.stat(path.join(dir, e.name));
+        // agent 正在写的时候文件可能在 readdir 和 stat 之间消失（重写 / 改名）。
+        // 原来这里 stat 抛出会一路冒到路由 → 500 → 前端把画布清空。
+        // 单个文件读不到就跳过它，不能因此让整份清单失败。
+        let stat;
+        try {
+          stat = await fs.stat(path.join(dir, e.name));
+        } catch { continue; }
         const item = {
           kind,
           name: e.name,
@@ -220,7 +229,10 @@ router.get('/:pid/artifacts', async (req, res, next) => {
       for (const t of taskEntries) {
         if (!t.isDirectory() || t.name.startsWith('.')) continue;
         const tDir = path.join(tasksDir, t.name);
-        const tStat = await fs.stat(tDir);
+        let tStat;
+        try {
+          tStat = await fs.stat(tDir);
+        } catch { continue; }   // 任务目录扫到一半被删：跳过，别让整份清单 500
         // 任务=会话一对一：.nd-task.json 是 PostToolUse 落的归属标记
         const marker = await readTaskMarker(tDir);
         const boundSession = typeof marker?.sessionId === 'string' ? marker.sessionId : null;

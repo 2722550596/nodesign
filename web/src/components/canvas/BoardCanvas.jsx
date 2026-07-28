@@ -14,6 +14,7 @@ import {
 } from '../../lib/board-geometry.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
+import { versionOfFile, versionOfTask } from '../../lib/file-versions.js';
 import ProjectBand from './ProjectBand.jsx';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
@@ -50,7 +51,7 @@ const EXT_MIME = {
 };
 
 export default function BoardCanvas({
-  projectId, currentSessionId, refreshToken, boardVersion, onAddToContext, onFocusDeck,
+  projectId, currentSessionId, listVersion, fileVersions, boardVersion, onAddToContext, onFocusDeck,
   // 工具栏合并（2026-07-27）：画布自己不再渲工具条 —— 通过 apiRef 暴露操作、
   // onUiState 上报状态，控件统一画在外层 CanvasToolbar
   apiRef, onUiState,
@@ -119,20 +120,33 @@ export default function BoardCanvas({
   const [dragActive, setDragActive] = useState(false);
 
   // ── 数据加载 ──
+  /**
+   * 重拉产物清单。
+   *
+   * 两条铁律（2026-07-28 加，都是真出过事的）：
+   *   **失败保留旧值。** 原来是 `.catch(() => ({ artifacts: [] }))` —— 任何一次
+   *   瞬时失败都会把画布清空，用户看到的是"所有内容突然消失，必须刷新整页"。
+   *   拉不到就维持现状，宁可显示旧的也不能显示空的。
+   *
+   *   **过期响应丢弃。** 连续重载时先发的请求可能后到，回来就把新数据覆盖成旧的。
+   */
+  const reloadSeqRef = useRef(0);
   const reload = useCallback(async () => {
+    const seq = ++reloadSeqRef.current;
     const [a, s, m, b] = await Promise.all([
-      Assets.artifacts(projectId).catch(() => ({ artifacts: [] })),
-      Sessions.list(projectId, { limit: 30 }).catch(() => ({ sessions: [] })),
-      Memory.list(projectId).catch(() => ({ memory: [] })),
+      Assets.artifacts(projectId).catch(() => null),
+      Sessions.list(projectId, { limit: 30 }).catch(() => null),
+      Memory.list(projectId).catch(() => null),
       layoutLoadedRef.current ? Promise.resolve(null) : Assets.getBoard(projectId).catch(() => null),
     ]);
+    if (seq !== reloadSeqRef.current) return;   // 已经有更新的一轮在跑，这份作废
     // 项目区顶带的摘要（指引全文 / 文件数）—— 卡片本体点开时才加载完整数据
     Instruction.read(projectId).then(r => setGuideText(r?.content || '')).catch(() => {});
     Assets.list(projectId).then(r => setFileCount((r?.files || r?.assets || []).length)).catch(() => {});
-    setArtifacts(Array.isArray(a?.artifacts) ? a.artifacts : []);
-    setTasks(Array.isArray(a?.tasks) ? a.tasks : []);
-    setSessions(Array.isArray(s?.sessions) ? s.sessions : []);
-    setMemoryDocs(Array.isArray(m?.memory) ? m.memory : []);
+    if (Array.isArray(a?.artifacts)) setArtifacts(a.artifacts);
+    if (Array.isArray(a?.tasks)) setTasks(a.tasks);
+    if (Array.isArray(s?.sessions)) setSessions(s.sessions);
+    if (Array.isArray(m?.memory)) setMemoryDocs(m.memory);
     if (b?.board && !layoutLoadedRef.current) {
       layoutLoadedRef.current = true;
       setLayout(b.board.objects || {});
@@ -143,7 +157,9 @@ export default function BoardCanvas({
     }
   }, [projectId]);
 
-  useEffect(() => { reload(); }, [reload, refreshToken]);
+  // listVersion 是**去抖后**的清单版本（不是每笔工具调用都涨）。iframe 的重载
+  // 跟它无关 —— 那走各卡自己的 fileVersions，两件事从此分开。
+  useEffect(() => { reload(); }, [reload, listVersion]);
 
   // agent 改过画布（board.updated）→ 整份布局重拉，服务端为准
   useEffect(() => {
@@ -765,6 +781,17 @@ export default function BoardCanvas({
     }
   };
 
+  /**
+   * 拖到空白处 = 把物件从工作区里摘出来（写 `zone: ''`）。
+   *
+   * **2026-07-28 按用户要求停用。** 这条路径只改 board.json 的视觉归属，磁盘上
+   * 文件还在 `tasks/<任务>/` 里 —— 桌面说它不属于这个任务、文件系统说属于，两边
+   * 对不上。而且很容易误触：拖着挪个位置手一滑落到区外，物件就从任务里"跑"出来了。
+   *
+   * 拖进文件夹 / 拖进别的工作区仍然可用（那是明确意图）。要恢复改回 true。
+   */
+  const DRAG_OUT_DETACHES = false;
+
   const onPointerUp = () => {
     const d = dragRef.current;
     dragRef.current = null;
@@ -800,7 +827,7 @@ export default function BoardCanvas({
               patch.y = Math.max(0, hint.ghost.y);
             }
             if (Object.keys(patch).length) patchLayout(d.id, patch);
-          } else if (prevZone) {
+          } else if (prevZone && DRAG_OUT_DETACHES) {
             patchLayout(d.id, { zone: '' });
           }
         }
@@ -1350,7 +1377,7 @@ export default function BoardCanvas({
               o={o}
               projectId={projectId}
               currentSessionId={currentSessionId}
-              refreshToken={refreshToken}
+              fileVersions={fileVersions}
               added={addedPaths.has(o.id)}
               animateLayout={!dragActive}
               agentActive={ringObjects.has(o.id)}
@@ -1475,7 +1502,7 @@ export default function BoardCanvas({
 
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
 function BoardObject({
-  o, projectId, currentSessionId, refreshToken, added, animateLayout = false, agentActive = false,
+  o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onToggleExpand, onFocus,
 }) {
   const [hover, setHover] = useState(false);
@@ -1607,8 +1634,8 @@ function BoardObject({
             <iframe
               title={`deck-${o.task ? `task-${o.task}${o.isMainDeck === false ? `-${o.deckFile}` : ''}` : o.sid}`}
               src={o.task
-                ? `${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}?v=${refreshToken || 0}`
-                : Canvas.artifactUrl(projectId, o.sid, refreshToken)}
+                ? `${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}?v=${versionOfFile(fileVersions, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}`
+                : Canvas.artifactUrl(projectId, o.sid, versionOfFile(fileVersions, 'canvas.html'))}
               sandbox="allow-scripts allow-same-origin"
               style={{
                 width: 1920, height: 1080, border: 0,
@@ -1663,7 +1690,7 @@ function BoardObject({
                 站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿" */}
             <iframe
               title={`site-${o.task}`}
-              src={`${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.entry || 'index.html'}`)}?v=${refreshToken || 0}`}
+              src={`${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.entry || 'index.html'}`)}?v=${versionOfTask(fileVersions, o.task)}`}
               sandbox="allow-scripts allow-same-origin"
               style={{
                 width: SITE_VIEWPORTS[0].w,

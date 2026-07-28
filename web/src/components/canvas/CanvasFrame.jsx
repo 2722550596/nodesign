@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { Assets } from '../../lib/api.js';
+import { versionOfFile, versionOfTask } from '../../lib/file-versions.js';
 import BoardCanvas from './BoardCanvas.jsx';
 
 // 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
@@ -48,6 +49,7 @@ export default function CanvasFrame({
   isStreaming = false,
   onAddToContext,
   artifactRefreshToken,
+  fileVersions,
   boardVersion,
   boardUi = null,
   boardApiRef: boardApiRefProp = null,
@@ -96,8 +98,12 @@ export default function CanvasFrame({
   };
 
   // 任务 deck 的 htmlSrc：直接走 artifact-file（tasks/<任务>/canvas.html）
-  const deckHtmlSrc = deckTaskSrc
-    ? `${Assets.artifactFileUrl(projectId, `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`)}?v=${artifactRefreshToken || 0}`
+  // 版本按**这一份文件**取：同任务里的别的 deck 被改动时，这扇窗不该重载
+  const deckRelPathForSrc = deckTaskSrc
+    ? `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`
+    : null;
+  const deckHtmlSrc = deckRelPathForSrc
+    ? `${Assets.artifactFileUrl(projectId, deckRelPathForSrc)}?v=${versionOfFile(fileVersions, deckRelPathForSrc)}`
     : htmlSrc;
   // 用户在画布上直接改字时，改的是哪一份要跟着走 —— 不带路径会写回会话的
   // canvas.html，前端显示"已保存"而用户看的那份纹丝不动（2026-07-28）
@@ -119,7 +125,8 @@ export default function CanvasFrame({
         <BoardCanvas
           projectId={projectId}
           currentSessionId={sessionId}
-          refreshToken={artifactRefreshToken}
+          listVersion={artifactRefreshToken}
+          fileVersions={fileVersions}
           boardVersion={boardVersion}
           onAddToContext={onAddToContext}
           apiRef={boardApiRef}
@@ -180,7 +187,7 @@ export default function CanvasFrame({
               entry={siteSrc.entry}
               title={siteSrc.title}
               pages={siteSrc.pages}
-              refreshToken={artifactRefreshToken}
+              refreshToken={versionOfTask(fileVersions, siteSrc.task)}
               onClose={() => setSiteSrc(null)}
             />
           </Suspense>

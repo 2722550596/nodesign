@@ -39,6 +39,7 @@ import { Canvas, Turn, Assets, Exports, Sessions, PendingChanges } from '../lib/
 import { openProjectWS } from '../lib/ws-client.js';
 import { sessionMessagesToDisplay } from '../lib/session-to-messages.js';
 import { reduceChatEvent, clearThinkingStreaming, mergeLiveTurnSnapshot, mergeHydrated } from '../lib/chat-stream.js';
+import { bumpFileVersion, versionOfFile } from '../lib/file-versions.js';
 
 // 舞台旁路消费的事件（转发进 BoardCanvas 的 stageRef，见 handleEvent 管线 1 段）
 const STAGE_EVENTS = new Set([
@@ -107,7 +108,20 @@ export default function ProjectWorkspace() {
   const [lastEventAt, setLastEventAt] = useState(Date.now()); // 给 ChatPanel header dot 判断"在动 vs 静默"
   const [selectedAnchor, setSelectedAnchor] = useState(null);
   const [iframeDoc, setIframeDoc] = useState(null);
-  const [reloadToken, setReloadToken] = useState(0);
+  // 刷新粒度（2026-07-28 重做）：
+  //   fileVersions —— 按文件记版本，谁被改了只有谁的 iframe 换 ?v=
+  //   listVersion  —— 产物清单版本，去抖合并（agent 一轮几十笔工具调用，
+  //                   清单只需要在尘埃落定后重拉一次）
+  // 原来是一个全局 reloadToken 两件事一起干：多 deck 任务改一份会让全部 iframe
+  // 同时重载（整屏闪），而且每笔动作都重拉一次清单。
+  const [fileVersions, setFileVersions] = useState({});
+  const [listVersion, setListVersion] = useState(0);
+  const listBumpTimerRef = useRef(null);
+  const bumpListSoon = useCallback(() => {
+    if (listBumpTimerRef.current) clearTimeout(listBumpTimerRef.current);
+    listBumpTimerRef.current = setTimeout(() => setListVersion(v => v + 1), 500);
+  }, []);
+  useEffect(() => () => { if (listBumpTimerRef.current) clearTimeout(listBumpTimerRef.current); }, []);
   // agent 改画布布局（board.updated）→ bump，BoardCanvas 整份重拉 board.json
   const [boardVersion, setBoardVersion] = useState(0);
   // 工作台 UI 态（BoardCanvas 上报）：工具栏 + 会话栏聚焦条共同消费
@@ -698,9 +712,10 @@ export default function ProjectWorkspace() {
         useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 done → toggle 锁死
         // 收尾：清 thinking 流式光标（run 结束后最后一条 thinking 不该一直闪）
         setMessages(prev => clearThinkingStreaming(prev));
-        // 双保险：FileChanged hook（run.file_changed）应该已 bump 过 reloadToken
-        // 但万一 hook 不触发（如 SDK 边角问题），这里兜底再 bump 一次
-        setReloadToken(t => t + 1);
+        // 双保险：万一 PostToolUse 那一发没到（SDK 边角问题），收尾时补拉一次
+        // **清单**。不再无条件 bump 所有 iframe —— 没有文件变过就不该重载，
+        // 那正是"每次动作完都刷一次"的来源。
+        bumpListSoon();
         // Phase B 批次 5：SDK 用 haiku helper incrementally 更新 session summary
         // 落 JSONL，run.done 后 refetch 让 chat 头部 / 面包屑 title 反映最新总结。
         // 已有 sid 的场景立即刷；新建场景 handleSend 已即时 navigate 到 /sessions/<sid>。
@@ -717,13 +732,13 @@ export default function ProjectWorkspace() {
       }
       case 'run.file_changed':
         // 2026-07-28 起事件源=PostToolUse 直发（agent 每写完一笔就来一发）。
-        // html → deck iframe 即时 reload；assets/（生成图/便签）→ 产物墙即时重拉。
-        // 其他文件（spec.json / .git/*）忽略。
-        // 站点加进来之后 .css / .js 也必须算（2026-07-28）：agent 改一次样式表
-        // 不 bump token 的话 iframe 的 ?v= 不变，浏览器给缓存，用户看着"改了没反应"。
+        // 只给**被改的那个文件**记一笔版本：改哪份 deck 就只有那份 iframe 换 ?v=，
+        // 同任务里的其他 deck 纹丝不动（多 deck 任务整屏闪的根因）。
+        // 站点的 .css / .js 也算 —— 它们不自己渲染，但整站版本会跟着涨。
         if (typeof evt.filePath === 'string'
             && (/\.(html?|css|js)$/i.test(evt.filePath) || /(^|\/)assets\//.test(evt.filePath))) {
-          setReloadToken(t => t + 1);
+          setFileVersions(prev => bumpFileVersion(prev, evt.filePath));
+          bumpListSoon();   // 新文件要进产物墙，但去抖合并，不是每笔都拉
         }
         break;
       case 'run.error': {
@@ -1806,7 +1821,7 @@ export default function ProjectWorkspace() {
           background: '#fff',
         }}>
           <CanvasFrame
-            htmlSrc={currentSessionId ? Canvas.artifactUrl(id, currentSessionId, reloadToken) : null}
+            htmlSrc={currentSessionId ? Canvas.artifactUrl(id, currentSessionId, versionOfFile(fileVersions, 'canvas.html')) : null}
             selectedAnchor={selectedAnchor}
             onSelectChange={setSelectedAnchor}
             onTextEdit={handleTextEdit}
@@ -1839,7 +1854,8 @@ export default function ProjectWorkspace() {
             onClearAllPending={pendingEditsHook.clearAll}
             canUndoPending={pendingEditsHook.canUndo}
             isStreaming={isStreaming}
-            artifactRefreshToken={reloadToken}
+            artifactRefreshToken={listVersion}
+            fileVersions={fileVersions}
             boardVersion={boardVersion}
             boardUi={boardUi}
             boardApiRef={boardApiRef}
