@@ -394,6 +394,9 @@ export async function runSession({
         : process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
       CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
+      // auto-memory 强制开启分支（binary gate：DISABLE 置 falsy 值 = force on，
+      // 绕过 CLAUDE_CODE_SIMPLE 等后置门；前置门 U$/zl 若拦住则此招无效 → 走自建 B 计划）
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
       // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
       // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
       ENABLE_TOOL_SEARCH: 'true',
@@ -591,6 +594,15 @@ export async function runSession({
     // 详细因果链见 platform.js 的 skipWebFetchPreflight 注释
     settings: {
       skipWebFetchPreflight: platform.skipWebFetchPreflight,
+      // 项目 memory（2026-07-28 正式启用）：骑 SDK 原生 auto-memory ——
+      // 二级索引（MEMORY.md 常驻 + 主题文件按需召回）、召回监督器
+      // （run.memory_recall 前端已渲染）、auto-dream 后台固化全由 SDK 包办。
+      // ⚠️ 目录必须显式指到项目共享区：默认按 cwd 派生，而 cwd 是会话级的，
+      // 不指定则每个会话一座记忆孤岛；指定后全项目所有会话共享一套。
+      ...(sharedRoot ? {
+        autoMemoryEnabled: true,
+        autoMemoryDirectory: path.join(sharedRoot, 'agent-memory', 'auto'),
+      } : {}),
     },
 
     includePartialMessages: STREAMING_ENABLED,
