@@ -109,7 +109,11 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
   return {
     // ── P0+ stage 1（不动）──
 
-    // FileChanged → EventBus emit run.file_changed → 前端 reload iframe
+    // FileChanged → EventBus emit run.file_changed → 前端 reload iframe。
+    // ⚠️ 2026-07-28 实测：这是 watcher 型 hook，需要有 hook 先返回
+    // hookSpecificOutput.watchPaths 声明监听路径 watcher 才会启动 —— 我们从没
+    // 声明过，所以它一次都没触发过。注册保留（将来开 watcher 可覆盖 bash/子代理
+    // 写文件），实时刷新真正走下面 PostToolUse 的确定性直发。
     FileChanged: [{
       hooks: [makeFileChangedHandler({ ctx })],
     }],
@@ -204,6 +208,13 @@ export function createHooks({ ctx, workspaceRoot, projectId: _projectId } = {}) 
       {
         matcher: 'Edit|Write',
         hooks: [makePostToolUseEditWriteTrimHandler({ ctx })],
+      },
+      // 写完一笔立刻让前端应用（2026-07-28）：写文件系工具成功即从入参直发
+      // run.file_changed，deck iframe / 产物墙不再等 run.done 才刷新。
+      // （FileChanged watcher hook 从未真正触发过，见上方 FileChanged 注释）
+      {
+        matcher: 'Write|Edit|MultiEdit|NotebookEdit',
+        hooks: [makePostToolUseFileChangedEmitter({ ctx })],
       },
       // Canvas 焕新升级 S1d — Edit/Write canvas.html 时检测改动落在哪些 page →
       // emit run.canvas_focus_page（前端 SlideNavigator 跳页 + pulse 高亮）。
@@ -687,6 +698,30 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot }) {
  * input: PostToolUseHookInput (sdk.d.ts:1926)
  * output: PostToolUseHookSpecificOutput (sdk.d.ts:1938)
  */
+/**
+ * PostToolUse(写文件系工具) → 直发 run.file_changed（2026-07-28）。
+ *
+ * SDK 的 FileChanged hook 是 watcher 型（要先声明 watchPaths 才启动），实测从未
+ * 触发。这里走确定性路径：Write/Edit/MultiEdit/NotebookEdit 成功完成即从入参拿
+ * 路径发事件 —— agent 每写完一笔，前端立刻 reload iframe / 刷产物墙 / 打角标，
+ * 不再等 run.done。PostToolUse 只在工具成功后触发（失败走 PostToolUseFailure），
+ * 不会把写坏的半成品刷给用户。
+ */
+function makePostToolUseFileChangedEmitter({ ctx }) {
+  // eslint-disable-next-line no-unused-vars
+  return async (input, _toolUseId, _options) => {
+    try {
+      const t = input?.tool_input;
+      const filePath = typeof t?.file_path === 'string' ? t.file_path
+        : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
+      if (filePath) ctx.emit(Events.fileChanged(filePath, 'change'));
+    } catch (err) {
+      console.warn('[hooks/PostToolUse:file-changed] emit failed:', err.message);
+    }
+    return {};
+  };
+}
+
 function makePostToolUseEditWriteTrimHandler({ ctx }) {
   return async (input, _toolUseId, _options) => {
     try {

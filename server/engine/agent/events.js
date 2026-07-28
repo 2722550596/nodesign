@@ -14,6 +14,7 @@
  *   run.delta.text             { round, text }
  *   run.delta.thinking         { round, text }
  *   run.delta.tool_use         { round, blockId, name, input }
+ *   run.delta.tool_input       { round, blockId, name, filePath?, append?, done? }  Edit/Write 入参真流式（节流后的字段尾巴增量，工作台舞台层直播代码用）
  *   run.delta.tool_result      { round, blockId, name, ok, output?, error? }
  *   run.todo.updated           { todos }
  *   run.cancelled              { reason }
@@ -180,6 +181,9 @@ export const Events = {
   deltaText: (round, text) => ({ type: 'run.delta.text', round, text }),
   deltaThinking: (round, text) => ({ type: 'run.delta.thinking', round, text }),
   deltaToolUse: (round, blockId, name, input) => ({ type: 'run.delta.tool_use', round, blockId, name, input }),
+  // 真流式工具入参（2026-07-28）：patch = { filePath?, append?, done? }。
+  // append 是抽出字段（Edit.new_string / Write.content）相对上次的纯文本增量
+  deltaToolInput: (round, blockId, name, patch) => ({ type: 'run.delta.tool_input', round, blockId, name, ...patch }),
 
   // 工具 streaming 起点 —— SDK content_block_start (type: tool_use) 触发，
   // 只携 blockId + name，input 此时还没流完。让前端立刻显示 icon + 名字

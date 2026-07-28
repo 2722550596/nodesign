@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
+import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
 
 // NoDesign agent 通用 prelude —— append 在 SDK preset 'claude_code' 之后、
 // SKILL.md 之前。教 Claude Code 工具用法 + NoDesign 工作台共性约束（assets
@@ -100,8 +101,8 @@ const ARTIFACT_CANDIDATES = ['canvas.html', 'deck.html', 'index.html', 'output.h
 // P0+ s1 C24：流式打字效果（text / thinking 逐 token 推送）。
 // 跟 sdkOptions.includePartialMessages 同步 —— 我们默认开（前端要打字效果）。
 // 启用时 handleAssistantBlocks 跳过 text/thinking blocks（已经从 stream_event 推完，
-// 避免双推），但仍推 tool_use（stream_event 里 tool_use input 是 partial JSON delta
-// 不好用，等 assistant message 完整 block 来一次更省事）。
+// 避免双推），但仍推 tool_use 完整 block（run.delta.tool_use 是入参的权威快照；
+// Edit/Write 另有节流的 run.delta.tool_input 真流式增量，见 handleStreamEvent）。
 export const STREAMING_ENABLED = true;
 
 /**
@@ -366,8 +367,8 @@ function handleAssistantBlocks(ctx, content, skipTextThinking = false) {
         }
         break;
       case 'tool_use':
-        // tool_use 不论流式与否都在 assistant 完成时推一次（SDK stream_event
-        // 里 tool_use input 是 partial JSON delta，前端拼起来不划算）
+        // tool_use 不论流式与否都在 assistant 完成时推一次 —— 完整入参的权威
+        // 快照（真流式 tool_input 只发抽出字段的增量，别的字段靠这条补全）
         ctx.emit(Events.deltaToolUse(ctx.counters.turns, block.id, block.name, block.input));
         ctx.incrementTool(false);
 
@@ -394,13 +395,60 @@ function handleAssistantBlocks(ctx, content, skipTextThinking = false) {
  *   message_start / content_block_start / content_block_delta /
  *   content_block_stop / message_delta / message_stop
  *
- * 我们只关心 content_block_delta（含 text_delta / thinking_delta /
- * input_json_delta / signature_delta / citations_delta）。
- * input_json_delta 不处理（tool_use input 等完整 block 在 assistant message 里推）。
+ * text_delta / thinking_delta 逐 token 转发；input_json_delta 只对 Edit/Write
+ * 累积 + 节流抽字段（见下方"真流式工具入参"段），其余工具照旧等完整 block。
  */
+
+// ── 真流式工具入参（2026-07-28，工作台舞台层代码直播）──
+// input_json_delta 是半截 JSON 碎片，等拼完再发一次的话，模型逐 token 生成
+// new_string 的几十秒里前端只能干转圈。这里对写代码的工具累积缓冲区，节流用
+// partial-json 容错解析累积串，把目标字段相对上次的纯文本增量推给前端
+// （run.delta.tool_input）。转义符跨块断开由解析器兜住；字段单调增长，
+// 万一局部解析短暂回缩就跳过本拍（append 只在变长时发）。
+const TOOL_INPUT_STREAM_FIELDS = {
+  Edit: 'new_string',
+  Write: 'content',
+};
+const TOOL_INPUT_THROTTLE_MS = 120;
+
+function toolInputStreams(ctx) {
+  if (!ctx._toolInputStreams) ctx._toolInputStreams = new Map();
+  return ctx._toolInputStreams;
+}
+
+function pumpToolInputStream(ctx, st, flush) {
+  const now = Date.now();
+  if (!flush && now - st.lastEmit < TOOL_INPUT_THROTTLE_MS) return;
+  let obj;
+  try { obj = parsePartialJson(st.buf, PartialAllow.ALL); } catch { return; }
+  if (!obj || typeof obj !== 'object') return;
+  const text = typeof obj[st.field] === 'string' ? obj[st.field] : '';
+  // file_path 只在确定流完后才取：容错解析会把半截字符串也带出来，第一拍常
+  // 截在路径中间（e2e 撞过：抽到项目目录名 → 前端物件寻址指错）。目标字段的
+  // key 出现（键序在 file_path 之后）或对象已有第二个键 = 路径已闭合。
+  const pathComplete = obj[st.field] !== undefined || Object.keys(obj).length >= 2;
+  const filePath = !st.filePathSent && pathComplete && typeof obj.file_path === 'string' ? obj.file_path : null;
+  const append = text.length > st.sent ? text.slice(st.sent) : '';
+  if (!append && !filePath && !flush) return;
+  st.lastEmit = now;
+  if (append) st.sent = text.length;
+  if (filePath) st.filePathSent = true;
+  ctx.emit(Events.deltaToolInput(ctx.counters.turns, st.id, st.name, {
+    ...(filePath ? { filePath } : {}),
+    ...(append ? { append } : {}),
+    ...(flush ? { done: true } : {}),
+  }));
+}
+
 function handleStreamEvent(ctx, msg) {
   const evt = msg.event;
   if (!evt) return;
+
+  // 新 assistant message 开始 —— block index 归零，残留的流式入参条目作废
+  if (evt.type === 'message_start') {
+    toolInputStreams(ctx).clear();
+    return;
+  }
 
   // tool_use 起点 —— content_block_start { content_block: { type: 'tool_use', id, name } }
   // 推 toolUseStarted 让前端立即显示 icon + tool name（status='running'）。
@@ -410,6 +458,23 @@ function handleStreamEvent(ctx, msg) {
     const cb = evt.content_block;
     if (cb && cb.type === 'tool_use' && cb.id && cb.name) {
       ctx.emit(Events.toolUseStarted(ctx.counters.turns, cb.id, cb.name));
+      const field = TOOL_INPUT_STREAM_FIELDS[cb.name];
+      if (field && Number.isInteger(evt.index)) {
+        toolInputStreams(ctx).set(evt.index, {
+          id: cb.id, name: cb.name, field,
+          buf: '', sent: 0, lastEmit: 0, filePathSent: false,
+        });
+      }
+    }
+    return;
+  }
+
+  // 跟踪中的 tool_use block 收尾：最后一次 flush + 带 done 标记，清条目
+  if (evt.type === 'content_block_stop') {
+    const st = toolInputStreams(ctx).get(evt.index);
+    if (st) {
+      pumpToolInputStream(ctx, st, true);
+      toolInputStreams(ctx).delete(evt.index);
     }
     return;
   }
@@ -423,8 +488,14 @@ function handleStreamEvent(ctx, msg) {
     ctx.emit(Events.deltaText(ctx.counters.turns, delta.text));
   } else if (delta.type === 'thinking_delta' && delta.thinking) {
     ctx.emit(Events.deltaThinking(ctx.counters.turns, delta.thinking));
+  } else if (delta.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
+    const st = toolInputStreams(ctx).get(evt.index);
+    if (st) {
+      st.buf += delta.partial_json;
+      pumpToolInputStream(ctx, st, false);
+    }
   }
-  // input_json_delta / signature_delta / citations_delta 暂不处理
+  // signature_delta / citations_delta 暂不处理
 }
 
 function handleUserBlocks(ctx, content) {
