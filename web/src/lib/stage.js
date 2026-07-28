@@ -44,6 +44,9 @@ export function resolveObjectId(filePath, currentSessionId) {
   const p = filePath.replace(/\\/g, '/');
   if (p.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
   if (p.endsWith('agent-memory/memory.md')) return 'doc:_root';
+  // 任务模型：tasks/<任务>/canvas.html = 任务 deck；其余任务文件用完整相对路径当 id
+  const mt = p.match(/(?:^|\/)tasks\/([^/]+)\/(.+)$/);
+  if (mt) return mt[2] === 'canvas.html' ? `deck:task/${mt[1]}` : `tasks/${mt[1]}/${mt[2]}`;
   if (DECK_FILES.has(fileNameOf(p)) && currentSessionId) return `deck:${currentSessionId}`;
   const m = p.match(/(?:^|\/)assets\/(.+)$/);
   if (m) return `assets/${m[1]}`;

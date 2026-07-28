@@ -181,10 +181,11 @@ export const Assets = {
   /**
    * 产物文件 URL（project 级，不依赖 session）。
    * relPath 是 artifacts 返回的 agent 视角路径（'assets/...'），
-   * artifact-file 路由的根就是 shared/assets/，所以去掉 'assets/' 前缀。
+   * artifact-file 路由根=shared/（2026-07-28 任务模型起），路径必须带
+   * 'assets/' 或 'tasks/' 前缀原样传递（server 兼容旧的无前缀形态）。
    */
   artifactFileUrl: (pid, relPath) => {
-    const sub = String(relPath || '').replace(/^assets\//, '');
+    const sub = String(relPath || '');
     return `/api/projects/${pid}/artifact-file/${sub.split('/').map(encodeURIComponent).join('/')}`;
   },
 };

@@ -70,7 +70,8 @@ The zone defaults to the current session's work zone (created if missing).`,
         else if (objectId === 'agent-memory/brand/memory.md') objectId = 'doc:brand';
         else if (!objectId.startsWith('deck:') && !objectId.startsWith('doc:')) {
           if (/^(generated|notes)\//.test(objectId)) objectId = `assets/${objectId}`;
-          if (!objectId.startsWith('assets/')) objectId = `assets/${objectId}`;
+          // tasks/<任务>/<文件> 原样通过（任务产出的物件 id 就是这个形态）
+          if (!objectId.startsWith('assets/') && !objectId.startsWith('tasks/')) objectId = `assets/${objectId}`;
           if (objectId.includes('..')) {
             return { content: [{ type: 'text', text: 'Invalid path.' }], isError: true };
           }

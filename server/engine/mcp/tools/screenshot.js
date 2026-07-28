@@ -95,9 +95,19 @@ Do NOT use this tool when:
         .min(1)
         .optional()
         .describe('If given, capture only section[data-page="N"] (overrides fullPage)'),
+      path: z
+        .string()
+        .optional()
+        .describe('Relative path of the html to capture (e.g. "tasks/<task>/canvas.html" for a task deck). Defaults to cwd canvas.html (legacy single-deck flow).'),
     },
-    async ({ viewport, fullPage, selector, pageIndex }) => {
-      const canvasPath = path.join(workspaceRoot, 'canvas.html');
+    async ({ viewport, fullPage, selector, pageIndex, path: relPath }) => {
+      // 任务模型（2026-07-28）：任务 deck 住 tasks/<任务>/canvas.html —— path 参数
+      // 指定目标；缺省仍是旧式 cwd/canvas.html。防穿越：解析后必须留在 workspace 内
+      // （tasks/ 是 workspace 下的软链，resolve 不出根）
+      const canvasPath = path.resolve(workspaceRoot, relPath || 'canvas.html');
+      if (canvasPath !== path.resolve(workspaceRoot) && !canvasPath.startsWith(path.resolve(workspaceRoot) + path.sep)) {
+        return { content: [{ type: 'text', text: 'path escapes workspace' }], isError: true };
+      }
       let html;
       try {
         html = await fs.readFile(canvasPath, 'utf8');
@@ -105,7 +115,7 @@ Do NOT use this tool when:
         return {
           content: [{
             type: 'text',
-            text: 'canvas.html not found in workspace. Write it first (with the Write tool) before screenshotting.',
+            text: `${relPath || 'canvas.html'} not found. Write it first (with the Write tool) before screenshotting.`,
           }],
           isError: true,
         };

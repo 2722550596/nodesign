@@ -60,6 +60,7 @@ export default function BoardCanvas({
 
   // 数据源
   const [artifacts, setArtifacts] = useState([]);
+  const [tasks, setTasks] = useState([]);         // 任务=shared/tasks/ 目录（任务模型）
   const [sessions, setSessions] = useState([]);
   const [memoryDocs, setMemoryDocs] = useState([]);
   // 布局（saved + 本地改动合一）：{ [id]: {x,y,z,expanded} }；zones：{ [sid]: {x,y,w,h,title} }
@@ -107,6 +108,7 @@ export default function BoardCanvas({
       layoutLoadedRef.current ? Promise.resolve(null) : Assets.getBoard(projectId).catch(() => null),
     ]);
     setArtifacts(Array.isArray(a?.artifacts) ? a.artifacts : []);
+    setTasks(Array.isArray(a?.tasks) ? a.tasks : []);
     setSessions(Array.isArray(s?.sessions) ? s.sessions : []);
     setMemoryDocs(Array.isArray(m?.memory) ? m.memory : []);
     if (b?.board && !layoutLoadedRef.current) {
@@ -173,6 +175,12 @@ export default function BoardCanvas({
         mtime: s.lastModified || s.mtime,
       });
     }
+    // 任务 deck（任务模型 2026-07-28）：tasks/<任务>/canvas.html 存在才有 deck 物件；
+    // 任务工作区分区本身由 zone 派生 effect 建（无 deck 的任务也有分区）
+    for (const t of tasks) {
+      if (!t.hasDeck) continue;
+      out.push({ id: `deck:task/${t.id}`, type: 'deck', task: t.id, title: t.title, mtime: t.mtime });
+    }
     for (const a of artifacts) {
       const sid = a.sessionId || a.meta?.sessionId || null;
       if (a.kind === 'note') out.push({ id: a.path, type: 'note', sid, ...a });
@@ -180,7 +188,7 @@ export default function BoardCanvas({
       else out.push({ id: a.path, type: 'file', sid, ...a });
     }
     return out;
-  }, [memoryDocs, sessions, artifacts]);
+  }, [memoryDocs, sessions, tasks, artifacts]);
 
   const sessionTitles = useMemo(() => {
     const map = new Map();
@@ -190,6 +198,10 @@ export default function BoardCanvas({
     return map;
   }, [sessions]);
 
+  // 任务工作区标题：zone id 'task/<目录名>' → 目录名即标题
+  const taskTitles = useMemo(
+    () => new Map(tasks.map(t => [`task/${t.id}`, t.title])), [tasks]);
+
   // ── 工作区派生：当前 session + 有产物的 session 各一块，缺的建出来并持久化 ──
   useEffect(() => {
     if (!layoutLoadedRef.current) return;
@@ -198,6 +210,7 @@ export default function BoardCanvas({
     for (const o of objects) {
       if (o.sid && o.type !== 'deck') needed.add(o.sid);
     }
+    for (const t of tasks) needed.add(`task/${t.id}`);   // 每个任务一块工作区
     const missing = [...needed].filter(zid => !zones[zid]);
     if (!missing.length) return;
     setZones(prev => {
@@ -207,14 +220,14 @@ export default function BoardCanvas({
         // 桌面化：新工作区先落在栈底占位（y 取超大值），堆叠 effect 下一拍归位
         next[zid] = {
           ...newStackedZoneRect(next),
-          ...(sessionTitles.get(zid) ? { title: sessionTitles.get(zid) } : {}),
+          ...((sessionTitles.get(zid) || taskTitles.get(zid)) ? { title: sessionTitles.get(zid) || taskTitles.get(zid) } : {}),
         };
         dirtyRef.current.zones.add(zid);
       }
       scheduleSave();
       return next;
     });
-  }, [objects, currentSessionId, zones, sessionTitles, scheduleSave]);
+  }, [objects, tasks, currentSessionId, zones, sessionTitles, taskTitles, scheduleSave]);
 
   /**
    * 自动摆位 + 归属判定：
@@ -244,13 +257,21 @@ export default function BoardCanvas({
       g.bottom = Math.max(g.bottom, y + h + ZONE.pad);
     };
 
-    // 归属解析（显式优先）：layout.zone 字段是真相（'' = 明确无归属），
-    // 没写过字段的回落到数据派生（有 sid 且工作区存在 → 归它）。
-    // 几何不再决定归属 —— 它只在拖放松手那一刻用来判定写什么进 zone 字段。
+    // 自然归属派生：任务物件按路径（tasks/<任务>/…）、deck 按 task/sid 字段、
+    // 其余按 meta.sessionId。显式 layout.zone 字段永远优先（'' = 明确无归属）。
+    const naturalZoneOf = (o) => {
+      if (o.task) return `task/${o.task}`;
+      if (typeof o.id === 'string' && o.id.startsWith('tasks/')) {
+        const parts = o.id.split('/');
+        if (parts.length >= 3) return `task/${parts[1]}`;
+      }
+      return o.sid || null;
+    };
     const effZoneOf = (o) => {
       const stored = layout[o.id];
       if (stored && stored.zone !== undefined) return stored.zone || null;
-      return o.sid && grids[o.sid] ? o.sid : null;
+      const nz = naturalZoneOf(o);
+      return nz && grids[nz] ? nz : null;
     };
 
     // pass 1：已摆放的成员 → 在所属工作区标占格
@@ -269,7 +290,8 @@ export default function BoardCanvas({
     for (const o of objects) {
       const stored = layout[o.id];
       if (stored) { items.push({ ...o, pos: stored }); continue; }
-      const zid = o.type === 'deck' ? (zones[o.sid] ? o.sid : null) : (o.sid && zones[o.sid] ? o.sid : null);
+      const nz0 = naturalZoneOf(o);
+      const zid = nz0 && grids[nz0] ? nz0 : null;
       if (zid) {
         const g = grids[zid];
         const sz = sizeOf({ ...o, pos: {} });
@@ -317,7 +339,7 @@ export default function BoardCanvas({
       id: zid,
       x: g.rect.x, y: g.rect.y, w: g.rect.w,
       h: Math.max(g.rect.h, g.bottom - g.rect.y),
-      title: sessionTitles.get(zid) || g.rect.title || '工作区',
+      title: sessionTitles.get(zid) || taskTitles.get(zid) || g.rect.title || '工作区',
       collapsed: !!g.rect.collapsed,
     }));
     for (const it of items) it.zoneId = effZoneOf(it);
@@ -330,16 +352,18 @@ export default function BoardCanvas({
       bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     }
     return { positioned: items, zoneView: zv, contentBottom: bottom };
-  }, [objects, layout, zones, sessionTitles]);
+  }, [objects, layout, zones, sessionTitles, taskTitles]);
   positionedRef.current = positioned;
 
-  // 桌面几何：宽度固定，视口窄则整体等比缩小（非交互）；高度随内容生长
+  // 桌面几何：宽度固定，视口窄则整体等比缩小（非交互）。
+  // 高度是动态的：内容一屏装得下 = 恰好一屏（无滚动）；装不下才向下生长
+  // 并带出滚动（生长时给底部 240px 呼吸区）。
   const scale = Math.min(1, (paneSize.w || DESKTOP_W) / DESKTOP_W);
   scaleRef.current = scale;
-  const boardH = Math.max(
-    (contentBottom || 0) + 280,
-    Math.ceil((paneSize.h || 600) / (scale || 1)),
-  );
+  const oneScreen = Math.ceil((paneSize.h || 600) / (scale || 1));
+  const boardH = (contentBottom || 0) <= oneScreen - 24
+    ? oneScreen
+    : (contentBottom || 0) + 240;
   const boardSize = { w: DESKTOP_W, h: boardH };
 
   // 量滚动容器尺寸（决定 fitScale 与桌面最小高度）
@@ -621,9 +645,13 @@ export default function BoardCanvas({
   };
 
   const focusDeck = (o) => {
-    if (o.sid === currentSessionId) onFocusDeck?.();
-    else {
-      onEditNav?.();   // ✏️ 意图=编辑：切会话后 CanvasFrame 直接进 Edit 视图
+    if (o.task) {
+      // 任务 deck：与会话解绑，原地开最大化编辑窗
+      onFocusDeck?.({ kind: 'task', task: o.task, title: o.title });
+    } else if (o.sid === currentSessionId) {
+      onFocusDeck?.({ kind: 'session' });
+    } else {
+      onEditNav?.();   // 旧式会话 deck 跨会话：切会话后 CanvasFrame 直接开窗
       navigate(`/projects/${projectId}/sessions/${o.sid}`);
     }
   };
@@ -725,9 +753,18 @@ export default function BoardCanvas({
     }
   }, [positioned, tryAutoExpand]);
 
-  // 舞台层的 file_changed 触发口：立刻试展开，deck 物件还没派生出来就挂起等布局
-  const requestAutoExpand = useCallback((sid) => {
-    if (!tryAutoExpand(sid)) pendingExpandRef.current.add(sid);
+  // 舞台层的 file_changed 触发口：立刻试展开，deck 物件还没派生出来就挂起等布局。
+  // 任务 deck 直播（任务模型）：agent 正在写 tasks/<任务>/canvas.html 时，工作
+  // 视图把聚焦切到该任务工作区 —— 否则镜头还锁在会话工作区，产出全程不可见
+  const requestAutoExpand = useCallback((key) => {
+    if (!tryAutoExpand(key)) pendingExpandRef.current.add(key);
+    if (key.startsWith('task/')) {
+      setFocusZoneId(prev => {
+        if (prev === key) return prev;
+        fittedKeyRef.current = '';
+        return key;
+      });
+    }
   }, [tryAutoExpand]);
 
   // ── 舞台层（StageLayer.jsx 自治）：事件状态机 + 跟随触发 + deck 自动展开触发 ──
@@ -1190,7 +1227,9 @@ function BoardObject({
             </button>
           </div>
           <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
-            {o.sid === currentSessionId ? '当前会话 · 双击内嵌渲染' : `${formatTime(o.mtime)} · 双击内嵌渲染`}
+            {o.task ? `任务 deck · 双击内嵌渲染`
+              : o.sid === currentSessionId ? '当前会话 · 双击内嵌渲染'
+              : `${formatTime(o.mtime)} · 双击内嵌渲染`}
           </div>
         </div>
       )}
@@ -1219,8 +1258,10 @@ function BoardObject({
             {/* 内嵌渲染：live iframe 缩到 1/3，pointer-events 关闭 —— deck 元素级
                 工具（DirectEdit / Drag / Comment）只在聚焦（✏️）后的编辑视图开放 */}
             <iframe
-              title={`deck-${o.sid}`}
-              src={Canvas.artifactUrl(projectId, o.sid, refreshToken)}
+              title={`deck-${o.task ? `task-${o.task}` : o.sid}`}
+              src={o.task
+                ? `${Assets.artifactFileUrl(projectId, `tasks/${o.task}/canvas.html`)}?v=${refreshToken || 0}`
+                : Canvas.artifactUrl(projectId, o.sid, refreshToken)}
               sandbox="allow-scripts allow-same-origin"
               style={{
                 width: 1920, height: 1080, border: 0,

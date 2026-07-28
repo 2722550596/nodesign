@@ -41,8 +41,9 @@ cwd = `sessions/<sid>/`。**所有 Read/Write/Glob/Grep 路径默认相对 cwd**
 
 | 路径 | 类型 | 含义 / 用法 |
 |---|---|---|
-| `canvas.html` | 文件 | **主产物**（你 Write 这里） |
-| `canvas.template.html` | 文件 | session 创建时系统从 skill 拷过来的起手模板，**Read 后 cp 改写** 写 canvas.html |
+| `tasks/` | softlink → shared/tasks/ | **任务文件夹**（跨 session 共享）：产出型工作先 `tasks/<任务名>/` 再动手，deck=`tasks/<任务名>/canvas.html`，全部产出放里面（详见「工作台画布」节） |
+| `canvas.html` | 文件 | 旧式单 deck 主产物（历史会话形态；新工作走 tasks/） |
+| `canvas.template.html` | 文件 | 起手模板，**Read 后改写**落到任务文件夹的 canvas.html |
 | `spec.json` | 文件 | 跨 turn / 跨 session 设计意图档案；工作台自动注入最近 5 条 decisions 摘要 |
 | `design-plan.md` | 文件 | plan-mode 通过后的 plan 落档（仅 plan-mode 才有） |
 | `assets/` | softlink → shared/assets/ | 用户上传素材 + generate_image 落档（`assets/generated/<name>.png`）；跨 session 共享。**Glob/Grep 默认不跟 symlink，对 `assets/*` 会返回空——靠每轮 system 注入的"workspace 里已有 N 个参考素材"清单直接 Read 路径**；plan mode 也允许 `ls assets/` / `find assets/` 兜底实地查 |
@@ -76,10 +77,22 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 ## 工作台画布（用户的项目主页）
 
-用户的主界面是一块空间画布：项目里的一切以物件形式摆在上面 —— deck 卡片
+用户的主界面是一张项目桌面：项目里的一切以物件形式摆在上面 —— deck 卡片
 （可内嵌渲染实时预览）、生成图、上传素材、灵感便签、项目记忆 / 品牌档案。
-每个 session 有自己的「工作区」分区；用户在整理视图（全画布）和工作视图
-（只看当前任务的工作区）之间切换。
+用户在整理视图（全桌面）和工作视图（只看聚焦的工作区）之间切换。
+
+**任务 = 文件夹**（核心约定，2026-07-28 起）：
+
+- 用户提出一项**产出型工作**（做 deck / 做一组图 / 写方案）时，先在 `tasks/`
+  下建任务文件夹再动手：`tasks/<简短任务名>/`（目录名就是桌面上显示的任务名，
+  用中文或短横线英文都行）。该任务的**全部产出放进这个文件夹**。
+- 任务的 deck 就是 `tasks/<任务名>/canvas.html` —— 起手模板照旧（Read
+  canvas.template.html 后改写），只是落点在任务文件夹里。桌面会自动为每个
+  任务生成工作区分区并把文件夹里的产物摆进去，deck 实时内嵌渲染。
+- **会话与任务解绑**：一个对话里可以先后开多个任务文件夹；聊天只是交流通道，
+  产出的家在任务文件夹。追问 / 修改某任务时直接改它文件夹里的文件。
+- 闲聊、咨询、小改动不需要建任务；cwd 根下的 `canvas.html` 旧式单 deck 流程
+  仍然有效（历史会话都是这个形态），但**新的成型工作一律走任务文件夹**。
 
 对你意味着什么：
 
@@ -189,7 +202,7 @@ git history 由 server 管，FileChanged hook 触发前端 reload，用户在画
 
 | 工具 | 一句话 | 核心入参 |
 |---|---|---|
-| `screenshot_canvas` | 截 canvas.html PNG（playwright 真渲染） | `viewport?` (默认 = canvas wrap data-deck-aspect 对应尺寸) / `fullPage?` / `selector?` / `pageIndex?` |
+| `screenshot_canvas` | 截 deck PNG（playwright 真渲染）；任务 deck 传 `path: "tasks/<任务>/canvas.html"` | `path?`（默认旧式 cwd canvas.html）/ `viewport?` / `fullPage?` / `selector?` / `pageIndex?` |
 | `list_pages` | 扫所有 `<section data-page>` 返每页 1 行摘要 | 无参 |
 | `read_page` | 按 `pageIndex` 切片返该页 outerHTML（hybrid 文件还会附 React mount 源段） | `pageIndex` |
 | `query_elements` | CSS selector 一次查全部匹配元素，返 anchor + bbox + text | `selector` / `pageIndex?` / `max?` |

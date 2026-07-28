@@ -245,6 +245,9 @@ export async function ensureProjectWorkspace(projectId) {
   await fs.mkdir(path.join(shared, '.claude', 'agents'), { recursive: true });
   await fs.mkdir(path.join(shared, '.claude', 'agent-memory'), { recursive: true });
   await fs.mkdir(path.join(shared, 'assets'), { recursive: true });
+  // 任务模型（2026-07-28）：任务=文件夹=产出的家。agent 按需 mkdir tasks/<名>/
+  // 并在其中工作（deck=canvas.html 放任务目录）；会话只是对话通道，与任务解绑
+  await fs.mkdir(path.join(shared, 'tasks'), { recursive: true });
 
   if (!(await fileExists(path.join(shared, '.gitignore')))) {
     await fs.writeFile(path.join(shared, '.gitignore'), DEFAULT_GITIGNORE, 'utf8');
@@ -331,6 +334,22 @@ export async function ensureSessionWorkspace(projectId, sessionId) {
       await fs.symlink(assetsTarget, assetsLink);
     } catch (err) {
       const msg = `assets symlink failed (${err.code || err.message}); agent 将看不到 ./assets/`;
+      if (allowSymlinkFallback) {
+        console.warn(`[workspace] ${msg}（降级 warn）`);
+      } else {
+        throw new Error(`[workspace] ${msg}。设 NODESIGN_ALLOW_SYMLINK_FALLBACK=1 强制降级`);
+      }
+    }
+  }
+
+  // 3.5) tasks 软链（绝对路径）—— agent 用相对路径 tasks/<名>/ 建任务文件夹并工作
+  const tasksLink = path.join(sessionRoot, 'tasks');
+  if (!(await pathExists(tasksLink))) {
+    const tasksTarget = path.join(shared, 'tasks');
+    try {
+      await fs.symlink(tasksTarget, tasksLink);
+    } catch (err) {
+      const msg = `tasks symlink failed (${err.code || err.message}); agent 将看不到 ./tasks/`;
       if (allowSymlinkFallback) {
         console.warn(`[workspace] ${msg}（降级 warn）`);
       } else {

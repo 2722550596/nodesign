@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
+import { Assets } from '../../lib/api.js';
 import BoardToolbar from './BoardToolbar.jsx';
 import BoardCanvas from './BoardCanvas.jsx';
 
@@ -51,9 +52,10 @@ export default function CanvasFrame({
   onBoardUiState,
   stageRef = null,
 }) {
-  // deck 编辑窗口：开/关 + 当前标签页
+  // deck 编辑窗口：开/关 + 当前标签页 + 目标（null=当前会话的旧式 deck；{task}=任务 deck）
   const [deckOpen, setDeckOpen] = useState(false);
   const [deckTab, setDeckTab] = useState('edit');
+  const [deckTaskSrc, setDeckTaskSrc] = useState(null);
   // BoardCanvas 经 apiRef 暴露操作给 BoardToolbar
   const boardApiRef = useRef(null);
   // ✏️ 跨会话编辑：切会话后再开窗（同会话的 ✏️ 直接 openDeck）
@@ -61,20 +63,29 @@ export default function CanvasFrame({
   useEffect(() => {
     if (editNavRef.current) {
       editNavRef.current = false;
+      setDeckTaskSrc(null);
       setDeckTab('edit');
       setDeckOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
-  // 会话没了（回 /work 新对话）→ 窗口自然关掉
+  // 会话没了（回 /work 新对话）→ 会话 deck 窗自然关掉（任务 deck 窗与会话解绑，保留）
   useEffect(() => {
-    if (!sessionId) setDeckOpen(false);
+    if (!sessionId && !deckTaskSrc) setDeckOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const openDeck = () => {
+  // BoardCanvas ✏️ 入口：desc = { kind:'session' } | { kind:'task', task, title }
+  const openDeck = (desc) => {
+    setDeckTaskSrc(desc?.kind === 'task' ? desc : null);
     setDeckTab('edit');
     setDeckOpen(true);
   };
+
+  // 任务 deck 的 htmlSrc：直接走 artifact-file（tasks/<任务>/canvas.html）
+  const deckHtmlSrc = deckTaskSrc
+    ? `${Assets.artifactFileUrl(projectId, `tasks/${deckTaskSrc.task}/canvas.html`)}?v=${artifactRefreshToken || 0}`
+    : htmlSrc;
 
   return (
     <div style={{
@@ -99,13 +110,13 @@ export default function CanvasFrame({
           onFocusDeck={openDeck}
         />
 
-        {deckOpen && sessionId && (
+        {deckOpen && (sessionId || deckTaskSrc) && (
           <Suspense fallback={null}>
           <DeckWindow
             tab={deckTab}
             onTabChange={setDeckTab}
             onClose={() => setDeckOpen(false)}
-            htmlSrc={htmlSrc}
+            htmlSrc={deckHtmlSrc}
             htmlContent={htmlContent}
             selectedAnchor={selectedAnchor}
             onSelectChange={onSelectChange}

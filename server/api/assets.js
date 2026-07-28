@@ -131,6 +131,8 @@ const ARTIFACT_MIME = {
   '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
   '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm',
   '.mp3': 'audio/mpeg', '.zip': 'application/zip',
+  '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
+  '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
 };
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
 
@@ -201,8 +203,34 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     await scanDir(path.join(assetsDir, 'generated'), 'generated', 'assets/generated');
     await scanDir(path.join(assetsDir, 'notes'), 'note', 'assets/notes');
 
-    artifacts.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
-    res.json({ artifacts });
+    // 任务模型（2026-07-28）：任务=shared/tasks/ 下的目录（agent 按需自建）。
+    // 目录名即任务名；canvas.html 存在 = 该任务有 deck；其余文件作为任务产物
+    // 上墙（path 'tasks/<任务>/<文件>'，前端按路径前缀派生归属到任务工作区）
+    const tasks = [];
+    const tasksDir = path.join(getSharedDir(req.params.pid), 'tasks');
+    try {
+      const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
+      for (const t of taskEntries) {
+        if (!t.isDirectory() || t.name.startsWith('.')) continue;
+        const tDir = path.join(tasksDir, t.name);
+        const tStat = await fs.stat(tDir);
+        tasks.push({
+          id: t.name,
+          title: t.name,
+          hasDeck: await exists(path.join(tDir, 'canvas.html')),
+          mtime: tStat.mtime.toISOString(),
+        });
+        await scanDir(tDir, 'task-file', `tasks/${t.name}`);
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+    // canvas.html 本体不当普通文件上墙（deck 物件由 tasks[] 派生）
+    const filtered = artifacts.filter(a => !(a.kind === 'task-file' && a.name === 'canvas.html'));
+
+    filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+    tasks.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+    res.json({ artifacts: filtered, tasks });
   } catch (err) { next(err); }
 });
 
@@ -284,13 +312,22 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
 
     const raw = req.params.subPath;
-    const subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
+    let subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
     if (!subPath) return res.status(400).json({ error: 'file path required' });
+    // 兼容旧形态：无前缀 = assets/ 相对路径（2026-07-28 前 api.js 会剥前缀）
+    if (!subPath.startsWith('assets/') && !subPath.startsWith('tasks/')) {
+      subPath = `assets/${subPath}`;
+    }
 
-    const assetsRoot = path.resolve(getSharedDir(req.params.pid), 'assets');
-    const absPath = path.resolve(assetsRoot, subPath);
-    if (absPath !== assetsRoot && !absPath.startsWith(assetsRoot + path.sep)) {
-      return res.status(403).json({ error: 'path escapes assets/' });
+    // 可服务根：assets/（素材）+ tasks/（任务产出，含任务 deck 的 canvas.html）。
+    // subPath 必须带前缀落在其一之内，防穿越
+    const sharedRoot = path.resolve(getSharedDir(req.params.pid));
+    const absPath = path.resolve(sharedRoot, subPath);
+    const inRoot = (root) => absPath === root || absPath.startsWith(root + path.sep);
+    const assetsRoot = path.join(sharedRoot, 'assets');
+    const tasksRoot = path.join(sharedRoot, 'tasks');
+    if (!inRoot(assetsRoot) && !inRoot(tasksRoot)) {
+      return res.status(403).json({ error: 'path escapes assets/ or tasks/' });
     }
 
     let stat;

@@ -176,7 +176,7 @@ export default function ChatPanel({
           <Focus size={10} style={{ flexShrink: 0 }} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             聚焦工作区：{boardFocus.title} · {boardFocus.count} 项
-            {!boardFocus.isSession && ' · 文件夹（内容用画布「＋」带进对话）'}
+            {!boardFocus.isSession && ' · 任务/收纳（内容用画布「＋」带进对话）'}
           </span>
         </div>
       )}
