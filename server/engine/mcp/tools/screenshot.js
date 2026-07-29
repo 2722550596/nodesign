@@ -37,6 +37,112 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/a
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
 
+// ── 页面诊断收集（2026-07-29）──
+// 背景：agent 塞了 GSAP/Lenis CDN 却不知道有没有加载成功——截图上看不出来。
+// 挂 4 个 playwright listener，截图 caption 里回传 console 错误 + 加载失败资源。
+// 上限/截断防止一个疯狂报错的页面把 caption 撑爆。
+const DIAG_MAX_ENTRIES = 15;
+const DIAG_MAX_TEXT = 300;
+
+export function attachPageDiagnostics(page) {
+  const consoleEntries = [];   // { type, text }
+  const failedRequests = [];   // { method, url, detail }
+  const seenConsole = new Map();  // text → count（同文重复只记一条 + 计数）
+
+  page.on('console', (msg) => {
+    const type = msg.type();
+    if (type !== 'error' && type !== 'warning') return;
+    const text = String(msg.text() || '').slice(0, DIAG_MAX_TEXT);
+    const prev = seenConsole.get(text);
+    if (prev) { prev.count += 1; return; }
+    const entry = { type, text, count: 1 };
+    seenConsole.set(text, entry);
+    if (consoleEntries.length < DIAG_MAX_ENTRIES) consoleEntries.push(entry);
+  });
+  page.on('pageerror', (err) => {
+    const text = String(err?.message || err).slice(0, DIAG_MAX_TEXT);
+    if (consoleEntries.length < DIAG_MAX_ENTRIES) {
+      consoleEntries.push({ type: 'pageerror', text, count: 1 });
+    }
+  });
+  page.on('requestfailed', (req) => {
+    if (failedRequests.length >= DIAG_MAX_ENTRIES) return;
+    failedRequests.push({
+      method: req.method(),
+      url: req.url().slice(0, DIAG_MAX_TEXT),
+      detail: req.failure()?.errorText || 'failed',
+    });
+  });
+  page.on('response', (res) => {
+    if (res.status() < 400 || failedRequests.length >= DIAG_MAX_ENTRIES) return;
+    failedRequests.push({
+      method: res.request().method(),
+      url: res.url().slice(0, DIAG_MAX_TEXT),
+      detail: `HTTP ${res.status()}`,
+    });
+  });
+
+  return {
+    /** 汇成 caption 附加段。干净时给正向确认（"不知道有没有挂"跟"确认没挂"是两回事）。 */
+    summary() {
+      if (!consoleEntries.length && !failedRequests.length) {
+        return 'console clean, all requests OK';
+      }
+      const lines = [];
+      if (consoleEntries.length) {
+        lines.push(`console (${consoleEntries.length}):`);
+        for (const e of consoleEntries) {
+          lines.push(`  [${e.type}] ${e.text}${e.count > 1 ? ` (×${e.count})` : ''}`);
+        }
+      }
+      if (failedRequests.length) {
+        lines.push(`failed requests (${failedRequests.length}):`);
+        for (const f of failedRequests) {
+          lines.push(`  ${f.method} ${f.url} — ${f.detail}`);
+        }
+      }
+      return lines.join('\n');
+    },
+  };
+}
+
+/**
+ * beforeShot 执行（2026-07-29）：截图环境不滚动 → ScrollTrigger/IO 入场动画永远
+ * 不触发 → agent 为"能被截图"反过来阉割设计。给截图前跑一段交互的能力。
+ *  - 'scrollToBottom'：分步滚到底再回顶（所有 scroll-linked 动画都触发过一遍）
+ *  - 其他字符串：当 JS 片段在页面上下文执行（支持 await），5s 超时兜底
+ */
+export async function runBeforeShot(page, beforeShot) {
+  if (!beforeShot) return null;
+  try {
+    if (beforeShot === 'scrollToBottom') {
+      await page.evaluate(async () => {
+        const doc = document.scrollingElement || document.documentElement;
+        const step = Math.max(200, window.innerHeight * 0.8);
+        for (let y = 0; y <= doc.scrollHeight; y += step) {
+          window.scrollTo(0, y);
+          await new Promise((r) => setTimeout(r, 120));
+        }
+        window.scrollTo(0, doc.scrollHeight);
+        await new Promise((r) => setTimeout(r, 250));
+        window.scrollTo(0, 0);
+      });
+      // 回顶后给 reveal/settle 动画一点时间
+      await page.waitForTimeout(400);
+    } else {
+      await Promise.race([
+        page.evaluate(`(async () => { ${beforeShot} })()`),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('beforeShot timeout (5s)')), 5000)),
+      ]);
+      await page.waitForTimeout(200);
+    }
+    return null;
+  } catch (err) {
+    // beforeShot 挂了不挡截图 —— 把错误带回 caption 让 agent 知道
+    return `beforeShot error: ${err?.message || err}`;
+  }
+}
+
 /**
  * @param {object} deps
  * @param {string} deps.workspaceRoot
@@ -74,8 +180,17 @@ pageIndex does not apply to sites; pass path to screenshot a specific page file.
 
 Targeted captures (selector / pageIndex) override fullPage.
 
-Returns: image content block (you see it directly via vision) plus a short
-text caption with size info.
+Returns: image content block (you see it directly via vision) plus a text caption
+with size info AND page diagnostics: console errors/warnings and failed resource
+loads (CDN scripts, fonts, images). "console clean, all requests OK" means your
+CDN libs actually loaded — no more guessing whether GSAP/Lenis are alive.
+
+beforeShot: the screenshot environment never scrolls, so scroll-linked animations
+(ScrollTrigger, IntersectionObserver reveals) leave elements at opacity:0 and they
+vanish from the shot. Pass beforeShot:"scrollToBottom" to scroll through the whole
+page and back to top first — every scroll trigger fires, then the shot is taken.
+Or pass a JS snippet (async/await OK) to click/hover/setup any state before capture.
+Do NOT delete entrance animations just to make screenshots work — use beforeShot.
 
 Use this tool when:
 - You finished writing or editing canvas.html and want to verify it looks right
@@ -116,12 +231,16 @@ Do NOT use this tool when:
         .enum(['desktop', 'tablet', 'mobile'])
         .optional()
         .describe('SITE ONLY. Render at a real device width to check responsive behaviour: desktop=1440, tablet=834, mobile=390. Ignored for decks.'),
+      beforeShot: z
+        .string()
+        .optional()
+        .describe("Run before capture: 'scrollToBottom' scrolls through the page and back (fires all scroll-linked animations — ScrollTrigger / IntersectionObserver reveals), or pass a JS snippet evaluated in page context (await supported, 5s timeout). Errors don't block the shot, they're reported in the caption."),
       path: z
         .string()
         .optional()
         .describe(CANVAS_PATH_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, beforeShot, path: relPath }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -176,13 +295,23 @@ Do NOT use this tool when:
         // 要读小字（版权行 / 数据标签）显式传 detail:'high' 走 1.0。
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
         const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale });
+        const diag = attachPageDiagnostics(page);
 
         // 用 file:// scheme 加载 canvas.html
-        // waitUntil: 'networkidle' 等所有外部 fetch（CDN 字体 / 图片）完成
-        await page.goto(`file://${canvasPath}`, {
-          waitUntil: 'networkidle',
-          timeout: 15000,
-        });
+        // waitUntil: 'networkidle' 等所有外部 fetch（CDN 字体 / 图片）完成。
+        // networkidle 超时不再整个失败 —— 慢 CDN / 长轮询页面照样截，超时记进诊断。
+        let gotoNote = null;
+        try {
+          await page.goto(`file://${canvasPath}`, {
+            waitUntil: 'networkidle',
+            timeout: 15000,
+          });
+        } catch (err) {
+          if (!/Timeout/i.test(String(err?.message))) throw err;
+          gotoNote = 'networkidle not reached in 15s (slow/looping network activity) — captured anyway';
+        }
+
+        const beforeShotNote = await runBeforeShot(page, beforeShot);
 
         // selector / pageIndex 优先，命中则截元素 bbox（locator.screenshot），
         // 都不给走 fullPage / viewport。新范式所有 section 默认平铺可见
@@ -224,11 +353,18 @@ Do NOT use this tool when:
           });
         } catch { /* emit fail-safe */ }
 
+        const captionParts = [
+          `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
+        ];
+        if (gotoNote) captionParts.push(gotoNote);
+        if (beforeShotNote) captionParts.push(beforeShotNote);
+        captionParts.push(diag.summary());
+
         return {
           content: [
             {
               type: 'text',
-              text: `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
+              text: captionParts.join('\n'),
             },
             {
               type: 'image',

@@ -29,6 +29,7 @@
 
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { makeScreenshotCanvasTool } from './tools/screenshot.js';
+import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
 import { makeExportHandoffTool } from './tools/export-handoff.js';
 import { makeRecordDecisionTool } from './tools/record-decision.js';
 import { makeWebSearchTool } from './tools/web-search.js';
@@ -72,6 +73,9 @@ const ALWAYS_LOAD_TOOLS = new Set([
   'screenshot_canvas', 'read_page', 'list_pages', 'query_elements',
   'get_computed_styles', 'navigate_to_page', 'highlight', 'preview_deck',
   'record_decision', 'get_pending_changes', 'clear_pending_changes',
+  // screenshot_url 常驻：explorer 显式 tools 列表没有 ToolSearch，defer 了它就
+  // 永远拉不到 schema；schema 本身很小（4 字段），常驻成本可忽略
+  'screenshot_url',
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
@@ -81,6 +85,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     tools: [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
       makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }),
+
+      // screenshot_url — 外部 URL 截图（2026-07-29）。explorer 找视觉参考不再
+      // 只能 WebFetch 文本转述；主 agent 也能直接看参考站。http/https only。
+      makeScreenshotUrlTool({ ctx }),
 
       // deliver_files — agent 挑好的产物直接进用户浏览器下载列表（emit run.download_ready）
       makeDeliverFilesTool({ workspaceRoot, projectId, sessionId, ctx }),

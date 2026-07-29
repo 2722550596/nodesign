@@ -37,9 +37,11 @@ export default function PickExportModal({ open, onClose, projectId, sessionId, o
         setItems(list);
         // deck：默认勾 deck 本身（最常见意图＝"把这份 deck 给我"）。
         // 站点：默认全勾 —— 只勾 .html 会漏掉 style.css 和图，用户下下来解压打开
-        // 是一张没有样式的白页，还查不出是导出漏了。
+        // 是一张没有样式的白页，还查不出是导出漏了。试作（_drafts/）不默认勾。
         setPicked(new Set(
-          kind === 'site' ? list.map(i => i.path) : list.filter(i => i.kind === 'deck').map(i => i.path),
+          kind === 'site'
+            ? list.filter(i => i.kind !== 'draft').map(i => i.path)
+            : list.filter(i => i.kind === 'deck').map(i => i.path),
         ));
       })
       .catch(err => { if (!cancelled) onToast?.(`读取产物失败：${err.message}`, 'error'); })

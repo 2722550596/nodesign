@@ -47,12 +47,27 @@ export function resolveObjectId(filePath, currentSessionId, siteTasks) {
   // 任务模型：tasks/<任务>/canvas.html = 任务 deck；其余任务文件用完整相对路径当 id
   const mt = p.match(/(?:^|\/)tasks\/([^/]+)\/(.+)$/);
   if (mt) {
-    // 站点任务：整个目录是**一个**物件。子页 about.html、style.css、images/ 全都
-    // 贴到同一张卡上 —— 各给一个 id 的话，agent 改一次样式表就在桌面上多冒一张
-    // 卡，用户看到的是一堆碎片而不是"他那个网站"。
-    if (siteTasks && siteTasks.has(mt[1])) return `site:task/${mt[1]}`;
+    // 站点：一个站点实例的子页 / 样式表 / 图片全贴同一张卡（各给 id 的话，
+    // agent 改一次样式表桌面就多冒一张卡）。多产物平权后 siteTasks 可以是
+    // Map<任务名, 站点root[]>（'' = 根站，'v2' = 子目录站），Set 兼容旧签名。
+    // `_drafts/<名>.html` 是独立单页卡；canvas.html 永远是 deck（混合任务）。
+    if (siteTasks && siteTasks.has(mt[1])) {
+      const md = mt[2].match(/^_drafts\/([^/]+\.html?)$/i);
+      if (md) return `site:task/${mt[1]}/_drafts/${md[1]}`;
+      if (mt[2] === 'canvas.html') return `deck:task/${mt[1]}`;
+      const roots = typeof siteTasks.get === 'function' ? siteTasks.get(mt[1]) : null;
+      if (Array.isArray(roots)) {
+        const sub = roots.find(r => r && (mt[2] === r || mt[2].startsWith(`${r}/`)));
+        if (sub) return `site:task/${mt[1]}/${sub}`;
+        if (roots.includes('')) return `site:task/${mt[1]}`;
+        // 无根站且不在任何子目录站里：顶层 .html 是平等的 deck
+        if (/\.html$/i.test(mt[2]) && !mt[2].includes('/')) return `deck:task/${mt[1]}/${mt[2]}`;
+        return `tasks/${mt[1]}/${mt[2]}`;
+      }
+      return `site:task/${mt[1]}`;
+    }
     if (mt[2] === 'canvas.html') return `deck:task/${mt[1]}`;
-    // 任务下的其他 .html = 试作 deck（同样是 deck 物件，不是普通文件卡）
+    // 任务下的其他顶层 .html = 平等的 deck 物件（不是普通文件卡）
     if (/\.html$/i.test(mt[2]) && !mt[2].includes('/')) return `deck:task/${mt[1]}/${mt[2]}`;
     return `tasks/${mt[1]}/${mt[2]}`;
   }

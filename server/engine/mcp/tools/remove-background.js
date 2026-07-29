@@ -54,6 +54,20 @@ const QUALITY_MAP = {
   best:     { model: 'birefnet-general',      alphaMatting: true  },
 };
 
+// 质量上限（env NODESIGN_REMBG_QUALITY_CAP）。birefnet 系模型在小内存机器上会被
+// OOM killer 直接杀掉 —— 而且杀的是常驻 service 进程，连带 fast 档一起死。
+// 超上限**显式拒绝并说明原因**（agent 看得见、能改传 fast），不做静默降档：
+// 静默降档意味着 agent 以为拿到了 birefnet 的边缘质量，实际是 isnet 的。
+const QUALITY_ORDER = ['fast', 'balanced', 'best'];
+function qualityCapError(quality) {
+  const cap = process.env.NODESIGN_REMBG_QUALITY_CAP;
+  if (!cap || !QUALITY_ORDER.includes(cap)) return null;
+  if (QUALITY_ORDER.indexOf(quality) <= QUALITY_ORDER.indexOf(cap)) return null;
+  return `quality "${quality}" 在这台机器上被禁用（上限 "${cap}"）：birefnet 系模型`
+    + '会触发 OOM kill 并连带杀掉常驻抠图服务。请改用 quality: "' + cap + '" 重试；'
+    + '需要更高边缘质量时告知用户当前机器内存不够。';
+}
+
 /**
  * 解析 workspace 相对路径到绝对路径。防 traversal。
  * @returns {Promise<{ abs: string, baseName: string, ext: string }>}
@@ -170,6 +184,11 @@ Returns: text caption with output path + image content block (preview the result
         .describe('Speed/edge-fidelity tradeoff. Default "fast" (isnet-general-use, NO alpha matting, ~3-8s warm) — reliable for batch / cards / collages. "balanced" (birefnet-general-lite + alpha matting, ~30-180s warm) for cleaner edges; pymatting is CPU-bound + single-threaded, slow on memory-pressured machines. "best" (birefnet-general 880MB + alpha matting, ~60-300s warm; first call downloads model ~3-5min) for critical hero shots. Resize >1MP inputs before balanced/best.'),
     },
     async ({ inputPath, outputName, overwrite = false, quality = 'fast' }) => {
+      // 0a. 质量上限（小内存机器禁 birefnet，显式拒绝不静默降档）
+      const capErr = qualityCapError(quality);
+      if (capErr) {
+        return { content: [{ type: 'text', text: `remove_background: ${capErr}` }], isError: true };
+      }
       // 0. 检查 rembg 可用
       const avail = await rembgIsAvailable();
       if (!avail.available) {

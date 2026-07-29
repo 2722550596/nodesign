@@ -73,6 +73,21 @@ export const useGlobalStore = create((set) => ({
     set({ planModeEnabled: enabled });
   },
 
+  // ── 模型选择（2026-07-29）──
+  // Composer 里的 picker。选择随每条消息的 body.model 下发，服务端写进
+  // session-config.json（模型的唯一真相源）并在会话空闲时重启 query 以生效。
+  // null = 跟随服务端默认（NODESIGN_MODEL）。localStorage 持久化，跨会话沿用。
+  modelPref: (() => {
+    try { return localStorage.getItem('nodesign:modelPref') || null; } catch { return null; }
+  })(),
+  setModelPref: (model) => {
+    try {
+      if (model) localStorage.setItem('nodesign:modelPref', model);
+      else localStorage.removeItem('nodesign:modelPref');
+    } catch { /* ignore */ }
+    set({ modelPref: model || null });
+  },
+
   // ── Phase B 批次 3：用户主动 recall project memory 到下一轮 chat ──
   // MemoryCard 点"📎 加到下条消息"会 push 一项到这里；ChatComposer 提交时
   // pendingMemoryRecalls 拼到 chat 字段头部（<memory-recall> 包裹），

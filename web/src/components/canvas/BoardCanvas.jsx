@@ -10,7 +10,7 @@ import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js'
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import {
   DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H, SIZES,
-  SITE_VIEWPORTS, EASE, POP_IN, sizeOf, newStackedZoneRect,
+  SITE_VIEWPORTS, EASE, POP_IN, sizeOf, newStackedZoneRect, resolveZoneAvoidance,
 } from '../../lib/board-geometry.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
@@ -223,38 +223,44 @@ export default function BoardCanvas({
       });
     }
     // 任务 deck（任务模型 2026-07-28）：tasks/<任务>/canvas.html 存在才有 deck 物件；
-    // 任务工作区分区本身由 zone 派生 effect 建（无 deck 的任务也有分区）
-    // 任务 deck：canvas.html = 主 deck（id `deck:task/<任务>`），其余 .html 是
-    // 试作 / 备选（id `deck:task/<任务>/<文件>`），并排摆在同一块任务区里
+    // 任务工作区分区本身由 zone 派生 effect 建（无产物的任务也有分区）
+    // 多产物平权（2026-07-29）：tasks[].artifacts 一条一卡，没有主/试作等级。
+    // 站点子页和样式表仍不各自上墙（用户要的是"我那个网站"，不是
+    // index/about/style 三张互不相干的卡）。id 沿用旧格式，存过的布局不丢：
+    //   deck: canvas.html → `deck:task/<t>`，其余 → `deck:task/<t>/<文件>`
+    //   根站 → `site:task/<t>`；子目录站 → `site:task/<t>/<目录>`；
+    //   单页（原 _drafts 试作）→ `site:task/<t>/_drafts/<文件>.html`
     for (const t of tasks) {
-      // 站点任务：一个任务 = 一个站点物件。子页和样式表不各自上墙 ——
-      // 用户要的是"我那个网站"，不是 index/about/style 三张互不相干的卡。
-      if (t.kind === 'site') {
-        out.push({
-          id: `site:task/${t.id}`,
-          type: 'site',
-          task: t.id,
-          entry: t.site?.entry || 'index.html',
-          pages: t.site?.pages || [],
-          title: t.title,
-          mtime: t.mtime,
-        });
-        continue;
-      }
-      const decks = Array.isArray(t.decks) && t.decks.length
-        ? t.decks
-        : (t.hasDeck ? [{ file: 'canvas.html', main: true }] : []);
-      for (const d of decks) {
-        const isMain = d.main || d.file === 'canvas.html';
-        out.push({
-          id: isMain ? `deck:task/${t.id}` : `deck:task/${t.id}/${d.file}`,
-          type: 'deck',
-          task: t.id,
-          deckFile: d.file,
-          isMainDeck: isMain,
-          title: isMain ? t.title : d.file.replace(/\.html$/i, ''),
-          mtime: t.mtime,
-        });
+      for (const a of (t.artifacts || [])) {
+        if (a.kind === 'site') {
+          out.push({
+            id: a.single
+              ? `site:task/${t.id}/${a.entryRel}`
+              : (a.title ? `site:task/${t.id}/${a.root}` : `site:task/${t.id}`),
+            type: 'site',
+            single: !!a.single,
+            task: t.id,
+            base: a.base || `tasks/${t.id}`,
+            entry: a.entry || 'index.html',
+            pages: a.pages || [],
+            root: a.root || '',
+            srcRoot: a.srcRoot || '',
+            exports: a.exports,
+            title: a.title || t.title,
+            mtime: t.mtime,
+          });
+        } else {
+          const isCanvas = a.file === 'canvas.html';
+          out.push({
+            id: isCanvas ? `deck:task/${t.id}` : `deck:task/${t.id}/${a.file}`,
+            type: 'deck',
+            task: t.id,
+            deckFile: a.file,
+            exports: a.exports,
+            title: a.title || t.title,
+            mtime: t.mtime,
+          });
+        }
       }
     }
     for (const a of artifacts) {
@@ -362,6 +368,19 @@ export default function BoardCanvas({
    *   3. 归属 = 物件中心落在工作区有效矩形内（区随内容向下自然生长）
    */
   const { positioned, zoneView, contentBottom, overlapFixes } = useMemo(() => {
+    // 聚焦区最小画幅 = 一屏（2026-07-29 用户拍板）：进文件夹时它初始就占满
+    // 一屏 canvas，内容超出再向下生长。只对聚焦区生效 —— 整理总览里每个区
+    // 都撑一屏的话，五个任务就是五屏死滚动。fitScale 跟渲染层同式（memo 在
+    // scale 定义之前跑，这里自己算一遍）。
+    const fitScale = Math.min(1, (paneSize.w || DESKTOP_W) / DESKTOP_W);
+    const oneScreenH = Math.ceil((paneSize.h || 600) / (fitScale || 1));
+    const focusedZid = viewMode === 'work'
+      ? (focusZoneId || sessionZone.get(currentSessionId) || currentSessionId)
+      : null;
+    const zoneMinHOf = (zid) => (zid === focusedZid
+      ? Math.max(ZONE_MIN_H, oneScreenH - 32)   // 上下各留 16 呼吸
+      : ZONE_MIN_H);
+
     // 占格：placed 成员先标格子，未摆放的按空格入座
     const grids = {};
     for (const [zid, z] of Object.entries(zonesEff)) {
@@ -449,8 +468,8 @@ export default function BoardCanvas({
     }
 
     // 收纳带（桌面底部）：文档架 / 无工作区 deck / 无主素材 / 文件，列数按桌面宽度算
-    const zoneBottom = Object.values(grids).reduce(
-      (acc, g) => Math.max(acc, g.rect.y + (g.rect.collapsed ? FOLDER_CARD_H : Math.max(g.rect.h, g.bottom - g.rect.y))), ZONE.bandY);
+    const zoneBottom = Object.entries(grids).reduce(
+      (acc, [zid, g]) => Math.max(acc, g.rect.y + (g.rect.collapsed ? FOLDER_CARD_H : Math.max(zoneMinHOf(zid), g.bottom - g.rect.y))), ZONE.bandY);
     const deckCols = Math.max(1, Math.floor((DESKTOP_W - MARGIN_X * 2) / 268));
     const artCols = Math.max(1, Math.floor((DESKTOP_W - MARGIN_X * 2) / 228));
     const docY = zoneBottom + 60;
@@ -462,55 +481,74 @@ export default function BoardCanvas({
     const fileY = artY + Math.ceil(legacy.art.length / artCols) * 210 + 40;
     legacy.file.forEach((o, i) => items.push({ ...o, pos: { x: MARGIN_X, y: fileY + i * 52, z: 1 } }));
 
-    // zone 视图（有效高度随内容生长）+ 逐物件归属（显式字段优先）
+    for (const it of items) it.zoneId = effZoneOf(it);
+
+    // pass 2.5：框内收容（2026-07-29）。刷新等时序下 stored 位置可能跟重堆后
+    // 的区矩形对不上（区挪了成员没跟上），卡看起来悬在文件夹外、区高度还按
+    // 错位内容算得很矮。这里把出框成员硬拉回框内，随后的避让 pass 排掉重叠
+    // —— 无论哪条路径产生的错位都在下一帧自愈。拖拽中的那张卡不收容
+    // （拖出边缘是合法路径：可能正拖去别的区/文件夹）。
+    const activeDragId = dragActive ? (dragRef.current?.id ?? null) : null;
+    const containFixes = {};
+    for (const it of items) {
+      if (!it.zoneId || it.id === activeDragId) continue;
+      const g = grids[it.zoneId];
+      if (!g || g.rect.collapsed) continue;
+      const sz = sizeOf(it);
+      const xMin = g.rect.x + ZONE.pad;
+      const xMax = Math.max(xMin, g.rect.x + g.rect.w - ZONE.pad - sz.w);
+      const yMin = g.rect.y + ZONE.header + ZONE.pad;
+      const nx = Math.max(xMin, Math.min(xMax, it.pos.x));
+      const ny = Math.max(yMin, it.pos.y);
+      if (Math.abs(nx - it.pos.x) > 0.5 || Math.abs(ny - it.pos.y) > 0.5) {
+        it.pos = { ...it.pos, x: nx, y: ny };
+        if (!dragActive && layout[it.id]) containFixes[it.id] = { x: nx, y: ny };
+      }
+    }
+
+    // pass 3：同区避让系统（2026-07-29 重写）
+    //
+    // 旧机制（"先来后到"，后来者被传送到网格空位）的两个毛病：
+    //   1. 你拖着的卡压到别人身上，被挪走的是你手里这张——排斥手感；
+    //   2. 被挪的卡跳到网格序第一个空位，可能离原位很远——传送不是让位。
+    // 新语义：**交互中的卡有路权，别人让**。
+    //   - 路权按 z（每次 pointerdown / 展开都 zMax+1，天然是"最近摸过"序）
+    //   - 让位是最小位移：向下 / 向右 / 向左三个方向里挑挪得最少的那个，
+    //     连锁避让（被挤的再挤别人）；侧移超过 8 次防振荡，只往下走（必收敛）
+    //   - 拖拽期间只改渲染位置不落盘 —— 拖走了别人自动弹回，松手才定格
+    const overlapFixes = { ...containFixes };
+    for (const [zid, g] of Object.entries(grids)) {
+      if (g.rect.collapsed) continue;   // 收起的文件夹成员不渲染，摆它没意义
+      const members = items.filter(it => it.zoneId === zid);
+      if (members.length < 2) continue;
+      const { moved, bottom: zoneContentBottom } = resolveZoneAvoidance(
+        members.map(it => { const sz = sizeOf(it); return { id: it.id, pos: it.pos, w: sz.w, h: sz.h }; }),
+        {
+          xMin: g.rect.x + ZONE.pad,
+          xMax: DESKTOP_W - ZONE.pad,     // 右边缘上限（rect 右缘不出桌面）
+          yMin: g.rect.y + ZONE.header + ZONE.pad,
+        },
+      );
+      for (const it of members) {
+        const fix = moved.get(it.id);
+        if (!fix) continue;
+        it.pos = { ...it.pos, x: fix.x, y: fix.y };
+        // 拖拽中只做渲染层避让（松手重算时再落盘）；未存过位置的自动入座件也不写
+        if (!dragActive && layout[it.id]) overlapFixes[it.id] = fix;
+      }
+      g.bottom = Math.max(g.bottom, zoneContentBottom + ZONE.pad);
+    }
+
+    // zone 视图（有效高度随内容生长，含避让后被挤出来的新底边）
     const zv = Object.entries(grids).filter(([zid]) => !sessionZone.has(zid)).map(([zid, g]) => ({
       id: zid,
       x: g.rect.x, y: g.rect.y, w: g.rect.w,
-      // 高度贴着内容走（存档矩形的 640 只当创建时的估算，不再当地板）：
-      // 空工作区不该占掉大半屏空画幅 —— 只留一个能接住拖放的最小身位
-      h: Math.max(ZONE_MIN_H, g.bottom - g.rect.y),
+      // 高度：聚焦区一屏起步、其余贴内容（zoneMinHOf），超出再向下生长；
+      // 存档矩形的 h 只当创建时的估算，不当地板
+      h: Math.max(zoneMinHOf(zid), g.bottom - g.rect.y),
       title: sessionTitles.get(zid) || taskTitles.get(zid) || g.rect.title || '工作区',
       collapsed: !!g.rect.collapsed,
     }));
-    for (const it of items) it.zoneId = effZoneOf(it);
-
-    // pass 3：同区内互相遮盖的成员推开（2026-07-28）
-    //
-    // 遮盖是这么来的：deck 从收起态（240×88）展开成内嵌渲染（640×388）后，
-    // 底下本来错开的图片就被盖住了；存过位置的物件之间也没人做过碰撞检查。
-    // 这里按"先来后到"重排：先摆的不动，后面的谁压上就顺着网格找下一个空位。
-    // 存过位置的物件被推开时记一笔 fix，effect 里落盘，避免每次渲染重算。
-    const overlapFixes = {};
-    const hit = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
-    for (const [zid, g] of Object.entries(grids)) {
-      const members = items
-        .filter(it => it.zoneId === zid)
-        .sort((a, b) => a.pos.y - b.pos.y || a.pos.x - b.pos.x);
-      const placed = [];
-      for (const it of members) {
-        const sz = sizeOf(it);
-        let rect = { x: it.pos.x, y: it.pos.y, w: sz.w, h: sz.h };
-        if (placed.some(r => hit(rect, r))) {
-          const cols = Math.max(1, g.cols);
-          let found = null;
-          for (let idx = 0; idx < 400 && !found; idx++) {
-            const c = idx % cols; const r = Math.floor(idx / cols);
-            const cand = {
-              x: Math.min(DESKTOP_W - sz.w, g.rect.x + ZONE.pad + c * ZONE.cellW),
-              y: g.rect.y + ZONE.header + ZONE.pad + r * ZONE.cellH,
-              w: sz.w, h: sz.h,
-            };
-            if (!placed.some(rr => hit(cand, rr))) found = cand;
-          }
-          if (found) {
-            rect = found;
-            it.pos = { ...it.pos, x: found.x, y: found.y };
-            if (layout[it.id]) overlapFixes[it.id] = { x: found.x, y: found.y };
-          }
-        }
-        placed.push(rect);
-      }
-    }
 
     for (const z of zv) z.memberCount = items.filter(it => it.zoneId === z.id).length;
     // 桌面高度 = 可见内容最低点 + 余量（收纳进文件夹的成员藏着，不该撑出死滚动区）
@@ -521,7 +559,8 @@ export default function BoardCanvas({
       bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     }
     return { positioned: items, zoneView: zv, contentBottom: bottom, overlapFixes };
-  }, [objects, layout, zonesEff, sessionTitles, taskTitles, sessionZone]);
+  }, [objects, layout, zonesEff, sessionTitles, taskTitles, sessionZone, dragActive, paneSize,
+    viewMode, focusZoneId, currentSessionId]);
   positionedRef.current = positioned;
 
   // 桌面几何：宽度固定，视口窄则整体等比缩小（非交互）。高度与镜头在
@@ -879,8 +918,14 @@ export default function BoardCanvas({
 
   const focusDeck = (o) => {
     if (o.type === 'site') {
-      // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态
-      onFocusDeck?.({ kind: 'site', task: o.task, entry: o.entry || 'index.html', title: o.title, pages: o.pages });
+      // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
+      // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
+      onFocusDeck?.({
+        kind: 'site', task: o.task, base: o.base || `tasks/${o.task}`,
+        entry: o.entry || 'index.html', title: o.title, pages: o.pages,
+        // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
+        built: !!(o.root && o.root !== o.srcRoot),
+      });
     } else if (o.task) {
       // 任务 deck：与会话解绑，原地开最大化编辑窗
       onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title });
@@ -900,7 +945,7 @@ export default function BoardCanvas({
     else if (o.type === 'file') openFile(o);
     else if (o.type === 'deck' || o.type === 'site') {
       if (o.pos.expanded) focusDeck(o);
-      else patchLayout(o.id, { expanded: true });
+      else patchLayout(o.id, { expanded: true, z: ++zMaxRef.current });
     }
   };
   primaryOpenRef.current = primaryOpen;   // preview_deck 走同一条"双击"路径
@@ -1011,7 +1056,7 @@ export default function BoardCanvas({
     const o = positionedRef.current.find(it => it.id === targetId);
     if (!o) return false;
     autoExpandedRef.current.add(sid);
-    patchLayout(targetId, { x: o.pos.x, y: o.pos.y, expanded: true });
+    patchLayout(targetId, { x: o.pos.x, y: o.pos.y, expanded: true, z: ++zMaxRef.current });
     return true;
   }, [patchLayout]);
 
@@ -1084,10 +1129,16 @@ export default function BoardCanvas({
 
   // ── 舞台层（StageLayer.jsx 自治）：事件状态机 + 跟随触发 + deck 自动展开触发 ──
   // 哪些任务是站点 —— 舞台寻址要用它把 index/about/style.css 收敛到同一张站点卡
-  const siteTasks = useMemo(
-    () => new Set(tasks.filter(t => t.kind === 'site').map(t => t.id)),
-    [tasks],
-  );
+  // Map<任务名, 站点root[]>（'' = 根站，'v2' = 子目录站）——舞台寻址按实例贴卡。
+  // 只有站点实例的任务才进表；纯 deck 任务走 resolveObjectId 的 deck 分支
+  const siteTasks = useMemo(() => {
+    const m = new Map();
+    for (const t of tasks) {
+      const dirSites = (t.artifacts || []).filter(a => a.kind === 'site' && !a.single);
+      if (dirSites.length) m.set(t.id, dirSites.map(a => (a.title ? a.root : '')));
+    }
+    return m;
+  }, [tasks]);
   const { stageCards, stageBadges, dismissStageCard } = useStageState({
     stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand: requestAutoExpand,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
@@ -1137,13 +1188,16 @@ export default function BoardCanvas({
   useEffect(() => {
     const fz = viewMode === 'work' ? (focusZoneId || currentSessionId) : null;
     const zv = fz ? zoneView.find(z => z.id === fz) : null;
-    // artifactKind：当前聚焦的任务做的是 deck 还是站点 —— 导出菜单据此换格式表。
-    // 不上报的话顶栏只能默认按 deck 给 PDF/PPTX，用户点了拿到 400。
+    // artifactKind / artifactExports：当前聚焦的任务做的是什么形态、可用哪些导出
+    // 格式（服务端 kinds/ 注册表吐的）—— 导出菜单据此渲染，不再在前端硬编码
+    // 格式表。不上报的话顶栏只能默认按 deck 给 PDF/PPTX，用户点了拿到 400。
     const focusTask = fz && fz.startsWith('task/') ? fz.slice(5) : null;
+    const focusTaskObj = focusTask ? tasks.find(t => t.id === focusTask) : null;
     const ui = {
       viewMode,
       focus: zv ? { id: zv.id, title: zv.title, count: zv.memberCount, isSession: sessionTitles.has(zv.id) } : null,
-      artifactKind: focusTask ? (tasks.find(t => t.id === focusTask)?.kind || null) : null,
+      artifactKind: focusTaskObj?.kind || null,
+      artifactExports: focusTaskObj?.exports || null,
     };
     // zoneView 每次布局变更都换新引用（拖拽期间逐帧）—— 序列化对比，内容没变不上报
     const key = JSON.stringify(ui);
@@ -1379,7 +1433,9 @@ export default function BoardCanvas({
               currentSessionId={currentSessionId}
               fileVersions={fileVersions}
               added={addedPaths.has(o.id)}
-              animateLayout={!dragActive}
+              // 避让系统：拖拽中只有被拖的卡要逐帧跟手（关过渡），被避让的
+              // 邻居保持 380ms 滑动 —— 挤开和弹回都是顺滑的
+              animateLayout={!dragActive || dragRef.current?.id !== o.id}
               agentActive={ringObjects.has(o.id)}
               onPointerDown={(e) => onObjectPointerDown(e, o)}
               wasDrag={wasDrag}
@@ -1389,7 +1445,9 @@ export default function BoardCanvas({
               onOpenFile={() => openFile(o)}
               onDetail={() => setDetail(o)}
               onDeleteNote={() => handleDeleteNote(o)}
-              onToggleExpand={() => patchLayout(o.id, { expanded: !o.pos.expanded })}
+              // 展开也拿路权（z 置顶）：deck/site 展开变大时是它把邻居挤开，
+              // 而不是它自己被避让系统摆走
+              onToggleExpand={() => patchLayout(o.id, { expanded: !o.pos.expanded, z: ++zMaxRef.current })}
               onFocus={() => focusDeck(o)}
             />
           ))}
@@ -1632,7 +1690,7 @@ function BoardObject({
             {/* 内嵌渲染：live iframe 缩到 1/3，pointer-events 关闭 —— deck 元素级
                 工具（DirectEdit / Drag / Comment）只在聚焦（✏️）后的编辑视图开放 */}
             <iframe
-              title={`deck-${o.task ? `task-${o.task}${o.isMainDeck === false ? `-${o.deckFile}` : ''}` : o.sid}`}
+              title={`deck-${o.task ? `task-${o.task}${o.deckFile && o.deckFile !== 'canvas.html' ? `-${o.deckFile}` : ''}` : o.sid}`}
               src={o.task
                 ? `${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}?v=${versionOfFile(fileVersions, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}`
                 : Canvas.artifactUrl(projectId, o.sid, versionOfFile(fileVersions, 'canvas.html'))}
@@ -1663,7 +1721,7 @@ function BoardObject({
             </button>
           </div>
           <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
-            {`站点 · ${o.pages?.length || 1} 个页面 · 双击预览`}
+            {o.single ? '单页 · 双击预览' : `站点 · ${o.pages?.length || 1} 个页面 · 双击预览`}
           </div>
         </div>
       )}
@@ -1689,8 +1747,8 @@ function BoardObject({
             {/* 站点缩略：按桌面宽度渲染再等比缩。**不套 1920×1080 固定画框** ——
                 站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿" */}
             <iframe
-              title={`site-${o.task}`}
-              src={`${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.entry || 'index.html'}`)}?v=${versionOfTask(fileVersions, o.task)}`}
+              title={`site-${o.id}`}
+              src={`${Assets.artifactFileUrl(projectId, `${o.base || `tasks/${o.task}`}/${o.entry || 'index.html'}`)}?v=${versionOfTask(fileVersions, o.task)}`}
               sandbox="allow-scripts allow-same-origin"
               style={{
                 width: SITE_VIEWPORTS[0].w,

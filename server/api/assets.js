@@ -18,9 +18,7 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
-import {
-  detectTaskKind, readTaskMarker, listSitePages, ENTRY_FILE, KIND_SITE, KIND_DECK,
-} from '../lib/artifact-target.js';
+import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 
 const router = express.Router();
 
@@ -216,11 +214,11 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     await scanDir(path.join(assetsDir, 'generated'), 'generated', 'assets/generated');
     await scanDir(path.join(assetsDir, 'notes'), 'note', 'assets/notes');
 
-    // 任务模型（2026-07-28）：任务=shared/tasks/ 下的目录（agent 按需自建）。
-    // 目录名即任务名。**任务有形态**（2026-07-28 加站点起）：
-    //   deck —— canvas.html 是主 deck，同目录其余 .html 是试作，各自一张卡
-    //   site —— index.html 是入口，整个目录是**一个**站点物件，子页和 style.css
-    //           不各自上墙（否则用户看到的是一堆卡而不是一个站）
+    // 任务模型（2026-07-28；2026-07-29 多产物平权）：任务=shared/tasks/ 下的
+    // 目录（agent 按需自建），目录名即任务名。一个任务可以装**多个平等产物**
+    // （tasks[].artifacts，一条一卡）：顶层每个 .html 各是一份 deck、根 index.html
+    // =一个站（子页和 style.css 不各自上墙）、无根站时带 index.html 的子目录各
+    // 是一个站、_drafts/*.html 各是一个单页。没有主/试作等级。
     const tasks = [];
     const tasksDir = path.join(getSharedDir(req.params.pid), 'tasks');
     const siteTaskNames = new Set();
@@ -233,38 +231,44 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         try {
           tStat = await fs.stat(tDir);
         } catch { continue; }   // 任务目录扫到一半被删：跳过，别让整份清单 500
-        // 任务=会话一对一：.nd-task.json 是 PostToolUse 落的归属标记
-        const marker = await readTaskMarker(tDir);
-        const boundSession = typeof marker?.sessionId === 'string' ? marker.sessionId : null;
-        const kind = await detectTaskKind(tDir);
+        // 形态解析统一走 kinds/ 注册表 —— 前端、感知工具、导出吃同一份 manifest，
+        // 不再各自猜文件名（2026-07-29）
+        const manifest = await taskManifest(tDir);
+        const kind = manifest?.kind || null;
 
         const task = {
           id: t.name,
           title: t.name,
           kind,                       // 'deck' | 'site' | null（还没写出产物）
-          sessionId: boundSession,
+          sessionId: manifest?.sessionId
+            ?? await (async () => {
+              try {
+                const raw = JSON.parse(await fs.readFile(path.join(tDir, '.nd-task.json'), 'utf8'));
+                return typeof raw?.sessionId === 'string' ? raw.sessionId : null;
+              } catch { return null; }
+            })(),
           mtime: tStat.mtime.toISOString(),
+          exports: manifest?.exportFormats || [],
         };
 
-        if (kind === KIND_SITE) {
+        // 多产物平权（2026-07-29）：任务的产物是一份平等清单，前端一条一卡。
+        // base = 该产物的预览 URL 根（站点是产物根目录；deck / 单页是任务根）
+        task.artifacts = (manifest?.artifacts || []).map((a) => ({
+          kind: a.kind,
+          view: a.view,
+          single: !!a.single,
+          file: a.file,                // deck / 单页：html 文件（相对任务根）
+          root: a.root || '',
+          srcRoot: a.srcRoot || '',    // 站点源目录；root≠srcRoot = 构建型（编辑要同步回源）
+          entry: a.kind === 'site' && !a.single ? a.entry : a.entryRel,
+          entryRel: a.entryRel,
+          base: `tasks/${t.name}${a.kind === 'site' && !a.single && a.root ? `/${a.root}` : ''}`,
+          pages: a.pages,
+          title: a.title,              // null = 用任务名
+          exports: a.exportFormats,
+        }));
+        if ((manifest?.artifacts || []).some(a => a.kind === KIND_SITE && !a.single)) {
           siteTaskNames.add(t.name);
-          const pages = await listSitePages(tDir);
-          task.site = { entry: ENTRY_FILE[KIND_SITE], pages };
-          task.hasDeck = false;
-          task.decks = [];
-        } else {
-          // 一个任务可以有多份 deck：canvas.html 是主 deck，
-          // 其余 .html 是试作 / 备选（风格原型探索阶段并排放着让用户挑）
-          let decks = [];
-          try {
-            const inner = await fs.readdir(tDir, { withFileTypes: true });
-            decks = inner
-              .filter(f => f.isFile() && f.name.toLowerCase().endsWith('.html') && !f.name.startsWith('.'))
-              .map(f => ({ file: f.name, main: f.name === ENTRY_FILE[KIND_DECK] }))
-              .sort((a, b) => (b.main - a.main) || a.file.localeCompare(b.file));
-          } catch { /* 目录读不到就当没 deck */ }
-          task.hasDeck = decks.some(d => d.main);
-          task.decks = decks;
         }
 
         tasks.push(task);
@@ -413,6 +417,14 @@ async function removeSessionByTask(pid, sid) {
 
 router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
   try {
+    // ⚠️ Cache-Control 必须先设、且错误路径也要带（2026-07-29 SPiCa 裸奔事故）：
+    // Cloudflare 对 .css/.js/.png 等扩展名按后缀边缘缓存，源站 `no-cache` 会被
+    // 改写成浏览器 max-age=14400（4 小时），**404 响应同样被缓存 4 小时** ——
+    // agent 先写 index.html 后写 style.css 的间隙里用户加载一次，浏览器就把
+    // "css 404" 缓存 4 小时，之后怎么刷新都裸奔。实测 `no-store` / `private`
+    // 会让 CF 判为 DYNAMIC 原样透传（同路由的 .html 就是这么幸免的）。
+    // 所以：默认 no-store 兜底一切错误路径，成功路径按类型再覆盖。
+    res.setHeader('Cache-Control', 'no-store');
     validateProjectId(req.params.pid);
     if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
 
@@ -456,10 +468,11 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     const ext = path.extname(servePath).toLowerCase();
     res.setHeader('Content-Type', ARTIFACT_MIME[ext] || 'application/octet-stream');
     res.setHeader('Content-Length', stat.size);
-    // 站点在编辑中要看到最新的那一份：deck 的图片可以缓存 5 分钟，html/css/js
-    // 不能 —— agent 改完 style.css 用户按刷新还是旧样式，会以为改动没生效。
+    // 站点在编辑中要看到最新的那一份：图片可以浏览器缓存 5 分钟（private 让 CF
+    // 不边缘缓存），html/css/js 一律 no-store —— no-cache 不够，CF 会对这些扩展
+    // 名边缘缓存 + 把浏览器 TTL 改写成 4 小时（见路由入口注释）。
     const editable = ext === '.html' || ext === '.htm' || ext === '.css' || ext === '.js';
-    res.setHeader('Cache-Control', editable ? 'no-cache' : 'private, max-age=300');
+    res.setHeader('Cache-Control', editable ? 'no-store' : 'private, max-age=300');
     res.end(await fs.readFile(servePath));
   } catch (err) { next(err); }
 });

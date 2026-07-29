@@ -6,6 +6,7 @@ import { useDropzone } from '../../lib/useDropzone.js';
 import ComposerTray from './ComposerTray.jsx';
 import SuggestionChip from './SuggestionChip.jsx';
 import PlanModeToggle from './PlanModeToggle.jsx';
+import ModelPicker from './ModelPicker.jsx';
 
 /**
  * Chat 输入框 — 双层结构（参考用户提供的设计图）
@@ -193,6 +194,9 @@ export default function ChatComposer({
           <div style={{ marginLeft: GAP.xs }}>
             <PlanModeToggle disabled={disabled} syncToActiveRun />
           </div>
+          {/* 模型 picker：切换从下一条消息生效（服务端空闲时重启 query），
+              正在跑时禁用 —— 不给"点了立刻切"的错觉 */}
+          <ModelPicker disabled={disabled || isRunning} />
 
           <div style={{ flex: 1 }} />
 

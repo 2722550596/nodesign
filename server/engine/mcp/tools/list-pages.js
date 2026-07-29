@@ -14,7 +14,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import {
-  resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, listSitePages,
+  resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, taskManifest,
 } from '../../../lib/artifact-target.js';
 
 /**
@@ -127,23 +127,36 @@ Lighter than read_page (which returns full outerHTML of one page).`,
 }
 
 /**
- * 站点结构：任务目录里每个 html 一条，带标题 / 小标题 / 站内外链接 / 体积。
+ * 站点结构：产物根里每个 html 一条，带标题 / 小标题 / 站内外链接 / 体积。
  *
  * 纯文本解析，不开 playwright —— 站点是多文件，逐个起浏览器既慢又没必要；
  * agent 要的是"这站有哪些页、彼此怎么连"，那是源码里就有的信息。
  * 顺带查断链：站内链接指到不存在的文件是站点最常见、也最容易漏的错。
+ *
+ * 扫的是**产物根**（构建型站点 = dist/ 之类）：预览和发布看的是它，源目录的
+ * md / 模板在这里没有意义。`_drafts/` 的试作不算站点页面，单独提一句。
  */
 async function listSiteStructure(target) {
-  const pages = await listSitePages(target.taskDir);
+  const manifest = await taskManifest(target.taskDir);
+  // 多产物平权：报的是**这个站点实例**的结构（resolve 已判好路径属于哪个产物）
+  const art = target.artifact
+    || manifest?.artifacts?.find(a => a.kind === 'site' && !a.single)
+    || null;
+  const pages = art?.pages || [];
+  const baseDir = target.artifactDir || target.taskDir;
   if (pages.length === 0) {
     return {
-      content: [{ type: 'text', text: `${target.task} 是站点任务，但目录里还没有 html 页面。` }],
+      content: [{
+        type: 'text',
+        text: `${target.task} 里这个站点（${art?.root ? `产物根 ${art.root}/` : '任务根'}）还没有 html 页面。`
+          + (art?.root ? '（源写完了的话，先跑构建让产物落进去。）' : ''),
+      }],
     };
   }
   const out = [];
   for (const rel of pages) {
     let raw = '';
-    try { raw = await fs.readFile(path.join(target.taskDir, rel), 'utf8'); } catch { continue; }
+    try { raw = await fs.readFile(path.join(baseDir, rel), 'utf8'); } catch { continue; }
     const titleM = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const headings = [...raw.matchAll(/<h([1-3])\b[^>]*>([\s\S]*?)<\/h\1>/gi)]
       .map(m => m[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
@@ -188,12 +201,18 @@ async function listSiteStructure(target) {
   const brokenNote = broken.length
     ? `\n\n⚠️ 站内链接指向不存在的页面（${broken.length} 条）：\n${broken.map(b => `- ${b}`).join('\n')}`
     : '';
+  const rootNote = art?.root ? `（产物根 ${art.root}/，改源后要重新构建）` : '';
+  // 任务里的其他平等产物（别的站 / deck / 单页）提一句，agent 知道全貌
+  const siblings = (manifest?.artifacts || []).filter(a => a.entryRel !== art?.entryRel);
+  const siblingNote = siblings.length
+    ? `\n\n同任务的其他产物（平等，各自寻址）：${siblings.map(a => a.entryRel).join(' / ')}`
+    : '';
 
   return {
     content: [{
       type: 'text',
-      text: `站点 ${target.task} · ${out.length} 个页面（入口 ${pages[0]}）：\n\n`
-        + `${JSON.stringify(out, null, 2)}${brokenNote}`,
+      text: `站点 ${target.task} · ${out.length} 个页面（入口 ${pages[0]}）${rootNote}：\n\n`
+        + `${JSON.stringify(out, null, 2)}${brokenNote}${siblingNote}`,
     }],
   };
 }

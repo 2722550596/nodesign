@@ -1,27 +1,26 @@
 /**
- * artifact-target.js — 产物寻址（2026-07-28，由 canvas-target.js 泛化而来）
+ * artifact-target.js — 产物寻址（2026-07-28 由 canvas-target.js 泛化；
+ * 2026-07-29 形态判定与解析下沉到 kinds/ 注册表，本文件只管「寻址」）
  *
- * 原来这层叫 canvas-target，它只认一种产物：deck = `tasks/<任务>/canvas.html`。
- * 加站点（site = `tasks/<任务>/index.html` + 子页 + style.css）时如果只在调用方
- * 打补丁，会重演任务模型上线时那批静默失败 —— 工具不报错，只是把站点当成
- * "没有分页的 deck"，返回空结果，agent 换招绕过去，用户永远不知道感知层瞎了。
+ * 定死三件事：
  *
- * 所以这里定死两件事：
+ * **① 任务有形态（kind），文件就是真相。** 判定规则在 kinds/ 注册表：
+ *    canvas.html → deck；index.html（任务根 / 声明的产物根 / 约定构建目录）→ site；
+ *    都没有才看 `.nd-task.json` 的 kind 兜底。
  *
- * **① 任务有形态（kind），文件就是真相。**
- *    目录里有 canvas.html → deck；否则有 index.html → site；都没有就看 marker；
- *    还没有就是"未定"（刚 mkdir 完还没写东西）。marker（`.nd-task.json`）只在
- *    文件判不出来时兜底 —— 文件会被用户和 agent 直接改，marker 不会，让不会变的
- *    那个当兜底而不是当权威。
+ * **② 寻址永远带着 kind 一起返回。** 下游（截图 / 分页 / 导出 / fit 注入）必须
+ *    能看见"这是 deck 还是 site"，才可能给出对的行为。kind 每次 resolve 按任务
+ *    现状重算，不缓存。
  *
- * **② 寻址永远带着 kind 一起返回。**
- *    调用方（截图 / 分页 / 导出 / fit 注入）必须能看见"这是 deck 还是 site"，
- *    才可能给出对的行为。返回值里没有 kind 的话，下游只能靠文件名猜，猜错了
- *    还是静默的。
+ * **③ 源和产物可以分开。** 构建型站点的源在任务根、产物在 dist/ 之类的产物根。
+ *    resolve 返回 taskDir（源，agent 的地盘）和 artifactDir（被预览 / 导出 / 发布
+ *    的根），deck 和手写站点两者相同。消费方要"看"产物就用 artifactDir，别再
+ *    自己 dirname(entryPath)。
  *
- * 寻址顺序（越靠前越明确，跟老版本一致）：
+ * 寻址顺序（越靠前越明确）：
  *   ① 调用方显式给的 path
- *   ② 本会话的"当前产物"——写过 / 截过 / 预览过哪份就是哪份
+ *   ② 本会话的"当前产物"——最近写过 / 截过 / 预览过哪份就是哪份；
+ *      写的是任务里的非 html（样式表 / 素材 / 构建脚本）时跟随该任务的入口
  *   ③ 绑在本会话名下那个任务的入口文件（tasks/<任务>/.nd-task.json 认领）
  *   ④ cwd/canvas.html（旧式单 deck 会话）
  *   ⑤ 整个 workspace 只有一份产物就是它；多份就报错列出来让调用方指定
@@ -32,33 +31,48 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import {
+  KINDS, kindDef, detectTaskKind, readTaskMarker, taskManifest, artifactOfPath,
+} from './kinds/index.js';
 
 export const KIND_DECK = 'deck';
 export const KIND_SITE = 'site';
 
-/** 每种形态的入口文件名。改这里等于改全平台约定 */
-export const ENTRY_FILE = Object.freeze({
-  [KIND_DECK]: 'canvas.html',
-  [KIND_SITE]: 'index.html',
-});
+/** 每种形态的入口文件名（从注册表派生；改形态契约去 kinds/） */
+export const ENTRY_FILE = Object.freeze(
+  Object.fromEntries(Object.values(KINDS).map(k => [k.id, k.entryFile])),
+);
 
-/** 站点目录里最多往下扫几层（子页 / pages/ / posts/ 够用，别把 node_modules 之类拖进来） */
-const SITE_SCAN_DEPTH = 3;
+// 形态判定与解析的权威在 kinds/，这里转发老名字（消费方 import 不用改两次）
+export { detectTaskKind, readTaskMarker, taskManifest, kindDef, artifactOfPath };
+export { formatAllowed } from './kinds/index.js';
 
-/** sessionId → { path, kind }。会话结束不清也无妨（两个短字符串） */
+/** sessionId → { path, task }。会话结束不清也无妨（几个短字符串） */
 const activeArtifact = new Map();
 
 /**
  * 记住这个会话正在做哪份产物（写文件 / 截图 / 预览时调）。
  *
- * kind 不传就按路径推断；推断不出来（任务里的非入口 .html）就跟随任务形态。
+ * 不再只认 .html（2026-07-29）：任务里的任何写入都说明 agent 在这个任务上干活。
+ * html → 记具体文件（试作 / 子页迭代时工具默认打它）；
+ * 任务内非 html（样式表 / 素材 / 构建产物）→ 记任务，resolve 时走任务入口 ——
+ * 但**不覆盖**已记下的同任务 html（改一次 style.css 不该把"正在做 proto-B"忘掉）。
+ * 任务外的非 html（agent-memory / spec.json）跟产物无关，不动 active。
  */
 export function setActiveArtifact(sessionId, relPath, kind) {
   if (!sessionId || typeof relPath !== 'string') return;
   const p = normalizeRel(relPath);
-  if (!p.endsWith('.html')) return;
-  if (p.endsWith('canvas.template.html') || p.endsWith('site.template.html')) return;  // 模板不是产物
-  activeArtifact.set(sessionId, { path: p, kind: kind || null });
+  if (/\.template\.(html?|css)$/i.test(p)) return;   // 模板不是产物
+  const task = taskNameOf(p);
+  const isHtml = /\.html?$/i.test(p);
+  if (isHtml) {
+    activeArtifact.set(sessionId, { path: p, task, kind: kind || null });
+    return;
+  }
+  if (!task) return;
+  const prev = activeArtifact.get(sessionId);
+  if (prev?.task === task && prev.path) return;
+  activeArtifact.set(sessionId, { path: null, task, kind: null });
 }
 
 export function getActiveArtifact(sessionId) {
@@ -89,35 +103,13 @@ export function taskNameOf(relPath) {
   return m ? m[1] : null;
 }
 
-/** 读任务标记（`.nd-task.json`）。没有 / 读不动 → null */
-export async function readTaskMarker(taskDir) {
-  try {
-    const raw = await fs.readFile(path.join(taskDir, '.nd-task.json'), 'utf8');
-    const parsed = JSON.parse(raw);
-    return (parsed && typeof parsed === 'object') ? parsed : null;
-  } catch { return null; }
-}
-
 /**
- * 判定任务形态。**文件即真相，marker 兜底。**
- *
- * @returns {Promise<'deck'|'site'|null>} null = 还判不出来（空目录 / 只有素材）
- */
-export async function detectTaskKind(taskDir) {
-  if (await exists(path.join(taskDir, ENTRY_FILE[KIND_DECK]))) return KIND_DECK;
-  if (await exists(path.join(taskDir, ENTRY_FILE[KIND_SITE]))) return KIND_SITE;
-  const marker = await readTaskMarker(taskDir);
-  const k = marker?.kind;
-  return (k === KIND_DECK || k === KIND_SITE) ? k : null;
-}
-
-/**
- * 列 workspace 里的所有任务（含形态与归属）。
+ * 列 workspace 里的所有任务（含形态、产物根与归属）。
  *
  * tasks/ 是软链目录，Glob 不跟软链，必须显式 readdir。
  *
- * @returns {Promise<Array<{name, dir, rel, kind, entry, entryRel, sessionId}>>}
- *          kind=null 的任务还没写出产物；entry/entryRel 此时也是 null
+ * @returns {Promise<Array<{name, dir, rel, kind, root, entry, entryRel, sessionId, manifest}>>}
+ *          kind=null 的任务还没写出产物；entry/entryRel/manifest 此时是 null
  */
 export async function listTasks(workspaceRoot) {
   const out = [];
@@ -130,75 +122,67 @@ export async function listTasks(workspaceRoot) {
     if (!d.isDirectory() && !d.isSymbolicLink()) continue;
     if (d.name.startsWith('.')) continue;
     const dir = path.join(workspaceRoot, 'tasks', d.name);
-    const kind = await detectTaskKind(dir);
-    const marker = await readTaskMarker(dir);
-    const entry = kind ? ENTRY_FILE[kind] : null;
+    const manifest = await taskManifest(dir);
+    const marker = manifest ? null : await readTaskMarker(dir);   // manifest 已含 sessionId
     out.push({
       name: d.name,
       dir,
       rel: `tasks/${d.name}`,
-      kind,
-      entry,
-      entryRel: entry ? `tasks/${d.name}/${entry}` : null,
-      sessionId: typeof marker?.sessionId === 'string' ? marker.sessionId : null,
+      kind: manifest?.kind || null,
+      root: manifest?.root || '',
+      entry: manifest?.entry || null,
+      entryRel: manifest ? `tasks/${d.name}/${manifest.entryRel}` : null,
+      sessionId: manifest?.sessionId
+        ?? (typeof marker?.sessionId === 'string' ? marker.sessionId : null),
+      manifest,
     });
   }
   return out;
 }
 
 /**
- * 站点任务里的页面清单（相对任务目录，含子目录，深度 SITE_SCAN_DEPTH）。
- * index.html 排第一，其余按路径排序。
+ * 站点任务的页面清单（相对产物根）。兼容旧签名：传任务目录，返回 pages 数组。
  */
 export async function listSitePages(taskDir) {
-  const pages = [];
-  const walk = async (dir, prefix, depth) => {
-    if (depth > SITE_SCAN_DEPTH) return;
-    let entries;
-    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (e.name.startsWith('.')) continue;
-      const rel = prefix ? `${prefix}/${e.name}` : e.name;
-      if (e.isDirectory()) await walk(path.join(dir, e.name), rel, depth + 1);
-      else if (/\.html?$/i.test(e.name)) pages.push(rel);
-    }
-  };
-  await walk(taskDir, '', 1);
-  pages.sort((a, b) => {
-    if (a === ENTRY_FILE[KIND_SITE]) return -1;
-    if (b === ENTRY_FILE[KIND_SITE]) return 1;
-    return a.localeCompare(b);
-  });
-  return pages;
+  const m = await KINDS[KIND_SITE].manifest(taskDir, await readTaskMarker(taskDir));
+  return m.pages;
 }
 
 /**
  * 推断某个 html 路径的产物形态。
  *
- * 任务里的非入口 .html：deck 任务下是试作（proto-暖调.html），site 任务下是子页
- * （about.html）—— 同样的文件名形态，含义完全相反，所以必须问任务而不是猜文件名。
+ * 多产物平权后按**所属产物**判：canvas.html 在站点任务里也是 deck、about.html
+ * 在同一任务里是站点页面 —— 同名文件形态可以不同，问 artifacts 清单而不是猜
+ * 文件名。任务里找不到所属产物（还没写出来）才退回文件名约定。
  */
 export async function kindOfPath(workspaceRoot, relPath) {
   const p = normalizeRel(relPath);
   const base = path.posix.basename(p);
   const task = taskNameOf(p);
   if (task) {
-    const taskKind = await detectTaskKind(path.join(workspaceRoot, 'tasks', task));
-    if (taskKind) return taskKind;
+    const m = await taskManifest(path.join(workspaceRoot, 'tasks', task));
+    if (m) {
+      const relInTask = p.replace(/^tasks\/[^/]+\//, '');
+      const art = artifactOfPath(m, relInTask);
+      if (art) return art.kind;
+      if (m.kind) return m.kind;
+    }
   }
   if (base === ENTRY_FILE[KIND_DECK]) return KIND_DECK;
   if (base === ENTRY_FILE[KIND_SITE]) return KIND_SITE;
   return KIND_DECK;   // 旧式会话 cwd 里的散装 .html 一律按 deck
 }
 
-/** 这个 workspace 里现有的产物入口（cwd 那份 + 每个任务一份） */
+/** 这个 workspace 里现有的产物入口（cwd 那份 + 每个任务的每个产物，平权） */
 export async function listWorkspaceArtifacts(workspaceRoot) {
   const out = [];
   if (await exists(path.join(workspaceRoot, ENTRY_FILE[KIND_DECK]))) {
     out.push({ rel: ENTRY_FILE[KIND_DECK], kind: KIND_DECK, task: null });
   }
   for (const t of await listTasks(workspaceRoot)) {
-    if (t.entryRel) out.push({ rel: t.entryRel, kind: t.kind, task: t.name });
+    for (const a of (t.manifest?.artifacts || [])) {
+      out.push({ rel: `tasks/${t.name}/${a.entryRel}`, kind: a.kind, task: t.name });
+    }
   }
   return out;
 }
@@ -210,11 +194,11 @@ export async function listWorkspaceDecks(workspaceRoot) {
     .map(a => a.rel);
 }
 
-/** 认领在本会话名下那个任务的入口（任务=会话一对一的 marker） */
-async function artifactOfBoundTask(workspaceRoot, sessionId) {
+/** 认领在本会话名下那个任务（任务=会话一对一的 marker） */
+async function taskBoundTo(workspaceRoot, sessionId) {
   if (!sessionId) return null;
   for (const t of await listTasks(workspaceRoot)) {
-    if (t.sessionId === sessionId && t.entryRel) return t;
+    if (t.sessionId === sessionId) return t;
   }
   return null;
 }
@@ -226,20 +210,42 @@ async function artifactOfBoundTask(workspaceRoot, sessionId) {
  * @param {string|null} relPath   调用方显式给的路径（优先级最高）
  * @param {string|null} sessionId
  * @returns {Promise<{ ok: true, absPath: string, relPath: string, kind: 'deck'|'site',
- *                     task: string|null, taskDir: string|null }
+ *                     task: string|null, taskDir: string|null,
+ *                     artifactDir: string|null, artifactRel: string|null }
  *                  | { ok: false, message: string }>}
+ *   taskDir      源（任务根，agent 的地盘）
+ *   artifactDir  产物根（被预览 / 导出 / 发布的目录）；deck 和手写站点 = taskDir
  */
 export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
   const decorate = async (rel) => {
     const p = normalizeRel(rel);
     const task = taskNameOf(p);
+    const taskDir = task ? path.join(workspaceRoot, 'tasks', task) : null;
+    // 按所属产物定 kind 和产物根（多产物平权：同任务里 canvas.html 是 deck、
+    // v2/index.html 是另一个站，root 各归各）
+    let kind = null;
+    let root = '';
+    let artifact = null;
+    if (taskDir) {
+      const m = await taskManifest(taskDir);
+      if (m) {
+        const relInTask = p.replace(/^tasks\/[^/]+\//, '');
+        artifact = artifactOfPath(m, relInTask);
+        if (artifact) { kind = artifact.kind; root = artifact.root || ''; }
+        else if (m.kind) { kind = m.kind; root = m.root || ''; }
+      }
+    }
+    if (!kind) kind = await kindOfPath(workspaceRoot, p);
     return {
       ok: true,
       absPath: path.resolve(workspaceRoot, p),
       relPath: p,
-      kind: await kindOfPath(workspaceRoot, p),
+      kind,
       task,
-      taskDir: task ? path.join(workspaceRoot, 'tasks', task) : null,
+      taskDir,
+      artifact,   // 所属产物条目（manifest.artifacts 里那条；散文件 / 旧式会话为 null）
+      artifactDir: taskDir ? (root ? path.join(taskDir, root) : taskDir) : null,
+      artifactRel: task ? `tasks/${task}${root ? `/${root}` : ''}` : null,
     };
   };
 
@@ -263,10 +269,17 @@ export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
   }
 
   const active = getActiveArtifact(sessionId);
-  const activeHit = await tryPath(active?.path);
-  if (activeHit) return activeHit;
+  if (active?.path) {
+    const activeHit = await tryPath(active.path);
+    if (activeHit) return activeHit;
+  } else if (active?.task) {
+    // 只知道在哪个任务上干活（最近写的是样式表 / 素材）→ 走该任务的入口
+    const m = await taskManifest(path.join(workspaceRoot, 'tasks', active.task));
+    const hit = m ? await tryPath(`tasks/${active.task}/${m.entryRel}`) : null;
+    if (hit) return hit;
+  }
 
-  const bound = await artifactOfBoundTask(workspaceRoot, sessionId);
+  const bound = await taskBoundTo(workspaceRoot, sessionId);
   const boundHit = await tryPath(bound?.entryRel);
   if (boundHit) { setActiveArtifact(sessionId, boundHit.relPath, boundHit.kind); return boundHit; }
 
@@ -294,7 +307,8 @@ export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
 
 /** 给各工具复用的 path 参数描述（保持措辞一致） */
 export const ARTIFACT_PATH_DESC =
-  'Relative path of the html file (deck: "tasks/<task>/canvas.html", site: "tasks/<task>/index.html"). '
+  'Relative path of the html file (deck: "tasks/<task>/canvas.html", site: "tasks/<task>/index.html" '
+  + 'or its built output like "tasks/<task>/dist/index.html"). '
   + 'Omit to use the artifact you are currently working on.';
 
 // ── 兼容层：老名字继续可用，内部全部走上面的实现 ────────────────────────────

@@ -507,6 +507,7 @@ export default function ProjectWorkspace() {
           attachments: stateAttachments,
           sessionId: sidForRequest,  // /work 路径 → null（新会话）；/sessions/:sid → 续约
           permissionMode: planModeEnabled ? 'plan' : undefined,
+          model: useGlobalStore.getState().modelPref || undefined,
         });
         setCurrentRunId(runId);
         setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
@@ -1305,6 +1306,7 @@ export default function ProjectWorkspace() {
         // S4：显式传选中的 sessionId；null 时后端识别为"新建 session"
         sessionId: sidForRequest,
         permissionMode: planModeEnabled ? 'plan' : undefined,
+        model: useGlobalStore.getState().modelPref || undefined,
       });
       setCurrentRunId(runId);  // 终止生成用
       setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
@@ -1518,6 +1520,9 @@ export default function ProjectWorkspace() {
       id: cid,
       anchor: ctx.anchor,
       aiContext: ctx.aiContext,
+      // 站点评论带页面 path（tasks/<t>/about.html）—— agent 拉 buffer 时才知道
+      // 评论挂在哪份文件上；deck 评论不带（默认当前 deck），行为不变
+      ...(ctx.path ? { path: ctx.path } : {}),
       text: trimmed,
       status: 'open',
       createdAt: new Date().toISOString(),
@@ -1530,6 +1535,7 @@ export default function ProjectWorkspace() {
           kind: 'comment',
           anchor: ctx.anchor,
           aiContext: ctx.aiContext,
+          ...(ctx.path ? { path: ctx.path } : {}),
           text: trimmed,
         });
       } catch (err) {
@@ -1740,6 +1746,7 @@ export default function ProjectWorkspace() {
               onOpenList={() => setExportsListOpen(true)}
               onPick={() => setPickExportOpen(true)}
               artifactKind={boardUi?.artifactKind || null}
+              artifactExports={boardUi?.artifactExports || null}
               anchorRef={exportBtnRef}
             />
           </div>

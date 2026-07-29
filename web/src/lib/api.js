@@ -258,7 +258,7 @@ export const Turn = {
    *   - 'plan' → 启用 SDK 原生 plan mode（read-only + ExitPlanMode 审批流）
    *   - 其他/不传 → 默认 bypassPermissions
    */
-  send: async ({ pid, chat, attachments = [], skillId, sessionId, permissionMode, requestId, raw }) => {
+  send: async ({ pid, chat, attachments = [], skillId, sessionId, permissionMode, requestId, raw, model }) => {
     // Phase A.6（2026-05-07）：requestId 幂等防重发。
     // 弱网下用户可能点两次发送或 fetch 超时自动重试。后端 LRU 同 requestId 直接返
     // 已存在的 { runId, sessionId } 不重复创建 session/run。
@@ -266,6 +266,9 @@ export const Turn = {
     const body = { chat, attachments, skillId };
     if (sessionId !== undefined) body.sessionId = sessionId;
     if (permissionMode) body.permissionMode = permissionMode;
+    // 模型选择（2026-07-29）：随消息下发，服务端写 session-config 并在空闲时
+    // 重启 query 生效。不传 = 跟随该会话已有配置 / 服务端默认
+    if (model) body.model = model;
     if (raw === true) body.raw = true;   // 斜杠命令直达（/compact 等），跳过消息装饰
     body.requestId = requestId || (crypto?.randomUUID
       ? crypto.randomUUID()

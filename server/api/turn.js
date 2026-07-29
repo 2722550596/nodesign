@@ -204,6 +204,32 @@ router.post('/:pid/turn', async (req, res, next) => {
     //     续 session 仅当 buffer/旧素材的存在仍可能影响判断时报（这里简化为"非空就报"）
     await ensureProjectWorkspace(project.id);
     const sessionRoot = await ensureSessionWorkspace(project.id, sid);
+
+    // 模型选择（可选 body.model）：写进 session-config.json —— 它是模型的唯一
+    // 真相源，session-loop 启动时读它。已有活 query 且**空闲**时把 query 关掉，
+    // 本条消息就会走 startNewRunSession 以新模型 resume（jsonl 对话无损，上下文
+    // 窗口 / appModel / thinking 配置全按新模型重算）。turn 正在跑时不动它 ——
+    // 前端 picker 在运行中是禁用的，这里只是兜底。
+    const requestedModel = typeof req.body?.model === 'string' && req.body.model.trim()
+      ? req.body.model.trim() : null;
+    if (requestedModel) {
+      const cfgPath = path.join(sessionRoot, 'session-config.json');
+      let cfg = {};
+      try { cfg = JSON.parse(await fs.readFile(cfgPath, 'utf8')) || {}; } catch { /* 新 config */ }
+      const prevEffective = cfg.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
+      if (cfg.model !== requestedModel) {
+        await fs.writeFile(cfgPath, JSON.stringify(
+          { ...cfg, model: requestedModel, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+      }
+      if (requestedModel !== prevEffective) {
+        const qs = getQuerySession(sid);
+        if (qs && !qs.currentRunId) {
+          closeQuerySession(sid, 'model_change');
+          console.info(`[turn] sid=${sid.slice(0, 8)} model ${prevEffective} → ${requestedModel}, query restarted`);
+        }
+      }
+    }
+
     const pendingSummary = isNewSession ? { count: 0, summary: '' } : await readPendingSummary(sessionRoot);
     const assetsSummary = await readAssetsSummary(sessionRoot);
     // raw：纯文本直达 SDK，不加任何装饰块 —— 斜杠命令（/compact 等）要求消息

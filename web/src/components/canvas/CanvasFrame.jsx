@@ -184,10 +184,17 @@ export default function CanvasFrame({
             <SiteWindow
               projectId={projectId}
               task={siteSrc.task}
+              base={siteSrc.base}
               entry={siteSrc.entry}
               title={siteSrc.title}
               pages={siteSrc.pages}
+              built={!!siteSrc.built}
               refreshToken={versionOfTask(fileVersions, siteSrc.task)}
+              // 直接编辑 + 评论：桥在 SiteWindow 内部接，path 按当前页线程，
+              // 数据层跟 deck 完全同一套（Canvas.write + pending-changes buffer）
+              onTextEdit={sessionId ? onTextEdit : null}
+              onAddComment={sessionId ? onAddComment : null}
+              onIframeReady={onIframeReady}
               onClose={() => setSiteSrc(null)}
             />
           </Suspense>

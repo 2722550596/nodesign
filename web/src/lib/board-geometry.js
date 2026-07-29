@@ -8,7 +8,9 @@
 
 // 桌面逻辑宽度固定（跨端坐标稳定），视口窄时整体 fitScale 等比缩（非交互）
 export const DESKTOP_W = 1360;
-export const MARGIN_X = 48;               // 桌面左右留白
+// 2026-07-29 用户反馈"文件夹周边空隙太多"：48→24。工作区宽度由堆叠 effect
+// 按 DESKTOP_W - MARGIN_X*2 重算，存档矩形下次渲染自动迁移
+export const MARGIN_X = 24;               // 桌面左右留白
 export const ZONE_GAP_Y = 28;             // 堆叠工作区之间的垂直间距
 export const FOLDER_CARD_H = 84;          // 收纳态整宽窄条占用的堆叠高度
 export const DECK_EMBED_W = 640;          // deck 内嵌渲染宽度（1920 → 1/3 缩放）
@@ -64,6 +66,66 @@ export function sizeOf(o) {
   if (o.type === 'deck') return o.pos?.expanded ? SIZES.deckExpanded : SIZES.deck;
   if (o.type === 'site') return o.pos?.expanded ? SIZES.siteExpanded : SIZES.site;
   return SIZES[o.type] || SIZES.file;
+}
+
+// ── 同区避让系统（2026-07-29）──────────────────────────────────────────
+//
+// 语义：**交互中的卡有路权，别人让**。谁的 z 大（最近被摸过 / 展开过）谁不动，
+// 其余成员按最小位移让位：向下 / 向右 / 向左三个方向挑挪得最少的，连锁避让；
+// 侧移次数超限后只往下（y 单调增，必收敛）。这是"避让"不是"排斥"——
+// 卡可以被拖到任何地方，是周围的卡自己走开。
+export const AVOID_GAP = 12;
+const AVOID_MAX_ITER = 60;
+const AVOID_SIDE_ITER = 8;
+
+const rectsHit = (a, b) =>
+  !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+
+/**
+ * 对一个工作区的成员做避让重排（纯函数，不改入参）。
+ *
+ * @param {Array<{id, pos:{x,y,z?}, w, h}>} members  含尺寸的成员矩形
+ * @param {{ xMin:number, xMax:number, yMin:number }} bounds
+ *        xMin/xMax = 水平可用范围（xMax 按"左边缘最大值"传），yMin = 区内容顶
+ * @returns {{ moved: Map<string,{x,y}>, bottom: number }}
+ *        moved 只含真被挪动的成员；bottom = 重排后内容最低点
+ */
+export function resolveZoneAvoidance(members, { xMin, xMax, yMin }) {
+  const ordered = [...members].sort((a, b) =>
+    (b.pos.z ?? 1) - (a.pos.z ?? 1) || a.pos.y - b.pos.y || a.pos.x - b.pos.x);
+  const placed = [];
+  const moved = new Map();
+  let bottom = yMin;
+  for (const m of ordered) {
+    const rect = { x: m.pos.x, y: m.pos.y, w: m.w, h: m.h };
+    let guard = 0;
+    while (guard < AVOID_MAX_ITER) {
+      const blocker = placed.find(r => rectsHit(rect, r));
+      if (!blocker) break;
+      guard += 1;
+      const down = blocker.y + blocker.h + AVOID_GAP - rect.y;
+      const cands = [{ dx: 0, dy: down, cost: down }];
+      if (guard <= AVOID_SIDE_ITER) {
+        const right = blocker.x + blocker.w + AVOID_GAP - rect.x;
+        const left = rect.x + rect.w + AVOID_GAP - blocker.x;
+        if (rect.x + right <= xMax) cands.push({ dx: right, dy: 0, cost: right });
+        if (rect.x - left >= xMin) cands.push({ dx: -left, dy: 0, cost: left });
+      }
+      cands.sort((a, b) => a.cost - b.cost);
+      rect.x += cands[0].dx; rect.y += cands[0].dy;
+    }
+    if (guard >= AVOID_MAX_ITER) {
+      // 不收敛兜底：回原 x，垂直堆到当前最底
+      rect.x = m.pos.x;
+      rect.y = placed.reduce((mx, r) => Math.max(mx, r.y + r.h), yMin) + AVOID_GAP;
+    }
+    if (Math.abs(rect.x - m.pos.x) > 0.5 || Math.abs(rect.y - m.pos.y) > 0.5) {
+      moved.set(m.id, { x: rect.x, y: rect.y });
+    }
+    placed.push(rect);
+    bottom = Math.max(bottom, rect.y + rect.h);
+  }
+  return { moved, bottom };
 }
 
 /** 新工作区先在现有栈底占位（用存档矩形估算），堆叠 effect 下一拍精确归位 */

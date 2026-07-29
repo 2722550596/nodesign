@@ -9,10 +9,19 @@ tasks/<任务名>/
   index.html        入口（**这个文件名决定了系统把这个任务当站点**）
   about.html        子页，同目录直接加
   style.css         全站共用一份
-  posts/            子目录可以有，扫描深度 3 层
+  posts/            子目录可以有（页面扫描深度 4 层）
+  assets/           任务自己的素材，站内写相对路径 assets/x.png 引用
+  _drafts/          独立单页。各自渲成卡并排挑，和其他产物平等；不算站点页面、不进整站导出
+  .ndignore         不想被系统扫到的东西写这（gitignore 语法，无 ! 反选）
 ```
 
-起手：`cp site.template.html tasks/<任务名>/index.html` +
+**构建型站点**（Astro / 11ty / 自写 build 脚本）：源随便组织，构建产物落
+`dist/`（或 `out/` `build/` `_site/`，有 index.html 的那个自动被认作**产物根**；
+也可在 `.nd-task.json` 加 `"root": "<目录>"` 显式指定）。预览、截图、`list_pages`、
+导出、发布看的**全是产物根** —— 改完源必须重新构建，否则用户看到的还是旧的。
+`node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
+
+手写起手：`cp site.template.html tasks/<任务名>/index.html` +
 `cp style.template.css tasks/<任务名>/style.css`，然后改。
 
 ## 路径铁律
@@ -22,27 +31,42 @@ tasks/<任务名>/
 
 - 站内链接**只用相对路径**：`about.html` / `posts/x.html` ✓
 - **绝不用根路径**：`/about.html` ✗ —— 会跳出前缀直接 404
-- 项目素材写 `../../assets/generated/x.png`（相对当前文件的位置）。导出时系统按
-  每个文件自己的深度归一成包内的 `assets/`，你不用管
+- 素材优先用**任务本地** `assets/`：项目共享素材（生成图 / 用户上传）先
+  `cp ../../assets/generated/x.png tasks/<任务>/assets/`，站内写 `assets/x.png`。
+  这样导出 zip / 发布时零改写。直接引 `../../assets/…` 也能用（导出时系统会归一），
+  但拷进来更稳
 - 外链正常写 `https://…`
 
-## 系统怎么认这是站点
+## 系统怎么认产物（多产物平权）
 
-任务目录里有 `index.html` = 站点，有 `canvas.html` = deck。**不用声明**，写出来就认。
-认定之后：
+**不用声明**，写出来就认。一个任务可以装多个平等产物：
 
-- 桌面上是**一个**站点物件（不是每个 html 一张卡），双击开响应式预览窗
+- 任务根有 `index.html`（或产物根里有）= 一个站点，同目录 `.html` 是它的子页
+- 任务根没有 `index.html` 时，带 `index.html` 的**一级子目录**各是一个站
+  （两个平行版本就放 `v1/` `v2/`）
+- 顶层每个 `canvas.html` / 其他 `.html` = 各一份 deck（根站存在时只有
+  `canvas.html` 保留 deck 身份，其余算站点子页）
+- 桌面上一个站点 = **一张**卡（不是每个 html 一张），双击开响应式预览窗；
+  `_drafts/` 里的单页各自一张卡
 - 导出菜单换成整站 zip / 单页自包含 HTML / 工程交付包（PDF/PPTX 不出现，站点没有分页）
 - 不会被注入分页 fit script（那是 deck 的整屏翻页脚本，注进站点会把长页变成翻页器）
 - `canvas-validate` 的 anchor / layout-role 校验不跑（那是 deck 规约）
 
 一个任务只做一种。想在同一个项目里既做 deck 又做站点，开两个任务。
 
+## 运行时库与构建
+
+- CDN 随便用（跟 deck 同生态）：`<script>` 标签或 importmap 拉 gsap / lenis /
+  three / alpine / htmx / echarts / katex（esm.sh / unpkg / jsdelivr）
+- npm install 跑得通，但依赖不进导出包 —— 只有构建型站点才值得装
+- 硬约束：**产物必须是纯静态文件**。SSR / 需要常驻 Node 进程的方案不行
+- CDN 依赖意味着导出的 zip 离线打开时缺那些库（联网打开正常，发布后正常）
+
 ## 感知层怎么用
 
 | 想知道 | 用 |
 |---|---|
-| 这站有哪些页、彼此怎么连、有没有断链 | `list_pages`（站点下返回站点结构 + 断链清单） |
+| 这站有哪些页、彼此怎么连、有没有断链 | `list_pages`（站点下返回站点结构 + 断链清单，扫的是产物根） |
 | 某一页长什么样 | `screenshot_canvas { path, device }` |
 | 移动端断点有没有生效 | `screenshot_canvas { device: 'mobile' }`（真的按 390px 渲染） |
 | 某个元素的实际盒子 / 计算样式 | `query_elements` / `get_computed_styles`（站点按 1440 宽量） |
@@ -53,10 +77,13 @@ tasks/<任务名>/
 
 ## 常坑
 
+- **构建型站点改了源忘构建**：预览指向产物根，源改完不 build 用户什么都看不到。
+  每轮改动收尾时跑一次构建再自检
+- **构建型站点上的 DirectEdit**：用户在预览里直接改的字落在**产物**上，下次构建
+  会被冲掉。收到构建型站点的 DirectEdit 变更时，把改动**同步回源文件**再重新构建
 - **忘了 `<meta name="viewport">`**：移动端会按 980px 虚拟视口渲染，你的媒体查询
   看着"没生效"，其实是视口不对。模板里已经有，别删
 - **字体链少了 CJK 那段**：`'Inter', sans-serif` 换台机器中文就掉到系统默认字体。
   每段 latin family 后面必须跟 `'PingFang SC', 'Noto Sans SC'`
 - **改了 style.css 预览没变**：不会。html/css/js 走 `no-cache`，写完即时刷新
 - **半角标点**：中文正文里的 `,` `:` 很扎眼，用全角 `，` `：`
-- **别引框架 / 构建步骤**：沙箱禁 npm install，而且用户要的是能自己改一句话的站

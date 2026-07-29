@@ -24,6 +24,14 @@ describe('resolveObjectId — 任务形态决定物件归属', () => {
     expect(resolveObjectId('tasks/我的站/posts/first.html', 'sid', SITES)).toBe('site:task/我的站');
   });
 
+  it('站点试作（_drafts/）是独立展品，各自一张卡；构建产物照样并进整站', () => {
+    expect(resolveObjectId('tasks/我的站/_drafts/hero-proto.html', 'sid', SITES))
+      .toBe('site:task/我的站/_drafts/hero-proto.html');
+    // 产物根（dist/）里的文件仍收敛到整站物件
+    expect(resolveObjectId('tasks/我的站/dist/index.html', 'sid', SITES)).toBe('site:task/我的站');
+    expect(resolveObjectId('tasks/我的站/dist/posts/a.html', 'sid', SITES)).toBe('site:task/我的站');
+  });
+
   it('不知道哪些任务是站点时（siteTasks 缺省）退回 deck 语义，不猜', () => {
     expect(resolveObjectId('tasks/我的站/about.html', 'sid'))
       .toBe('deck:task/我的站/about.html');
@@ -41,8 +49,9 @@ describe('resolveObjectId — 任务形态决定物件归属', () => {
 });
 
 describe('zoneOfObjectId — 站点物件落对工作区', () => {
-  it('site:task/<名> 归属该任务区', () => {
+  it('site:task/<名> 归属该任务区（试作卡同样）', () => {
     expect(zoneOfObjectId('site:task/我的站', 'sid')).toBe('task/我的站');
+    expect(zoneOfObjectId('site:task/我的站/_drafts/hero.html', 'sid')).toBe('task/我的站');
   });
 
   it('deck 的两种形态照旧', () => {

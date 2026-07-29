@@ -127,6 +127,8 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
     //
     // tools 显式收窄到 read-only researcher：
     //   - mcp__nodesign__web_search（多 provider 联网搜）
+    //   - mcp__nodesign__screenshot_url（外站截图 —— 找视觉参考要能看见视觉，
+    //     2026-07-29 前只能 WebFetch 文本转述"这个站是深色的"，等于瞎子摸象）
     //   - WebFetch（SDK 内置，按 prompt 总结 URL 内容）
     //   - Read / Glob / Grep（看本地 ./assets 和 ./spec.json）
     //   - TodoWrite（多步研究列计划）
@@ -147,6 +149,7 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
       model: pickAgentModel('explorer', { sdkSpoofMain, subModel }),
       tools: [
         'mcp__nodesign__web_search',
+        'mcp__nodesign__screenshot_url',
         'WebFetch',
         'Read', 'Glob', 'Grep',
         'TodoWrite',

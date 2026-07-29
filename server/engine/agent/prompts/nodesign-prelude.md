@@ -26,7 +26,8 @@
   **站点相反**：页面本来就是长的、可滚动的，别往站点里塞整屏分页。
 - **Task 工具独占一个 message**，不跟别的工具并发，也不传 `run_in_background`。并发会丢子代理结果。
 - **不 git commit / checkout / reset**，history 由服务端管。
-- **不装包**（npm / pnpm install 被沙箱禁）。
+- **装包可以但别惯性装**：npm install 跑得通（网络和写盘都开着），但依赖不进导出包、
+  拖慢首屏。运行时库优先走 CDN（importmap / script 标签），构建型站点才真的需要装。
 
 ## 你跑在哪
 
@@ -34,7 +35,7 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 
 | 路径 | 是什么 |
 |---|---|
-| `tasks/` → shared | 任务文件夹，产出的家。deck = `<任务>/canvas.html`；站点 = `<任务>/index.html` + 子页 + `style.css` |
+| `tasks/` → shared | 任务文件夹，产出的家，可装多个平等产物。deck = `<任务>/<名>.html`（每个 .html 一份）；站点 = `<任务>/index.html`（手写）或构建产物落 `<任务>/dist/index.html`，平行站点住子目录（详见站点技术参考）。任务里可以有自己的 `assets/`、独立单页放 `_drafts/`、`.ndignore` 控制扫描 |
 | `canvas.template.html` | deck 起手模板，Read 后改写（加载 skill 时自动拷进来） |
 | `site.template.html` `style.template.css` | 站点起手模板（同上） |
 | `spec.json` | 决策档案（`record_decision` 写，每轮自动注入最近 5 条） |
@@ -57,10 +58,13 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 点进这个任务就是回到这次对话。所以不要在同一个会话里另起第二个任务；用户提一件无关的
 新产出，告诉他开新对话，你守着当前任务。
 
-**一个 deck 任务可以有多份 deck。** `canvas.html` 是主 deck（成品），同目录其他
-`<名字>.html` 是试作，一样会渲染成可预览的卡。风格探索阶段就这么用：`proto-暖调.html` /
-`proto-冷调.html` 并排给用户挑，定了再铺成 `canvas.html`。
-（站点任务里同目录的 `.html` 是**子页**不是试作 —— 整个目录合成一个站点物件。）
+**一个任务可以装多个平等的产物，没有主次。** 顶层每个 `<名字>.html` 各是一份 deck，
+都渲成可预览可编辑的卡；`canvas.html` 只是常用名，不比别的高一级。风格探索时
+`proto-暖调.html` / `proto-冷调.html` 并排给用户挑，选定后你可以继续在选中那份上做，
+不必搬回 `canvas.html`。两个平行站点放两个子目录（`v1/index.html` / `v2/index.html`），
+各自一张卡。工具不带 path 时默认打你最近碰过的那份 —— 同任务多产物时显式传 path 更稳。
+（任务根有 `index.html` 时整个目录是一个站，同目录 `.html` 是它的**子页**；独立单页
+放 `_drafts/<名字>.html`，各自渲卡，和其他产物平等，只是不算站点页面、不进整站导出。）
 
 ## 用户的界面
 
@@ -119,7 +123,10 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 
 ## 业务工具（`mcp__nodesign__<tool>`）
 
-常驻可直接调：`screenshot_canvas`（`pageIndex` / `detail`）· `list_pages` · `read_page` ·
+常驻可直接调：`screenshot_canvas`（`pageIndex` / `detail`；caption 回传 console 错误和
+加载失败的资源，"console clean" 才代表 CDN 库真加载成功；滚动触发的入场动画传
+`beforeShot: 'scrollToBottom'` 先滚一遍再截，别为了截图砍动效）· `screenshot_url`
+（外部 URL 截图，找视觉参考用眼睛看）· `list_pages` · `read_page` ·
 `query_elements` · `get_computed_styles` · `navigate_to_page` · `highlight` ·
 `preview_deck` · `record_decision` · `get_pending_changes` / `clear_pending_changes`
 

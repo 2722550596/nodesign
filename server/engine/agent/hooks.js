@@ -52,7 +52,7 @@ import { resolveModelContextWindow } from './model-context.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
 import {
   setActiveArtifact, getActiveArtifact, listWorkspaceArtifacts,
-  detectTaskKind, readTaskMarker, kindOfPath, listSitePages,
+  detectTaskKind, readTaskMarker, kindOfPath, taskManifest, kindDef,
   KIND_DECK, KIND_SITE, ENTRY_FILE,
 } from '../../lib/artifact-target.js';
 
@@ -638,13 +638,20 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         } else {
           const active = getActiveArtifact(sessionId)?.path || null;
           const lines = [];
-          for (const a of artifacts.slice(0, 6)) {
+          const manifestCache = new Map();   // 同任务多产物：manifest 只算一次
+          for (const a of artifacts.slice(0, 8)) {
             let note = '';
             try {
-              if (a.kind === KIND_SITE) {
-                const pages = await listSitePages(path.join(workspaceRoot, 'tasks', a.task));
-                note = `站点 · ${pages.length} 个页面：${pages.slice(0, 6).join(' / ')}${pages.length > 6 ? ' …' : ''}`;
+              if (a.task) {
+                // 形态说明由注册表出（每个产物一行：deck 报页数，站点报页面清单+产物根）
+                const taskDir = path.join(workspaceRoot, 'tasks', a.task);
+                if (!manifestCache.has(a.task)) manifestCache.set(a.task, await taskManifest(taskDir));
+                const m = manifestCache.get(a.task);
+                const relInTask = a.rel.replace(/^tasks\/[^/]+\//, '');
+                const art = m?.artifacts?.find(x => x.entryRel === relInTask) || null;
+                note = art ? await kindDef(art.kind).describe(taskDir, art) : '还判不出形态';
               } else {
+                // 旧式 cwd 单 deck
                 const stat = await fs.stat(path.join(workspaceRoot, a.rel));
                 if (stat.size <= CANVAS_HTML_MAX_BYTES) {
                   const raw = await fs.readFile(path.join(workspaceRoot, a.rel), 'utf8');
@@ -1377,10 +1384,6 @@ function makePreToolUseAskUserQuestionProtocolInjector() {
  */
 function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
   const injected = new Set();
-  const DOC = {
-    [KIND_DECK]: { file: 'hybrid-reference', title: 'Hybrid deck 技术参考' },
-    [KIND_SITE]: { file: 'site-reference', title: '站点技术参考' },
-  };
   return async (input, _toolUseId, _options) => {
     const fp = input?.tool_input?.file_path;
     if (typeof fp !== 'string' || !/\.html?$/i.test(fp)) return {};
@@ -1388,7 +1391,8 @@ function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
     const kind = workspaceRoot ? await kindOfPath(workspaceRoot, rel) : KIND_DECK;
     if (injected.has(kind)) return {};
     injected.add(kind);
-    const meta = DOC[kind] || DOC[KIND_DECK];
+    // 技术参考按注册表分发（kinds/<kind>.referenceDoc）—— 新形态自带自己那份
+    const meta = kindDef(kind)?.referenceDoc || kindDef(KIND_DECK).referenceDoc;
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',

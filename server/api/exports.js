@@ -27,7 +27,10 @@ import {
 import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml, inlineLocalImages } from './exports/build-standalone.js';
-import { resolveCanvasTarget, KIND_SITE, ENTRY_FILE } from '../lib/artifact-target.js';
+import {
+  resolveCanvasTarget, KIND_SITE, ENTRY_FILE, formatAllowed, taskNameOf,
+} from '../lib/artifact-target.js';
+import { walkTaskFiles, loadIgnore } from '../lib/task-scan.js';
 
 const router = express.Router();
 
@@ -134,27 +137,21 @@ router.get('/:pid/sessions/:sid/exports/items', async (req, res, next) => {
       } catch { /* 读不到就不列 */ }
     };
 
-    // 任务目录里的东西（deck / 试作 / 说明 / plan；站点则含子目录里的全部页面与样式）
-    const taskDir = target.ok ? path.dirname(target.relPath) : null;
+    // 任务目录里的东西（deck / 试作 / 说明 / plan；站点则含子目录里的全部页面与样式）。
+    // 统一扫描规则（task-scan.js）：硬清单 + .ndignore 生效，node_modules / 构建缓存
+    // 不再出现在勾选列表里；`_drafts/` 的试作照列（用户可能就想下某一版）。
     const isSite = target.ok && target.kind === KIND_SITE;
-    if (taskDir && taskDir !== '.') {
-      // 站点要递归：css/ images/ posts/ 这些子目录是站的一部分，漏了下下来打不开
-      const walk = async (relDir, depth) => {
-        let entries = [];
-        try {
-          entries = await fs.readdir(path.resolve(sessionRoot, relDir), { withFileTypes: true });
-        } catch { return; }
-        for (const e of entries) {
-          if (e.name.startsWith('.')) continue;
-          const rel = `${relDir}/${e.name}`;
-          if (e.isDirectory()) {
-            if (isSite && depth < 3) await walk(rel, depth + 1);
-            continue;
-          }
-          await add(rel, e.name.endsWith('.html') ? (isSite ? 'site-page' : 'deck') : 'file');
-        }
-      };
-      await walk(taskDir, 1);
+    if (target.ok && target.task && target.taskDir) {
+      const files = await walkTaskFiles(target.taskDir, {
+        maxDepth: isSite ? 4 : 1,
+        includeDrafts: true,
+      });
+      for (const f of files) {
+        const kind = /\.html?$/i.test(f.name)
+          ? (f.rel.startsWith('_drafts/') ? 'draft' : (isSite ? 'site-page' : 'deck'))
+          : 'file';
+        await add(`tasks/${target.task}/${f.rel}`, kind);
+      }
     } else if (target.ok) {
       await add(target.relPath, isSite ? 'site-page' : 'deck');
     }
@@ -333,7 +330,7 @@ router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
-    if (rejectSite(res, target, 'PDF')) return;
+    if (rejectFormat(res, target, 'pdf', 'PDF')) return;
     const file = target.absPath;
 
     const { chromium } = await import('playwright');
@@ -441,7 +438,7 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
-    if (rejectSite(res, target, 'PDF')) return;
+    if (rejectFormat(res, target, 'pptx', 'PPTX')) return;
     const file = target.absPath;
 
     const { chromium } = await import('playwright');
@@ -515,15 +512,15 @@ router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
 });
 
 /**
- * 分页导出（PDF / PPTX）对站点没有意义 —— 站点是自然滚动的长页，没有
- * `<section data-page>`。以前会一路跑到 playwright 渲染完再因为找不到分页结构
- * 400，白烧一次 esbuild + tailwind CLI，报错文案还写着 "canvas.html"。这里提前拦。
+ * 形态 × 格式守卫（注册表驱动）：不适用的格式提前 400，不白烧 playwright /
+ * esbuild。以前是 if kind === site 的散装判断，第三种形态进来就得再改一轮 ——
+ * 现在各形态可用的格式表在 kinds/ 注册条目里，这里只查表。
  */
-function rejectSite(res, target, format) {
-  if (target.kind !== KIND_SITE) return false;
+function rejectFormat(res, target, formatId, label) {
+  if (formatAllowed(target.kind, formatId)) return false;
   res.status(400).json({
-    error: `${target.relPath} 是站点，不是分页 deck —— ${format} 导出只适用于 deck。`
-      + '站点请用「整站打包」（/exports/site）或导出菜单里的站点 zip。',
+    error: `${target.relPath} 是 ${target.kind} —— ${label} 导出不适用于这种形态。`
+      + (target.kind === KIND_SITE ? '站点请用「整站打包」（/exports/site）或导出菜单里的站点 zip。' : ''),
   });
   return true;
 }
@@ -531,11 +528,15 @@ function rejectSite(res, target, format) {
 /**
  * GET /:pid/sessions/:sid/exports/site —— 整站打包
  *
+ * 打的是**产物根**（手写站点 = 任务根，构建型站点 = dist/ 之类），不是源目录 ——
+ * 用户要的是能直接发布的站，不是构建脚本和 md。扫描走统一规则（task-scan.js）：
+ * 硬清单 + .ndignore + 跳 `_drafts/`，node_modules 打进 zip 这种事故从根上没了。
+ *
  * 原样保留目录结构和文件名（相对链接才不会断），不注入 fit、不改写结构、不重命名。
- * 唯一的改写是**素材路径归一**：站点引用项目素材写的是 `../../assets/x.png`（相对它
- * 在 workspace 里的位置），包里没有 workspace 这层，所以把素材拷进 `site/assets/`
- * 并按每个文件自己的深度重写前缀 —— 子目录里的页面要 `../assets/`，写死成 `assets/`
- * 就又裂一次。
+ * 唯一的改写是**素材路径归一**：站点引用项目共享素材写的是 `../../assets/x.png`
+ * （相对它在 workspace 里的位置），包里没有 workspace 这层，所以把素材拷进
+ * `site/assets/` 并按每个文件自己的深度重写前缀 —— 子目录里的页面要 `../assets/`，
+ * 写死成 `assets/` 就又裂一次。任务本地 assets/（推荐写法）本来就在包里，零改写。
  */
 router.get('/:pid/sessions/:sid/exports/site', async (req, res, next) => {
   try {
@@ -544,45 +545,43 @@ router.get('/:pid/sessions/:sid/exports/site', async (req, res, next) => {
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
-    if (target.kind !== KIND_SITE) {
-      return res.status(400).json({ error: `${target.relPath} 是 deck，不是站点 —— 用 /exports/html 或 /exports/handoff。` });
+    if (!formatAllowed(target.kind, 'site')) {
+      return res.status(400).json({ error: `${target.relPath} 是 ${target.kind}，不是站点 —— 用 /exports/html 或 /exports/handoff。` });
+    }
+    if (target.artifact?.single) {
+      return res.status(400).json({ error: `${target.relPath} 是单页产物，没有"整站"可打包 —— 用 /exports/html 导出这一页。` });
     }
     if (!target.taskDir) return res.status(400).json({ error: 'site must live in a task folder' });
 
     const zip = new JSZip();
     const referenced = new Map();   // workspace 相对路径 → 包内相对 site/ 的落点
+    const baseDir = target.artifactDir || target.taskDir;
+    const files = await walkTaskFiles(baseDir, {
+      maxDepth: 6,
+      ignore: await loadIgnore(target.taskDir),
+      ignoreBase: target.taskDir,
+    });
 
-    const addDir = async (dirAbs, prefix, depth) => {
-      let entries;
-      try { entries = await fs.readdir(dirAbs, { withFileTypes: true }); } catch { return; }
-      for (const e of entries) {
-        if (e.name.startsWith('.')) continue;
-        const abs = path.join(dirAbs, e.name);
-        if (e.isDirectory()) {
-          if (depth < 3) await addDir(abs, `${prefix}${e.name}/`, depth + 1);
-          continue;
-        }
-        if (!e.isFile()) continue;
-        if (!/\.(html?|css)$/i.test(e.name)) {
-          zip.file(`site/${prefix}${e.name}`, await fs.readFile(abs));
-          continue;
-        }
-        let text;
-        try { text = await fs.readFile(abs, 'utf8'); } catch { continue; }
-        // 先按原文收集引用（改写之后就找不回原路径了）
-        for (const r of localRefsOf(text)) {
-          const refAbs = path.resolve(dirAbs, r);
-          if (!refAbs.startsWith(sessionRoot + path.sep)) continue;
-          if (refAbs.startsWith(target.taskDir + path.sep)) continue;   // 站内文件整目录已经打包了
-          const wsRel = path.relative(sessionRoot, refAbs).split(path.sep).join('/');
-          if (wsRel.startsWith('assets/')) referenced.set(wsRel, wsRel);
-        }
-        // `../../assets/…` → 按本文件深度重算前缀（根层是 `assets/`，一层子目录是 `../assets/`）
-        const up = '../'.repeat(depth - 1);
-        zip.file(`site/${prefix}${e.name}`, text.replace(/(["'(])(?:\.\.\/)+assets\//g, `$1${up}assets/`));
+    for (const f of files) {
+      if (!/\.(html?|css)$/i.test(f.name)) {
+        try { zip.file(`site/${f.rel}`, await fs.readFile(f.abs)); } catch { /* 中途被删就跳过 */ }
+        continue;
       }
-    };
-    await addDir(target.taskDir, '', 1);
+      let text;
+      try { text = await fs.readFile(f.abs, 'utf8'); } catch { continue; }
+      // 先按原文收集引用（改写之后就找不回原路径了）
+      for (const r of localRefsOf(text)) {
+        const refAbs = path.resolve(path.dirname(f.abs), r);
+        if (!refAbs.startsWith(sessionRoot + path.sep)) continue;
+        if (refAbs.startsWith(target.taskDir + path.sep)) continue;   // 站内文件整目录已经打包了
+        const wsRel = path.relative(sessionRoot, refAbs).split(path.sep).join('/');
+        if (wsRel.startsWith('assets/')) referenced.set(wsRel, wsRel);
+      }
+      // `../../assets/…` → 按本文件深度重算前缀（根层是 `assets/`，一层子目录是 `../assets/`）
+      const depth = f.rel.split('/').length;
+      const up = '../'.repeat(depth - 1);
+      zip.file(`site/${f.rel}`, text.replace(/(["'(])(?:\.\.\/)+assets\//g, `$1${up}assets/`));
+    }
 
     for (const [wsRel, dst] of referenced) {
       try {
@@ -645,10 +644,21 @@ export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, proj
   const isSite = kind === KIND_SITE;
 
   if (isSite) {
-    // 站点：整个任务目录进 design/，保留文件名与子目录 —— 只留入口页并改名叫
+    // 站点：产物根整个进 design/，保留文件名与子目录 —— 只留入口页并改名叫
     // canvas.html 的话，子页和 style.css 全丢，页间相对链接必然断。
-    const taskDirAbs = path.dirname(path.resolve(sessionRoot, deckPath));
-    await zipDirRecursive(zip, taskDirAbs, 'design', { skipDotfiles: true });
+    // dirname(入口) 就是产物根（手写 = 任务根，构建型 = dist/）；忽略规则
+    // 从任务根读（.ndignore 住那），试作 `_drafts/` 不进交付包。
+    const artifactDirAbs = path.dirname(path.resolve(sessionRoot, deckPath));
+    const taskName = taskNameOf(deckPath);
+    const taskRootAbs = taskName ? path.resolve(sessionRoot, 'tasks', taskName) : artifactDirAbs;
+    const siteFiles = await walkTaskFiles(artifactDirAbs, {
+      maxDepth: 6,
+      ignore: await loadIgnore(taskRootAbs),
+      ignoreBase: taskRootAbs,
+    });
+    for (const f of siteFiles) {
+      try { zip.file(`design/${f.rel}`, await fs.readFile(f.abs)); } catch { /* 中途被删就跳过 */ }
+    }
     // 站内 html/css 的 `../../assets/` 归一（zip 布局是 design/<页面> + design/assets/）
     for (const rel of Object.keys(zip.files)) {
       if (zip.files[rel].dir || !/\.(html?|css)$/i.test(rel)) continue;

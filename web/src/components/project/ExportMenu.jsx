@@ -2,25 +2,45 @@ import { useEffect, useRef } from 'react';
 import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare, Globe } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
-const DECK_ITEMS = [
-  { id: 'html',     icon: FileCode,     label: 'Standalone HTML',    desc: '单文件，可双击打开' },
-  { id: 'pdf',      icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）' },
-  { id: 'pptx',     icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
-  { id: 'handoff',  icon: Hammer,       label: '工程交付包',           desc: 'ZIP: HTML + spec + assets + README' },
-];
-
 /**
- * 站点的格式跟 deck 不是同一套（2026-07-28）。
- *
- * PDF / PPTX 对站点没有意义 —— 它们的实现是"逐 `<section data-page>` 截图再拼"，
- * 站点没有分页。留在菜单里只会让用户点了拿到一个 400，所以整型换掉而不是灰掉：
- * 灰着还得解释为什么，换掉就没有这个问题。
+ * 格式 id → 展示元数据。**哪些格式可用由服务端 kinds/ 注册表定**（/artifacts 的
+ * tasks[].exports，经 boardUi.artifactExports 传进来）—— 前端只管每个格式长什么样。
+ * 这样第三种形态（视频等）上线时菜单自动跟上，不用再改这里的 if。
+ * 文案按形态微调（deck 的 handoff 装单文件 HTML，站点的装整站）。
  */
-const SITE_ITEMS = [
-  { id: 'site',     icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 图，解压双击就能看' },
-  { id: 'html',     icon: FileCode,     label: '单页自包含 HTML',      desc: '只当前入口页，图片内联' },
-  { id: 'handoff',  icon: Hammer,       label: '工程交付包',           desc: 'ZIP: 整站 + spec + assets + README' },
-];
+const FORMAT_META = {
+  html:    { icon: FileCode,     label: 'Standalone HTML',    desc: '单文件，可双击打开',
+             siteLabel: '单页自包含 HTML',  siteDesc: '只当前入口页，图片内联' },
+  pdf:     { icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）' },
+  pptx:    { icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
+  site:    { icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 图，解压双击就能看' },
+  handoff: { icon: Hammer,       label: '工程交付包',           desc: 'ZIP: HTML + spec + assets + README',
+             siteDesc: 'ZIP: 整站 + spec + assets + README' },
+};
+
+// 服务端没给格式表时的兜底（旧数据 / 聚焦的不是任务）
+const FALLBACK_FORMATS = {
+  deck: ['html', 'pdf', 'pptx', 'handoff'],
+  site: ['site', 'html', 'handoff'],
+};
+
+function itemsFor(artifactKind, artifactExports) {
+  const isSite = artifactKind === 'site';
+  const ids = (Array.isArray(artifactExports) && artifactExports.length)
+    ? artifactExports
+    : (FALLBACK_FORMATS[artifactKind] || FALLBACK_FORMATS.deck);
+  return ids
+    .filter(id => FORMAT_META[id])
+    .map(id => {
+      const m = FORMAT_META[id];
+      return {
+        id,
+        icon: m.icon,
+        label: (isSite && m.siteLabel) || m.label,
+        desc: (isSite && m.siteDesc) || m.desc,
+      };
+    });
+}
 
 /**
  * ExportMenu — 顶栏导出下拉
@@ -30,7 +50,7 @@ const SITE_ITEMS = [
  *
  * PPTX 标灰禁点，留 P0+。
  */
-export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick, artifactKind = null }) {
+export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick, artifactKind = null, artifactExports = null }) {
   const ref = useRef(null);
 
   // 点外面关闭
@@ -61,7 +81,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
         zIndex: 50,
       }}
     >
-      {(artifactKind === 'site' ? SITE_ITEMS : DECK_ITEMS).map(item => {
+      {itemsFor(artifactKind, artifactExports).map(item => {
         const Icon = item.icon;
         return (
           <button

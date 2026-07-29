@@ -38,7 +38,7 @@ export function useStageState({ stageRef, currentSessionId, siteTasks, followToO
     setTimeout(() => {
       setStageCards(prev => {
         const c = prev[blockId];
-        if (!c || c.status === 'fail') return prev;   // 失败卡保留，用户点 × 关
+        if (!c) return prev;
         const next = { ...prev };
         delete next[blockId];
         return next;
@@ -135,7 +135,9 @@ export function useStageState({ stageRef, currentSessionId, siteTasks, followToO
           if (!evt.ok && typeof evt.error === 'string') patch.error = evt.error.slice(0, 600);
           return { ...prev, [evt.blockId]: { ...c, ...patch } };
         });
-        removeStageCardLater(evt.blockId, 1600);
+        // 失败卡多留一会儿（红卡要被看见）但也自动收束 —— 详细错误在聊天时间轴
+        // 里一直都有，画布不该积着一排要手点 × 的尸体（2026-07-29 用户反馈）
+        removeStageCardLater(evt.blockId, evt.ok ? 1600 : 10000);
         break;
       }
       case 'run.file_changed': {
@@ -159,7 +161,7 @@ export function useStageState({ stageRef, currentSessionId, siteTasks, followToO
       case 'run.done':
       case 'run.error':
       case 'run.cancelled': {
-        // 收场：残留 running/ok 卡淡出，失败卡留给用户看
+        // 收场：残留 running/ok 卡淡出；失败卡留到自己的 10s 定时器收束
         setTimeout(() => {
           setStageCards(prev => {
             const next = {};

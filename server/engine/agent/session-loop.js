@@ -29,7 +29,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { AgentContext } from './context.js';
 import { Events } from './events.js';
-import { markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata } from '../runs/store.js';
+import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata } from '../runs/store.js';
 import { randomUUID } from 'node:crypto';
 import {
   registerQuerySession,
@@ -217,6 +217,18 @@ function isReadonlyBashCommand(rawCmd) {
  *                                       condition（push 早于 register 没法关联 runId）
  * @returns {Promise<void>}  - inputQueue 关闭时 resolve
  */
+/**
+ * SDK 自发 turn 的开启信号：真实的模型/对话活动（assistant 输出、流式增量、
+ * SDK 注入的 user 消息）。task_notification / task_progress / notification 等
+ * 旁路事件**不算** —— 通知之后 SDK 不一定真的唤起模型，铸了 run 却等不来
+ * result 收尾就是僵尸 run。
+ */
+function isBackgroundTurnOpener(message) {
+  return message?.type === 'assistant'
+    || message?.type === 'stream_event'
+    || message?.type === 'user';
+}
+
 export async function runSession({
   sessionId,
   projectId,
@@ -294,7 +306,16 @@ export async function runSession({
   // hooks / mcp 闭包持稳定引用即可。
   // sessionId 传入让 ctx.emit 自动 enrich event.sessionId，WS handler 按 sid 过滤
   // 防多 session / 多 tab 跨 session 串扰（project bus 共享）。
-  const model = modelOverride.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
+  // model 优先级：调用方显式 > session-config.json（用户在 picker 选的，随会话
+  // 持久）> env 全局默认。session-config 是模型选择的唯一真相源 —— turn.js 收到
+  // body.model 也是先写进 config 再走到这，loop 重启（含 idle 后 resume）不丢选择。
+  let sessionModelPref = null;
+  try {
+    const rawCfg = await fs.readFile(path.join(cwdRoot, 'session-config.json'), 'utf8');
+    const cfg = JSON.parse(rawCfg);
+    if (typeof cfg?.model === 'string' && cfg.model) sessionModelPref = cfg.model;
+  } catch { /* 没有 config / 解析失败：走默认 */ }
+  const model = modelOverride.model || sessionModelPref || process.env.NODESIGN_MODEL || 'kimi-k2.6';
   const sdkModel = resolveSdkSpoofModel(model);
 
   // appModel env：session-level，由 try 块内 + finally 配对管理。详见 line 558 注释。
@@ -548,9 +569,13 @@ export async function runSession({
       if (!toolUseId) {
         return { behavior: 'deny', message: 'AskUserQuestion missing toolUseID', interrupt: false };
       }
-      const currentRunId = getCurrentTurnRunId(sessionId);
+      let currentRunId = getCurrentTurnRunId(sessionId);
       if (!currentRunId) {
-        return { behavior: 'deny', message: 'no active turn for AskUserQuestion', interrupt: false };
+        // 后台自发 turn（task-notification 唤起）里 agent 问用户 —— 以前直接
+        // deny "no active turn"，把带 preview 的候选卡逼退成纯文字。现在铸造
+        // 一个真 turn 再放行（mintBackgroundTurn 会 emit run.start 让前端拿到
+        // runId，answer 回路照常走）。
+        currentRunId = mintBackgroundTurn('AskUserQuestion');
       }
       sharedCtx.emit({ type: 'run.ask_user_question', toolUseId, input });
       try {
@@ -721,6 +746,30 @@ export async function runSession({
     sharedCtx.emit(Events.start());
   };
 
+  // ── 后台自发 turn 铸造（2026-07-29）──
+  // SDK 自己发起的 turn（后台 Task 子代理完成 → task-notification 重新唤起 agent）
+  // 没有经过 turn.js POST /turn，没人 createRun / 设 currentRunId。后果：
+  //   1. AskUserQuestion 被 canUseTool 以 "no active turn" 拒掉 —— explorer 跑完
+  //      准备好三张带 preview 的方向卡片，只能退化成纯文字描述（真实伤口）
+  //   2. 整个回合的事件挂在上一个已结束 run 的 runId 上，前端归属混乱
+  // 修法：检测到无主 turn 时铸造一个真 run record（createRun → setCurrentTurnRunId
+  // → startTurn），让 run.start/run.done、AskUserQuestion answer 回路、runs 审计
+  // 全部照常工作。前端 activeRun 由 run.start 设置，answer POST 天然有 runId 可用。
+  const mintBackgroundTurn = (reason) => {
+    const run = createRun({
+      skillId,
+      brief: `(后台回合：${reason})`,
+      projectId,
+      metadata: { background: true, mintReason: reason },
+    });
+    setCurrentTurnRunId(sessionId, run.id);
+    startTurn(run.id);
+    console.info(
+      `[session-loop] sid=${sessionId.slice(0, 8)} minted background turn run=${run.id} (${reason})`,
+    );
+    return run.id;
+  };
+
   const finishTurn = async (status, info) => {
     if (!activeTurnRunId) return;
     const runId = activeTurnRunId;
@@ -826,6 +875,10 @@ export async function runSession({
           await finishTurn('error', { message: 'turn boundary skipped without result', code: 'TURN_LEAK' });
         }
         startTurn(cid);
+      } else if (!cid && !activeTurnRunId && isBackgroundTurnOpener(message)) {
+        // SDK 自发 turn（后台 Task 完成通知唤起 agent）—— 没有用户消息、没有
+        // runId。铸造一个让整回合事件有正确归属（否则全挂在上一个已结束 run 上）。
+        mintBackgroundTurn(`sdk_${message.type}`);
       }
 
       handleSDKMessage(sharedCtx, message);
