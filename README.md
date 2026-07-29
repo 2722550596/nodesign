@@ -1,20 +1,32 @@
 # NoDesign
 
-> agent 驱动的可参数化 deck 设计工作台 —— chat 一句 brief，得到一份带专属控制
-> 面板的 HTML deck，用户能拖 slider 实时调样式，导出 PDF / PPTX / 工程包。
+> agent 驱动的设计工作台 —— 一张空间画布桌面，chat 一句 brief，agent 在任务
+> 文件夹里做出 deck / 网站等产物，实时直播在画布上；用户直接在产物上改字、
+> 留评论、拖 Tweaks，导出 PDF / PPTX / 整站 zip / 工程包。
 
 ---
 
 ## 这是什么
 
-NoDesign 把"做 deck"从**人手工拼图层**变成**跟 agent 协作 + 可参数化的产品**：
+NoDesign 把"做设计"从**人手工拼图层**变成**跟 agent 协作的空间工作台**：
 
-- **agent 写 HTML deck**（单文件 `canvas.html`，`<section data-page="N">` 分页，1920×1080 设计坐标系 + fit script 自适应任意视口）
-- **可调维度暴露成 Tweaks 面板**（5-8 个 slider / color picker），用户拖动实时预览
-- **跨 session 长期记忆**（项目品牌档案 / 通用偏好），agent 跨 session 续做不忘
-- **多种交付**：HTML / PDF（矢量）/ PPTX（位图）/ 工程包（zip 含源 + assets + readme）
+- **一张桌面**：项目 = 一张空间画布，任务 = 文件夹（工作区），agent 的每一步
+  （写代码 / 跑命令 / 生图）实时直播成画布上的舞台卡，产物写完即上墙
+- **多形态产物，平等共存**：一个任务文件夹可以装多个产物 ——
+  deck（单文件 HTML，`<section data-page>` 分页 + fit script）、
+  站点（手写或构建型，产物根自动认定，响应式三档取景预览）、
+  单页；形态由文件证据认定（`kinds/` 注册表），不用声明
+- **直接操作产物**：deck 和站点同一套 —— 双击改字（写回源文件）、单击元素留
+  评论（带页面 path 进 pending buffer，agent 下轮主动拉）、Tweaks 参数面板
+- **agent 有眼睛**：截图自检（回传 console 错误 + 加载失败资源 + beforeShot
+  滚动触发动画）、DOM 雷达（query_elements / computed_styles）、外站截图找
+  视觉参考（explorer 子代理用眼睛看，不靠文本转述想象）
+- **跨 session 长期记忆**：项目品牌档案 / 通用偏好，agent 跨会话续做不忘
+- **模型可选**：输入框旁 picker 切 Sonnet / Opus（session-config 为真相源，
+  空闲时无损重启 query 生效，对话与画布不丢）
 
-跟"普通 LLM 写 HTML 服务"区别：13 个业务 mcp 工具让 agent 真正**有眼睛**（截图自检）、**有 DOM 雷达**（query_elements + computed_styles）、**能感知用户**（pending-changes buffer）。详见 [server/engine/skills/deskskill-engine-mini/SKILL.md](server/engine/skills/deskskill-engine-mini/SKILL.md)。
+详见 skills：[deck 守则](server/engine/plugins/nodesign/skills/deskskill-engine-mini/SKILL.md)
+/ [站点方法论](server/engine/plugins/nodesign/skills/site-craft/SKILL.md)。
 
 ---
 
@@ -28,177 +40,168 @@ npx playwright install chromium
 
 # 2. 配 .env（敏感值不入 git）
 cp .env.example .env
-# 编辑 .env 填 NODESIGN_GATEWAY_URL / NODESIGN_GATEWAY_KEY
+# 按注释配模型接入（Claude 订阅 OAuth 或 API gateway）、NODESIGN_AUTH_PASSWORD（公网必配）
 
 # 3. 起 dev server
-npm run dev          # 后端 :4001（hot reload）
+npm run dev           # 后端 :4001（hot reload）
 cd web && npm run dev # 前端 :5174（Vite）
 
 # 4. 访问 http://localhost:5174
 ```
 
-dev 模式 server 自动热重载（`node --watch`）。生产部署看 [DEPLOY.md](DEPLOY.md)。
+生产部署（pm2 + nginx + Cloudflare）看 [DEPLOY.md](DEPLOY.md)。
+
+⚠️ **Cloudflare 前置时的坑**：CF 对 `.css/.js/.png` 等扩展名按后缀边缘缓存，
+`/api` 路径也不放过，源站 `no-cache` 会被改写成浏览器 4 小时 TTL、404 同样缓存。
+产物 serving 路由必须发 `no-store`（`server/api/assets.js` 的 artifact-file 已处理，
+新加按扩展名可访问的路由要想到这条）。
 
 ---
 
 ## ⚠️ 开发约束：Linux 是 source of truth
 
 NoDesign 部署目标是 **Linux 服务器**（Ubuntu / Debian），Mac 只是 dev 便利。
-**任何"我本地能跑"都不算数**——必须在 Linux 上验证过才算 working。
+**任何"我本地能跑"都不算数** —— 必须在 Linux 上验证过才算 working。
 
 ### 4 条铁律
 
 1. **路径**：永远 `os.homedir()` + `path.join` + `path.sep`，绝不硬编码 `/home/...` 或 `/Users/...`
 2. **跨平台决策**：所有跟 OS / 工具 / 外部状态相关的决策（CLAUDE_CONFIG_DIR、sandbox、preflight、凭据黑名单）**只在 [`server/runtime/platform.js`](server/runtime/platform.js) 里做**。业务文件 `import { platform }` 用结果，不要自己拼 env
 3. **状态显式声明**：外部状态（OAuth token、cache、env）在启动时 `platform.dump()` 打日志，运维一眼能看到
-4. **Loud fail，不 silent fallback**：失败默认 `throw`，需要降级用显式开关（如 `NODESIGN_ALLOW_SYMLINK_FALLBACK=1`）
+4. **Loud fail，不 silent fallback**：失败默认 `throw`，需要降级用显式开关；工具失败按名字暴露，不拿静默兜底掩盖
 
 ### 已知跨平台陷阱（踩过的）
 
 | 陷阱 | 现象 | 解决 |
 |---|---|---|
 | `CLAUDE_CONFIG_DIR` per-session | SDK list/fork/delete 找不到 jsonl | 统一全局 → `platform.claudeConfigDir` |
-| bwrap 不解析 symlink | Glob/Read 看不到 `assets/` `agent-memory/`（指向 shared 的软链） | sandbox 默认关 + 拓扑重排（`.claude/` 文件型 / session root 目录型） |
-| WebFetch preflight | `DomainCheckFailedError "blocking claude.ai"`，gateway key 模式 100% 复现 | `skipWebFetchPreflight: true` |
+| bwrap 不解析 symlink | Glob/Read 看不到 `assets/` `tasks/`（指向 shared 的软链） | sandbox 默认关 + 拓扑重排 |
+| WebFetch preflight | `DomainCheckFailedError`，gateway key 模式 100% 复现 | `skipWebFetchPreflight: true` |
 | Mac 残留 OAuth token | "我本地能跑啊"幻觉，服务器 non-root user 100% 炸 | docker / CI 早测 Linux |
-
-### Linux 验证流程
-
-```bash
-# 方案 1：docker 本地 sanity check
-docker run --rm -v "$PWD:/app" -w /app -e ANTHROPIC_API_KEY \
-  --memory 1g node:20-bookworm bash -c "npm install && npm test"
-
-# 方案 2：服务器 dev 实例（推荐）
-# 见 DEPLOY.md § dev 实例搭建
-```
 
 ---
 
-## 主要功能
+## 核心概念
 
-### Agent 设计协作
+### 任务模型
 
-- **多轮深度对齐**：默认 2-3 轮 AskUserQuestion（深度对齐 toggle 3-5 轮）含可视 preview HTML 让用户对比方向 / 配色 / 字体
-- **streamInput 模式**：一个 query 横跨 session，cancel 不丢上下文，追加消息排队
-- **subagent 工作流**：explorer 找参考 / vision-checker 自检视觉，子代理转录不污染主上下文
+**会话 = 对话通道，任务 = 文件夹 = 产出的家，一对一绑定。**
 
-### Canvas 操作
+```
+projects-data/<projectId>/
+├── shared/                     跨 session 共享
+│   ├── tasks/<任务名>/         一个任务文件夹（agent 按需自建，目录名即任务名）
+│   │   ├── canvas.html         deck（顶层每个 .html 各是一份平等的 deck）
+│   │   ├── index.html          站点入口（有它 = 整个目录是一个站，子页同目录加）
+│   │   ├── dist/               构建型站点产物根（dist/out/build/_site/public 自动认）
+│   │   ├── v1/ v2/             无根站时，带 index.html 的子目录各是一个平行站点
+│   │   ├── _drafts/*.html      独立单页，各自一张卡
+│   │   ├── assets/             任务本地素材（站内相对引用，导出零改写）
+│   │   └── .nd-task.json       marker（sessionId 绑定 / root 显式覆盖，机器不猜时才用）
+│   ├── assets/                 项目级素材（生成图 / 上传）
+│   └── .claude/agent-memory/   长期记忆（memory.md + brand/memory.md）
+└── sessions/<sid>/             per-session 工作区（tasks/ assets/ 软链指向 shared）
+```
 
-- **三模式**：edit（双击改字 + 选中评论）/ preview / code（Monaco 直接改 HTML）
-- **Tweaks 面板**：agent expose_tweaks 后用户拖 slider 实时预览样式
-- **多页导览**：SlideNavigator 自动扫 `<section data-page>` 切页
+**多产物平权**（2026-07-29 起）：没有"主产物 / 试作"等级，`kinds/` 注册表按
+文件证据把任务解析成 `artifacts[]` 平等列表，画布一条一卡。工具寻址默认打
+**最近碰过的那份**，多产物时显式传 path。
 
-### 多种导出
+### 空间画布
 
-| 格式 | 实现 | 适合 |
+- 桌面固定 1360 逻辑宽，任务工作区自动纵向堆叠，聚焦的文件夹占满一屏
+- **避让系统**：交互中的卡有路权（最近摸过的不动），被压的卡最小位移让位、
+  连锁传递、拖走弹回；刷新错位由框内收容自愈
+- **舞台层**：agent 的 Edit/Write 逐字节流式直播、终端卡、生图 shimmer、
+  AskUserQuestion 直接在画布上答
+- deck / 站点卡两态：收起条 ↔ 内嵌渲染；✏️ 开最大化窗（DeckWindow letterbox
+  缩放 / SiteWindow 真实设备宽取景 desktop 1440 / tablet 834 / mobile 390）
+
+### 直接编辑 + 评论
+
+`DirectEditBridge` 是通用 iframe 桥，deck 窗和站点窗共享同一套：
+双击改字（整页序列化写回该文件 + 进 pending buffer）、单击选元素留评论
+（带页面 path）。agent 通过 `get_pending_changes` 拉 buffer，改完 `clear`。
+构建型站点的编辑落在产物上，agent 负责同步回源再重建。
+
+---
+
+## 导出
+
+| 格式 | 适用形态 | 实现 |
 |---|---|---|
-| HTML | 单文件复制 | 网页演示 / 双击打开 |
-| PDF | playwright `page.pdf()` | 投屏 / 邮件分享（矢量文字）|
-| PPTX | playwright 截图 + pptxgenjs 嵌入 | PowerPoint 编辑 / 传统会议（位图，文字不可编辑）|
-| 工程包 | JSZip：HTML + spec.json + assets + README | 设计师二次开发 |
+| 自包含 HTML | deck / 站点单页 | 单文件内联 |
+| PDF（矢量） | deck | playwright `page.pdf()` |
+| PPTX | deck | playwright 截图 + pptxgenjs（位图，文字不可编辑） |
+| 整站 zip | 站点 | 产物根打包，`.ndignore` + 硬忽略清单，资源引用归一 |
+| 工程交付包 | 全部 | JSZip：源 + assets + README |
+| deliver_files | 任意文件 | agent 挑着推进浏览器下载列表 |
 
-### 跨 session 记忆
-
-- `./.claude/agent-memory/memory.md` — main agent 通用记忆（前端 MemoryCard 读）
-- `./.claude/agent-memory/brand/memory.md` — 品牌档案（前端 BrandCard 读）
-
-不跨项目 —— 每个 project 独立 `shared/.claude/agent-memory/` 软链空间。
+导出格式按产物形态守卫（`formatAllowed`），点错会得到明确的 400 而不是静默错。
 
 ---
 
 ## 架构概览
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│ 浏览器 (Vite :5174 / nginx :443)                                │
-│  ┌─ ChatPanel ──┐ ┌─ CanvasFrame ────────┐ ┌─ Tweaks Panel ──┐│
-│  │ chat /        │ │ iframe (canvas.html)  │ │ slider /        ││
-│  │ session UI    │ │ + InspectFloating     │ │ color picker    ││
-│  │               │ │ + DirectEdit bridge   │ │ (浮窗 toggle)   ││
-│  └───────────────┘ └────────────────────────┘ └─────────────────┘│
-│         │                  │                          │          │
-│         └────── HTTP /api  └── WS /ws ────────────────┘          │
-└──────────┬──────────────────────────────────────────────────────┘
-           │
-┌──────────▼──────────────────────────────────────────────────────┐
-│ NoDesign server (:4001, pm2 单实例)                              │
-│                                                                   │
-│  HTTP API (express) ── projects / sessions / canvas / pending /   │
-│                        memory / exports / brand / turn            │
-│                                                                   │
-│  WS broker ── EventBus per project，stream agent 事件给前端       │
-│                                                                   │
-│  Engine                                                           │
-│   └── session-loop.js ── 每个 active session 一个 long-running    │
-│       │                  SDK Query（streamInput 模式）             │
-│       │                                                            │
-│       ├── Claude Agent SDK ── spawn claude binary subprocess      │
-│       │                       SDK 通过 stdio 跟 binary 通信         │
-│       │                       binary 通过 ANTHROPIC_BASE_URL        │
-│       │                       连 LLM gateway                         │
-│       │                                                            │
-│       ├── 13 个业务 mcp 工具 (in-process)                          │
-│       │   screenshot_canvas / read_page / query_elements /        │
-│       │   get_computed_styles / list_pages / navigate / ...        │
-│       │                                                            │
-│       └── 4 个 subagent (Task fork)                                │
-│           explorer / vision-checker / ds-extractor / tweak-proposer│
-└──────────┬──────────────────────────────────────────────────────┘
-           │
-┌──────────▼──────────────────────────────────────────────────────┐
-│ Persistent Volume                                                │
-│  server/projects-data/<projectId>/                                │
-│    ├── shared/                  跨 session 共享                   │
-│    │   ├── .claude/agent-memory/  长期 memory                     │
-│    │   └── assets/              用户素材 / curl 下载              │
-│    └── sessions/<sid>/          per-session 沙盒                  │
-│        ├── canvas.html          主产物                             │
-│        ├── spec.json            决策日志                           │
-│        ├── pending-changes.json buffer                             │
-│        ├── exports/             handoff zip / pdf / pptx           │
-│        ├── .claude/             SDK jsonl + 软链                   │
-│        └── .git                 per-session git history             │
-│                                                                    │
-│  server/db/nodesign.db        SQLite（projects / runs metadata）  │
-└──────────────────────────────────────────────────────────────────┘
-```
+浏览器 (Vite :5174 dev / nginx+CF :443 prod)
+  ┌ ChatPanel ─────┐ ┌ BoardCanvas（桌面）───────────────┐
+  │ 对话 / 子代理   │ │ 任务工作区(避让/收容/舞台层直播)     │
+  │ 时间轴 / 模型   │ │  ├ DeckWindow（letterbox + 编辑全家）│
+  │ picker         │ │  └ SiteWindow（设备宽取景 + 编辑）   │
+  └────────────────┘ └───────────────────────────────────┘
+        │ HTTP /api            │ WS /ws
+        ▼                      ▼
+NoDesign server (:4001, pm2 单实例)
+  ├ express API：projects / sessions / canvas / assets(artifact-file, no-store)
+  │              exports / board / pending-changes / memory / turn
+  ├ WS broker：EventBus per project
+  └ Engine
+     ├ session-loop.js   每个活跃 session 一个 long-running SDK query
+     │                   （streamInput；后台自发 turn 铸造 runId）
+     ├ lib/kinds/        产物形态注册表（deck / site；manifest = artifacts[] 平权）
+     ├ lib/artifact-target.js  寻址（路径 → 所属产物 → kind + 产物根）
+     ├ 20 个业务 mcp 工具（screenshot_canvas 带诊断回传 / screenshot_url /
+     │   read_page / query_elements / generate_image / remove_background /
+     │   web_search / pin_to_board / deliver_files / …）
+     └ 4 个 subagent：explorer（可外站截图）/ vision-checker /
+                       ds-extractor / tweak-proposer
 
-详细架构 / 设计决策 / 历史交接看 [HANDOVER.md](HANDOVER.md)。
+server/db/nodesign.db   SQLite（projects / runs metadata）
+```
 
 ---
 
 ## 文档导航
 
-| 文档 | 内容 | 受众 |
-|---|---|---|
-| **README.md**（本文） | 项目入口 / 速览 | 第一次接触的人 |
-| [DEPLOY.md](DEPLOY.md) | 生产部署 SOP（pm2 + nginx + 故障排查） | 运维 / SRE |
-| [HANDOVER.md](HANDOVER.md) | 完整交接：产品定位 / 架构决策 / 阶段历史 | 接手开发 / 产品经理 |
-| [PLAN.md](PLAN.md) | living document：当前阶段执行清单 | 持续开发 |
-| [Canvas.md](Canvas.md) | Canvas 工作面设计：agent + 用户协作模式 | UX / 前端 |
-| [server/engine/skills/deskskill-engine-mini/SKILL.md](server/engine/skills/deskskill-engine-mini/SKILL.md) | agent 业务规则（设计师视角的工具触发时机 / paradigm） | agent 行为调优 |
-| [server/engine/agent/prompts/nodesign-prelude.md](server/engine/agent/prompts/nodesign-prelude.md) | agent 通用 prelude（NoDesign 共性约束）| agent 行为调优 |
+| 文档 | 内容 |
+|---|---|
+| **README.md**（本文） | 项目入口 / 速览 |
+| [DEPLOY.md](DEPLOY.md) | 生产部署 SOP（pm2 + nginx + 故障排查） |
+| [HANDOVER.md](HANDOVER.md) | 完整交接：产品定位 / 架构决策 / 阶段历史 |
+| [server/engine/agent/prompts/nodesign-prelude.md](server/engine/agent/prompts/nodesign-prelude.md) | agent 通用 prelude |
+| [server/engine/agent/prompts/tools/site-reference.md](server/engine/agent/prompts/tools/site-reference.md) | 站点目录约定 / 产物认定规则（多产物平权口径） |
+| [server/engine/plugins/nodesign/skills/](server/engine/plugins/nodesign/skills/) | deck / 站点两份 SKILL（方法论化：形态从问题长出来，不预设范式） |
 
 ---
 
 ## 当前状态
 
-**v0.1.0-mvp** — 内部测试基线（2026-05-03 起）。
+**空间工作台版**（`main` @ 2026-07-29）。5 月的 v0.1-mvp 之后主线演进：
 
-主要能力已通：
-- streamInput query 跨 turn 连续 + 追加消息
-- 13 个 mcp 工具完整接通（视觉感知 / 精准编辑 / 用户互联 / 产物加值 / 研究）
-- 4 大类 export（HTML / PDF / PPTX / handoff）
-- pm2 生产部署 SOP 落档（[DEPLOY.md](DEPLOY.md)）
+- 空间画布桌面化（任务=文件夹、舞台层直播、避让系统、文件夹收纳）
+- 站点成为一等产物（响应式取景 / 整站导出 / 构建型支持），随后**多产物平权**
+- 直接编辑 + 评论泛化到站点；失败舞台卡自动收束
+- 感知工具升级：截图诊断回传 + beforeShot、screenshot_url、后台回合 AskUserQuestion
+- 模型选择器（Sonnet / Opus 5）；订阅 OAuth 接入 + token 瘦身（起步上下文 ~35k）
 
 已知限制：
 
-- **单实例 only**（in-memory state，多 pm2 instance 会数据错乱），P1 改 Redis pub/sub
-- **重启丢活跃 session**：用户在 agent 跑时 `pm2 restart` 会让 query 死，需重发 chat
-- **SDK binary 偶发错**：process uncaughtException 守护住 server 不 crash，但用户偶尔看到 ⚠️ toast，刷新即可
-- **PPTX 文字不可编辑**（每页位图嵌入），矢量重建工程量大几个数量级，MVP 接受
-- **多用户协作未做**：agent-memory / canvas / sessions 都是单用户视角，多用户共编同 deck 的并发是 P1+
+- **单实例 only**（in-memory state，多 pm2 instance 会数据错乱）
+- **重启丢活跃 session**：agent 跑着时 `pm2 restart` 会让当前 turn 死，重发即恢复（jsonl resume）
+- **PPTX 文字不可编辑**（位图嵌入）
+- **单用户视角**：多用户共编的并发未做
+- 产物只能是纯静态（无常驻进程，SSR/带后端的 app 不行）
 
 ---
 
@@ -206,9 +209,9 @@ docker run --rm -v "$PWD:/app" -w /app -e ANTHROPIC_API_KEY \
 
 - **后端**：Node.js 20+ / Express / WebSocket / better-sqlite3 / @anthropic-ai/claude-agent-sdk
 - **前端**：React 19 / Vite 6 / lucide-react / 纯 inline style（无 CSS framework）
-- **playwright**：截图 / PDF / PPTX 图片源
-- **pptxgenjs**：HTML → PPTX 拼装
-- **JSZip**：handoff 工程包
+- **playwright**：截图 / PDF / PPTX 图片源 / e2e 验证
+- **pptxgenjs / JSZip**：PPTX 拼装 / zip 打包
+- **rembg**（可选）：常驻抠图服务（unix socket，`server/.venv-rembg/`）
 
 native 依赖：`better-sqlite3`、`playwright` 需要 OS 系统库（Linux `npx playwright install-deps chromium`）。
 
@@ -222,4 +225,3 @@ native 依赖：`better-sqlite3`、`playwright` 需要 OS 系统库（Linux `npx
 
 > 部署 / 运维问题看 [DEPLOY.md](DEPLOY.md)。
 > 开发 / 设计决策看 [HANDOVER.md](HANDOVER.md)。
-> 反馈：直接 commit / 提 issue / 内部群。
