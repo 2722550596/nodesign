@@ -1,11 +1,21 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, MessageSquarePlus } from 'lucide-react';
+import { X, Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { SITE_VIEWPORTS, POP_IN } from '../../lib/board-geometry.js';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
-import { findElementByAnchor } from '../../lib/html-utils.js';
 import { serializeForAI } from '../../lib/element-semantics.js';
+import { findElementByAnchor } from '../../lib/html-utils.js';
+import { applyMoveToRuntime, applyStyleToRuntime } from '../../lib/pending-edit-apply.js';
+import { applyOpsToSource } from '../../lib/site-source-patch.js';
+import { versionOfSitePage } from '../../lib/file-versions.js';
+import LiveFrame from './LiveFrame.jsx';
+import EditOverlay from './EditOverlay.jsx';
+import InspectFloatingCard from './InspectFloatingCard.jsx';
+import CommentMarkers from './CommentMarkers.jsx';
+import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
+import GrabHandle from './GrabHandle.jsx';
+import PostDragNotePanel from './PostDragNotePanel.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
 
 /**
@@ -21,11 +31,16 @@ import CodeCanvas from './CodeCanvas.jsx';
  *
  * 站内导航是窗口内部状态：点站内链接就在同一扇窗里换页，地址栏跟着走。
  *
- * 编辑模式（2026-07-29）：deck 那套"直接改字 + 元素评论"给站点也来一份。
- * DirectEditBridge 本来就是通用 iframe 桥，这里只是接线：双击改字 →
- * onTextEdit（带当前页 path，整页序列化写回该文件 + 进 pending buffer）；
- * 单击选元素 → 浮条上点"评论" → onAddComment（同样带 path）。
- * 编辑模式里链接一律不跳转（点击=选择，不是浏览）。
+ * 编辑/拖拽（2026-07-29 与 deck 对齐）：交互组件全部复用 deck 的那套 ——
+ * EditOverlay 选中光圈、InspectFloatingCard 评论浮卡、CommentMarkers 橙色标记、
+ * DragOverlay/GrabHandle 拖拽全家。差别只在数据层落点：deck 的拖拽走
+ * pending buffer 等 agent 应用；站点是我们自己的纯 HTML 文件，改动由前端
+ * 自己写盘（Canvas.write 通道）：**磁盘干净源码 + 按锚点重放操作**（见
+ * site-source-patch.js），脚本页的运行时产物不进文件。拖拽先进暂存栈、
+ * 用户确认才落盘（确认前可撤销一步/全部放弃）；改字 Enter 即确认，600ms
+ * 合并落盘。buffer 里只留 applied-* 与 edit 的 FYI 记录让 agent 知道动过什么。
+ * React mount 区是唯一例外 —— 运行时 DOM 动了会被 next render 覆盖，
+ * 照旧推 pending-*，agent 改 JSX 源码。
  */
 export default function SiteWindow({
   projectId,
@@ -34,84 +49,384 @@ export default function SiteWindow({
   entry = 'index.html',
   title,
   pages = [],
-  refreshToken = 0,
+  fileVersions = null,  // 按文件版本表：本页 html 或共享资产变了才刷新（别的页不扰动）
   built = false,        // 构建型站点：编辑落在产物上，agent 会同步回源再构建
-  onTextEdit = null,    // 没接线（无会话等）就不显示编辑标签
   onAddComment = null,
+  onResolveComment = null,
+  onDeleteComment = null,
+  onDomEdit = null,     // 拖拽落盘通道：({ path, html, summary, records, persist }) => void
   onIframeReady = null,
+  isStreaming = false,
+  comments = [],
   onClose,
 }) {
   const [viewport, setViewport] = useState(SITE_VIEWPORTS[0].id);
   const [tab, setTab] = useState('preview');
-  const [selected, setSelected] = useState(null);   // { anchor, label } 编辑模式选中态
+  const [selected, setSelected] = useState(null);   // { anchor } 编辑模式选中态
   const [current, setCurrent] = useState(entry);      // 当前看的是站内哪一页
   const [history, setHistory] = useState([]);          // 站内后退栈
   const [sourceText, setSourceText] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [wrapSize, setWrapSize] = useState({ width: 0, height: 0 });
+  const [iframeDoc, setIframeDoc] = useState(null);
+  const [docTick, setDocTick] = useState(0);           // iframe 每次 load +1：桥/overlay 重绑新 doc
+  const [dragFreeMode, setDragFreeMode] = useState(false);
+  const [collageWarn, setCollageWarn] = useState(false);   // 大量绝对定位 = 拼贴式版面，DOM 拖拽不可靠
+  const [isDragging, setIsDragging] = useState(false);
+  const [draggedSource, setDraggedSource] = useState(null);
+  const [notePanelOpen, setNotePanelOpen] = useState(false);
   const wrapRef = useRef(null);
   const iframeRef = useRef(null);
 
   const vp = SITE_VIEWPORTS.find(v => v.id === viewport) || SITE_VIEWPORTS[0];
   const baseRel = base || `tasks/${task}`;
   const relPath = `${baseRel}/${current}`;
-  const src = `${Assets.artifactFileUrl(projectId, relPath)}?v=${refreshToken}-${reloadKey}`;
+  // 版本按**这一页**取（本页 html + 非 html 共享资产）：agent 改别的页时这扇窗不动
+  const pageVersion = versionOfSitePage(fileVersions, baseRel, current);
+  const src = `${Assets.artifactFileUrl(projectId, relPath)}?v=${pageVersion}-${reloadKey}`;
+
+  const editable = !!onDomEdit;
+  const draggable = !!onDomEdit;
+  const relPathRef = useRef(relPath); relPathRef.current = relPath;
+  const tabRef = useRef(tab); tabRef.current = tab;
 
   // 换任务 / 换入口时回到入口页（同一扇窗被复用的场景）
   useEffect(() => { setCurrent(entry); setHistory([]); }, [task, entry]);
 
-  // ── 编辑模式接线（桥是通用的，这里只做站点侧的 path 线程）──
-  const editable = !!onTextEdit;
-  const tabRef = useRef(tab); tabRef.current = tab;
-  const relPathRef = useRef(relPath); relPathRef.current = relPath;
-  const navBlockRef = useRef(null);
+  // 当前页的评论（站点评论都带 path；别的页 / deck 的评论不在这份 doc 里，别拿来找元素）
+  const pageComments = useMemo(
+    () => comments.filter(c => c.path === relPath),
+    [comments, relPath],
+  );
 
-  const attachBridge = useCallback(() => {
+  // ── 编辑落盘队列 ─────────────────────────────────────────────
+  // 用户改完 = 运行时 DOM 已是目标状态。落盘不直接序列化运行时 DOM（脚本页会把
+  // pin-spacer/注入节点/动画中间态一并烤进源文件），而是取磁盘干净源码，把这批
+  // 操作（改字/搬移/复制/定位）按锚点重放上去再写回 —— 见 site-source-patch.js。
+  // 锚点在干净副本上找不到（脚本改了结构）才回退整页序列化：宁可带污染别丢改动。
+  // 写盘 debounce 600ms：nudge 连按只落最后一版；flush 串行链（上一笔写完才取
+  // 下一笔的源码），不然第二笔会基于旧源码重放、覆盖掉第一笔。
+  const persistJobRef = useRef(null);
+  const persistTimerRef = useRef(null);
+  const flushChainRef = useRef(Promise.resolve());
+  const onDomEditRef = useRef(onDomEdit); onDomEditRef.current = onDomEdit;
+
+  const runFlushJob = useCallback(async (job) => {
+    let html = null;
+    let fallback = false;
+    try {
+      const res = await fetch(Assets.artifactFileUrl(projectId, job.path));
+      if (res.ok) html = applyOpsToSource(await res.text(), job.ops);
+    } catch { /* 走回退 */ }
+    if (!html) {
+      // 回退：整页序列化运行时 DOM（剥掉拖拽模式的运行时装饰）
+      fallback = true;
+      try {
+        if (job.doc) {
+          const body = job.doc.body;
+          const prevSel = body?.style.userSelect || '';
+          if (body) body.style.userSelect = '';
+          html = '<!doctype html>\n' + job.doc.documentElement.outerHTML;
+          if (body) body.style.userSelect = prevSel;
+          html = html.replace(/ style=""/g, '');
+        }
+      } catch { html = null; }
+    }
+    if (!html) return;
+    const records = fallback
+      ? job.records.map(r => ({ ...r, serializedFrom: 'runtime-dom' }))
+      : job.records;
+    await onDomEditRef.current?.({ path: job.path, html, summary: job.summary, records, persist: true });
+  }, [projectId]);
+
+  const flushPersist = useCallback(() => {
+    if (persistTimerRef.current) { clearTimeout(persistTimerRef.current); persistTimerRef.current = null; }
+    const job = persistJobRef.current;
+    if (!job) return;
+    persistJobRef.current = null;
+    flushChainRef.current = flushChainRef.current
+      .then(() => runFlushJob(job))
+      .catch(() => { /* 单笔失败不断链 */ });
+  }, [runFlushJob]);
+
+  const anchorKey = (a) => a?.dataId || a?.path || '';
+
+  // ── 拖拽暂存栈（2026-07-30：拖完不立刻落库，确认才写盘，给反悔机会）──
+  // 每笔 {op, record, revert}：op 给干净源码重放用；revert 是运行时回退闭包
+  // （撤销 = 画面原地退回）。保存时整栈进落盘链；换页/关窗/agent 开跑前自动保存
+  // （运行时 DOM 即将销毁，不救就丢）。改字不走这里 —— Enter/Esc 本身就是确认/反悔。
+  const stagedRef = useRef([]);
+  const [stagedCount, setStagedCount] = useState(0);
+
+  const stageOp = useCallback((entry) => {
+    const staged = stagedRef.current;
+    const last = staged[staged.length - 1];
+    // 连续 nudge 合并：同元素 style 只留最后一版（revert 保留第一笔的 —— 回到原点）
+    if (last && last.op.type === 'style' && entry.op.type === 'style'
+        && anchorKey(last.op.anchor) === anchorKey(entry.op.anchor)) {
+      last.op = entry.op;
+      last.record = entry.record;
+    } else {
+      staged.push(entry);
+    }
+    setStagedCount(staged.length);
+  }, []);
+
+  const saveStaged = useCallback(() => {
+    const staged = stagedRef.current;
+    if (staged.length === 0) return;
+    stagedRef.current = [];
+    setStagedCount(0);
+    let doc = null;
+    try { doc = iframeRef.current?.contentDocument; } catch { doc = null; }
+    const job = {
+      path: relPathRef.current,
+      doc,
+      ops: staged.map(e => e.op),
+      records: staged.map(e => e.record),
+      summary: `${staged.length} 处布局调整`,
+    };
+    flushChainRef.current = flushChainRef.current
+      .then(() => runFlushJob(job))
+      .catch(() => { /* 单笔失败不断链 */ });
+  }, [runFlushJob]);
+
+  const undoStaged = useCallback(() => {
+    const entry = stagedRef.current.pop();
+    if (entry) { try { entry.revert?.(); } catch { /* 元素可能已没了 */ } }
+    setStagedCount(stagedRef.current.length);
+  }, []);
+
+  const discardStaged = useCallback(() => {
+    const staged = stagedRef.current;
+    stagedRef.current = [];
+    for (let i = staged.length - 1; i >= 0; i--) {
+      try { staged[i].revert?.(); } catch { /* */ }
+    }
+    setStagedCount(0);
+  }, []);
+
+  const queueOp = useCallback((summary, op, record) => {
+    let doc = null;
+    try { doc = iframeRef.current?.contentDocument; } catch { doc = null; }
+    if (!doc) return;
+    const job = (persistJobRef.current && persistJobRef.current.path === relPathRef.current)
+      ? persistJobRef.current
+      : { path: relPathRef.current, ops: [], records: [] };
+    job.doc = doc;
+    job.summary = summary;
+    // 连续 nudge 合并：同元素的 style 只留最后一条
+    const lastOp = job.ops[job.ops.length - 1];
+    if (lastOp && lastOp.type === 'style' && op.type === 'style'
+        && anchorKey(lastOp.anchor) === anchorKey(op.anchor)) {
+      job.ops[job.ops.length - 1] = op;
+      job.records[job.records.length - 1] = record;
+    } else {
+      job.ops.push(op);
+      job.records.push(record);
+    }
+    persistJobRef.current = job;
+    if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(flushPersist, 600);
+  }, [flushPersist]);
+
+  // 全量收口：改字队列 flush + 拖拽暂存自动保存。用在运行时 DOM 即将销毁 /
+  // 用户离开确认场景的所有出口（换页/刷新/重载/卸载/切出拖拽/agent 开跑）。
+  const commitAllPending = useCallback(() => {
+    saveStaged();
+    flushPersist();
+  }, [saveStaged, flushPersist]);
+
+  // 卸载 / iframe 源变化（agent 改了文件触发重载）前抢救未落盘的改动
+  useEffect(() => () => commitAllPending(), [commitAllPending]);
+  useEffect(() => { commitAllPending(); }, [src, commitAllPending]);
+  // 切出拖拽标签：暂存的调整自动保存（不静默丢弃）
+  useEffect(() => {
+    if (tab !== 'drag') saveStaged();
+  }, [tab, saveStaged]);
+
+  // React mount 区：DOM 不能动（next render 会覆盖），照 deck 的老路推 pending-* 给 agent
+  const pushReactPending = useCallback((summary, record) => {
+    onDomEditRef.current?.({
+      path: relPathRef.current, html: null, summary,
+      records: [{ ...record, reactMount: true }], persist: false,
+    });
+  }, []);
+
+  // 暂存条上的操作说明：把"改了什么结构"说出来 —— 拼贴版式里 DOM 重排常常
+  // 画面纹丝不动，用户不点名就永远不知道自己刚改了源码结构（SPiCa 事故的教训）
+  const tagOf = (el) => {
+    if (!el?.tagName) return '元素';
+    const t = el.tagName.toLowerCase();
+    const cls = (typeof el.className === 'string' && el.className.trim()) ? `.${el.className.trim().split(/\s+/)[0]}` : '';
+    return `<${t}${cls}>`;
+  };
+
+  // ── 拖拽落地（组件与 deck 相同，落点不同：直接写盘）──
+  const handleCommitMove = useCallback((payload, refs) => {
+    if (!payload) return;
+    if (payload.reactMount) {
+      pushReactPending('移动元素（React 区）', {
+        kind: refs.duplicate ? 'pending-duplicate' : 'pending-move',
+        anchor: payload.sourceAnchor, move: payload.move, aiContext: payload.aiContext,
+      });
+      return;
+    }
+    if (refs.duplicate) {
+      const clone = refs.sourceEl?.cloneNode(true);
+      if (!clone || !refs.targetContainer) return;
+      try { clone.removeAttribute('data-anchor'); } catch { /* */ }
+      if (refs.beforeEl && refs.beforeEl.parentNode === refs.targetContainer) {
+        refs.targetContainer.insertBefore(clone, refs.beforeEl);
+      } else {
+        refs.targetContainer.appendChild(clone);
+      }
+      stageOp({
+        op: { type: 'duplicate', anchor: payload.sourceAnchor, container: payload.move?.container, before: payload.move?.before },
+        record: { kind: 'applied-duplicate', applied: true, anchor: payload.sourceAnchor, move: payload.move, aiContext: payload.aiContext },
+        revert: () => { try { clone.remove(); } catch { /* */ } },
+        label: `复制 ${tagOf(refs.sourceEl)} 到 ${tagOf(refs.targetContainer)}`,
+      });
+      return;
+    }
+    let doc; try { doc = iframeRef.current?.contentDocument; } catch { doc = null; }
+    const result = applyMoveToRuntime({
+      iframeDoc: doc, sourceEl: refs.sourceEl,
+      targetContainer: refs.targetContainer, beforeEl: refs.beforeEl,
+    });
+    if (result.applied === 'dom') {
+      stageOp({
+        op: { type: 'move', anchor: payload.sourceAnchor, container: payload.move?.container, before: payload.move?.before },
+        record: { kind: 'applied-move', applied: true, anchor: payload.sourceAnchor, move: payload.move, aiContext: payload.aiContext },
+        revert: result.revert,
+        label: payload.move?.intent === 'child-of'
+          ? `${tagOf(refs.sourceEl)} 移入 ${tagOf(refs.targetContainer)} 内部`
+          : `${tagOf(refs.sourceEl)} 移到 ${tagOf(refs.targetContainer)} 里的新位置`,
+      });
+    } else {
+      pushReactPending('移动元素（React 区）', {
+        kind: 'pending-move', anchor: payload.sourceAnchor, move: payload.move, aiContext: payload.aiContext,
+      });
+    }
+  }, [stageOp, pushReactPending]);
+
+  const handleCommitFreePosition = useCallback((payload, refs) => {
+    if (!payload) return;
+    const result = applyStyleToRuntime({
+      sourceEl: refs.sourceEl, parentEl: refs.parentEl,
+      styleDelta: payload.styleDelta, runtimeLocks: payload.runtimeLocks,
+      parentNeedsRelative: payload.parentNeedsRelative,
+    });
+    const record = {
+      anchor: payload.sourceAnchor, styleDelta: payload.styleDelta,
+      aiContext: {
+        ...payload.aiContext,
+        parentAnchor: payload.parentAnchor,
+        parentNeedsRelative: payload.parentNeedsRelative,
+      },
+    };
+    if (result.applied === 'dom') {
+      stageOp({
+        op: {
+          type: 'style', anchor: payload.sourceAnchor,
+          // styleDelta（用户意图）+ runtimeLocks（尺寸锁补偿）都写进文件 —— 所见即所存
+          styles: { ...payload.styleDelta, ...(payload.runtimeLocks || {}) },
+          parentNeedsRelative: payload.parentNeedsRelative,
+        },
+        record: { kind: 'applied-style', applied: true, ...record },
+        revert: result.revert,
+        label: `${tagOf(refs.sourceEl)} 改坐标 (${payload.styleDelta?.left ?? '?'}, ${payload.styleDelta?.top ?? '?'})`,
+      });
+    } else {
+      pushReactPending('调整位置（React 区）', { kind: 'pending-style', ...record });
+    }
+  }, [stageOp, pushReactPending]);
+
+  // ── 双击改字：跟拖拽走同一条落盘队列（干净源码重放，不再整页序列化）──
+  const handleTextEditLocal = useCallback((info) => {
+    if (!info || typeof info.newText !== 'string') return;
+    let doc; try { doc = iframeRef.current?.contentDocument; } catch { doc = null; }
+    const el = doc?.body ? findElementByAnchor(info.anchor, doc.body) : null;
+    queueOp(`改字「${info.newText.trim().slice(0, 12)}」`,
+      { type: 'text', anchor: info.anchor, newText: info.newText },
+      {
+        kind: 'edit', anchor: info.anchor,
+        diff: { oldText: info.oldText, newText: info.newText },
+        aiContext: el ? serializeForAI(el) : null,
+      });
+  }, [queueOp]);
+
+  // 拖完的补充说明 → 元素评论（带 path 进 buffer，agent 连着 applied-* 记录一起看）
+  const handleDragNote = useCallback(async (anchor, text) => {
+    const t = text && text.trim();
+    if (!t) return;
+    const el = draggedSource;
+    await onAddComment?.({
+      anchor,
+      aiContext: el && el.isConnected ? serializeForAI(el) : null,
+      path: relPathRef.current,
+      text: t,
+    });
+  }, [draggedSource, onAddComment]);
+
+  // 协作 lock（deck 同款）：agent run 期间强制退出 drag，避免双方并行改同一份文件
+  useEffect(() => {
+    if (isStreaming && tab === 'drag') { commitAllPending(); setTab('preview'); }
+  }, [isStreaming, tab, commitAllPending]);
+
+  // 拼贴式版面检测：绝对定位碎片多的页面，DOM 顺序与视觉位置解耦，
+  // 普通拖拽（改 DOM 插入位）会产生"画面没变但结构变了"的静默事故。
+  // 检出后提示条明说，且绝对定位元素拖拽自动走坐标语义（DragOverlay autoFree）。
+  useEffect(() => {
+    if (tab !== 'drag') return;
+    try {
+      const doc = iframeRef.current?.contentDocument;
+      const view = doc?.defaultView;
+      if (!doc?.body || !view) { setCollageWarn(false); return; }
+      let abs = 0;
+      const els = doc.body.querySelectorAll('*');
+      const cap = Math.min(els.length, 800);
+      for (let i = 0; i < cap; i++) {
+        const pos = view.getComputedStyle(els[i]).position;
+        if (pos === 'absolute' || pos === 'fixed') abs++;
+      }
+      setCollageWarn(abs >= 6);
+    } catch { setCollageWarn(false); }
+  }, [tab, docTick]);
+
+  // ── 链接拦截：编辑/拖拽模式里点击不当浏览 ──
+  useEffect(() => {
+    if (tab !== 'edit' && tab !== 'drag') return undefined;
     const frame = iframeRef.current;
-    if (!frame) return;
-    let doc; try { doc = frame.contentDocument; } catch { return; }
-    if (!doc?.body) return;
-    // 编辑模式里链接一律不跳转（点击=选择，不是浏览）。capture 先挂，
-    // preventDefault 之后事件继续走到桥的 select
+    let doc; try { doc = frame?.contentDocument; } catch { doc = null; }
+    if (!doc?.body) return undefined;
     const blockNav = (e) => {
       if (e.target?.closest?.('a[href]')) e.preventDefault();
     };
     doc.addEventListener('click', blockNav, true);
-    navBlockRef.current = { doc, blockNav };
+    return () => { try { doc.removeEventListener('click', blockNav, true); } catch { /* doc 已换 */ } };
+  }, [tab, docTick]);
+
+  // ── 编辑桥（双击改字 + 单击选元素）——docTick 变化 = iframe 重载，重绑新 doc ──
+  useEffect(() => {
+    if (tab !== 'edit') return undefined;
+    const frame = iframeRef.current;
+    if (!frame) return undefined;
     attachEditMode(frame, {
-      onTextEdit: (info) => onTextEdit?.({ ...info, deckPath: relPathRef.current }),
+      onTextEdit: (info) => handleTextEditLocal(info),
       onSelect: ({ anchor }) => setSelected(anchor ? { anchor } : null),
     });
-  }, [onTextEdit]);
+    return () => {
+      try { detachAll(frame); } catch { /* */ }
+      setSelected(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, docTick]);
 
-  const detachBridge = useCallback(() => {
-    const nb = navBlockRef.current;
-    if (nb) {
-      try { nb.doc.removeEventListener('click', nb.blockNav, true); } catch { /* doc 可能已换 */ }
-      navBlockRef.current = null;
-    }
-    const frame = iframeRef.current;
-    if (frame) detachAll(frame);
-    setSelected(null);
-  }, []);
-
-  useEffect(() => {
-    if (tab === 'edit') attachBridge();
-    return () => detachBridge();
-  }, [tab, attachBridge, detachBridge]);
-
-  const handleCommentSelected = useCallback(() => {
-    if (!selected || !onAddComment) return;
-    const frame = iframeRef.current;
-    let doc; try { doc = frame?.contentDocument; } catch { doc = null; }
-    const el = doc?.body ? findElementByAnchor(selected.anchor, doc.body) : null;
-    onAddComment({
-      anchor: selected.anchor,
-      aiContext: el ? serializeForAI(el) : null,
-      path: relPathRef.current,
-    });
-    setSelected(null);
-  }, [selected, onAddComment]);
+  // 评论浮卡的提交带上当前页 path（跟文本编辑同一条线程规则）
+  const handleAddCommentWithPath = useCallback((ctx) => {
+    onAddComment?.({ ...ctx, path: relPathRef.current });
+  }, [onAddComment]);
 
   // 量取景框：只在窗口装不下目标宽度时整体缩一次
   useEffect(() => {
@@ -139,34 +454,43 @@ export default function SiteWindow({
       .then(t => { if (!cancelled) setSourceText(t); })
       .catch(() => { if (!cancelled) setSourceText('<!-- 读不到源码 -->'); });
     return () => { cancelled = true; };
-  }, [tab, projectId, relPath, reloadKey, refreshToken]);
+  }, [tab, projectId, relPath, reloadKey, pageVersion]);
 
   const navigateTo = useCallback((page) => {
+    commitAllPending();           // 换页前收口：改字 flush + 暂存拖拽自动保存（doc 即将销毁）
     setHistory(h => [...h, current]);
     setCurrent(page);
-  }, [current]);
+  }, [current, commitAllPending]);
 
   const goBack = useCallback(() => {
+    commitAllPending();
     setHistory((h) => {
       if (h.length === 0) return h;
       setCurrent(h[h.length - 1]);
       return h.slice(0, -1);
     });
-  }, []);
+  }, [commitAllPending]);
 
-  // ESC 的 handler 只挂一次（依赖 onClose），拿 ref 读最新的后退栈与后退动作，
-  // 免得每次导航都重挂 listener
+  // ESC 的 handler 只挂一次，拿 ref 读最新状态，免得每次交互都重挂 listener
   const historyRef = useRef(history);
   const goBackRef = useRef(goBack);
-  useEffect(() => { historyRef.current = history; goBackRef.current = goBack; }, [history, goBack]);
+  const selectedRef = useRef(selected);
+  const isDraggingRef = useRef(isDragging);
+  useEffect(() => {
+    historyRef.current = history; goBackRef.current = goBack;
+    selectedRef.current = selected; isDraggingRef.current = isDragging;
+  }, [history, goBack, selected, isDragging]);
 
-  // ESC：站内有后退栈先后退，栈空了才关窗（跟 DeckWindow 的"先清选中再关窗"同构）
+  // ESC 优先级（deck 同构）：拖拽中让 DragOverlay 自己取消 → 有选中先清选中
+  // → 站内有后退栈先后退 → 都没有才关窗
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (isDraggingRef.current) return;
       e.stopPropagation();
+      if (selectedRef.current) { setSelected(null); return; }
       if (historyRef.current.length > 0) goBackRef.current();
       else onClose?.();
     };
@@ -188,14 +512,14 @@ export default function SiteWindow({
     // 直接编辑用：把 iframe **元素**报给外层（外层自己取 contentDocument，
     // handleTextEdit 序列化整页写回 —— 跟 HtmlIframe 的回报形状一致）
     onIframeReady?.(frame);
-    // iframe 换页重载后，编辑模式的桥要重挂（旧 doc 已销毁）
-    if (tabRef.current === 'edit') attachBridge();
+    setIframeDoc(doc);
+    setDocTick(t => t + 1);   // 桥 / overlay 全家重绑新 doc
     const dir = current.includes('/') ? current.slice(0, current.lastIndexOf('/') + 1) : '';
     for (const a of doc.querySelectorAll('a[href]')) {
       const href = a.getAttribute('href') || '';
       if (/^(?:[a-z][a-z0-9+\-.]*:|\/\/|#)/i.test(href)) continue;   // 外链 / 锚点不管
       a.addEventListener('click', (e) => {
-        if (tabRef.current === 'edit') return;   // 编辑模式点击=选择，不换页
+        if (tabRef.current === 'edit' || tabRef.current === 'drag') return;   // 编辑/拖拽点击≠浏览
         const clean = href.split('#')[0].split('?')[0];
         if (!clean) return;
         // 站内相对路径归一成"相对任务目录"
@@ -212,19 +536,22 @@ export default function SiteWindow({
         navigateTo(next);
       });
     }
-  }, [current, navigateTo, onIframeReady, attachBridge]);
+  }, [current, navigateTo, onIframeReady]);
 
   const pageList = useMemo(() => (pages.length ? pages : [entry]), [pages, entry]);
 
-  const tabBtn = (id, label, Icon) => (
+  const tabBtn = (id, label, Icon, extra = {}) => (
     <button
-      onClick={() => setTab(id)}
+      onClick={() => { if (!extra.disabled) { setSelected(null); setNotePanelOpen(false); setTab(id); } }}
+      title={extra.title}
       style={{
         display: 'flex', alignItems: 'center', gap: 4,
-        padding: '3px 9px', borderRadius: 5, border: 'none', cursor: 'pointer',
+        padding: '3px 9px', borderRadius: 5, border: 'none',
+        cursor: extra.disabled ? 'default' : 'pointer',
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
         background: tab === id ? COLOR.text : 'transparent',
         color: tab === id ? '#fff' : COLOR.sub,
+        opacity: extra.disabled ? 0.4 : 1,
       }}
     >
       <Icon size={11} />{label}
@@ -251,8 +578,10 @@ export default function SiteWindow({
     );
   };
 
+  const overlayIframeRef = { current: iframeRef.current };
+
   return (
-    <div style={{
+    <div data-site-window={task} style={{
       position: 'absolute', inset: 0, zIndex: 400,
       display: 'flex', flexDirection: 'column',
       background: '#fff', animation: POP_IN,
@@ -270,11 +599,13 @@ export default function SiteWindow({
         <div style={{ display: 'flex', gap: 2 }}>
           {tabBtn('preview', '预览', Eye)}
           {editable && tabBtn('edit', '编辑', Pencil)}
+          {draggable && tabBtn('drag', '拖拽', Move, isStreaming
+            ? { disabled: true, title: 'agent 正在工作，拖拽暂不可用' } : {})}
           {tabBtn('code', '源码', FileCode)}
         </div>
         <div style={{ flex: 1 }} />
         {tab !== 'code' && <div style={{ display: 'flex', gap: 2 }}>{SITE_VIEWPORTS.map(vpBtn)}</div>}
-        <button onClick={() => setReloadKey(k => k + 1)} title="刷新" style={iconBtn}>
+        <button onClick={() => { commitAllPending(); setReloadKey(k => k + 1); }} title="刷新" style={iconBtn}>
           <RotateCw size={13} />
         </button>
         <a
@@ -319,15 +650,26 @@ export default function SiteWindow({
         ))}
       </div>
 
-      {/* 编辑模式提示条：怎么用 + 构建型警示 */}
-      {tab === 'edit' && (
+      {/* 模式提示条：怎么用 + 构建型警示 */}
+      {(tab === 'edit' || tab === 'drag') && (
         <div style={{
           flexShrink: 0, padding: `4px ${GAP.md}px`,
           display: 'flex', alignItems: 'center', gap: GAP.sm,
           fontFamily: FONT_SANS, fontSize: 11, color: COLOR.text2,
           background: '#fdf8ef', borderBottom: `1px solid ${COLOR.borderLt}`,
         }}>
-          <span>双击文字直接改（Enter 保存 / Esc 还原），单击元素可留评论 —— 改动和评论都会带给 agent</span>
+          {tab === 'edit' ? (
+            <span>双击文字直接改（Enter 保存 / Esc 还原），单击元素弹评论卡 —— 改动和评论都会带给 agent</span>
+          ) : (
+            <span>
+              拖动元素调整布局，摆好后<b>点「保存」写进文件</b>（保存前可撤销）· 按 P 切自由摆放 · Alt 拖 = 复制 · 自由模式方向键微调
+              {collageWarn && (
+                <span style={{ color: '#a4600f' }}>
+                  {' '}· 这页是拼贴式版面（大量绝对定位）：绝对定位碎片拖动自动改坐标；其余元素拖动改的是结构，画面可能不变 —— 精修位置更推荐直接吩咐 agent 改 CSS
+                </span>
+              )}
+            </span>
+          )}
           {built && (
             <span style={{ color: '#a4600f' }}>
               · 构建型站点：这里改的是构建产物，agent 会把改动同步回源再重新构建
@@ -340,6 +682,7 @@ export default function SiteWindow({
       {tab !== 'code' ? (
         <div ref={wrapRef} style={{
           flex: 1, minHeight: 0, overflow: 'auto',
+          position: 'relative',   // overlay 全家的定位容器（iframe.offsetParent）
           display: 'flex', justifyContent: 'center',
           background: '#f4f2ee', padding: GAP.md,
         }}>
@@ -352,13 +695,14 @@ export default function SiteWindow({
             height: Math.max(0, wrapSize.height - GAP.md * 2),
             flexShrink: 0,
           }}>
-            <iframe
-              ref={iframeRef}
-              key={`${relPath}-${reloadKey}`}
-              title={`site-${task}-${current}`}
+            {/* LiveFrame 双缓冲：agent 改本页 / 手动刷新 / 站内换页都不闪白，
+                同页刷新还把滚动位置带过去。staging 层 absolute 定位挂在 wrapRef
+                （最近的 positioned 祖先）上，隐藏加载不干扰布局。 */}
+            <LiveFrame
               src={src}
-              onLoad={handleLoad}
-              sandbox="allow-scripts allow-same-origin"
+              title={`site-${task}-${current}`}
+              frameRef={iframeRef}
+              onActive={handleLoad}
               style={{
                 width: vp.w,
                 height: scale > 0 ? Math.max(0, (wrapSize.height - GAP.md * 2) / scale) : '100%',
@@ -366,41 +710,130 @@ export default function SiteWindow({
                 background: '#fff',
                 boxShadow: tab === 'edit'
                   ? `0 0 0 2px ${COLOR.btn}, 0 2px 18px rgba(0,0,0,0.08)`
-                  : '0 2px 18px rgba(0,0,0,0.08)',
+                  : tab === 'drag'
+                    ? '0 0 0 2px #3a7afe, 0 2px 18px rgba(0,0,0,0.08)'
+                    : '0 2px 18px rgba(0,0,0,0.08)',
                 display: 'block',
                 transform: scale < 1 ? `scale(${scale})` : 'none',
                 transformOrigin: 'top left',
               }}
             />
           </div>
-          {/* 选中元素浮条：评论入口 */}
+
+          {/* ── 编辑态 overlay（deck 同一套组件，zoom = 取景缩放）── */}
           {tab === 'edit' && selected && (
+            <EditOverlay
+              key={`ring-${docTick}`}
+              selectedAnchor={selected.anchor}
+              iframeRef={overlayIframeRef}
+              zoom={scale}
+            />
+          )}
+          <CommentMarkers
+            key={`markers-${docTick}`}
+            comments={pageComments}
+            iframeRef={overlayIframeRef}
+            zoom={scale}
+            onSelectAnchor={(anchor) => {
+              if (tabRef.current !== 'edit') setTab('edit');
+              setSelected({ anchor });
+            }}
+          />
+          {tab === 'edit' && selected && iframeDoc && (
+            <InspectFloatingCard
+              selectedAnchor={selected.anchor}
+              iframeDoc={iframeDoc}
+              iframeRef={overlayIframeRef}
+              iframeRect={wrapSize}
+              zoom={scale}
+              comments={pageComments}
+              onClose={() => setSelected(null)}
+              onAddComment={handleAddCommentWithPath}
+              onResolveComment={onResolveComment}
+              onDeleteComment={onDeleteComment}
+            />
+          )}
+
+          {/* ── 拖拽态 overlay（deck 同一套组件）── */}
+          <GrabHandle
+            key={`grab-${docTick}`}
+            active={tab === 'drag' && !isDragging}
+            iframeRef={overlayIframeRef}
+            zoom={scale}
+            pickDragSource={pickDragSource}
+            isDragging={isDragging}
+          />
+          <DragOverlay
+            key={`drag-${docTick}`}
+            active={tab === 'drag'}
+            iframeRef={overlayIframeRef}
+            zoom={scale}
+            freeMode={dragFreeMode}
+            onFreeModeChange={setDragFreeMode}
+            onDraggingChange={setIsDragging}
+            onSelectionChange={(srcEl) => {
+              setDraggedSource(srcEl);
+              if (srcEl) setNotePanelOpen(true);
+            }}
+            onCommitMove={handleCommitMove}
+            onCommitFreePosition={handleCommitFreePosition}
+          />
+          <PostDragNotePanel
+            active={tab === 'drag' && notePanelOpen && !isDragging && !!draggedSource}
+            iframeRef={overlayIframeRef}
+            zoom={scale}
+            sourceEl={draggedSource}
+            hasPendingEditId={true}
+            onSubmit={handleDragNote}
+            onDismiss={() => setNotePanelOpen(false)}
+          />
+
+          {/* 拖拽暂存确认条：摆完确认才写盘（撤销 = 运行时原地回退）。
+              离开拖拽标签 / 换页 / 关窗 / agent 开跑时未确认的会自动保存。 */}
+          {tab === 'drag' && stagedCount > 0 && !isDragging && (
             <div style={{
-              position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', alignItems: 'center', gap: GAP.sm,
-              padding: `6px ${GAP.md}px`, borderRadius: 999,
+              padding: `7px ${GAP.md}px`, borderRadius: 999,
               background: COLOR.text, color: '#fff',
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
-              boxShadow: '0 6px 20px rgba(0,0,0,0.25)', zIndex: 5,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.3)', zIndex: 60,
             }}>
-              <span style={{ fontFamily: FONT_MONO, fontSize: 11, opacity: 0.75 }}>
-                {selected.anchor?.tag || '元素'}
+              <span style={{ opacity: 0.85 }}>
+                {stagedCount} 处调整未保存
+                {stagedRef.current[stagedRef.current.length - 1]?.label
+                  ? ` · ${stagedRef.current[stagedRef.current.length - 1].label}`
+                  : ''}
               </span>
               <button
-                onClick={handleCommentSelected}
+                onClick={saveStaged}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '3px 10px', borderRadius: 999, border: 'none', cursor: 'pointer',
-                  background: '#fff', color: COLOR.text, fontSize: FONT_SIZE.xs, fontFamily: FONT_SANS,
+                  padding: '3px 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                  background: '#fff', color: COLOR.text, fontSize: FONT_SIZE.xs,
+                  fontFamily: FONT_SANS, fontWeight: 600,
                 }}
               >
-                <MessageSquarePlus size={12} />评论这个元素
+                保存
               </button>
               <button
-                onClick={() => setSelected(null)}
-                style={{ border: 'none', background: 'transparent', color: '#fff', cursor: 'pointer', display: 'flex' }}
+                onClick={undoStaged}
+                style={{
+                  padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                  border: '1px solid rgba(255,255,255,0.4)', background: 'transparent',
+                  color: '#fff', fontSize: FONT_SIZE.xs, fontFamily: FONT_SANS,
+                }}
               >
-                <X size={12} />
+                撤销一步
+              </button>
+              <button
+                onClick={discardStaged}
+                style={{
+                  padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                  border: 'none', background: 'transparent',
+                  color: 'rgba(255,255,255,0.65)', fontSize: FONT_SIZE.xs, fontFamily: FONT_SANS,
+                }}
+              >
+                全部放弃
               </button>
             </div>
           )}

@@ -36,6 +36,7 @@ export default function CanvasFrame({
   project, deckSpec, projectId, sessionId, decisionsReloadKey,
   comments = [],
   onAddComment, onResolveComment, onDeleteComment,
+  onSiteDomEdit,
   tweaksAvailable = false,
   pendingEdits = [],
   onCommitMove,
@@ -189,11 +190,15 @@ export default function CanvasFrame({
               title={siteSrc.title}
               pages={siteSrc.pages}
               built={!!siteSrc.built}
-              refreshToken={versionOfTask(fileVersions, siteSrc.task)}
-              // 直接编辑 + 评论：桥在 SiteWindow 内部接，path 按当前页线程，
-              // 数据层跟 deck 完全同一套（Canvas.write + pending-changes buffer）
-              onTextEdit={sessionId ? onTextEdit : null}
+              fileVersions={fileVersions}
+              // 直接编辑 + 评论 + 拖拽：交互组件跟 deck 同一套（SiteWindow 内部接线），
+              // path 按当前页线程。改字/拖拽都走 onDomEdit 落盘（干净源码重放 + FYI 记录）
               onAddComment={sessionId ? onAddComment : null}
+              onResolveComment={onResolveComment}
+              onDeleteComment={onDeleteComment}
+              onDomEdit={sessionId ? onSiteDomEdit : null}
+              comments={comments}
+              isStreaming={isStreaming}
               onIframeReady={onIframeReady}
               onClose={() => setSiteSrc(null)}
             />

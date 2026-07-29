@@ -97,7 +97,7 @@ export default function DragOverlay({
     const prevUserSelect = body.style.userSelect;
     body.style.userSelect = 'none';
 
-    let local = { source: null, startX: 0, startY: 0, started: false, altKey: false };
+    let local = { source: null, startX: 0, startY: 0, started: false, altKey: false, autoFree: false };
 
     // iframe 内 mousedown 启动 drag —— P1 模式 + pickDragSource 兜底 inline 元素
     // Alt-drag 复制：mousedown 时按住 Alt → 落地走 pending-duplicate（保留原元素位置）
@@ -109,6 +109,14 @@ export default function DragOverlay({
       if (!source) return;
       e.preventDefault();
       e.stopPropagation();
+      // 绝对/固定定位的元素自动走"坐标语义"（= 自由模式）：这类元素的视觉位置
+      // 由 top/left 决定、与 DOM 顺序解耦，按 DOM 插入语义拖它只会改出
+      // "画面没变但结构变了"的静默事故（拼贴版式的 h1 被塞进天空图那类）。
+      let autoFree = false;
+      try {
+        const pos = doc.defaultView.getComputedStyle(source).position;
+        autoFree = pos === 'absolute' || pos === 'fixed';
+      } catch { /* */ }
       // mousedown 在 iframe doc 内 —— e.clientX/Y 已经是 iframe 内部坐标，无需转换
       local = {
         source,
@@ -116,6 +124,7 @@ export default function DragOverlay({
         startY: e.clientY,
         started: false,
         altKey: e.altKey,  // 记下"是否复制"，松手时按这个分流 move vs duplicate
+        autoFree,
       };
       onDraggingChangeRef.current?.(true);
     };
@@ -130,6 +139,7 @@ export default function DragOverlay({
         startY: internal.y,
         started: false,
         altKey: false,
+        autoFree: false,
       };
       onDraggingChangeRef.current?.(true);
     };
@@ -174,7 +184,7 @@ export default function DragOverlay({
       const hitY = ghostRect.top + ghostRect.height / 2;
       // 自由模式（freeMode）只算 ghost 跟手 + 距离 alignment，不算 dropTarget/caret
       // —— absolute 定位的语义是"落到任意像素位置"，没有"插入哪个容器"的概念
-      const inFreeMode = freeModeRef.current;
+      const inFreeMode = freeModeRef.current || local.autoFree;
       let dropInfo = null;
       let dropIntent = null;
       let alignGuides = [];
@@ -270,6 +280,7 @@ export default function DragOverlay({
         smartSpacing,
         reactMount: isInsideReactMount(local.source),
         freeMode: inFreeMode,
+        autoFree: local.autoFree,
         duplicate: local.altKey,
       });
     };
@@ -282,9 +293,9 @@ export default function DragOverlay({
       const dropIntent = wasStarted ? lastDropIntentRef.current : null;
       const align = wasStarted ? lastAlignRef.current : [];
       const ghostR = wasStarted ? lastGhostRectRef.current : null;
-      const inFree = freeModeRef.current;
+      const inFree = freeModeRef.current || local.autoFree;
       const isDuplicate = local.altKey;
-      local = { source: null, startX: 0, startY: 0, started: false, altKey: false };
+      local = { source: null, startX: 0, startY: 0, started: false, altKey: false, autoFree: false };
       setDrag(null);
       onDraggingChangeRef.current?.(false);
       // 不再自动关 freeMode —— 由外层 toggle 控制持久状态
@@ -349,7 +360,7 @@ export default function DragOverlay({
     const handleKey = (e) => {
       if (e.key === 'Escape' && local.source) {
         e.preventDefault();
-        local = { source: null, startX: 0, startY: 0, started: false };
+        local = { source: null, startX: 0, startY: 0, started: false, altKey: false, autoFree: false };
         setDrag(null);
         onDraggingChangeRef.current?.(false);
         onCancelRef.current?.();
@@ -601,7 +612,7 @@ export default function DragOverlay({
             whiteSpace: 'nowrap',
             boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
           }}>
-            📌 自由模式 · 落到像素位置（再按 P 切回）
+            {drag.autoFree ? '📌 绝对定位元素 · 拖动改坐标，不动 DOM 结构' : '📌 自由模式 · 落到像素位置（再按 P 切回）'}
           </div>
         )}
         {!drag.freeMode && drag.reactMount && (

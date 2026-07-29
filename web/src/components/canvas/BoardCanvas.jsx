@@ -14,7 +14,8 @@ import {
 } from '../../lib/board-geometry.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
-import { versionOfFile, versionOfTask } from '../../lib/file-versions.js';
+import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
+import LiveFrame from './LiveFrame.jsx';
 import ProjectBand from './ProjectBand.jsx';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
@@ -1685,16 +1686,16 @@ function BoardObject({
             </button>
           </div>
           <div
-            style={{ width: DECK_EMBED_W, height: 360, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px' }}
+            style={{ width: DECK_EMBED_W, height: 360, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px', position: 'relative' }}
           >
             {/* 内嵌渲染：live iframe 缩到 1/3，pointer-events 关闭 —— deck 元素级
-                工具（DirectEdit / Drag / Comment）只在聚焦（✏️）后的编辑视图开放 */}
-            <iframe
+                工具（DirectEdit / Drag / Comment）只在聚焦（✏️）后的编辑视图开放。
+                LiveFrame 双缓冲：agent 改动时旧画面保留到新文档就绪，不闪白 */}
+            <LiveFrame
               title={`deck-${o.task ? `task-${o.task}${o.deckFile && o.deckFile !== 'canvas.html' ? `-${o.deckFile}` : ''}` : o.sid}`}
               src={o.task
                 ? `${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}?v=${versionOfFile(fileVersions, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}`
                 : Canvas.artifactUrl(projectId, o.sid, versionOfFile(fileVersions, 'canvas.html'))}
-              sandbox="allow-scripts allow-same-origin"
               style={{
                 width: 1920, height: 1080, border: 0,
                 transform: `scale(${DECK_EMBED_W / 1920})`, transformOrigin: '0 0',
@@ -1743,13 +1744,14 @@ function BoardObject({
               <ChevronsUpDown size={11} />
             </button>
           </div>
-          <div style={{ width: DECK_EMBED_W, height: 400, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px' }}>
+          <div style={{ width: DECK_EMBED_W, height: 400, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px', position: 'relative' }}>
             {/* 站点缩略：按桌面宽度渲染再等比缩。**不套 1920×1080 固定画框** ——
-                站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿" */}
-            <iframe
+                站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿"。
+                版本按**入口页**取（entry html + 非 html 资产）：agent 改别的子页
+                时缩略图不重载；LiveFrame 双缓冲让必要的重载也不闪白 */}
+            <LiveFrame
               title={`site-${o.id}`}
-              src={`${Assets.artifactFileUrl(projectId, `${o.base || `tasks/${o.task}`}/${o.entry || 'index.html'}`)}?v=${versionOfTask(fileVersions, o.task)}`}
-              sandbox="allow-scripts allow-same-origin"
+              src={`${Assets.artifactFileUrl(projectId, `${o.base || `tasks/${o.task}`}/${o.entry || 'index.html'}`)}?v=${versionOfSitePage(fileVersions, o.base || `tasks/${o.task}`, o.entry || 'index.html')}`}
               style={{
                 width: SITE_VIEWPORTS[0].w,
                 height: Math.round(400 / (DECK_EMBED_W / SITE_VIEWPORTS[0].w)),

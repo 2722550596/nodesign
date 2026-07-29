@@ -63,12 +63,22 @@ export function findElementByAnchor(anchor, root) {
     } catch { /* invalid selector, fall through */ }
   }
   if (anchor.textHint) {
+    // 取命中里 textContent 最短的（最具体的那个），不是文档序第一个 ——
+    // 文档序里祖先先于后代，而祖先的文本以第一个后代的文本开头，
+    // "第一个命中"永远是祖先容器（.cards 抢 card-a 的坑，2026-07-30）
     const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let best = null;
+    let bestLen = Infinity;
     let n = walker.nextNode();
     while (n) {
-      if ((n.textContent || '').trim().startsWith(anchor.textHint)) return n;
+      const t = (n.textContent || '').trim();
+      if (t.startsWith(anchor.textHint) && t.length < bestLen) {
+        best = n;
+        bestLen = t.length;
+      }
       n = walker.nextNode();
     }
+    return best;
   }
   return null;
 }

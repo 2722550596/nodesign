@@ -83,10 +83,12 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 系统会在消息顶部注一句 `<system>用户在过去时段做了 N 处变更…</system>`。看到就走：
 
 1. 立刻 `get_pending_changes`（首调时系统注入逐 kind 处理协议全文，按它做）。
-2. **edit 是已完成的事实**，不要动它，回复里知会一声就行。
+2. **edit 和 applied-\* 是已完成的事实**（改字 / 站点窗里的拖拽都直接写进文件了），
+   不要再应用一遍，回复里知会一声就行。带 `path` 的记录指明改的是哪份文件。
    **comment 是修改请求**，按指示改。
-   **pending-move / pending-style / pending-delete 是结构化操作意图**，用户已经在画布上
-   看到视觉结果但源码没动，你必须真的落进文件，否则下次 reload 视觉跳回，他会觉得白拖了。
+   **pending-move / pending-style / pending-delete 是结构化操作意图**（deck 拖拽和
+   React 区的站点拖拽走这条），用户已经在画布上看到视觉结果但源码没动，你必须
+   真的落进文件，否则下次 reload 视觉跳回，他会觉得白拖了。
 3. 处理完调 `clear_pending_changes`，不清下轮会重复处理一遍。
 4. 收尾消息里说清处理了哪些。
 

@@ -84,7 +84,9 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
     if (!guard(req, res)) return;
     const body = req.body || {};
     const { kind, anchor } = body;
-    const VALID_KINDS = ['edit', 'comment', 'pending-move', 'pending-style', 'pending-duplicate', 'pending-delete'];
+    // applied-*（2026-07-29）：站点窗拖拽已直接落盘的 FYI 记录，agent 不再应用
+    const VALID_KINDS = ['edit', 'comment', 'pending-move', 'pending-style', 'pending-duplicate', 'pending-delete',
+      'applied-move', 'applied-style', 'applied-duplicate'];
     if (!VALID_KINDS.includes(kind)) {
       return res.status(400).json({ error: `kind must be one of ${VALID_KINDS.join(' / ')}` });
     }
@@ -142,13 +144,19 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
         text: body.text,
         ...(body.linkedToEditId ? { linkedToEditId: body.linkedToEditId } : {}),
       } : {}),
-      ...((kind === 'pending-move' || kind === 'pending-duplicate') ? { move: body.move } : {}),
-      ...(kind === 'pending-style' ? {
+      ...((kind === 'pending-move' || kind === 'pending-duplicate'
+           || kind === 'applied-move' || kind === 'applied-duplicate') ? { move: body.move } : {}),
+      ...((kind === 'pending-style' || kind === 'applied-style') ? {
         styleDelta: body.styleDelta,
         ...(body.constraint && typeof body.constraint === 'object'
           ? { constraint: body.constraint }  // { x: 'left'|'right'|'center'|'stretch', y: 'top'|'bottom'|'center'|'stretch' }
           : {}),
       } : {}),
+      // applied-*：站点窗已落盘的 FYI 记录特有标记（applied=事实已写盘；
+      // serializedFrom=落盘走了运行时序列化兜底，文件可能带脚本运行时产物）
+      ...(body.applied === true ? { applied: true } : {}),
+      ...(typeof body.serializedFrom === 'string' && body.serializedFrom
+        ? { serializedFrom: body.serializedFrom } : {}),
       ts: new Date().toISOString(),
     };
 

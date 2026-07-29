@@ -50,6 +50,25 @@ export function versionOfTask(versions, task) {
 }
 
 /**
+ * 站点**单页**的刷新版本（2026-07-30）：该页自己的 html + 产物根下所有非 html
+ * 文件（css/js/图片可能被任何页引用，改了都该重渲）。其它页面的 html 不算 ——
+ * agent 改 about.html 时正在看的 index.html 不该跟着重载。
+ * versionOfTask 仍留给"整任务"粒度的消费方（导出菜单等）。
+ *
+ * @param {string} baseRel 产物根（'tasks/<t>' 或 'tasks/<t>/dist'）
+ * @param {string} pageRel 页面相对产物根的路径（'index.html' / 'posts/a.html'）
+ */
+export function versionOfSitePage(versions, baseRel, pageRel) {
+  if (!versions || !baseRel || !pageRel) return 0;
+  const prefix = `${baseRel}/`;
+  let sum = versions[`${baseRel}/${pageRel}`] || 0;
+  for (const [k, v] of Object.entries(versions)) {
+    if (k.startsWith(prefix) && !/\.html?$/i.test(k)) sum += v;
+  }
+  return sum;
+}
+
+/**
  * 记一笔改动。返回新的 versions 对象；路径认不出来时返回原对象（引用不变，
  * 不触发 React 重渲）。
  */

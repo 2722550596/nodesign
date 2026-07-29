@@ -1499,6 +1499,43 @@ export default function ProjectWorkspace() {
     }
   };
 
+  /**
+   * 站点拖拽落盘（2026-07-29）：deck 的拖拽走 pending buffer 等 agent 应用；
+   * 站点是我们自己的纯 HTML 文件，拖完的运行时 DOM 就是目标状态 ——
+   * SiteWindow 序列化整页传上来，直接写回磁盘（跟双击改字同一条通道）。
+   * records 是 FYI 记录（kind applied-*），push 进 buffer 只为让 agent 知道
+   * 用户动过什么、必要时顺一下源码 —— 不需要它再应用一遍。
+   * persist=false = React mount 区（运行时 DOM 动不得），照旧推 pending-* 等 agent 改 JSX。
+   */
+  const handleSiteDomEdit = async ({ path, html, summary, records = [], persist = true }) => {
+    if (!currentSessionId) {
+      showToast('请先开始一个会话再编辑', 'error');
+      return;
+    }
+    try {
+      if (persist) {
+        if (!html) { showToast('页面未就绪，改动没保存', 'error'); return; }
+        await Canvas.write(id, currentSessionId, html, 'user', path);
+        showToast(`已保存：${summary}`, 'success');
+        // 用户通道的写没有 run.file_changed 事件（那是 agent PostToolUse 直发的），
+        // 本地补一笔版本：让本页从干净磁盘态平滑重载（LiveFrame 换代 + 滚动保持），
+        // 运行时里脚本注入的杂质顺便被冲掉，画面与文件重新对齐
+        setFileVersions(prev => bumpFileVersion(prev, path));
+      } else {
+        showToast(`已记录：${summary}，发消息让 agent 落地`, 'info');
+      }
+      for (const r of records) {
+        try {
+          await PendingChanges.push(id, currentSessionId, { ...r, path });
+        } catch (err) {
+          console.warn('[pending-changes] push site layout failed:', err.message);
+        }
+      }
+    } catch (err) {
+      showToast(`保存失败：${err.message}`, 'error');
+    }
+  };
+
   // C3 起：InspectFloatingCard 内嵌 textarea 直接传 ctx.text；老调用兼容 prompt
   const handleAddComment = async (ctx) => {
     let text = ctx?.text && ctx.text.trim();
@@ -1848,6 +1885,7 @@ export default function ProjectWorkspace() {
             onAddComment={handleAddComment}
             onResolveComment={handleResolveComment}
             onDeleteComment={handleDeleteComment}
+            onSiteDomEdit={handleSiteDomEdit}
             onDirectEdit={handleDirectEdit}
             onTriggerRun={handleTriggerRun}
             tweaksAvailable={isTweaksExposed}

@@ -11,7 +11,8 @@
  *     items: [{
  *       id: string,
  *       kind: 'edit' | 'comment'
- *           | 'pending-move' | 'pending-style' | 'pending-duplicate' | 'pending-delete',
+ *           | 'pending-move' | 'pending-style' | 'pending-duplicate' | 'pending-delete'
+ *           | 'applied-move' | 'applied-style' | 'applied-duplicate',
  *       anchor: { dataId, path, textHint, bbox },
  *       aiContext: { tag, role?, pageInfo?, outerHtml?, computed?, siblings?,
  *                    targetContainerTag?, alignmentHints? },
@@ -31,6 +32,10 @@
  *   - pending-delete    用户按 Del 删元素；按 anchor 删 source 节点
  *
  *  reactMount=true 的 item 走 `<script id="__nd-app">` 里的 JSX 改动（不是改 HTML 段）。
+ *
+ * 2026-07-29 新增 applied-* kind（站点窗拖拽直接落盘）：用户在站点页拖完，
+ * 前端已把整页序列化写回文件 —— 这些是 FYI 记录（applied:true），**不要再应用一遍**，
+ * 只用来理解用户动了什么；有 path 字段指明改的是哪份文件。
  *
  * 拉完后建议调 mcp__nodesign__clear_pending_changes 清 buffer，避免重复处理。
  */
@@ -60,12 +65,22 @@ When to use:
 
 Each item has:
 - kind: one of
-    'edit'             (user changed text by double-clicking in the canvas)
+    'edit'             (user changed text by double-clicking in the canvas —
+                        ALREADY saved to the file; informational)
     'comment'          (user wrote a comment for an element)
     'pending-move'     (user dragged an element to a new container/position)
     'pending-duplicate'(user alt-dragged to copy an element to a new spot)
     'pending-style'    (user nudged / adjusted alignment → inline style delta)
     'pending-delete'   (user deleted an element)
+    'applied-move' / 'applied-style' / 'applied-duplicate'
+                       (user dragged inside a site page window — the frontend
+                        ALREADY serialized the page and wrote it to the file.
+                        Do NOT re-apply these; they are FYI so you know what
+                        the user changed. You may tidy the source afterwards
+                        — e.g. lift baked inline left/top into the stylesheet —
+                        but only if asked or clearly beneficial.)
+- path (optional): which file the change belongs to (e.g. tasks/<t>/about.html).
+  Absent = the current session's canvas.html.
 - anchor: stable element reference (dataId / path / textHint / bbox)
 - aiContext: element role, page info, outerHTML, computed styles, siblings,
              plus targetContainerTag / alignmentHints for moves
