@@ -37,6 +37,41 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/a
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
 
+// ── 出图归一化（2026-07-29）──
+// 背景：fullPage 截长站点页时 PNG 会超 API 的图片上限（尺寸 8000px / 字节 5MB），
+// 整个工具调用直接报错。而且 API 侧本来就会把长边 >1568 或总像素 >~1.15MP 的图
+// 缩到这个规格再喂给模型 —— 本地先缩到同规格，模型看到的画面一个像素不差，
+// 但传输体积小一个量级、永远不会触发上限报错。编码统一 webp（API 支持，比 PNG 小得多）。
+const API_LONG_EDGE = 1568;
+const API_MAX_PIXELS = 1_150_000;
+
+/** PNG buffer → { data, mimeType, note }。失败时原样回退 PNG（宁可大也别丢图）。 */
+export async function normalizeShot(buf) {
+  try {
+    const { default: sharp } = await import('sharp');
+    const meta = await sharp(buf).metadata();
+    const w = meta.width || 0;
+    const h = meta.height || 0;
+    if (!w || !h) return { data: buf.toString('base64'), mimeType: 'image/png', note: null };
+    const scale = Math.min(1, API_LONG_EDGE / Math.max(w, h), Math.sqrt(API_MAX_PIXELS / (w * h)));
+    const tw = Math.max(1, Math.round(w * scale));
+    const th = Math.max(1, Math.round(h * scale));
+    let img = sharp(buf);
+    if (scale < 1) img = img.resize(tw, th);
+    const out = await img.webp({ quality: 82 }).toBuffer();
+    let note = scale < 1
+      ? `image normalized ${w}x${h} -> ${tw}x${th} webp ${(out.length / 1024).toFixed(0)}KB (matches what the vision API would downscale to anyway)`
+      : null;
+    // 极端长图：整体缩完细节所剩无几，提示换姿势而不是硬看
+    if (scale < 0.35 && Math.max(w, h) / Math.min(w, h) > 4) {
+      note += ' — long page squeezed hard; details are unreadable at this scale. Prefer sectioned shots (viewport + beforeShot scroll) or pageIndex/device over fullPage.';
+    }
+    return { data: out.toString('base64'), mimeType: 'image/webp', note };
+  } catch (err) {
+    return { data: buf.toString('base64'), mimeType: 'image/png', note: `image normalize skipped: ${err?.message || err}` };
+  }
+}
+
 // ── 页面诊断收集（2026-07-29）──
 // 背景：agent 塞了 GSAP/Lenis CDN 却不知道有没有加载成功——截图上看不出来。
 // 挂 4 个 playwright listener，截图 caption 里回传 console 错误 + 加载失败资源。
@@ -353,9 +388,12 @@ Do NOT use this tool when:
           });
         } catch { /* emit fail-safe */ }
 
+        const shot = await normalizeShot(buf);
+
         const captionParts = [
-          `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode}, ${(buf.length / 1024).toFixed(1)} KB)`,
+          `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode})`,
         ];
+        if (shot.note) captionParts.push(shot.note);
         if (gotoNote) captionParts.push(gotoNote);
         if (beforeShotNote) captionParts.push(beforeShotNote);
         captionParts.push(diag.summary());
@@ -368,8 +406,8 @@ Do NOT use this tool when:
             },
             {
               type: 'image',
-              data: buf.toString('base64'),
-              mimeType: 'image/png',
+              data: shot.data,
+              mimeType: shot.mimeType,
             },
           ],
         };

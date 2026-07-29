@@ -18,7 +18,7 @@
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { attachPageDiagnostics, runBeforeShot } from './screenshot.js';
+import { attachPageDiagnostics, runBeforeShot, normalizeShot } from './screenshot.js';
 
 const RASTER_SCALE = 0.6;
 const DEVICE_VIEWPORTS = {
@@ -132,18 +132,20 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
           });
         } catch { /* emit fail-safe */ }
 
+        const shot = await normalizeShot(buf);
         const title = await page.title().catch(() => '');
         const finalUrl = page.url();
         const captionParts = [
-          `Screenshot of ${finalUrl}${title ? ` — "${title}"` : ''} (${device || 'desktop'} ${vp.width}x${vp.height} @${rasterScale}x, fullPage=${fullPage === true}, ${(buf.length / 1024).toFixed(1)} KB)`,
+          `Screenshot of ${finalUrl}${title ? ` — "${title}"` : ''} (${device || 'desktop'} ${vp.width}x${vp.height} @${rasterScale}x, fullPage=${fullPage === true})`,
         ];
+        if (shot.note) captionParts.push(shot.note);
         if (gotoNote) captionParts.push(gotoNote);
         captionParts.push(diag.summary());
 
         return {
           content: [
             { type: 'text', text: captionParts.join('\n') },
-            { type: 'image', data: buf.toString('base64'), mimeType: 'image/png' },
+            { type: 'image', data: shot.data, mimeType: shot.mimeType },
           ],
         };
       } catch (err) {
