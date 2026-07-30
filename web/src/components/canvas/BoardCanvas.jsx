@@ -388,17 +388,27 @@ export default function BoardCanvas({
    *   3. 归属 = 物件中心落在工作区有效矩形内（区随内容向下自然生长）
    */
   const { positioned, zoneView, contentBottom, overlapFixes } = useMemo(() => {
-    // 聚焦区最小画幅 = 一屏（2026-07-29 用户拍板）：进文件夹时它初始就占满
-    // 一屏 canvas，内容超出再向下生长。只对聚焦区生效 —— 整理总览里每个区
-    // 都撑一屏的话，五个任务就是五屏死滚动。fitScale 跟渲染层同式（memo 在
-    // scale 定义之前跑，这里自己算一遍）。
+    // 聚焦区（正在里面干活的那个任务）最小画幅 = 一屏；其余贴内容。
+    //
+    // 两轮反馈来回过一次，记下结论免得再翻烧饼：
+    //   07-29 定"聚焦区吃满一屏"
+    //   07-30 反馈"文件夹下面老吊着一块空白，难看" → 一度改成一律贴内容
+    //   07-30 再确认"工作进行时初始就该吃满一屏" → 回到一屏，改的是**空白的来源**
+    //
+    // 关键在于一屏之后别再多出边角料：桌面高度同时收敛到恰好一屏（见 boardH），
+    // 区就把整个视口占满，底下不再留一条既不属于区、也不属于内容的空画幅。
+    // 内容多于一屏时区照常往下长。
     const fitScale = Math.min(1, (paneSize.w || DESKTOP_W) / DESKTOP_W);
-    const oneScreenH = Math.ceil((paneSize.h || 600) / (fitScale || 1));
+    const oneScreenH = Math.floor((paneSize.h || 600) / (fitScale || 1));
     const focusedZid = viewMode === 'work'
       ? (focusZoneId || sessionZone.get(currentSessionId) || currentSessionId)
       : null;
     const zoneMinHOf = (zid) => (zid === focusedZid
-      ? Math.max(ZONE_MIN_H, oneScreenH - 32)   // 上下各留 16 呼吸
+      // 一屏减 16 = 上下各留 8（跟 viewOffsetY 的 8 对齐）。这三个数字是一组，
+      // 必须一起改：viewOffsetY 吃掉上边距、这里定区高、boardH 的判定给出下边距。
+      // 任何一个多留几像素，"区高 + 上边距"就越过一屏，桌面被判成装不下再补
+      // 120 的余量 —— 内容只有一屏却常驻一条竖滚动条。
+      ? Math.max(ZONE_MIN_H, oneScreenH - 16)
       : ZONE_MIN_H);
 
     // 占格：placed 成员先标格子，未摆放的按空格入座
@@ -587,7 +597,9 @@ export default function BoardCanvas({
   // 可见性算完之后定（见下方"桌面高度 / 镜头裁切"）。
   const scale = Math.min(1, (paneSize.w || DESKTOP_W) / DESKTOP_W);
   scaleRef.current = scale;
-  const oneScreen = Math.ceil((paneSize.h || 600) / (scale || 1));
+  // floor 不是 ceil：占位壳高度 = boardH * scale，用 ceil 时 ceil(h/s)*s 会比视口
+  // 高出不到 1px，于是内容明明装得下也常驻一条竖滚动条。floor 保证 ≤ 视口。
+  const oneScreen = Math.floor((paneSize.h || 600) / (scale || 1));
 
   // 量滚动容器尺寸（决定 fitScale 与桌面最小高度）
   useEffect(() => {
@@ -712,7 +724,7 @@ export default function BoardCanvas({
   // 现在工作视图给桌面一个偏移量：聚焦区被平移到桌面顶端（bandY），高度只按
   // 这块区自己的内容算。整理视图 offset=0，行为不变。
   const viewOffsetY = focusZone && visibleZones[0]
-    ? Math.max(0, visibleZones[0].y - 16)
+    ? Math.max(0, visibleZones[0].y - 8)
     : 0;
   viewOffsetRef.current = viewOffsetY;
   const rawBottom = focusZone
@@ -723,7 +735,8 @@ export default function BoardCanvas({
   // 视图内的内容高度（已扣掉偏移）：一屏装得下就恰好一屏（无滚动），
   // 装不下才向下生长并带出滚动（底部留呼吸区）。
   const viewBottom = Math.max(0, rawBottom - viewOffsetY);
-  const boardH = viewBottom <= oneScreen - 24 ? oneScreen : viewBottom + (focusZone ? 120 : 240);
+  // 装得下就恰好一屏（不留 24 的判定余量 —— 那点余量最后都变成区底下的空隙）
+  const boardH = viewBottom <= oneScreen ? oneScreen : viewBottom + (focusZone ? 120 : 240);
   const boardSize = { w: DESKTOP_W, h: boardH };
   // 舞台层还在全局坐标系里贴卡（物件坐标没平移），夹取上界要用未裁切的高度
   const stageBounds = { w: DESKTOP_W, h: viewOffsetY + boardH };
@@ -1273,7 +1286,13 @@ export default function BoardCanvas({
       <style>{[
         '@keyframes ndPopIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}',
         '@keyframes ndStageOut{to{opacity:0;transform:scale(.97)}}',
-        '@keyframes ndShimmer{from{background-position:200% 0}to{background-position:-60% 0}}',
+        // 流光：一个动画周期必须**正好走完一个图案周期**，否则每次 loop 重启时
+        // 花纹相位对不上，看着就是"扫到一半跳一下"。
+        // background-size:200% 时 offset(p) = (W - 2W)·p = -W·p，
+        // 100% → -100% 的位移正好是 2W = 一个图案宽。
+        // （原来是 size 240% + 200%→-60%：位移 3.64W / 周期 2.4W = 1.517 个周期，
+        //   每 1.5s 跳一次。）
+        '@keyframes ndShimmer{from{background-position:100% 0}to{background-position:-100% 0}}',
         '@keyframes ndCaret{0%,100%{opacity:1}50%{opacity:0}}',
         '@keyframes ndSpin{to{transform:rotate(360deg)}}',
         '@keyframes ndPulse{from{box-shadow:0 0 0 0 rgba(79,143,91,0.4)}to{box-shadow:0 0 0 12px rgba(79,143,91,0)}}',

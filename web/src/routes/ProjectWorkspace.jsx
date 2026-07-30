@@ -1206,6 +1206,11 @@ export default function ProjectWorkspace() {
         // 窗口从"碰不到"变成"必碰"。file_changed 只在 canvas.html 写入时触发，
         // 这里补上"图完成也刷"。
         setReloadToken(t => t + 1);
+        // 产物墙也当场重拉（2026-07-30）：服务端已经补发了 file_changed，这里再兜一道。
+        // 之前只 bump reloadToken（那是 deck iframe 的 token，根本没传给 BoardCanvas），
+        // 产物墙要等 run.done 的收尾刷新才拉到这张图 —— 用户看到的就是"图生成完了，
+        // 但要等这一轮结束才出现在任务文件夹里"。
+        bumpListSoon();
         break;
       }
 

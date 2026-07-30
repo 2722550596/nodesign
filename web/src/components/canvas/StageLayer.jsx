@@ -590,8 +590,12 @@ function ShimmerCard({ card, height, onDismiss }) {
     >
       <div style={{
         ...(imgH ? { height: imgH } : { aspectRatio: '4 / 3' }),
-        background: 'linear-gradient(100deg, #ece7db 30%, #faf8f2 45%, #ece7db 60%)',
-        backgroundSize: '240% 100%',
+        // 跑动时才铺流光渐变；停下来直接换成素色 —— 原来是 animation:'none'，
+        // 花纹停在初始相位，卡片上会留一道不动的亮带，看着像没渲染完
+        background: running
+          ? 'linear-gradient(100deg, #ece7db 30%, #faf8f2 45%, #ece7db 60%)'
+          : COLOR.bgCard,
+        backgroundSize: '200% 100%',   // 跟 ndShimmer 的 100%→-100% 是一组，别单独改
         animation: running ? 'ndShimmer 1.5s linear infinite' : 'none',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>

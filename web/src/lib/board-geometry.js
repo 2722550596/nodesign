@@ -8,9 +8,9 @@
 
 // 桌面逻辑宽度固定（跨端坐标稳定），视口窄时整体 fitScale 等比缩（非交互）
 export const DESKTOP_W = 1360;
-// 2026-07-29 用户反馈"文件夹周边空隙太多"：48→24。工作区宽度由堆叠 effect
-// 按 DESKTOP_W - MARGIN_X*2 重算，存档矩形下次渲染自动迁移
-export const MARGIN_X = 24;               // 桌面左右留白
+// 反馈两轮都是同一句"文件夹周边空隙太多"：48 → 24（07-29）→ 10（07-30）。
+// 工作区宽度由堆叠 effect 按 DESKTOP_W - MARGIN_X*2 重算，存档矩形下次渲染自动迁移。
+export const MARGIN_X = 10;               // 桌面左右留白
 export const ZONE_GAP_Y = 28;             // 堆叠工作区之间的垂直间距
 export const FOLDER_CARD_H = 84;          // 收纳态整宽窄条占用的堆叠高度
 export const DECK_EMBED_W = 640;          // deck 内嵌渲染宽度（1920 → 1/3 缩放）

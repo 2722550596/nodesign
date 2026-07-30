@@ -43,6 +43,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { Events } from '../../agent/events.js';
 import { z } from 'zod';
 import sharp from 'sharp';
 
@@ -738,7 +739,18 @@ become part of the spec.json design history.`,
         }));
       }
 
-      // 7. emit run.image_generated（前端可显 thumbnail / 加 timeline 节点）
+      // 7a. emit file_changed —— 让图**当场**上墙。
+      //
+      // MCP 工具写盘不走 PostToolUse(Write|Edit) 那条 file_changed 直发（matcher
+      // 匹配不到 mcp__nodesign__* 工具名），所以生成的图在这一发之前对前端是不存在的：
+      // 产物墙只在 listVersion / boardVersion 变化时才重拉 /artifacts，而这两个都要等
+      // run.done 的兜底刷新。结果就是"图生完了，要等这一轮跑完才出现在任务文件夹里"。
+      // record-decision.js 早就补过同样的一发，这里漏了。
+      try {
+        ctx?.emit?.(Events.fileChanged(absOut, 'add'));
+      } catch { /* fail-safe */ }
+
+      // 7b. emit run.image_generated（前端可显 thumbnail / 加 timeline 节点）
       try {
         ctx?.emit?.({
           type: 'run.image_generated',
