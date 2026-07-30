@@ -21,6 +21,7 @@ import {
 import { setActiveSession } from '../projects/store.js';
 import { patchBoard } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
+import { getProjectCover } from '../lib/cover.js';
 
 const router = express.Router();
 
@@ -291,6 +292,31 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
     tasks.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
     res.json({ artifacts: filtered, tasks });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /:pid/cover — 项目封面 JPEG（首页卡片缩略图）
+ *
+ * 服务端截最新产物的图（见 lib/cover.js 里为什么不是 iframe）。缓存按源 mtime，
+ * 命中就是读盘；没命中要起一次 chromium，串行排队，冷启动 1-3s。
+ * 没产物 / 截图环境不可用 → 204，前端画占位框（不是错误，别报 500）。
+ */
+router.get('/:pid/cover', async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    let result;
+    try {
+      result = await getProjectCover(req.params.pid, getSharedDir(req.params.pid));
+    } catch (err) {
+      console.warn('[cover] render failed:', err.message);
+      return res.status(204).end();
+    }
+    if (!result) return res.status(204).end();
+    if (req.headers['if-none-match'] === `"${result.etag}"`) return res.status(304).end();
+    res.set('ETag', `"${result.etag}"`);
+    res.set('Cache-Control', 'private, max-age=60');
+    res.type('image/jpeg').send(result.buffer);
   } catch (err) { next(err); }
 });
 

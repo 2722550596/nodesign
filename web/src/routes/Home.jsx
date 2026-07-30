@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, Wrench, LayoutTemplate, MoreHorizontal, Copy, Trash2, Edit2, ArrowUp } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
@@ -8,7 +8,7 @@ import ComposerTray from '../components/chat/ComposerTray.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { Sessions, Canvas, Assets } from '../lib/api.js';
+import { Sessions, Assets } from '../lib/api.js';
 import { timeAgo } from '../lib/helpers.js';
 
 /**
@@ -22,7 +22,7 @@ import { timeAgo } from '../lib/helpers.js';
  *   [QuickEntry]            ← 闪聊入口
  *   [最近闪聊 list]          ← kind=quick 的项目下的最近 sessions（Sessions.recent）
  *   [我的项目 grid]          ← kind=project 的项目（hydrate({ kind:'project' })）
- *                              卡片封面 = iframe(最新 session canvas.html)
+ *                              卡片封面 = iframe(最新任务的首个产物)
  */
 export default function Home() {
   const navigate = useNavigate();
@@ -481,7 +481,6 @@ function RecentQuickRow({ session: s, isFirst, onDelete }) {
 function ProjectCard({ project }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [hover, setHover] = useState(false);
-  const [latestSid, setLatestSid] = useState(null);
   const navigate = useNavigate();
   const updateProject = useProjectStore(s => s.updateProject);
   const deleteProject = useProjectStore(s => s.deleteProject);
@@ -489,17 +488,6 @@ function ProjectCard({ project }) {
   const showToast = useGlobalStore(s => s.showToast);
   const confirm = useGlobalStore(s => s.confirm);
   const prompt = useGlobalStore(s => s.prompt);
-
-  // mount: 拉最新 session sid 用于 iframe 封面
-  useEffect(() => {
-    let cancelled = false;
-    Sessions.list(project.id, { limit: 1 })
-      .then(({ sessions = [] }) => {
-        if (!cancelled && sessions.length > 0) setLatestSid(sessions[0].sessionId);
-      })
-      .catch(() => { /* ignore — 拉不到就用占位 */ });
-    return () => { cancelled = true; };
-  }, [project.id]);
 
   const dot = project.status === 'running' ? COLOR.warn : project.status === 'failed' ? COLOR.error : COLOR.success;
 
@@ -564,8 +552,8 @@ function ProjectCard({ project }) {
         transform: hover ? 'translateY(-2px)' : 'none',
         transition: 'all 0.25s cubic-bezier(0.25, 1, 0.5, 1)',
       }}>
-        {/* Thumbnail：有最新 session 用 iframe 渲染 canvas.html，否则占位 */}
-        <ThumbnailBox project={project} latestSid={latestSid} />
+        {/* Thumbnail：服务端截的最新产物封面，没有就占位 */}
+        <ThumbnailBox project={project} hasCover />
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: GAP.sm }}>
           <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 500, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
@@ -636,59 +624,30 @@ function ProjectCard({ project }) {
 }
 
 /**
- * 缩略图：iframe 加载最新 session canvas.html
+ * 缩略图：服务端截的封面图（GET /api/projects/:pid/cover）
  *
- * 自适应：容器 aspect-ratio 跟随 deck 比例（4 档可选 16:9 / 16:10 / 9:16 / 4:3），
- * 启动后 fetch /canvas/deck-meta 拿真实 dim，ResizeObserver 监听卡片宽度，
- * scale = width / dim.w 实时刷新——网格列数变（2/3/4 列响应式）时缩略图等
- * 比缩进容器。fetch 没回来前默认 16:9 占位，回来后按真实比例 reflow。
+ * 两版演进（2026-07-30）：
+ *   老版 iframe 挂 sessions/<sid>/canvas.html —— 形态注册表落地后产物搬进
+ *   tasks/<任务>/，这条路只剩后端占位页，封面于是常年一片灰。
+ *   改成 iframe 指向真实产物后又撞第二个坎：sandbox 不给 allow-scripts（一屏
+ *   十几张卡不能各跑一遍动画/3D），凡是靠 JS 出画面的产物照样白板。
+ *   最终落在服务端截图：脚本在 chromium 里真跑一次，浏览器只收一张 JPEG。
  *
- * 注：iframe 内 canvas.html 的 fit script 因 window!==top 早退，
- * 这里手动 transform: scale 等比铺满 iframe 容器。
- *
- * - sandbox="allow-same-origin"：禁脚本只渲染静态 DOM（性能 + 安全）
- * - pointerEvents:none：iframe 不截走点击，整张卡片仍是 Link
- * - loading="lazy"：视口外不加载
+ * 画幅：出图比例由产物形态决定（deck 是画幅本身，site 是 1440×900 首屏），
+ * 前端不预设——onLoad 读 naturalWidth/Height 拿真实比例再定容器，加载前用
+ * 16:10 占位。204（没产物 / 截图环境不可用）走占位框。
  */
-const DEFAULT_DIMS = { w: 1920, h: 1080 };
+const DEFAULT_RATIO = 16 / 10;
 
-function ThumbnailBox({ project, latestSid }) {
-  const ref = useRef(null);
-  const [scale, setScale] = useState(0.22);
-  const [dims, setDims] = useState(DEFAULT_DIMS);
+function ThumbnailBox({ project, hasCover }) {
+  const [ratio, setRatio] = useState(DEFAULT_RATIO);
+  const [failed, setFailed] = useState(false);
 
-  // latestSid 变化时拉 deck-meta — cancel-safe（避免 race / 卸载后 setState）
-  useEffect(() => {
-    if (!latestSid) {
-      setDims(DEFAULT_DIMS);
-      return;
-    }
-    let cancelled = false;
-    Canvas.deckMeta(project.id, latestSid).then((meta) => {
-      if (cancelled) return;
-      if (meta && Number.isFinite(meta.width) && Number.isFinite(meta.height)) {
-        setDims({ w: meta.width, h: meta.height });
-      }
-    }).catch(() => { /* 静默 fallback 默认 16:9 */ });
-    return () => { cancelled = true; };
-  }, [project.id, latestSid]);
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const recalc = () => {
-      const w = el.offsetWidth;
-      if (w > 0) setScale(w / dims.w);
-    };
-    recalc();
-    const ro = new ResizeObserver(recalc);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [dims.w]);
+  useEffect(() => { setFailed(false); }, [project.id]);
 
   const wrap = {
     width: '100%',
-    aspectRatio: `${dims.w} / ${dims.h}`,
+    aspectRatio: String(ratio),
     borderRadius: 8,
     marginBottom: GAP.lg,
     overflow: 'hidden',
@@ -696,33 +655,36 @@ function ThumbnailBox({ project, latestSid }) {
     position: 'relative',
   };
 
-  if (!latestSid) {
+  if (!hasCover || failed) {
     return (
-      <div ref={ref} style={{
+      <div style={{
         ...wrap,
+        aspectRatio: String(DEFAULT_RATIO),
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.dim,
       }}>
-        {project.summary || '新项目'}
+        {project.summary || '还没有产物'}
       </div>
     );
   }
 
   return (
-    <div ref={ref} style={wrap}>
-      <iframe
-        src={Canvas.artifactUrl(project.id, latestSid)}
-        sandbox="allow-same-origin"
+    <div style={wrap}>
+      <img
+        src={Assets.coverUrl(project.id)}
+        alt={`${project.name} 预览`}
         loading="lazy"
-        title={`${project.name} 预览`}
+        onLoad={(e) => {
+          const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+          // 空响应（204）在部分浏览器也会触发 load，宽高为 0 → 当没封面
+          if (!w || !h) setFailed(true);
+          else setRatio(w / h);
+        }}
+        onError={() => setFailed(true)}
         style={{
-          width: dims.w,
-          height: dims.h,
-          border: 0,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-          pointerEvents: 'none',
-          background: '#fff',
+          width: '100%', height: '100%',
+          objectFit: 'cover', objectPosition: 'top',
+          display: 'block', border: 0,
         }}
       />
     </div>

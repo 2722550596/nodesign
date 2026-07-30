@@ -199,6 +199,11 @@ export const Assets = {
     const sub = String(relPath || '');
     return `/api/projects/${pid}/artifact-file/${sub.split('/').map(encodeURIComponent).join('/')}`;
   },
+  /**
+   * 项目封面图 URL（首页卡片缩略图）——服务端截最新产物，按源 mtime 缓存。
+   * 没产物时返 204，<img> 走 onError 兜底成占位框。
+   */
+  coverUrl: (pid) => `/api/projects/${pid}/cover`,
   /** 删任务文件夹 —— 连它绑定的会话一起删（一对一，不独立存在）*/
   removeTask: (pid, name) =>
     jsonRequest('DELETE', `/api/projects/${pid}/tasks/${encodeURIComponent(name)}`),
