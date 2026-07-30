@@ -122,11 +122,6 @@ export function getLiveTurnSnapshot(sessionId) {
   };
 }
 
-export function clearLiveTurn(sessionId) {
-  liveTurns.delete(sessionId);
-  lastUsage.delete(sessionId);
-}
-
 function fold(evt) {
   const sid = evt.sessionId;
   if (!sid) return;

@@ -356,14 +356,6 @@ export const Turn = {
    */
   setPermissionMode: ({ pid, runId, mode }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/permission-mode`, { mode }),
-
-  /**
-   * SDK Query control: setModel —— 运行时切模型。
-   * model: 'kimi-k2.6' / 'claude-sonnet-4-6' / 'claude-opus-4-7' 等。
-   * 传 null 让 SDK 用默认。
-   */
-  setModel: ({ pid, runId, model }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/model`, { model }),
 };
 
 // ── Instruction（项目级 .claude/CLAUDE.md 读写）──

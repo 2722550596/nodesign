@@ -810,6 +810,11 @@ router.post('/:pid/runs/:runId/plan-request/:toolUseId/decide', async (req, res,
  *
  * 运行中切 model（SDK query.setModel，当场对下一次 LLM 调用生效）。
  *
+ * **目前只有 API 能到这里**：前端 picker 在 turn 运行中是禁用的，它走
+ * PUT /sessions/:sid/model（那条等空闲才重启 query）。这条留着是因为"turn 跑到
+ * 一半换模型"是它独有的能力，PUT 那条按设计做不到。前端那个没人调的 Turn.setModel
+ * 绑定已删（doc 里还写着 kimi 时代的 model 名，留着只会误导下一个人）。
+ *
  * 2026-07-30：切完**必须同时落 session-config**。原来这条只改运行时不写文件，
  * 于是"当前这轮是 Opus、下次 resume 变回 Sonnet"，而且界面无从得知；跟另外两条
  * 写模型的路加起来，同一个事实有三个互不知情的写者。现在统一走 applySessionModel，

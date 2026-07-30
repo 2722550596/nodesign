@@ -211,7 +211,6 @@ function isReadonlyBashCommand(rawCmd) {
  * @param {import('../../lib/async-queue.js').AsyncQueue} opts.inputQueue
  * @param {string} [opts.skillId='deskskill-engine-mini']
  * @param {string} [opts.sessionTitle]
- * @param {object} [opts.modelOverride={}]
  * @param {string[]} [opts.toolAllowlist=DEFAULT_TOOL_ALLOWLIST]
  * @param {string} [opts.initialPermissionMode]
  * @param {string} [opts.initialRunId] - 首条 turn 的 run record id；若给则 register
@@ -239,7 +238,6 @@ export async function runSession({
   inputQueue,
   skillId = 'deskskill-engine-mini',
   sessionTitle = null,
-  modelOverride = {},
   toolAllowlist = DEFAULT_TOOL_ALLOWLIST,
   initialPermissionMode = null,
   initialRunId = null,
@@ -312,7 +310,7 @@ export async function runSession({
   // 持久）> env 全局默认。这条链现在只写在 session-model.js 一处 —— 以前它在这里、
   // turn.js、canvas.js 各有一份写法不同的复制品，对不上的时候没人发现。
   const { model: resolvedModel } = await resolveSessionModel(cwdRoot);
-  const model = modelOverride.model || resolvedModel;
+  const model = resolvedModel;
   const sdkModel = resolveSdkSpoofModel(model);
 
   // appModel env：session-level，由 try 块内 + finally 配对管理。详见 line 558 注释。
@@ -642,14 +640,13 @@ export async function runSession({
     // 默认只透传 tool_use/tool_result（心跳级），不够渲染嵌套 transcript。
     forwardSubagentText: true,
 
-    thinking: modelOverride.thinking || pickThinkingConfig(model),
-    effort: modelOverride.effort || 'medium',
+    thinking: pickThinkingConfig(model),
+    effort: 'medium',
     // streamInput 模式 query 横跨整个 session，maxTurns 是**全局累计**（每条
     // user message 起一轮 agent loop，turn 数不重置）。15 太低 —— 用户聊几
     // 轮就触顶导致 'error_max_turns' 误中断。改 50 给复杂 deck（多页 +
     // 多次自检 + 子代理）足够余量；env override 给极端情况用
-    maxTurns: modelOverride.maxTurns
-      || Number(process.env.NODESIGN_MAX_TURNS)
+    maxTurns: Number(process.env.NODESIGN_MAX_TURNS)
       || 50,
 
     // 不传 resume —— streamInput 模式 SDK 内存保 history，不依赖 jsonl

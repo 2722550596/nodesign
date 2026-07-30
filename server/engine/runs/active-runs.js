@@ -620,7 +620,6 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
   const token = Symbol('querySession');
   activeQuerySessions.set(sessionId, {
     abortController,
-    ctx: null,
     query: null,
     inputQueue,
     currentRunId: null,
