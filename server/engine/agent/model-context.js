@@ -68,18 +68,6 @@ export const SELECTABLE_MODELS = Object.freeze([
   }),
 ]);
 
-/** 短名：给按钮用。认不出就原样返回（宁可长，不要撒谎） */
-export function shortModelLabel(appModel) {
-  if (!appModel) return '';
-  const hit = SELECTABLE_MODELS.find((m) => m.id === appModel);
-  if (hit) return hit.label;
-  if (/opus/i.test(appModel)) return 'Opus';
-  if (/sonnet/i.test(appModel)) return 'Sonnet';
-  if (/haiku/i.test(appModel)) return 'Haiku';
-  if (/^kimi/i.test(appModel)) return 'Kimi';
-  return appModel;
-}
-
 /**
  * 决定 sdkOptions.model 喂什么。未知 model 原样返回（让 SDK 自己 fallback）。
  */
