@@ -18,6 +18,7 @@ import {
 } from '../projects/store.js';
 import { guardProject } from './_guard.js';
 import { ensureProjectWorkspace, removeProjectWorkspace } from '../projects/workspace.js';
+import { removeEntriesForProject } from '../lib/showcase-store.js';
 import { disposeProjectBus } from '../ws/broker.js';
 
 const router = express.Router();
@@ -120,6 +121,8 @@ router.delete('/:pid', async (req, res, next) => {
       const stmt = db.prepare('DELETE FROM runs WHERE id = ?');
       for (const r of runs) stmt.run(r.id);
     }
+    // 橱窗卡片指着这个项目的产物，作品没了卡片留着只会点出 404
+    removeEntriesForProject(req.params.pid);
     deleteProject(req.params.pid);
     disposeProjectBus(req.params.pid);
     res.status(204).end();

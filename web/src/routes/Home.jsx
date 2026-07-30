@@ -45,7 +45,7 @@ export default function Home() {
     <AppShell
       actions={
         <>
-          <Link to="/templates" style={iconBtnStyle}><LayoutTemplate size={14} /> 模板</Link>
+          <Link to="/gallery" style={iconBtnStyle}><LayoutTemplate size={14} /> 橱窗</Link>
           <Link to="/skills" style={iconBtnStyle}><Wrench size={14} /> Skill</Link>
           <button style={primaryBtnStyle} onClick={openCreate}>
             <Plus size={14} /> 新建项目

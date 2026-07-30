@@ -2,7 +2,7 @@ import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import Home from './routes/Home.jsx';
 import ProjectWorkspace from './routes/ProjectWorkspace.jsx';
 import SkillList from './routes/SkillList.jsx';
-import TemplateMarket from './routes/TemplateMarket.jsx';
+import Showcase from './routes/Showcase.jsx';
 import ToastContainer from './components/ui/ToastContainer.jsx';
 import GlobalDialogs from './components/ui/GlobalDialogs.jsx';
 
@@ -17,7 +17,10 @@ const router = createBrowserRouter([
   { path: '/projects/:id/work', element: <ProjectWorkspace /> },
   { path: '/projects/:id/sessions/:sid', element: <ProjectWorkspace /> },
   { path: '/skills', element: <SkillList /> },
-  { path: '/templates', element: <TemplateMarket /> },
+  // 橱窗取代了假模板市场（2026-07-30）：卡片是用户自己做出来的作品 + 那次探索
+  // 固化出来的 skill。/templates 是旧地址，留个重定向别让老链接 404。
+  { path: '/gallery', element: <Showcase /> },
+  { path: '/templates', element: <Navigate to="/gallery" replace /> },
 ]);
 
 export default function App() {

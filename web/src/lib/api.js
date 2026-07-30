@@ -63,6 +63,15 @@ export const Skills = {
     jsonRequest('GET', `/api/skills${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),
 };
 
+// ── Me（当前用户自视图：用量 + 个人橱窗）──
+export const Me = {
+  usage: () => jsonRequest('GET', '/api/me/usage'),
+  /** 橱窗条目：作品 + 它沉淀出来的 skill（由 agent 的 crystallize_skill 产生） */
+  showcase: () => jsonRequest('GET', '/api/me/showcase'),
+  showcaseCoverUrl: (id) => `/api/me/showcase/${id}/cover`,
+  removeShowcase: (id) => jsonRequest('DELETE', `/api/me/showcase/${id}`),
+};
+
 // ── Canvas（H3：session-scoped）──
 export const Canvas = {
   read: async (pid, sid) => {

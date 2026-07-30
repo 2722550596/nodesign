@@ -48,6 +48,7 @@ import { makeRemoveBackgroundTool } from './tools/remove-background.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
+import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -98,6 +99,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // C11 record_decision — 写入 spec.json decisions[] 设计意图档案
       makeRecordDecisionTool({ workspaceRoot, sessionId, ctx }),
+
+      // crystallize_skill — 把探索出来的方法论固化成用户自己的 skill + 作品进橱窗
+      // （2026-07-30）。用户明确要求才调；写的是判断依据不是成品 HTML。
+      makeCrystallizeSkillTool({ projectId, sessionId, ctx }),
 
       // web_search — 4 provider 联网搜索（baidu/tavily/exa/zhipu，CJK auto route to baidu）
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。
