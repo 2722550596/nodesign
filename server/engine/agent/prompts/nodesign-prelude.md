@@ -38,7 +38,7 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 | `tasks/` → shared | 任务文件夹，产出的家，可装多个平等产物。deck = `<任务>/<名>.html`（每个 .html 一份）；站点 = `<任务>/index.html`（手写）或构建产物落 `<任务>/dist/index.html`，平行站点住子目录（详见站点技术参考）。任务里可以有自己的 `assets/`、独立单页放 `_drafts/`、`.ndignore` 控制扫描 |
 | `canvas.template.html` | deck 起手模板，Read 后改写（加载 skill 时自动拷进来） |
 | `site.template.html` `style.template.css` | 站点起手模板（同上） |
-| `spec.json` | 决策档案（`record_decision` 写，每轮自动注入最近 5 条） |
+| `spec.json` | 压缩历史等暗档案（系统写；决策不再进这里，走便利贴） |
 | `design-plan.md` | plan mode 的故事弧（只有走过 plan mode 才有） |
 | `assets/` → shared | 上传素材 + 生成图。**Glob/Grep 不跟软链，对 `assets/*` 返回空**，用每轮注入的素材清单直接 Read，或 `ls assets/` |
 | `agent-memory/` → shared | `memory.md` 用户偏好档（他说"记住…"就 Read 后 Edit 追加，别覆盖）· `brand/memory.md` 品牌档案（锚定风格后写：色号 / 字体链 / 版式语言 / 动效预算）· `auto/` 系统自动记的，**不要碰** |
@@ -65,6 +65,18 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 各自一张卡。工具不带 path 时默认打你最近碰过的那份 —— 同任务多产物时显式传 path 更稳。
 （任务根有 `index.html` 时整个目录是一个站，同目录 `.html` 是它的**子页**；独立单页
 放 `_drafts/<名字>.html`，各自渲卡，和其他产物平等，只是不算站点页面、不进整站导出。）
+
+## 便利贴（`tasks/<任务>/notes/*.md`）
+
+任务的共享头脑风暴层：你写的每张 `.md` 在用户桌面上渲成一张可翻页的贴纸，贴在任务区里。
+他看得到、翻得动、也能改 —— 这不是你的私人日志，是你们俩共用的白板边角。
+
+- 一个文件 = 一张贴；`\n---\n` 分面（翻页看）；每面首行 `# 标题`。
+- **设计决策**调 `record_decision`，它追加到 `notes/决策.md` 的新一面。
+- **讨论结论 / 参考素材消化 / 接力棒**（"下次从这继续"）直接 Write `notes/<slug>.md`。
+  explorer 的研究报告里值得留的也落一张 —— 你的上下文迟早压缩，贴纸不会。
+- 别当垃圾桶：一张贴讲一件事，过时的删掉（文件删了贴就下墙）。每轮注入的清单
+  只带文件名和标题，内容自己 Read —— 用户可能改过，别凭记忆引用。
 
 ## 用户的界面
 

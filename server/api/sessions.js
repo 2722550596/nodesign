@@ -35,6 +35,7 @@ import {
   validateSessionId,
 } from '../projects/workspace.js';
 import { withConfigDir } from '../lib/sdk-session.js';
+import { patchBoard } from '../projects/board-store.js';
 import { platform } from '../runtime/platform.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
@@ -301,6 +302,12 @@ async function removeBoundTaskDirs(pid, sid) {
     try {
       await fs.rm(path.join(tasksDir, e.name), { recursive: true, force: true });
       removed.push(e.name);
+      // 桌面 zone 行一起清（board.json 持久化，不清就留僵尸文件夹，2026-07-30）
+      try {
+        await patchBoard(pid, { zones: { [`task/${e.name}`]: null } });
+      } catch (err) {
+        console.warn(`[delete session] 清 board zone 失败 ${e.name}:`, err.message);
+      }
     } catch (err) {
       console.warn(`[delete session] 删任务文件夹失败 ${e.name}:`, err.message);
     }

@@ -374,7 +374,7 @@ NB2 不是万能的——以下是 final 接受前**必扫**的 checklist：
 
 ## J. 调完必做
 
-1. **`record_decision`** —— 把 prompt + role + path + 用户评价记 spec.json，重生时能查回
+1. **`record_decision`** —— 把 prompt + role + path + 用户评价记进任务便利贴（`notes/决策.md`），重生时能查回，用户在画布上也看得到
 2. **关键节点的反馈循环**：cover / 第一个 portrait / logo 嵌入这种页面级 anchor（会被当 referenceImages 种子用于 downstream），生完图后在自然回话里邀请用户反馈一下方向（例如："这个 cover 当全 deck 视觉锚 OK 吗？想换风格告诉我"）。这些是 downstream 的种子，早定早收益；用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到）。
 3. **落档后 read_page / list_pages 看到的是 thumbnail 快照**（`/api/canvas` GET 时把 `assets/generated/<n>.<ext>` 透明重写到 `.thumbnails/<n>.thumb.jpg`），真实 HTML / 文件系统中的 `<img src>` 不变。如果你 Read canvas.html 想确认 src 已写进去——直接看 Read 结果（不经 thumbnail 重写）；如果想知道 preview iframe 加载哪张图——查 `.thumbnails/` 目录。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即见最新。
 

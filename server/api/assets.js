@@ -18,6 +18,7 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
+import { patchBoard } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 
 const router = express.Router();
@@ -273,6 +274,10 @@ router.get('/:pid/artifacts', async (req, res, next) => {
 
         tasks.push(task);
         await scanDir(tDir, 'task-file', `tasks/${t.name}`);
+        // 任务便利贴（2026-07-30）：tasks/<任务>/notes/*.md —— agent 和用户的
+        // 共享头脑风暴层（record_decision 的决策贴也写这里）。复用 note kind：
+        // 正文解析、zone 归属（naturalZoneOf 按 tasks/<t>/ 前缀）、避让全现成
+        await scanDir(path.join(tDir, 'notes'), 'note', `tasks/${t.name}/notes`);
       }
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
@@ -360,6 +365,73 @@ router.delete('/:pid/notes/:filename', async (req, res, next) => {
 });
 
 /**
+ * 任务便利贴路由（2026-07-30）—— tasks/<任务>/notes/*.md 的用户侧写入口。
+ * agent 侧不走这里（它直接 Write 文件）；这两条给前端"共享头脑风暴"用：
+ * 用户在贴纸阅读浮层里改内容 / 删贴。
+ *
+ * 校验：任务名和文件名都可能是 CJK（决策.md），不能套 assets/notes 那条
+ * `[A-Za-z0-9._-]` 正则。改为否定式（禁路径分隔符 / .. / 隐藏文件）+
+ * resolve 后必须留在 shared/tasks 下的双保险。
+ */
+function safeNoteSegment(s, { md = false } = {}) {
+  if (typeof s !== 'string' || !s || s.length > 200) return false;
+  if (s.includes('/') || s.includes('\\') || s.includes('..') || s.startsWith('.')) return false;
+  if (md && !s.endsWith('.md')) return false;
+  return true;
+}
+
+function resolveTaskNote(pid, task, filename) {
+  const base = path.join(getSharedDir(pid), 'tasks');
+  const file = path.resolve(base, task, 'notes', filename);
+  if (!file.startsWith(base + path.sep)) return null;
+  return file;
+}
+
+/** PUT /:pid/task-notes/:task/:filename — 写/改任务便利贴（用户侧编辑） */
+router.put('/:pid/task-notes/:task/:filename', express.json(), async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    const { task, filename } = req.params;
+    if (!safeNoteSegment(task) || !safeNoteSegment(filename, { md: true })) {
+      return res.status(400).json({ error: 'invalid task/filename' });
+    }
+    const text = String(req.body?.text ?? '');
+    if (!text.trim()) return res.status(400).json({ error: 'text required' });
+    if (text.length > 20_000) return res.status(400).json({ error: 'note too long (max 20k chars)' });
+    const file = resolveTaskNote(req.params.pid, task, filename);
+    if (!file) return res.status(400).json({ error: 'invalid path' });
+    try {
+      await fs.access(path.join(getSharedDir(req.params.pid), 'tasks', task));
+    } catch { return res.status(404).json({ error: 'task not found' }); }
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, text, 'utf8');
+    res.json({ ok: true, path: `tasks/${task}/notes/${filename}` });
+  } catch (err) { next(err); }
+});
+
+/** DELETE /:pid/task-notes/:task/:filename — 删任务便利贴 */
+router.delete('/:pid/task-notes/:task/:filename', async (req, res, next) => {
+  try {
+    validateProjectId(req.params.pid);
+    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    const { task, filename } = req.params;
+    if (!safeNoteSegment(task) || !safeNoteSegment(filename, { md: true })) {
+      return res.status(400).json({ error: 'invalid task/filename' });
+    }
+    const file = resolveTaskNote(req.params.pid, task, filename);
+    if (!file) return res.status(400).json({ error: 'invalid path' });
+    try {
+      await fs.unlink(file);
+    } catch (err) {
+      if (err.code === 'ENOENT') return res.status(404).json({ error: 'note not found' });
+      throw err;
+    }
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/**
  * GET /:pid/artifact-file/*subPath — project 级文件服务（shared/assets 子树）。
  * 工作台缩略图 / 大图用，不依赖 session（canvas.js 的同款路由是 session 级的）。
  * 防 traversal 同 canvas.js：resolve 后必须留在 shared/assets 下。
@@ -385,12 +457,9 @@ router.delete('/:pid/tasks/:name', async (req, res, next) => {
       boundSession = JSON.parse(await fs.readFile(path.join(taskDir, '.nd-task.json'), 'utf8'))?.sessionId || null;
     } catch { /* 旧任务没标记 */ }
 
-    try {
-      await fs.rm(taskDir, { recursive: true, force: true });
-    } catch (err) {
-      if (err.code === 'ENOENT') return res.status(404).json({ error: 'task not found' });
-      throw err;
-    }
+    // fs.rm force:true 对不存在的目录静默成功 —— 删除语义幂等：目录早没了也照样
+    // 把 zone 行清掉（孤儿 zone「删不了」的根因之一，2026-07-30）
+    await fs.rm(taskDir, { recursive: true, force: true });
 
     // 连带删会话：走 sessions 路由同一条实现（HTTP self-call 太绕，直接复用逻辑）
     let removedSession = null;
@@ -401,6 +470,13 @@ router.delete('/:pid/tasks/:name', async (req, res, next) => {
       } catch (err) {
         console.warn('[delete task] 连带删会话失败:', err.message);
       }
+    }
+    // 桌面 zone 行是持久化的（board.json），任务没了它不会自己消失 ——
+    // 2026-07-30 前这里从来不清，每删一个任务留一个僵尸文件夹
+    try {
+      await patchBoard(req.params.pid, { zones: { [`task/${name}`]: null } });
+    } catch (err) {
+      console.warn('[delete task] 清 board zone 失败:', err.message);
     }
     res.json({ removedTask: name, removedSession });
   } catch (err) { next(err); }

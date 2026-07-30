@@ -174,6 +174,11 @@ export const Assets = {
   /** 删便签 */
   removeNote: (pid, filename) =>
     jsonRequest('DELETE', `/api/projects/${pid}/notes/${encodeURIComponent(filename)}`),
+  /** 任务便利贴（tasks/<任务>/notes/*.md，agent 和用户的共享头脑风暴层）*/
+  putTaskNote: (pid, task, filename, text) =>
+    jsonRequest('PUT', `/api/projects/${pid}/task-notes/${encodeURIComponent(task)}/${encodeURIComponent(filename)}`, { text }),
+  removeTaskNote: (pid, task, filename) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/task-notes/${encodeURIComponent(task)}/${encodeURIComponent(filename)}`),
   /** 画布布局（空间画布，含 zones 分区）*/
   getBoard: (pid) => jsonRequest('GET', `/api/projects/${pid}/board`),
   putBoard: (pid, board) => jsonRequest('PUT', `/api/projects/${pid}/board`, { board }),

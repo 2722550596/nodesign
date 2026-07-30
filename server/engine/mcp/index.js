@@ -97,7 +97,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
 
       // C11 record_decision — 写入 spec.json decisions[] 设计意图档案
-      makeRecordDecisionTool({ workspaceRoot, ctx }),
+      makeRecordDecisionTool({ workspaceRoot, sessionId, ctx }),
 
       // web_search — 4 provider 联网搜索（baidu/tavily/exa/zhipu，CJK auto route to baidu）
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。

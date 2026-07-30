@@ -36,8 +36,14 @@ module.exports = {
       node_args: '--env-file-if-exists=.env --max-old-space-size=4096',
       env: {
         NODE_ENV: 'production',
-        HOME: '/home/nodesign',
-        CLAUDE_CONFIG_DIR: '/home/nodesign/.claude',
+        // 2026-07-30 从 /home/nodesign 改回 /home/wangang-dev：那个独立家目录是
+        // 07-23 的理想化隔离配置，但从未真正生效过（历次 restart --update-env 的
+        // 环境合并一直把它盖成 wangang-dev）。现实是订阅 OAuth 凭据和全部会话
+        // 转录（hydrate 数据源）都在 /home/wangang-dev/.claude —— 今天首次按
+        // 干净环境重建进程后历史会话全部"消失"、下一轮 agent 还会认证失败，
+        // 遂把配置改成与现实一致。真要隔离家目录得连凭据+转录一起迁，另立项。
+        HOME: '/home/wangang-dev',
+        CLAUDE_CONFIG_DIR: '/home/wangang-dev/.claude',
       },
       // log 落 logs/ 目录（已加 .gitignore，不入仓）
       error_file: 'logs/nodesign-error.log',

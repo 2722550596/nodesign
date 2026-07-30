@@ -90,6 +90,8 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
         agentType={message.agentType}
         taskStatus={message.taskStatus}
         taskSummary={message.taskSummary}
+        taskSummaryLog={message.taskSummaryLog}
+        taskDescription={message.taskDescription}
         taskLastTool={message.taskLastTool}
         // S3b：SubagentStop hook 收尾时挂的 lastAssistantMessage（vision-checker
         // critique 卡的数据源）
@@ -1176,8 +1178,13 @@ const SUBAGENT_ICONS = {
   'tweak-proposer': Sliders,                    // 滑块 = 推 tweak schema
 };
 
+// SDK 的子代理工具名：老版 'Task'，新版 'Agent'（2026-07-30 真机确认两名并存期）
+function isSubagentTool(toolName) {
+  return toolName === 'Task' || toolName === 'Agent';
+}
+
 function getToolIcon(toolName, agentType) {
-  if (toolName === 'Task' && agentType && SUBAGENT_ICONS[agentType]) {
+  if (isSubagentTool(toolName) && agentType && SUBAGENT_ICONS[agentType]) {
     return SUBAGENT_ICONS[agentType];
   }
   return TOOL_ICONS[toolName] || Wrench;
@@ -1232,7 +1239,7 @@ function summarizeToolInput(toolName, input) {
     const todos = input.todos || [];
     return `${todos.length} todos`;
   }
-  if (toolName === 'Task') {
+  if (isSubagentTool(toolName)) {
     return `${input.subagent_type || ''}: ${(input.prompt || input.description || '').slice(0, 60)}`;
   }
   if (toolName === 'Skill') {
@@ -1465,13 +1472,13 @@ function VisionCheckerCard({ text }) {
 
 function ToolMessage({
   toolName, toolInput, toolOutput, toolError, toolImages, status, elapsed,
-  agentType, taskStatus, taskSummary, taskLastTool, subagentResult,
+  agentType, taskStatus, taskSummary, taskSummaryLog, taskDescription, taskLastTool, subagentResult,
 }) {
   const [open, setOpen] = useState(false);
 
   // Task 工具状态优先用 taskStatus，fallback status
   const effectiveStatus =
-    toolName === 'Task'
+    isSubagentTool(toolName)
       ? (taskStatus === 'completed' ? 'success'
         : taskStatus === 'failed' ? 'error'
         : taskStatus === 'stopped' ? 'error'
@@ -1483,7 +1490,7 @@ function ToolMessage({
   const isRunning = effectiveStatus === 'running';
 
   // v2：节点 icon 直接用工具特定 icon（去外环），颜色按状态变
-  const NodeIcon = getToolIcon(toolName, agentType);
+  const NodeIcon = getToolIcon(toolName, toolInput?.subagent_type || agentType);
   const iconColor = isRunning ? COLOR.warn : (isError ? COLOR.error : COLOR.sub);
 
   // Edit / Write 特殊渲染：文件名 + +N/-M 行数 + 展开看真 diff
@@ -1558,14 +1565,118 @@ function ToolMessage({
     );
   }
 
+  // Task/Agent 工具：时间轴抽屉（2026-07-30）。状态行只留一句话，30s 摘要流水 /
+  // 结果内容 / 入参全部收进抽屉 —— 聊天流不再被子代理的过程刷屏，画布上的
+  // 舞台便利贴负责"现在在干嘛"的实时可见性。
+  if (isSubagentTool(toolName)) {
+    // 真名优先走 toolInput.subagent_type（SDK task_started 的 taskType 可能是
+    // 'local_agent' 这种泛名，真机 2026-07-30 确认）
+    const agentName = toolInput?.subagent_type || agentType || 'subagent';
+    const drawerRows = Array.isArray(taskSummaryLog) && taskSummaryLog.length
+      ? taskSummaryLog
+      : (taskSummary ? [taskSummary] : []);
+    const resultText = subagentResult?.lastAssistantMessage || null;
+    const statusLabel = taskStatus === 'completed' ? '完成'
+      : taskStatus === 'failed' ? '失败'
+      : taskStatus === 'stopped' ? '已停止'
+      : isRunning ? (taskSummary || taskLastTool || '工作中…') : null;
+    return (
+      <TimelineNode icon={NodeIcon} iconColor={iconColor} isSpinning={isRunning}>
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2,
+            padding: 0, background: 'transparent', border: 'none', cursor: 'pointer',
+            maxWidth: '100%',
+          }}
+          title={taskDescription || toolName}
+        >
+          <span className={isRunning ? 'nd-shimmer' : undefined} style={{ fontWeight: 500, flexShrink: 0 }}>
+            {agentName}
+          </span>
+          {taskDescription && (
+            <span style={{
+              color: COLOR.sub, opacity: 0.85, fontWeight: 400,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, maxWidth: 200,
+            }}>
+              {taskDescription}
+            </span>
+          )}
+          {statusLabel && (
+            <span style={{
+              color: taskStatus === 'failed' || taskStatus === 'stopped' ? COLOR.error
+                : taskStatus === 'completed' ? COLOR.success : COLOR.warn,
+              fontSize: 10, flexShrink: 0, fontStyle: isRunning ? 'italic' : 'normal',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
+            }}>
+              · {statusLabel}
+            </span>
+          )}
+          {isRunning && elapsed != null && elapsed >= 1 && (
+            <span style={{ color: COLOR.warn, fontSize: 10, flexShrink: 0 }}>· {formatElapsed(elapsed)}</span>
+          )}
+          <ChevronRight
+            size={10} strokeWidth={1.75} color={COLOR.dim}
+            style={{
+              flexShrink: 0,
+              transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+              transition: 'transform 0.2s cubic-bezier(0.25, 1, 0.5, 1)',
+            }}
+          />
+        </button>
+
+        {open && (
+          <div style={{ marginTop: GAP.sm, display: 'flex', flexDirection: 'column', gap: GAP.sm }}>
+            {/* 派活的 brief */}
+            {toolInput?.prompt && (
+              <div style={{
+                padding: GAP.md, background: COLOR.bgCard, borderRadius: 8,
+                fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
+                lineHeight: 1.5, whiteSpace: 'pre-wrap', maxHeight: 140, overflow: 'auto',
+              }}>
+                <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em' }}>BRIEF</div>
+                {String(toolInput.prompt)}
+              </div>
+            )}
+            {/* 30s 摘要流水（时间轴）*/}
+            {drawerRows.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {drawerRows.map((s, i) => (
+                  <div key={i} style={{
+                    display: 'flex', gap: 6, alignItems: 'baseline',
+                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
+                  }}>
+                    <span style={{ color: COLOR.dim, flexShrink: 0 }}>·</span>
+                    <span style={{ fontStyle: 'italic' }}>{s}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* 结果内容：vision-checker 走结构化卡，其余子代理直接给收尾文本 */}
+            {agentName === 'vision-checker' && resultText ? (
+              <VisionCheckerCard text={resultText} />
+            ) : resultText ? (
+              <div style={{
+                padding: GAP.md, background: COLOR.bgCard, borderRadius: 8,
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
+                lineHeight: 1.6, whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto',
+              }}>
+                <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em', fontFamily: FONT_MONO }}>结果</div>
+                {resultText}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </TimelineNode>
+    );
+  }
+
   // 其他工具：保留 chip 折叠展开 input/output
   const summary = summarizeToolInput(toolName, toolInput);
-  let displayName = toolName?.startsWith('mcp__nodesign__')
+  const displayName = toolName?.startsWith('mcp__nodesign__')
     ? toolName.replace('mcp__nodesign__', '')
     : toolName;
-  if (toolName === 'Task' && agentType) {
-    displayName = `Task → ${agentType}`;
-  }
 
   return (
     <TimelineNode icon={NodeIcon} iconColor={iconColor} isSpinning={isRunning}>
@@ -1612,27 +1723,6 @@ function ToolMessage({
           }}
         />
       </button>
-
-      {/* subagent 30s 进度摘要 */}
-      {toolName === 'Task' && (taskSummary || taskLastTool) && (
-        <div style={{
-          marginTop: GAP.xs,
-          fontFamily: FONT_SANS,
-          fontSize: FONT_SIZE.xs,
-          color: COLOR.sub,
-          fontStyle: 'italic',
-          lineHeight: 1.4,
-        }}>
-          {taskSummary || `· ${taskLastTool}`}
-        </div>
-      )}
-
-      {/* S3b：vision-checker critique 卡（解析 VERDICT/ISSUES/OVERALL） */}
-      {toolName === 'Task'
-        && agentType === 'vision-checker'
-        && subagentResult?.lastAssistantMessage && (
-        <VisionCheckerCard text={subagentResult.lastAssistantMessage} />
-      )}
 
       {open && (
         <div style={{ marginTop: GAP.sm, display: 'flex', flexDirection: 'column', gap: GAP.sm }}>

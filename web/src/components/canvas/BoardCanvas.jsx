@@ -15,6 +15,7 @@ import {
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
 import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
+import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import LiveFrame from './LiveFrame.jsx';
 import ProjectBand from './ProjectBand.jsx';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -104,7 +105,8 @@ export default function BoardCanvas({
   const pendingPreviewRef = useRef(null);  // preview 目标还没上墙 → 等它出现
   const [addedPaths, setAddedPaths] = useState(() => new Set());
   const [detail, setDetail] = useState(null);       // 图片详情
-  const [viewer, setViewer] = useState(null);       // { title, content } markdown 阅读
+  const [viewer, setViewer] = useState(null);       // { title, content, note? } markdown 阅读；note = 可编辑的任务便利贴
+  const [viewerEdit, setViewerEdit] = useState(null); // null = 阅读态；string = 编辑中的草稿
   const [projectPanel, setProjectPanel] = useState(null);   // 'memory'|'guide'|'brand'|'files'
   const [guideText, setGuideText] = useState('');           // 顶带「项目指引」摘要
   const [fileCount, setFileCount] = useState(null);         // 顶带「项目文件」计数
@@ -266,7 +268,15 @@ export default function BoardCanvas({
     }
     for (const a of artifacts) {
       const sid = a.sessionId || a.meta?.sessionId || null;
-      if (a.kind === 'note') out.push({ id: a.path, type: 'note', sid, ...a });
+      // noteTask：任务便利贴（tasks/<任务>/notes/*.md，agent 和用户共享的头脑
+      // 风暴层）；null = 项目级灵感便签（assets/notes/）。删除/编辑走不同路由
+      if (a.kind === 'note') {
+        out.push({
+          id: a.path, type: 'note', sid,
+          noteTask: a.path.startsWith('tasks/') ? a.path.split('/')[1] : null,
+          ...a,
+        });
+      }
       else if (a.isImage) out.push({ id: a.path, type: 'image', sid, ...a });
       else out.push({ id: a.path, type: 'file', sid, ...a });
     }
@@ -309,6 +319,12 @@ export default function BoardCanvas({
   }, [zones, ghostZones]);
   const zonesEffRef = useRef(zonesEff); zonesEffRef.current = zonesEff;
 
+  // 刚被用户删掉的 zone 墓碑：删任务后 tasks 列表要等 reload 才更新，这个
+  // effect 会在窗口期把 zone 重建并回写 board.json（e2e 抓到的真 race，
+  // 2026-07-30）。墓碑挡住重建；对应 id 从 needed 里消失后墓碑自动出清
+  // （同名新任务照常建区）
+  const removedZonesRef = useRef(new Set());
+
   // ── 工作区派生：当前 session + 有产物的 session 各一块，缺的建出来并持久化 ──
   useEffect(() => {
     if (!layoutLoadedRef.current) return;
@@ -318,7 +334,10 @@ export default function BoardCanvas({
       if (o.sid && o.type !== 'deck' && !sessionZone.has(o.sid)) needed.add(o.sid);
     }
     for (const t of tasks) needed.add(`task/${t.id}`);   // 每个任务一块工作区
-    const missing = [...needed].filter(zid => !zones[zid]);
+    for (const zid of [...removedZonesRef.current]) {
+      if (!needed.has(zid)) removedZonesRef.current.delete(zid);
+    }
+    const missing = [...needed].filter(zid => !zones[zid] && !removedZonesRef.current.has(zid));
     if (!missing.length) return;
     setZones(prev => {
       const next = { ...prev };
@@ -900,11 +919,14 @@ export default function BoardCanvas({
       const r = await Memory.read(projectId, o.readKey).catch(() => null);
       setViewer({ title: o.title, content: r?.content || o.preview || '(空)' });
     } else if (o.type === 'note') {
+      const title = o.noteTask ? o.name.replace(/\.md$/i, '') : '便签';
       try {
         const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
         const raw = await res.text();
-        setViewer({ title: '便签', content: raw.replace(/^---\n[\s\S]{0,500}?\n---\n?/, '') });
-      } catch { setViewer({ title: '便签', content: o.text || '' }); }
+        // 任务便利贴带 note 引用 → 浮层出"编辑"按钮（共享头脑风暴：用户改完
+        // agent 下轮从注入清单看到文件、自己 Read 到新内容）
+        setViewer({ title, content: raw.replace(/^---\n[\s\S]{0,500}?\n---\n?/, ''), note: o.noteTask ? o : null });
+      } catch { setViewer({ title, content: o.text || '', note: o.noteTask ? o : null }); }
     }
   };
 
@@ -913,8 +935,11 @@ export default function BoardCanvas({
   };
 
   const handleDeleteNote = async (o) => {
-    try { await Assets.removeNote(projectId, o.name); reload(); }
-    catch (err) { console.warn('[board] delete note failed:', err.message); }
+    try {
+      if (o.noteTask) await Assets.removeTaskNote(projectId, o.noteTask, o.name);
+      else await Assets.removeNote(projectId, o.name);
+      reload();
+    } catch (err) { console.warn('[board] delete note failed:', err.message); }
   };
 
   const focusDeck = (o) => {
@@ -1018,6 +1043,14 @@ export default function BoardCanvas({
     if (!ok) return;
     try {
       const r = await Assets.removeTask(projectId, name);
+      // 服务端已把 board.json 里的 zone 行清掉，本地 state 也要同步剪，
+      // 否则要刷新页面僵尸文件夹才消失（2026-07-30「删不了」修复的一半）
+      removedZonesRef.current.add(zid);
+      setZones(prev => {
+        const next = { ...prev };
+        delete next[zid];
+        return next;
+      });
       if (focusZoneRef.current === zid) exitToProjectRef.current?.();
       else reload();
       useGlobalStore.getState().showToast(
@@ -1029,6 +1062,33 @@ export default function BoardCanvas({
       useGlobalStore.getState().showToast(`删除失败：${err.message}`, 'error');
     }
   }, [projectId, currentSessionId, navigate, reload]);
+
+  /**
+   * 旧式会话 zone（任务模型之前的遗产，id 是 sessionId 或历史残行）从桌面移除。
+   * 只清 board.json 里的这行，不动会话记录 —— 会话在左栏列表照旧能进。
+   * 2026-07-30 前这类 zone 没有任何删除入口，永远赖在桌面上。
+   */
+  const handleRemoveLegacyZone = useCallback(async (zid, title) => {
+    const ok = await useGlobalStore.getState().confirm({
+      title: '从桌面移除',
+      message: `把「${title || '这个工作区'}」从桌面拿掉？只移除这张卡片，不删除对话记录（左栏会话列表里还能找到）。`,
+      confirmLabel: '移除',
+      danger: false,
+    });
+    if (!ok) return;
+    try {
+      await Assets.patchBoard(projectId, { zones: { [zid]: null } });
+      removedZonesRef.current.add(zid);
+      setZones(prev => {
+        const next = { ...prev };
+        delete next[zid];
+        return next;
+      });
+      useGlobalStore.getState().showToast('已从桌面移除', 'info');
+    } catch (err) {
+      useGlobalStore.getState().showToast(`移除失败：${err.message}`, 'error');
+    }
+  }, [projectId]);
 
   const focusZoneAction = (zid) => {
     if (zones[zid]?.collapsed) patchZone(zid, { collapsed: false });
@@ -1310,10 +1370,17 @@ export default function BoardCanvas({
                   onClick={() => !wasDrag() && focusZoneAction(z.id)}
                   style={zoneHeaderBtn}
                 ><FolderOpen size={13} /></button>
-                {z.id.startsWith('task/') && (
+                {z.id.startsWith('task/') ? (
                   <button
                     data-zone-action title="删除任务（连同它的对话）"
                     onClick={() => !wasDrag() && handleDeleteTask(z.id, z.title)}
+                    style={{ ...zoneHeaderBtn, color: COLOR.error }}
+                  ><Trash2 size={13} /></button>
+                ) : (zoneSession.get(z.id) || z.id) !== currentSessionId && z.memberCount === 0 && (
+                  /* 只给空区：非空的删了会被"有产物的 session 自动建区"效应立刻重建 */
+                  <button
+                    data-zone-action title="从桌面移除（不删对话记录）"
+                    onClick={() => !wasDrag() && handleRemoveLegacyZone(z.id, z.title)}
                     style={{ ...zoneHeaderBtn, color: COLOR.error }}
                   ><Trash2 size={13} /></button>
                 )}
@@ -1394,10 +1461,17 @@ export default function BoardCanvas({
                       style={zoneHeaderBtn}
                     ><FolderInput size={13} /></button>
                   )}
-                  {z.id.startsWith('task/') && (
+                  {z.id.startsWith('task/') ? (
                     <button
                       data-zone-action title="删除任务（连同它的对话）"
                       onClick={() => { if (!wasDrag()) handleDeleteTask(z.id, z.title); }}
+                      style={{ ...zoneHeaderBtn, color: COLOR.error }}
+                    ><Trash2 size={13} /></button>
+                  ) : (zoneSession.get(z.id) || z.id) !== currentSessionId && z.memberCount === 0 && (
+                    /* 只给空区：非空的删了会被"有产物的 session 自动建区"效应立刻重建 */
+                    <button
+                      data-zone-action title="从桌面移除（不删对话记录）"
+                      onClick={() => { if (!wasDrag()) handleRemoveLegacyZone(z.id, z.title); }}
                       style={{ ...zoneHeaderBtn, color: COLOR.error }}
                     ><Trash2 size={13} /></button>
                   )}
@@ -1492,21 +1566,56 @@ export default function BoardCanvas({
         </Overlay>
       )}
 
-      {/* markdown 阅读浮层（便签全文 / 记忆 / 品牌）*/}
+      {/* markdown 阅读浮层（便签全文 / 记忆 / 品牌）；任务便利贴可直接编辑（共享头脑风暴）*/}
       {viewer && (
-        <Overlay onClose={() => setViewer(null)}>
+        <Overlay onClose={() => { setViewer(null); setViewerEdit(null); }}>
           <div style={{
             background: COLOR.bg, borderRadius: 12, padding: GAP.lg,
             width: 'min(720px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'auto',
+            display: 'flex', flexDirection: 'column',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: GAP.sm }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: GAP.sm, flexShrink: 0 }}>
               <BookOpen size={14} color={COLOR.sub} />
               <span style={{ marginLeft: 6, fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.md, color: COLOR.text }}>{viewer.title}</span>
-              <button onClick={() => setViewer(null)} style={{ ...toolBtn, marginLeft: 'auto' }}><X size={12} /></button>
+              {viewer.note && viewerEdit === null && (
+                <button title="编辑" onClick={() => setViewerEdit(viewer.content)} style={{ ...toolBtn, marginLeft: 'auto' }}>
+                  <PencilLine size={12} />
+                </button>
+              )}
+              {viewer.note && viewerEdit !== null && (
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  <button onClick={async () => {
+                    const o = viewer.note;
+                    try {
+                      await Assets.putTaskNote(projectId, o.noteTask, o.name, viewerEdit);
+                      setViewer(v => ({ ...v, content: viewerEdit }));
+                      setViewerEdit(null);
+                      reload();
+                    } catch (err) { console.warn('[board] save note failed:', err.message); }
+                  }} style={toolBtn}>保存</button>
+                  <button onClick={() => setViewerEdit(null)} style={toolBtn}>取消</button>
+                </div>
+              )}
+              <button onClick={() => { setViewer(null); setViewerEdit(null); }}
+                style={{ ...toolBtn, ...(viewer.note ? { marginLeft: 4 } : { marginLeft: 'auto' }) }}><X size={12} /></button>
             </div>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7 }}>
-              <ReactMarkdown>{viewer.content}</ReactMarkdown>
-            </div>
+            {viewerEdit === null ? (
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7 }}>
+                <ReactMarkdown>{viewer.content}</ReactMarkdown>
+              </div>
+            ) : (
+              <textarea
+                value={viewerEdit}
+                onChange={(e) => setViewerEdit(e.target.value)}
+                autoFocus
+                style={{
+                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7,
+                  minHeight: 320, resize: 'vertical', width: '100%', boxSizing: 'border-box',
+                  border: `1px solid ${COLOR.borderLt}`, borderRadius: 8, padding: GAP.md,
+                  background: '#fffbeb', outline: 'none',
+                }}
+              />
+            )}
           </div>
         </Overlay>
       )}
@@ -1781,18 +1890,7 @@ function BoardObject({
         </div>
       )}
 
-      {o.type === 'note' && (
-        <div
-          style={{
-            padding: GAP.md, background: '#fffbeb', borderRadius: 10, minHeight: SIZES.note.h - 2,
-            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.6,
-            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-            display: '-webkit-box', WebkitLineClamp: 6, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-          }}
-        >
-          {o.text || o.name}
-        </div>
-      )}
+      {o.type === 'note' && <NoteFaces o={o} />}
 
       {o.type === 'file' && (
         <div
@@ -1813,6 +1911,60 @@ function BoardObject({
           fontFamily: FONT_MONO, fontSize: 9, padding: '1px 5px',
         }}>
           托盘✓
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 便利贴卡体 —— `\n---\n` 分面翻页（note-faces.js 统一约定）。
+ * 任务贴（noteTask 非空）右上角带文件名小签，和项目级灵感便签区分。
+ * 翻页按钮挂 data-board-action：不触发拖拽 / 双击打开。
+ */
+function NoteFaces({ o }) {
+  const [face, setFace] = useState(0);
+  const faces = useMemo(() => splitNoteFaces(o.text || ''), [o.text]);
+  const idx = Math.min(face, faces.length - 1);
+  const { title, body } = faceParts(faces[idx]);
+  const faceBtn = {
+    border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.sub,
+    fontFamily: FONT_MONO, fontSize: 12, lineHeight: 1, padding: '2px 6px',
+  };
+  return (
+    <div style={{
+      padding: GAP.md, background: '#fffbeb', borderRadius: 10, minHeight: SIZES.note.h - 2,
+      display: 'flex', flexDirection: 'column',
+    }}>
+      {(o.noteTask || title) && (
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4, minWidth: 0 }}>
+          {title && (
+            <span style={{
+              fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+            }}>{title}</span>
+          )}
+          {o.noteTask && (
+            <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub, marginLeft: 'auto', flexShrink: 0 }}>
+              {o.name.replace(/\.md$/i, '')}
+            </span>
+          )}
+        </div>
+      )}
+      <div style={{
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.6,
+        whiteSpace: 'pre-wrap', wordBreak: 'break-word', flex: 1,
+        display: '-webkit-box', WebkitLineClamp: title ? 4 : 6, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+      }}>
+        {body || o.name}
+      </div>
+      {faces.length > 1 && (
+        <div data-board-action style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4 }}>
+          <button data-board-action style={faceBtn} title="上一面"
+            onClick={(e) => { e.stopPropagation(); setFace((idx - 1 + faces.length) % faces.length); }}>‹</button>
+          <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub }}>{idx + 1}/{faces.length}</span>
+          <button data-board-action style={faceBtn} title="下一面"
+            onClick={(e) => { e.stopPropagation(); setFace((idx + 1) % faces.length); }}>›</button>
         </div>
       )}
     </div>

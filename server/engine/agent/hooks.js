@@ -592,7 +592,8 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         `你的 cwd 是 ${workspaceRoot}\n`
         + `关键路径（用 ./ 相对路径访问，软链已挂好不要绕）：\n`
         + `  ./tasks/<任务名>/          产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css\n`
-        + `  ./spec.json                设计意图档案（agent 决策日志）\n`
+        + `  ./tasks/<任务名>/notes/    便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
+        + `  ./spec.json                压缩历史暗档案（决策改写便利贴，这里别再写）\n`
         + `  ./assets/                  用户上传素材 + 你 curl 下载的资源（软链 → shared，跨 session 共享）\n`
         + `  ./agent-memory/            跨 session 长期记忆（软链 → shared）\n`
         + `    ├── memory.md            main agent 通用 memory（前端 MemoryCard 读这条）\n`
@@ -616,12 +617,44 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
               return `  ${idx}. ${title}${rationale ? ` — ${rationale}` : ''}`;
             }).join('\n');
             parts.push(
-              `本项目设计决策档案（spec.json，共 ${decisions.length} 条，最近 ${recent.length} 条）：\n${lines}`,
+              `旧决策档案（spec.json 遗产，共 ${decisions.length} 条，最近 ${recent.length} 条；新决策一律走 record_decision → 任务便利贴）：\n${lines}`,
             );
           }
         }
       } catch {
         // spec.json 不存在 / 解析失败 / stat 失败：noop
+      }
+
+      // 1.5 任务便利贴清单（2026-07-30）：tasks/*/notes/*.md —— 决策 + 头脑风暴的
+      // 共享层。metadata-not-content：只列文件和每张贴的首行标题，细节 agent 自己 Read
+      try {
+        const tasksDir = path.join(workspaceRoot, 'tasks');
+        const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
+        const lines = [];
+        for (const t of taskEntries) {
+          if (!t.isDirectory() || t.name.startsWith('.')) continue;
+          let noteFiles = [];
+          try {
+            noteFiles = (await fs.readdir(path.join(tasksDir, t.name, 'notes')))
+              .filter(n => n.endsWith('.md') && !n.startsWith('.'));
+          } catch { continue; }
+          for (const n of noteFiles.slice(0, 12)) {
+            let title = '';
+            let faces = 0;
+            try {
+              const raw = await fs.readFile(path.join(tasksDir, t.name, 'notes', n), 'utf8');
+              title = (raw.match(/^#\s+(.{1,60})/m)?.[1] || '').trim();
+              faces = raw.split(/\n---\n/).length;
+            } catch { /* 列出文件名就够 */ }
+            const meta = [title, faces > 1 ? `${faces} 面` : ''].filter(Boolean).join(' · ');
+            lines.push(`  tasks/${t.name}/notes/${n}${meta ? `（${meta}）` : ''}`);
+          }
+        }
+        if (lines.length > 0) {
+          parts.push(`任务便利贴（和用户共享，他看得到也可能改过；细节 Read）：\n${lines.join('\n')}`);
+        }
+      } catch {
+        // tasks/ 不存在：noop
       }
 
       // 2. 现有产物清单（2026-07-28：任务模型下产物住 tasks/<任务>/，这里以前只看

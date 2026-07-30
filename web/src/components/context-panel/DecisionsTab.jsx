@@ -8,8 +8,9 @@ import { Spec } from '../../lib/api.js';
  *
  * 数据来自 C29 GET /api/projects/:pid/spec endpoint。
  * 内容由 agent 维护：
- *   - decisions[] = MCP record_decision 工具写入（C11）
- *   - history[]   = PostCompact hook 写入摘要（C7）
+ *   - decisions[] = 旧会话遗产（2026-07-30 起 record_decision 改写任务便利贴
+ *     tasks/<任务>/notes/决策.md，画布上直接看；这里只剩历史存量）
+ *   - history[]   = PostCompact hook 写入摘要（C7），仍是这里的现役内容
  *
  * 触发刷新：mount + 手动 refresh button + run.decision_recorded /
  *           run.compact_persisted 事件（Project.jsx 通过 reloadKey 传入）
@@ -105,10 +106,10 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           color: COLOR.sub,
           lineHeight: 1.6,
         }}>
-          还没有决策。<br />
-          agent 用 <code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 4px', borderRadius: 3 }}>
-            mcp__nodesign__record_decision
-          </code> 工具记录的关键设计选择会出现在这里。
+          设计决策现在记在画布的任务便利贴上<br />
+          （<code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 4px', borderRadius: 3 }}>notes/决策.md</code>，
+          任务区里那张黄贴纸）。<br />
+          这里只显示旧会话的存量决策和压缩历史。
         </div>
       )}
 

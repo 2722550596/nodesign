@@ -46,6 +46,9 @@ const STAGE_EVENTS = new Set([
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
   'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
   'run.done', 'run.error', 'run.cancelled',
+  // 子代理舞台便利贴（2026-07-30）：运行中出贴、完成翻结果。管线 1 是旁路
+  // （if 不 return），这四个事件同时继续走管线 3 的聊天侧栏逻辑
+  'run.task.started', 'run.task.progress', 'run.task.notification', 'run.subagent.stop',
 ]);
 // 聊天流折叠事件（lib/chat-stream.js reducer 接管，见管线 2 段）
 const CHAT_STREAM_EVENTS = new Set([
@@ -736,8 +739,9 @@ export default function ProjectWorkspace() {
         // 只给**被改的那个文件**记一笔版本：改哪份 deck 就只有那份 iframe 换 ?v=，
         // 同任务里的其他 deck 纹丝不动（多 deck 任务整屏闪的根因）。
         // 站点的 .css / .js 也算 —— 它们不自己渲染，但整站版本会跟着涨。
+        // .md 也算：任务便利贴（tasks/*/notes/*.md）要当场上墙
         if (typeof evt.filePath === 'string'
-            && (/\.(html?|css|js)$/i.test(evt.filePath) || /(^|\/)assets\//.test(evt.filePath))) {
+            && (/\.(html?|css|js|md)$/i.test(evt.filePath) || /(^|\/)assets\//.test(evt.filePath))) {
           setFileVersions(prev => bumpFileVersion(prev, evt.filePath));
           bumpListSoon();   // 新文件要进产物墙，但去抖合并，不是每笔都拉
         }
@@ -893,7 +897,15 @@ export default function ProjectWorkspace() {
         if (evt.toolUseId) {
           setMessages(prev => prev.map(m =>
             m.role === 'tool' && m.id === evt.toolUseId
-              ? { ...m, taskSummary: evt.summary, taskLastTool: evt.lastToolName }
+              ? {
+                  ...m,
+                  taskSummary: evt.summary,
+                  taskLastTool: evt.lastToolName,
+                  // 时间轴抽屉（2026-07-30）：30s 摘要不再只留最后一条，全程累积
+                  ...(evt.summary ? {
+                    taskSummaryLog: [...(m.taskSummaryLog || []), evt.summary].slice(-20),
+                  } : {}),
+                }
               : m,
           ));
         }

@@ -19,8 +19,10 @@ const TOOL_STAGE_KIND = {
   AskUserQuestion: 'question',   // 交互卡直接上画布（dock），聊天栏那张照旧
 };
 
-// 不上舞台的工具：聊天栏已有完整交互卡，舞台重复出现只会抢镜头
-const SILENT_TOOLS = new Set(['TodoWrite', 'ExitPlanMode', 'EnterPlanMode']);
+// 不上舞台的工具：聊天栏已有完整交互卡，舞台重复出现只会抢镜头。
+// Task/Agent（SDK 新旧两名）也在这：子代理有自己的舞台便利贴（run.task.*
+// 事件驱动，key 同 toolUseId），chip 形态会跟它撞 key
+const SILENT_TOOLS = new Set(['TodoWrite', 'ExitPlanMode', 'EnterPlanMode', 'Task', 'Agent']);
 
 export function stageKindOf(toolName) {
   if (!toolName || typeof toolName !== 'string') return null;
