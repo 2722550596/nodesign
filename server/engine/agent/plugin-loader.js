@@ -30,10 +30,28 @@ import os from 'node:os';
 import { PLUGIN_ROOT, parseFrontmatter } from './skill.js';
 import { getSharedDir } from '../../projects/workspace.js';
 
-/** 用户级 plugin 根：~/.nodesign/plugins/。env override 给测试用 */
-export function getUserPluginsRoot() {
+/** 用户级 plugin 总根：~/.nodesign/plugins/。env override 给测试用 */
+export function getUserPluginsBaseRoot() {
   return process.env.NODESIGN_USER_PLUGINS_DIR
     || path.join(os.homedir(), '.nodesign', 'plugins');
+}
+
+/** 用户 id 只该是 users 表那种 `u_xxx`（登录墙关时是 `_anon`）；别的一律不当目录名 */
+const USER_DIR_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * 某个用户的 plugin 根：~/.nodesign/plugins/<userId>/
+ *
+ * 2026-07-30 分用户：原来所有人共用总根，任何登录用户装的 plugin 会加载进**每个人**
+ * 的 agent 会话（loader 对所有 project 都扫这个根），也能删掉别人的。project 级
+ * 早就按 owner 隔离了，用户级是内测隔离唯一漏网的一处。
+ *
+ * userId 缺失/不合法 → 返 null（调用方按"没有用户级 plugin"处理），不退回总根：
+ * 退回去就等于把漏洞留成 fallback。
+ */
+export function getUserPluginsRoot(userId) {
+  if (!userId || !USER_DIR_RE.test(String(userId))) return null;
+  return path.join(getUserPluginsBaseRoot(), String(userId));
 }
 
 /** project 级 plugin 根：<shared>/.claude/plugins/ */
@@ -196,20 +214,23 @@ async function scanPluginRoot(rootDir, sourceLabel) {
  *
  * @param {object} opts
  * @param {string} [opts.projectId] - 不传则跳过 project 级扫描
+ * @param {string} [opts.userId]    - 项目 owner 的用户 id；不传则跳过用户级扫描
+ *                                    （不是"退回全局共享根"——那正是要修掉的东西）
  * @returns {Promise<{
  *   plugins: Array<{ type: 'local', path: string }>,
  *   skills: string[],
  *   diagnostics: { builtin: number, user: number, project: number }
  * }>}
  */
-export async function loadInstalledPlugins({ projectId } = {}) {
+export async function loadInstalledPlugins({ projectId, userId } = {}) {
+  const userRoot = getUserPluginsRoot(userId);
   // 三 root 并行扫
   const [builtin, user, projectLocal] = await Promise.all([
     scanPluginRoot(path.dirname(PLUGIN_ROOT), 'builtin')
       // builtin root = `server/engine/plugins/`（PLUGIN_ROOT 的父目录），里面只该有 nodesign
       // 但为了将来支持系统自带多个 plugin，统一扫
       .then(items => items.filter(p => p.path === PLUGIN_ROOT)),
-    scanPluginRoot(getUserPluginsRoot(), 'user'),
+    userRoot ? scanPluginRoot(userRoot, 'user') : Promise.resolve([]),
     projectId
       ? scanPluginRoot(getProjectPluginsRoot(projectId), 'project')
       : Promise.resolve([]),

@@ -35,9 +35,11 @@ const router = express.Router();
 
 router.get('/', async (req, res, next) => {
   try {
+    // 用户级只列**自己的**（2026-07-30 分用户根）；没身份就当没有
+    const userRoot = getUserPluginsRoot(req.user?.id);
     const [builtin, user] = await Promise.all([
       listInstalledPluginsDetailed(getBuiltinPluginsRoot()),
-      listInstalledPluginsDetailed(getUserPluginsRoot()),
+      userRoot ? listInstalledPluginsDetailed(userRoot) : Promise.resolve([]),
     ]);
 
     const plugins = [

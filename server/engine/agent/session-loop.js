@@ -369,7 +369,13 @@ export async function runSession({
     // 装新 plugin 只有重启 session 才生效（v1 接受，详见 plan § "Hot-reload v2"）。
     // skillId 参数（传入的 'deskskill-engine-mini'）保留兼容，但实际 skills 列表以
     // installed.skills 为准 —— 包含所有已装 plugin 内的 skill name 合集。
-    installed = await loadInstalledPlugins({ projectId });
+    // 用户级 plugin 按**项目 owner** 取，不是按"当前请求者"—— 同一个项目谁来跑
+    // （owner 自己、后台自发回合、admin 代看）都该是同一套 skill，不然会话行为
+    // 会随观看者变。owner 为空（历史项目没回填全）→ 只跳过用户级，别退回共享根。
+    installed = await loadInstalledPlugins({
+      projectId,
+      userId: projectId ? getProject(projectId)?.ownerId : null,
+    });
     console.log(
       `[session-loop] plugins=[${installed.plugins.map(p => p.path.split('/').pop()).join(', ')}] `
       + `skills=[${installed.skills.join(', ')}] `

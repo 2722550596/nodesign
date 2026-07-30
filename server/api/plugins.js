@@ -28,8 +28,6 @@
 
 import express from 'express';
 import multer from 'multer';
-import { promises as fs } from 'fs';
-import path from 'path';
 
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
@@ -38,23 +36,11 @@ import {
   getProjectPluginsRoot,
   listInstalledPluginsDetailed,
 } from '../engine/agent/plugin-loader.js';
+import { LIMITS } from '../lib/plugin-validator.js';
 import {
-  validateSkillUpload,
-  extractToStaging,
-  LIMITS,
-} from '../lib/plugin-validator.js';
-
-// ── plugin name 合规检查（同 validator，但 DELETE 路径需独立查） ──
-const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
-const RESERVED_PLUGIN_NAMES = new Set([
-  'nodesign', 'claude', 'anthropic', 'system', 'builtin', 'default',
-]);
-
-function isValidPluginName(name) {
-  return typeof name === 'string'
-    && PLUGIN_NAME_RE.test(name)
-    && !RESERVED_PLUGIN_NAMES.has(name);
-}
+  installPluginToRoot,
+  uninstallFromRoot,
+} from '../lib/plugin-install.js';
 
 // 允许的上传 mime / 后缀（双轨：单 .md / zip）。multer fileFilter 拦其他类型。
 const ALLOWED_MIME = new Set([
@@ -94,111 +80,50 @@ function rejectInvalidFile(req, res) {
   return false;
 }
 
-// ── 安装核心（两轨共用） ──
-
-async function installPluginToRoot(buffer, targetRoot, { force }) {
-  const validation = await validateSkillUpload(buffer);
-  if (!validation.ok) {
-    return { status: 400, body: { error: 'validation failed', errors: validation.errors } };
-  }
-  const { manifest, skills, warnings, mode } = validation;
-  const targetDir = path.join(targetRoot, manifest.name);
-
-  let existingManifest = null;
-  try {
-    const raw = await fs.readFile(path.join(targetDir, '.claude-plugin', 'plugin.json'), 'utf8');
-    existingManifest = JSON.parse(raw);
-  } catch { /* not installed */ }
-
-  if (existingManifest && !force) {
-    return {
-      status: 409,
-      body: {
-        error: 'plugin already installed',
-        existing: {
-          name: existingManifest.name,
-          version: existingManifest.version || '0.0.0',
-          description: existingManifest.description || '',
-        },
-        incoming: manifest,
-        hint: '加 ?force=true 强制覆盖（旧 plugin 目录会被删除）',
-      },
-    };
-  }
-
-  // staging：装到目标 root 下的 .staging/<tmpId>/，方便 atomic rename 同设备
-  await fs.mkdir(targetRoot, { recursive: true });
-  const stagingRoot = path.join(targetRoot, '.staging');
-  await fs.mkdir(stagingRoot, { recursive: true });
-  const tmpDir = path.join(stagingRoot, `${manifest.name}-${Date.now().toString(36)}`);
-  await fs.mkdir(tmpDir);
-
-  try {
-    await extractToStaging({ buffer, validation, stagingDir: tmpDir });
-    if (existingManifest) {
-      await fs.rm(targetDir, { recursive: true, force: true });
-    }
-    await fs.rename(tmpDir, targetDir);
-  } catch (err) {
-    try { await fs.rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    throw err;
-  }
-
-  return {
-    status: existingManifest ? 200 : 201,
-    body: {
-      installed: { ...manifest, path: targetDir, skills },
-      replaced: existingManifest || null,
-      warnings,
-      uploadMode: mode,  // 'single-md' / 'single-skill-zip' / 'plugin-zip' — UI 用 toast
-    },
-  };
-}
-
-// ── 卸载核心 ──
-
-async function uninstallFromRoot(rootDir, name) {
-  if (!isValidPluginName(name)) {
-    return { status: 400, body: { error: `plugin name \`${name}\` 不合规或是保留名` } };
-  }
-  const targetDir = path.join(rootDir, name);
-  const resolved = path.resolve(targetDir);
-  const resolvedRoot = path.resolve(rootDir);
-  if (!resolved.startsWith(resolvedRoot + path.sep)) {
-    return { status: 400, body: { error: 'invalid target path' } };
-  }
-  try {
-    await fs.access(targetDir);
-  } catch {
-    return { status: 404, body: { error: `plugin \`${name}\` not installed` } };
-  }
-  await fs.rm(targetDir, { recursive: true, force: true });
-  return { status: 200, body: { uninstalled: name } };
-}
-
 // ── Router 1：用户级（挂 /api/plugins） ──
+//
+// 2026-07-30 起每个用户一个根（~/.nodesign/plugins/<userId>/）。之前是全站一个
+// 共享目录：任何登录用户装的 plugin 会加载进所有人的 agent 会话，也能删别人的。
+// 这里的 req.user 由 authGuard 挂（登录墙关闭时是 `_anon`），拿不到就 401 —— 没有
+// 身份就没有"用户级"可言，不能退回共享根。
 
 export const userPluginsRouter = express.Router();
 
-userPluginsRouter.get('/', async (_req, res, next) => {
+/** 取当前请求者的 plugin 根；没有合法身份时直接回 401 并返 null */
+function userRootOf(req, res) {
+  const root = getUserPluginsRoot(req.user?.id);
+  if (!root) {
+    res.status(401).json({ error: 'unauthorized' });
+    return null;
+  }
+  return root;
+}
+
+userPluginsRouter.get('/', async (req, res, next) => {
   try {
-    const plugins = await listInstalledPluginsDetailed(getUserPluginsRoot());
+    const root = userRootOf(req, res);
+    if (!root) return;
+    const plugins = await listInstalledPluginsDetailed(root);
     res.json({ plugins });
   } catch (err) { next(err); }
 });
 
 userPluginsRouter.post('/install', upload.single('file'), async (req, res, next) => {
   try {
+    const root = userRootOf(req, res);
+    if (!root) return;
     if (rejectInvalidFile(req, res)) return;
     const force = req.query.force === 'true';
-    const result = await installPluginToRoot(req.file.buffer, getUserPluginsRoot(), { force });
+    const result = await installPluginToRoot(req.file.buffer, root, { force });
     res.status(result.status).json(result.body);
   } catch (err) { next(err); }
 });
 
 userPluginsRouter.delete('/:name', async (req, res, next) => {
   try {
-    const result = await uninstallFromRoot(getUserPluginsRoot(), req.params.name);
+    const root = userRootOf(req, res);
+    if (!root) return;
+    const result = await uninstallFromRoot(root, req.params.name);
     res.status(result.status).json(result.body);
   } catch (err) { next(err); }
 });
