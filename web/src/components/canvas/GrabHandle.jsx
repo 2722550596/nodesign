@@ -14,6 +14,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { isInsideReactMount } from './DirectEditBridge.js';
+import { overlayBase } from '../../lib/overlay-rect.js';
 
 const HANDLE_COLOR = '#3a7afe';
 const HANDLE_COLOR_REACT = '#b85c1a';
@@ -115,15 +116,13 @@ export default function GrabHandle({
   if (!active || !hover || isDragging || !iframeRef?.current) return null;
 
   const iframe = iframeRef.current;
-  const iframeRect = iframe.getBoundingClientRect();
-  const offsetParent = iframe.offsetParent;
-  if (!offsetParent) return null;
-  const containerRect = offsetParent.getBoundingClientRect();
+  const base = overlayBase(iframe);
+  if (!base) return null;
 
   const r = hover.rect;
   const color = hover.reactMount ? HANDLE_COLOR_REACT : HANDLE_COLOR;
-  const previewTop = (iframeRect.top + r.top * zoom) - containerRect.top - 2;
-  const previewLeft = (iframeRect.left + r.left * zoom) - containerRect.left - 2;
+  const previewTop = base.y + r.top * zoom - 2;
+  const previewLeft = base.x + r.left * zoom - 2;
   const previewW = r.width * zoom + 4;
   const previewH = r.height * zoom + 4;
 

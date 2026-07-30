@@ -578,7 +578,15 @@ export default function SiteWindow({
     );
   };
 
-  const overlayIframeRef = { current: iframeRef.current };
+  // overlay 全家共用的 iframe 引用。
+  //
+  // 原来这里是 `{ current: iframeRef.current }` —— 每次渲染新造一个对象，把当时的
+  // iframeRef.current 拍扁进去。LiveFrame 是双缓冲：刷新时新文档先在一层
+  // `position:absolute; left:0; top:0` 的 staging iframe 里加载，load 完才提升为前台。
+  // 渲染时机撞上换代的话，overlay 拿到的可能是那层 staging（它贴在 wrapRef 左上角，
+  // 而真正的前台 iframe 在居中的定位盒里），算出来的圈就整体偏到一边去。
+  // 直接复用 iframeRef —— LiveFrame 的 bindActive 保证它永远指向前台那个。
+  const overlayIframeRef = iframeRef;
 
   return (
     <div data-site-window={task} style={{

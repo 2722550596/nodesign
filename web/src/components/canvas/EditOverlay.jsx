@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { COLOR } from '../../lib/theme.js';
+import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
 
 /**
  * EditOverlay — 选中元素的高亮边框
@@ -87,13 +88,11 @@ export default function EditOverlay({ selectedAnchor, iframeRef, zoom = 1 }) {
   }
 
   // overlay 是 iframe.offsetParent (iframeWrapRef) 的 absolute child
-  const offsetParent = iframe.offsetParent;
-  if (!offsetParent) return null;
-  const containerRect = offsetParent.getBoundingClientRect();
+  const base = overlayBase(iframe);
+  if (!base) return null;
 
-  // 转到 offsetParent 坐标系：内部坐标 * zoom 才能跟外层 iframeRect 对齐
-  const top = (iframeRect.top + elRect.top * zoom) - containerRect.top;
-  const left = (iframeRect.left + elRect.left * zoom) - containerRect.left;
+  // 换算（含缩放 / 平移 / 容器滚动）统一走 overlay-rect
+  const { top, left } = toOverlayXY(base, elRect.left, elRect.top, zoom);
   const width = elRect.width * zoom;
   const height = elRect.height * zoom;
 

@@ -59,7 +59,11 @@ export function findElementByAnchor(anchor, root) {
   if (anchor.path) {
     try {
       const byPath = root.querySelector(anchor.path);
-      if (byPath) return byPath;
+      // path 是位置式的（nth-of-type 链），DOM 一动就指到邻居去。**命中了也要对一下
+      // textHint**：对不上说明这条路径已经过期，让给下面的文本查找。
+      // 实测踩到：一页卡片被拖动过之后，评论在「腹黑毒舌」上，标记画到了「温柔暖心」——
+      // 正好差一个兄弟节点（2026-07-30）。
+      if (byPath && !anchorTextMismatch(anchor, byPath)) return byPath;
     } catch { /* invalid selector, fall through */ }
   }
   if (anchor.textHint) {
@@ -96,4 +100,26 @@ export function ensureNodeId(el) {
     el.setAttribute('data-anchor', id);
   }
   return id;
+}
+
+/** path 命中的元素跟当初记下的文本对不对得上（textHint 为空时不判） */
+function anchorTextMismatch(anchor, el) {
+  const hint = (anchor.textHint || '').trim();
+  if (!hint) return false;
+  const now = (el.textContent || '').trim();
+  return !now.startsWith(hint) && !hint.startsWith(now);
+}
+
+/**
+ * 稳定锚点：先在元素上盖一个 data-anchor 再序列化。
+ *
+ * 用在**要长期存活的引用**上（评论、选中）。位置式 path 一旦 DOM 被搬动就失准，
+ * 而站点/deck 的拖拽是真的在搬 DOM 节点（pending-edit-apply.js），所以纯 path 的
+ * 锚点活不过一次拖拽。原来只有拖拽路径调 ensureNodeId，评论和选中都没调 ——
+ * 于是"评论 A 元素、标记画在 B 元素上"。
+ */
+export function serializeStableAnchor(el) {
+  if (!el || el.nodeType !== 1) return null;
+  try { ensureNodeId(el); } catch { /* 只读文档等场景：退回纯 path */ }
+  return serializeAnchor(el);
 }

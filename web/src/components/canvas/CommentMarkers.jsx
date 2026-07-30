@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { findElementByAnchor } from '../../lib/html-utils.js';
+import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
 
 /**
  * CommentMarkers — 已评论元素的视觉标记（橙色框 + 右上角"已评论"标签）
@@ -76,9 +77,8 @@ export default function CommentMarkers({
   if (!doc) return null;
 
   const iframeRect = iframe.getBoundingClientRect();
-  const offsetParent = iframe.offsetParent;
-  if (!offsetParent) return null;
-  const containerRect = offsetParent.getBoundingClientRect();
+  const base = overlayBase(iframe);
+  if (!base) return null;
 
   const win = iframe.contentWindow;
   const innerW = win?.innerWidth ?? iframeRect.width / zoom;
@@ -99,8 +99,7 @@ export default function CommentMarkers({
           return null;
         }
 
-        const top = (iframeRect.top + elRect.top * zoom) - containerRect.top;
-        const left = (iframeRect.left + elRect.left * zoom) - containerRect.left;
+        const { top, left } = toOverlayXY(base, elRect.left, elRect.top, zoom);
         const width = elRect.width * zoom;
         const height = elRect.height * zoom;
 

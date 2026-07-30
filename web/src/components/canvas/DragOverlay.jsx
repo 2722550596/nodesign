@@ -31,6 +31,7 @@ import {
   computeSmartSpacing,
 } from '../../lib/drag-intent.js';
 import { isInsideReactMount } from './DirectEditBridge.js';
+import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
 
 const GHOST_COLOR = 'rgba(45, 36, 24, 0.85)';        // 跟 EditOverlay 一致的深棕
 const CARET_COLOR = '#3a7afe';                        // 亮蓝（区别于评论橙）
@@ -482,14 +483,13 @@ export default function DragOverlay({
 
   const iframe = iframeRef.current;
   const iframeRect = iframe.getBoundingClientRect();
-  const offsetParent = iframe.offsetParent;
-  if (!offsetParent) return null;
-  const containerRect = offsetParent.getBoundingClientRect();
+  const base = overlayBase(iframe);
+  if (!base) return null;
 
   // 把 iframe 内部坐标 (x, y, w, h) 转 overlay 坐标
   const toOverlay = (x, y, w, h) => ({
-    top:  (iframeRect.top  + y * zoom) - containerRect.top,
-    left: (iframeRect.left + x * zoom) - containerRect.left,
+    top:  base.y + y * zoom,
+    left: base.x + x * zoom,
     width:  w * zoom,
     height: h * zoom,
   });

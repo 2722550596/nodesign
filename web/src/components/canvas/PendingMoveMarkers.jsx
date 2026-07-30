@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { findElementByAnchor } from '../../lib/html-utils.js';
+import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
 
 const PURPLE = '#9c4dcc';
 const PURPLE_GLOW = 'rgba(156, 77, 204, 0.18)';
@@ -57,9 +58,8 @@ export default function PendingMoveMarkers({ edits = [], iframeRef, zoom = 1 }) 
   const doc = iframe.contentDocument;
   if (!doc) return null;
   const iframeRect = iframe.getBoundingClientRect();
-  const offsetParent = iframe.offsetParent;
-  if (!offsetParent) return null;
-  const containerRect = offsetParent.getBoundingClientRect();
+  const base = overlayBase(iframe);
+  if (!base) return null;
   const win = iframe.contentWindow;
   const innerW = win?.innerWidth ?? iframeRect.width / zoom;
   const innerH = win?.innerHeight ?? iframeRect.height / zoom;
@@ -76,8 +76,7 @@ export default function PendingMoveMarkers({ edits = [], iframeRef, zoom = 1 }) 
           elRect.right <= 0 ||
           elRect.left >= innerW
         ) return null;
-        const top = (iframeRect.top + elRect.top * zoom) - containerRect.top;
-        const left = (iframeRect.left + elRect.left * zoom) - containerRect.left;
+        const { top, left } = toOverlayXY(base, elRect.left, elRect.top, zoom);
         const width = elRect.width * zoom;
         const height = elRect.height * zoom;
         const targetLabel = edit.aiContext?.targetContainerTag

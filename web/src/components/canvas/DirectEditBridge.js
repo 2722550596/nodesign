@@ -11,7 +11,7 @@
  *   - detachAll：清理一切
  */
 
-import { serializeAnchor } from '../../lib/html-utils.js';
+import { serializeStableAnchor } from '../../lib/html-utils.js';
 
 const STATE_KEY = '__nodesignBridgeState';
 
@@ -62,7 +62,7 @@ export function attachEditMode(iframe, { onTextEdit, onSelect } = {}) {
       cleanup();
       if (newText !== oldText) {
         onTextEdit?.({
-          anchor: serializeAnchor(el),
+          anchor: serializeStableAnchor(el),
           oldText,
           newText,
         });
@@ -91,8 +91,9 @@ export function attachEditMode(iframe, { onTextEdit, onSelect } = {}) {
       onSelect?.({ anchor: null });
       return;
     }
+    // 稳定锚点：选中会被评论沿用，纯位置式 path 活不过一次拖拽
     onSelect?.({
-      anchor: serializeAnchor(el),
+      anchor: serializeStableAnchor(el),
     });
   };
 
