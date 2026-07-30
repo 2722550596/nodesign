@@ -8,18 +8,32 @@ export function newId(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/**
+ * 时间戳 → Date。SQLite 的 `datetime('now')` 落的是 **UTC 但不带时区标记**的
+ * "YYYY-MM-DD HH:MM:SS"，JS 按规范会把这种格式当**本地时间**解析——东八区就凭空
+ * 差 8 小时（实测项目卡片上 6 小时前的东西显示成"14 小时前"，新建的东西因为落在
+ * 未来一直显示"刚刚"）。这里显式补 'Z' 按 UTC 解。带 T / 带时区的 ISO 串原样走。
+ */
+function parseStamp(value) {
+  if (!value) return null;
+  const s = String(value);
+  const naiveSqlite = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s);
+  const d = new Date(naiveSqlite ? `${s.replace(' ', 'T')}Z` : s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 /** ISO → "YYYY-MM-DD" */
 export function formatDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
+  const d = parseStamp(iso);
+  if (!d) return '';
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** "刚刚" / "X 分钟前" / "X 小时前" / "X 天前" */
 export function timeAgo(iso) {
-  if (!iso) return '';
-  const ms = Date.now() - new Date(iso).getTime();
+  const at = parseStamp(iso);
+  if (!at) return '';
+  const ms = Date.now() - at.getTime();
   if (isNaN(ms)) return '';
   const m = Math.floor(ms / 60000);
   if (m < 1) return '刚刚';
