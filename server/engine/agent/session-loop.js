@@ -701,7 +701,9 @@ export async function runSession({
       askUserQuestion: { previewFormat: 'html' },
     },
 
-    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId }),
+    // projectId 要传：PostToolUseFailure 记问题库时用它标归属（漏传的话
+    // issues 行的 project_id 全是 null，事后追不回是哪个项目踩的）
+    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId, projectId }),
 
     mcpServers: {
       nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx }),

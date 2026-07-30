@@ -3,6 +3,7 @@ import Home from './routes/Home.jsx';
 import ProjectWorkspace from './routes/ProjectWorkspace.jsx';
 import SkillList from './routes/SkillList.jsx';
 import Showcase from './routes/Showcase.jsx';
+import Issues from './routes/Issues.jsx';
 import ToastContainer from './components/ui/ToastContainer.jsx';
 import GlobalDialogs from './components/ui/GlobalDialogs.jsx';
 
@@ -21,6 +22,8 @@ const router = createBrowserRouter([
   // 固化出来的 skill。/templates 是旧地址，留个重定向别让老链接 404。
   { path: '/gallery', element: <Showcase /> },
   { path: '/templates', element: <Navigate to="/gallery" replace /> },
+  // harness 问题库（admin 用；后端 adminGuard 兜底，非 admin 进来只会看到空列表）
+  { path: '/admin/issues', element: <Issues /> },
 ]);
 
 export default function App() {

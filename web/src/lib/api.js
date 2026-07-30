@@ -72,6 +72,20 @@ export const Me = {
   removeShowcase: (id) => jsonRequest('DELETE', `/api/me/showcase/${id}`),
 };
 
+// ── Admin（仅 admin 可见；后端 adminGuard 兜底）──
+export const Admin = {
+  /** harness 问题库：auto=工具失败自动记录，agent=report_friction 主动报 */
+  issues: ({ status, source } = {}) => {
+    const qs = new URLSearchParams();
+    if (status) qs.set('status', status);
+    if (source) qs.set('source', source);
+    const q = qs.toString();
+    return jsonRequest('GET', `/api/admin/issues${q ? `?${q}` : ''}`);
+  },
+  setIssueStatus: (id, status) => jsonRequest('PATCH', `/api/admin/issues/${id}`, { status }),
+  removeIssue: (id) => jsonRequest('DELETE', `/api/admin/issues/${id}`),
+};
+
 // ── Canvas（H3：session-scoped）──
 export const Canvas = {
   read: async (pid, sid) => {

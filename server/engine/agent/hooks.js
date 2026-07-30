@@ -49,6 +49,7 @@ import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
 import { resolveModelContextWindow } from './model-context.js';
+import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
 import {
   setActiveArtifact, getActiveArtifact, listWorkspaceArtifacts,
@@ -110,7 +111,7 @@ function loadToolPrompt(name) {
  * @param {string} [deps.projectId]
  * @returns {Partial<Record<string, Array<{ matcher?: string, hooks: Function[], timeout?: number }>>>}
  */
-export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId: _projectId } = {}) {
+export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId } = {}) {
   return {
     // ── P0+ stage 1（不动）──
 
@@ -290,7 +291,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // PostToolUseFailure —— 任意工具失败时统一处理：emit 事件 + 给 agent
     // 注入恢复建议（避免重试同样的错）。
     PostToolUseFailure: [{
-      hooks: [makePostToolUseFailureHandler({ ctx })],
+      hooks: [makePostToolUseFailureHandler({ ctx, projectId, sessionId })],
     }],
 
     // SubagentStart / SubagentStop —— 主动捕子代理生命周期。当前只 emit 事件
@@ -1047,7 +1048,7 @@ function makePostToolUseExportHandler({ ctx: _ctx }) {
  * output: PostToolUseFailureHookSpecificOutput (sdk.d.ts:1921)
  *   - additionalContext?: string
  */
-function makePostToolUseFailureHandler({ ctx }) {
+function makePostToolUseFailureHandler({ ctx, projectId, sessionId }) {
   return async (input, _toolUseId, _options) => {
     const tool = input?.tool_name || 'unknown';
     const error = String(input?.error || '').slice(0, 500);
@@ -1059,6 +1060,22 @@ function makePostToolUseFailureHandler({ ctx }) {
 
     // is_interrupt: 用户中断 → 不注入建议（agent 应该停下，不是恢复）
     if (isInterrupt) return {};
+
+    // 自动层问题记录（2026-07-30）：每次真失败按"错误类"累加计数。
+    // 这层不依赖 agent 自觉 —— 它太会兜底了，工具坏了换个姿势就绕过去，
+    // 表面上活儿还是干完的，于是"某个工具本周失败 40 次"没人知道。
+    // fail-soft：记录本身绝不能变成新的故障源。
+    try {
+      recordIssue({
+        source: 'auto',
+        toolName: tool,
+        summary: `${tool} 失败：${error.slice(0, 120)}`,
+        detail: error,
+        projectId,
+        sessionId,
+        signature: signatureOf(`${tool}|${error}`),
+      });
+    } catch { /* ignore */ }
 
     let advice;
     if (tool === 'mcp__nodesign__screenshot_canvas') {

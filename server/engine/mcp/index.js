@@ -49,6 +49,7 @@ import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
+import { makeReportFrictionTool } from './tools/report-friction.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -103,6 +104,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // crystallize_skill — 把探索出来的方法论固化成用户自己的 skill + 作品进橱窗
       // （2026-07-30）。用户明确要求才调；写的是判断依据不是成品 HTML。
       makeCrystallizeSkillTool({ projectId, sessionId, ctx }),
+
+      // report_friction — agent 报 harness 层的摩擦（缺参数 / 返回不合用 / 反复绕路）。
+      // 跟 PostToolUseFailure 的自动记录写同一张 issues 表：自动层记"发生了什么"，
+      // 这层补"为什么难受、期望怎样"。deferred 加载，不占常驻 schema。
+      makeReportFrictionTool({ projectId, sessionId, ctx }),
 
       // web_search — 4 provider 联网搜索（baidu/tavily/exa/zhipu，CJK auto route to baidu）
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。

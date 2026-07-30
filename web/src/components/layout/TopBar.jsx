@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { LogOut } from 'lucide-react';
+import { LogOut, AlertTriangle } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -34,6 +34,11 @@ function UserBadge() {
       padding: `${GAP.xs}px ${GAP.md}px`, background: 'rgba(0,0,0,0.04)', borderRadius: 100,
     }}>
       <span style={{ color: COLOR.text, fontWeight: 500 }}>{authUser.username}</span>
+      {authUser.role === 'admin' && (
+        <Link to="/admin/issues" title="Harness 问题库" style={{ color: COLOR.sub, display: 'flex' }}>
+          <AlertTriangle size={12} />
+        </Link>
+      )}
       {usage && (
         <span title="今日 token 用量" style={{ color: nearCap ? COLOR.warn : COLOR.sub }}>
           {fmt(usage.usedToday)}{usage.limit != null ? ` / ${fmt(usage.limit)}` : ''}

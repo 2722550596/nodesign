@@ -1,19 +1,23 @@
 /**
  * server/api/admin.js — 内测管理接口（2026-07-30）
  *
- * 全部挂 adminGuard（authGuard 已在外层挂好 req.user）。没有管理页 UI，
- * 你用 curl / server/scripts/invite.mjs 操作。
+ * 全部挂 adminGuard（authGuard 已在外层挂好 req.user）。用户/邀请码还是走
+ * curl / server/scripts/invite.mjs；问题库有页面（/admin/issues）。
  *
- *   POST  /api/admin/invites          {maxUses?, expiresInDays?} → 生成邀请码
- *   GET   /api/admin/invites          邀请码列表（含用量）
- *   GET   /api/admin/users            用户列表 + 今日用量
- *   PATCH /api/admin/users/:id        {disabled?, dailyTokenLimit?} 封禁/调限额
+ *   POST   /api/admin/invites          {maxUses?, expiresInDays?} → 生成邀请码
+ *   GET    /api/admin/invites          邀请码列表（含用量）
+ *   GET    /api/admin/users            用户列表 + 今日用量
+ *   PATCH  /api/admin/users/:id        {disabled?, dailyTokenLimit?} 封禁/调限额
+ *   GET    /api/admin/issues           harness 问题库（按次数降序）+ 按工具聚合
+ *   PATCH  /api/admin/issues/:id       {status} open|ack|ignored|closed
+ *   DELETE /api/admin/issues/:id       删掉一条
  */
 
 import express from 'express';
 import { adminGuard } from '../auth/middleware.js';
 import { createInvite, listInvites, listUsers, getUserById, updateUser } from '../auth/users-store.js';
 import { usedTokensToday, limitFor } from '../lib/quota.js';
+import { listIssues, setIssueStatus, removeIssue, issueStats } from '../lib/issues-store.js';
 
 const router = express.Router();
 router.use(adminGuard);
@@ -57,6 +61,38 @@ router.patch('/users/:id', (req, res) => {
     patch.dailyTokenLimit = v === null ? null : Number(v);
   }
   res.json({ user: updateUser(user.id, patch) });
+});
+
+// ── harness 问题库（2026-07-30）──
+// 两个来源写同一张表：auto = PostToolUseFailure 自动记的工具失败；
+// agent = report_friction 主动报的摩擦。默认按次数降序 —— 一眼看到最该修的。
+
+router.get('/issues', (req, res) => {
+  const { status, source } = req.query;
+  const limit = Math.min(500, Number(req.query.limit) || 200);
+  res.json({
+    issues: listIssues({
+      status: typeof status === 'string' && status !== 'all' ? status : undefined,
+      source: typeof source === 'string' && source !== 'all' ? source : undefined,
+      limit,
+    }),
+    stats: issueStats(),
+  });
+});
+
+router.patch('/issues/:id', (req, res) => {
+  try {
+    const issue = setIssueStatus(req.params.id, String(req.body?.status || ''));
+    if (!issue) return res.status(404).json({ error: 'issue not found' });
+    res.json({ issue });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete('/issues/:id', (req, res) => {
+  if (!removeIssue(req.params.id)) return res.status(404).json({ error: 'issue not found' });
+  res.status(204).end();
 });
 
 export default router;
