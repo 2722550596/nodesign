@@ -30,11 +30,53 @@ const upload = multer({
   limits: { fileSize: 16 * 1024 * 1024 },
 });
 
+/**
+ * 文件名净化 —— 保留原名的可读性，只挡掉真正危险的字符。
+ *
+ * 老版本是 ASCII 白名单（`[^A-Za-z0-9._-]` → '_'），中文名进来整个变成一串
+ * 下划线：「品牌规范-2026.pdf」落盘成「_____-2026.pdf」。文件名是 agent 判断
+ * 素材是什么的第一手信号（turn 的 assets 提示里就是列文件名给它看），抹掉等于
+ * 每次上传都丢一层语义。
+ *
+ * 现在按"排除法"：路径分隔符、Windows 保留字符、控制字符、空白 → '_'（agent 会在
+ * Bash 里引用这些路径，带空格容易出事）；开头的点去掉（防隐藏文件）；长度按码点
+ * 截断（别把 UTF-8 从中间切断）。连字符和中文原样留着。
+ * 落盘后仍然只在 assets/ 一层里用，路径逃逸由调用处的 resolve 前缀校验兜底。
+ */
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f/\\:*?"<>|]/g;
+
 function sanitizeFilename(name) {
-  // 只保留 [A-Za-z0-9._-]，替换其它 → '_'。最长 80 字符。
-  return (name || 'unnamed')
-    .replace(/[^A-Za-z0-9._-]/g, '_')
-    .slice(0, 80);
+  const cleaned = String(name || '')
+    .normalize('NFC')
+    .replace(UNSAFE_NAME_CHARS, '_')
+    .replace(/\s+/g, '_')
+    .replace(/^\.+/, '')
+    .trim();
+  if (!cleaned) return 'unnamed';
+  const chars = [...cleaned];
+  if (chars.length <= 80) return cleaned;
+  // 超长时保住扩展名 —— 后面的 mime 判断 / 是否当图上墙全看它
+  const ext = /\.[A-Za-z0-9]{1,10}$/.exec(cleaned)?.[0] || '';
+  return chars.slice(0, 80 - ext.length).join('') + ext;
+}
+
+/**
+ * multer 按 RFC 7578 把 multipart 的 filename 当 latin1 读，中文名到手就是
+ * 「æµè¯.txt」这种乱码。浏览器实际发的是 UTF-8 字节，按 latin1 还原成 Buffer
+ * 再用 UTF-8 解一次就对了。解出来不是合法 UTF-8 时保留原值。
+ */
+function decodeUploadName(raw) {
+  const name = String(raw || '');
+  try {
+    const fixed = Buffer.from(name, 'latin1').toString('utf8');
+    return fixed.includes('\uFFFD') ? name : fixed;
+  } catch { return name; }
+}
+
+/** 单层文件名：不许带路径、不许 '..'、不许以点开头（隐藏文件） */
+function safeSegment(s) {
+  return typeof s === 'string' && !!s && s.length <= 200
+    && !s.includes('/') && !s.includes('\\') && !s.includes('..') && !s.startsWith('.');
 }
 
 router.post('/:pid/assets', upload.single('file'), async (req, res, next) => {
@@ -45,7 +87,8 @@ router.post('/:pid/assets', upload.single('file'), async (req, res, next) => {
     await ensureProjectWorkspace(req.params.pid);
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
 
-    let filename = sanitizeFilename(req.file.originalname);
+    const originalName = decodeUploadName(req.file.originalname);
+    let filename = sanitizeFilename(originalName);
     const targetPath = path.join(assetsDir, filename);
     if (await exists(targetPath)) {
       const ts = Date.now().toString(36);
@@ -61,7 +104,7 @@ router.post('/:pid/assets', upload.single('file'), async (req, res, next) => {
         // 或者用 SDK additionalDirectories 拿到的绝对路径前缀；前端展示用 name 即可。
         path: `../../shared/assets/${filename}`,
         name: filename,
-        originalName: req.file.originalname,
+        originalName,
         size: req.file.size,
         mime: req.file.mimetype,
       },
@@ -106,13 +149,17 @@ router.delete('/:pid/assets/:filename', async (req, res, next) => {
     if (!guardProject(req, res)) return;
 
     const filename = req.params.filename;
-    // 严格防 traversal：只允许 sanitize 后产生的字符集
-    if (!/^[A-Za-z0-9._-]+$/.test(filename)) {
+    // 防 traversal：单层文件名 + resolve 后必须还在 assets/ 里
+    // （不能用 ASCII 白名单——中文名的素材会删不掉）
+    if (!safeSegment(filename)) {
       return res.status(400).json({ error: 'invalid filename' });
     }
 
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
-    const filePath = path.join(assetsDir, filename);
+    const filePath = path.resolve(assetsDir, filename);
+    if (!filePath.startsWith(assetsDir + path.sep)) {
+      return res.status(400).json({ error: 'invalid filename' });
+    }
     try {
       await fs.unlink(filePath);
     } catch (err) {
@@ -366,15 +413,19 @@ function parseNoteFrontmatter(raw) {
   return { body: raw.slice(m[0].length).replace(/^\n+/, ''), sessionId: sm ? sm[1] : null };
 }
 
-/** DELETE /:pid/notes/:filename — 删便签（仅 notes/ 目录，字符集严格校验） */
+/** DELETE /:pid/notes/:filename — 删便签（仅 notes/ 目录，单层名 + 落点校验） */
 router.delete('/:pid/notes/:filename', async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
     const filename = req.params.filename;
-    if (!/^[A-Za-z0-9._-]+\.md$/.test(filename)) {
+    if (!safeSegment(filename) || !filename.endsWith('.md')) {
       return res.status(400).json({ error: 'invalid note filename' });
     }
-    const filePath = path.join(getSharedDir(req.params.pid), 'assets', 'notes', filename);
+    const notesDir = path.join(getSharedDir(req.params.pid), 'assets', 'notes');
+    const filePath = path.resolve(notesDir, filename);
+    if (!filePath.startsWith(notesDir + path.sep)) {
+      return res.status(400).json({ error: 'invalid note filename' });
+    }
     try {
       await fs.unlink(filePath);
     } catch (err) {
