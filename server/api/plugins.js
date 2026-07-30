@@ -32,6 +32,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import {
   getUserPluginsRoot,
   getProjectPluginsRoot,
@@ -208,8 +209,7 @@ export const projectPluginsRouter = express.Router();
 
 projectPluginsRouter.get('/:pid/plugins', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const root = getProjectPluginsRoot(req.params.pid);
     const plugins = await listInstalledPluginsDetailed(root);
     res.json({ plugins });
@@ -218,8 +218,7 @@ projectPluginsRouter.get('/:pid/plugins', async (req, res, next) => {
 
 projectPluginsRouter.post('/:pid/plugins/install', upload.single('file'), async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     if (rejectInvalidFile(req, res)) return;
     const force = req.query.force === 'true';
     const root = getProjectPluginsRoot(req.params.pid);
@@ -230,8 +229,7 @@ projectPluginsRouter.post('/:pid/plugins/install', upload.single('file'), async 
 
 projectPluginsRouter.delete('/:pid/plugins/:name', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const root = getProjectPluginsRoot(req.params.pid);
     const result = await uninstallFromRoot(root, req.params.name);
     res.status(result.status).json(result.body);

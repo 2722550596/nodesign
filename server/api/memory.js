@@ -25,6 +25,7 @@ import express from 'express';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import { getSharedDir, ensureProjectWorkspace } from '../projects/workspace.js';
 
 const router = express.Router();
@@ -62,8 +63,7 @@ async function readDirectoryConcat(dir) {
 // ── GET：列项目所有 agent 的 memory 概要 ──
 router.get('/:pid/memory', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     await ensureProjectWorkspace(req.params.pid);
     const root = memoryRoot(req.params.pid);
@@ -108,8 +108,7 @@ router.get('/:pid/memory', async (req, res, next) => {
 // ── GET /:agentType：读单个 agent 全文 ──
 router.get('/:pid/memory/:agentType', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const agentType = req.params.agentType;
     if (agentType !== '_root' && !AGENT_TYPE_RE.test(agentType)) {
@@ -137,8 +136,7 @@ router.get('/:pid/memory/:agentType', async (req, res, next) => {
 // ── PUT /:agentType：覆盖 memory.md ──
 router.put('/:pid/memory/:agentType', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const agentType = req.params.agentType;
     if (agentType !== '_root' && !AGENT_TYPE_RE.test(agentType)) {
@@ -165,8 +163,7 @@ router.put('/:pid/memory/:agentType', async (req, res, next) => {
 // ── DELETE /:agentType：删整个 agent 子目录 / 顶层文件 ──
 router.delete('/:pid/memory/:agentType', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const agentType = req.params.agentType;
     if (agentType !== '_root' && !AGENT_TYPE_RE.test(agentType)) {

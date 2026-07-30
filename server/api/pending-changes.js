@@ -31,6 +31,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { mutex } from 'async-mutex-lite';
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import { ensureSessionWorkspace, validateSessionId } from '../projects/workspace.js';
 
 const router = express.Router();
@@ -40,18 +41,13 @@ const MAX_ITEMS = 200;
 
 function guard(req, res) {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
   } catch (err) {
     res.status(400).json({ error: err.message || 'invalid pid/sid' });
     return null;
   }
-  const project = getProject(req.params.pid);
-  if (!project) {
-    res.status(404).json({ error: 'project not found' });
-    return null;
-  }
-  return project;
+  // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
+  return guardProject(req, res);
 }
 
 async function readBuf(sessionRoot) {

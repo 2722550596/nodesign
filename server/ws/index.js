@@ -21,7 +21,8 @@ import { getSessionWorkspace, validateSessionId } from '../projects/workspace.js
 import { withConfigDir } from '../lib/sdk-session.js';
 import { platform } from '../runtime/platform.js';
 import { getProjectBus } from './broker.js';
-import { requestAuthed } from '../auth/session.js';
+import { requestUser } from '../auth/session.js';
+import { userOwnsProject } from '../api/_guard.js';
 import {
   getCurrentTurnRunId,
   hasActiveQuerySession,
@@ -113,11 +114,11 @@ export function setupWS(httpServer) {
   });
 
   httpServer.on('upgrade', (req, socket, head) => {
-    // 登录墙：cookie 无效直接拒（同 /api 守卫；密码未配置时 requestAuthed 恒 true）
-    if (!requestAuthed(req)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      return socket.destroy();
-    }
+    // 登录墙（2026-07-30 多用户）：解析身份而非布尔。cookie 无效不再写 HTTP 401
+    // 拒 upgrade —— 浏览器拿不到 upgrade 阶段的状态码，只见 close 1006，前端
+    // ws-client 会无限指数退避重连。改为完成握手后 close(4401)，前端把它列为
+    // fatal code → 停止重连并回登录页。
+    const user = requestUser(req);
 
     let url;
     try {
@@ -140,9 +141,14 @@ export function setupWS(httpServer) {
       return socket.destroy();
     }
 
-    if (!getProject(pid)) {
-      socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
-      return socket.destroy();
+    // 身份或归属不对 → 握手后 4401 关闭（同一个 code：外人不该分得清
+    // "没登录"和"不是你的项目"）
+    const project = getProject(pid);
+    if (!user || !userOwnsProject(user, project)) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.close(4401, 'unauthorized');
+      });
+      return;
     }
 
     // ?since=N — 客户端最后看到的 EventBus seq；server 通过 buffer 回放 (since, _seq] 段

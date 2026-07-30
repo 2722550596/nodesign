@@ -7,6 +7,11 @@ import { create } from 'zustand';
  * 不放这里——走每个 /projects/:id 内的 useReducer + Context。
  */
 export const useGlobalStore = create((set) => ({
+  // ── 当前登录用户（2026-07-30 多用户内测）──
+  // AuthGate 登录/status 后写入；{ id, username, role } | null（登录墙关闭时 null）
+  authUser: null,
+  setAuthUser: (u) => set({ authUser: u }),
+
   // ── Toast ──
   toasts: [],
   showToast: (msg, kind = 'info') => set((s) => ({

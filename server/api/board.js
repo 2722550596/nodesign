@@ -11,17 +11,14 @@
 
 import express from 'express';
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import { readBoard, replaceBoard, patchBoard } from '../projects/board-store.js';
 
 const router = express.Router();
 
 function guard(req, res) {
-  validateProjectId(req.params.pid);
-  if (!getProject(req.params.pid)) {
-    res.status(404).json({ error: 'project not found' });
-    return false;
-  }
-  return true;
+  // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
+  return !!guardProject(req, res);
 }
 
 router.get('/:pid/board', async (req, res, next) => {

@@ -787,6 +787,28 @@ export function getSessionIdByRunId(runId) {
 }
 
 /**
+ * 并发闸门数据源（2026-07-30 内测）：此刻真正在跑的 turn 数。
+ * activeQuerySessions 里 currentRunId 非空 = 该 session 有 turn 在飞。
+ * idle 的活跃 session（query 开着等消息）不算并发。
+ */
+export function countRunningTurns() {
+  let n = 0;
+  for (const rec of activeQuerySessions.values()) {
+    if (rec.currentRunId) n += 1;
+  }
+  return n;
+}
+
+/** 此刻正在跑的 turn 的 runId 列表（配额层按 runs.user_id 归属到用户） */
+export function listRunningTurnRunIds() {
+  const ids = [];
+  for (const rec of activeQuerySessions.values()) {
+    if (rec.currentRunId) ids.push(rec.currentRunId);
+  }
+  return ids;
+}
+
+/**
  * 取 inputQueue 当前积压深度（push 但尚未被 SDK pull 的 message 数）。
  * 给前端显示"已排队 N 条"用。
  *

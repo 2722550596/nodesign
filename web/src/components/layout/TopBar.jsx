@@ -1,5 +1,55 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
+
+/**
+ * 用户角标（2026-07-30 多用户内测）：用户名 + 今日用量/限额 + 登出。
+ * 用量拉 /api/me/usage：mount 一次 + 每 90s 轻刷（run.done 不在这层，轮询兜住）。
+ * admin 不显示限额（不限），登录墙关闭（authUser null）整块不渲染。
+ */
+function UserBadge() {
+  const authUser = useGlobalStore(s => s.authUser);
+  const [usage, setUsage] = useState(null);
+  useEffect(() => {
+    if (!authUser) return undefined;
+    let dead = false;
+    const pull = () => {
+      fetch('/api/me/usage').then(r => (r.ok ? r.json() : null))
+        .then(u => { if (!dead && u) setUsage(u); })
+        .catch(() => {});
+    };
+    pull();
+    const t = setInterval(pull, 90_000);
+    return () => { dead = true; clearInterval(t); };
+  }, [authUser]);
+  if (!authUser) return null;
+  const fmt = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+  const nearCap = usage?.limit != null && usage.usedToday >= usage.limit * 0.8;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 8,
+      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+      padding: `${GAP.xs}px ${GAP.md}px`, background: 'rgba(0,0,0,0.04)', borderRadius: 100,
+    }}>
+      <span style={{ color: COLOR.text, fontWeight: 500 }}>{authUser.username}</span>
+      {usage && (
+        <span title="今日 token 用量" style={{ color: nearCap ? COLOR.warn : COLOR.sub }}>
+          {fmt(usage.usedToday)}{usage.limit != null ? ` / ${fmt(usage.limit)}` : ''}
+        </span>
+      )}
+      <button
+        title="登出"
+        onClick={async () => {
+          try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* */ }
+          window.location.reload();
+        }}
+        style={{ border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.sub, display: 'flex', padding: 0 }}
+      ><LogOut size={12} /></button>
+    </span>
+  );
+}
 
 /**
  * TopBar — 顶栏（h: 56px）
@@ -136,6 +186,9 @@ export default function TopBar({ breadcrumb = [], status, actions }) {
 
       {/* Actions */}
       {actions && <div style={{ display: 'flex', alignItems: 'center', gap: GAP.md }}>{actions}</div>}
+
+      {/* 用户角标（用户名 · 今日用量 · 登出）*/}
+      <UserBadge />
     </header>
   );
 }

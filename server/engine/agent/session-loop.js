@@ -29,7 +29,8 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { AgentContext } from './context.js';
 import { Events } from './events.js';
-import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata } from '../runs/store.js';
+import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata, setRunMetrics } from '../runs/store.js';
+import { getProject } from '../../projects/store.js';
 import { randomUUID } from 'node:crypto';
 import {
   registerQuerySession,
@@ -725,6 +726,7 @@ export async function runSession({
       durationMs: 0, durationApiMs: 0, totalCostUsd: 0,
       inputTokens: 0, outputTokens: 0,
       cacheReadTokens: 0, cacheCreateTokens: 0,
+      subagentInputTokens: 0, subagentOutputTokens: 0,
     };
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
@@ -749,10 +751,14 @@ export async function runSession({
   // → startTurn），让 run.start/run.done、AskUserQuestion answer 回路、runs 审计
   // 全部照常工作。前端 activeRun 由 run.start 设置，answer POST 天然有 runId 可用。
   const mintBackgroundTurn = (reason) => {
+    // 归属：后台自发 turn 没有 req.user，用项目 owner（配额/审计口径一致）
+    let ownerId = null;
+    try { ownerId = getProject(projectId)?.ownerId ?? null; } catch { /* 归属查不到不挡后台回合 */ }
     const run = createRun({
       skillId,
       brief: `(后台回合：${reason})`,
       projectId,
+      userId: ownerId,
       metadata: { background: true, mintReason: reason },
     });
     setCurrentTurnRunId(sessionId, run.id);
@@ -769,6 +775,7 @@ export async function runSession({
     if (status === 'success') {
       const artifactPath = await detectArtifact(sharedCtx);
       mergeRunMetadata(runId, { sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters });
+      setRunMetrics(runId, sharedCtx.counters);
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
       sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
       // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
@@ -779,7 +786,12 @@ export async function runSession({
         })
         .catch((err) => console.warn('[auto-name]', err.message));
     } else if (status === 'cancelled') {
-      mergeRunMetadata(runId, { aborted: true, abortReason: info?.reason || 'user_cancel' });
+      // 取消掉的 turn 也烧了 token —— counters 一样落库（配额视角是漏收）
+      mergeRunMetadata(runId, {
+        aborted: true, abortReason: info?.reason || 'user_cancel',
+        sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters,
+      });
+      setRunMetrics(runId, sharedCtx.counters);
       try { markRunFailed(runId, `cancelled: ${info?.reason || 'user_cancel'}`); } catch { /* */ }
       sharedCtx.emit({ type: 'run.cancelled', reason: info?.reason || 'user_cancel' });
     } else if (status === 'error') {
@@ -787,6 +799,7 @@ export async function runSession({
         sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters,
         errorCode: info?.code, errorMessage: info?.message,
       });
+      setRunMetrics(runId, sharedCtx.counters);
       try { markRunFailed(runId, info?.message || 'unknown'); } catch { /* */ }
       sharedCtx.emit(Events.error(info?.message || 'unknown', info?.code, info?.stack));
     }
@@ -879,6 +892,10 @@ export async function runSession({
       if (message.type === 'assistant') emitContextUsage();
 
       if (message.type === 'result') {
+        // 计量断链修复（2026-07-30）：result message 的 usage/total_cost_usd 是
+        // 本 turn 真增量，从前直接丢弃 → runs 表 token counters 常年全 0。
+        // cancelled 也吸收 —— 取消掉的 turn 已经烧了 token，配额要计
+        sharedCtx.absorbResult(message);
         const isCancelled = message.terminal_reason === 'aborted_streaming'
           || message.terminal_reason === 'aborted_tools';
 

@@ -50,7 +50,9 @@ router.get('/', async (req, res, next) => {
     if (pid && typeof pid === 'string') {
       try {
         validateProjectId(pid);
-        if (getProject(pid)) {
+        const proj = getProject(pid);
+        // 多用户（2026-07-30）：project 级 skill 只给项目归属人/admin 看
+        if (proj && (req.user?.role === 'admin' || proj.ownerId === req.user?.id)) {
           const projectPlugins = await listInstalledPluginsDetailed(getProjectPluginsRoot(pid));
           // 拍平 project 级 skills（保留 plugin name 追溯）
           for (const p of projectPlugins) {

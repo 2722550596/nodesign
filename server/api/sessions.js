@@ -25,6 +25,7 @@ import {
   query,
 } from '@anthropic-ai/claude-agent-sdk';
 import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
 import {
   getProjectWorkspace,
@@ -104,9 +105,8 @@ export async function listSessionsForProject(pid) {
 // ── List：自实现（readdir sessions/ + per-sid getSessionInfo）──
 router.get('/:pid/sessions', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const all = await listSessionsForProject(req.params.pid);
 
@@ -121,10 +121,9 @@ router.get('/:pid/sessions', async (req, res, next) => {
 // ── Read：单 session messages ──
 router.get('/:pid/sessions/:sid', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
 
@@ -143,10 +142,9 @@ router.get('/:pid/sessions/:sid', async (req, res, next) => {
 // ── Fork：SDK fork + 复制产物 + mv jsonl 到新 session 子目录 ──
 router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const srcSid = req.params.sid;
     const srcSessionRoot = getSessionWorkspace(req.params.pid, srcSid);
@@ -178,7 +176,11 @@ router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
     } catch (err) {
       console.warn(`[fork] rename ${srcJsonl} → ${newJsonl} failed (${err.code}); searching alt encoded dir`);
       const altParent = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects');
-      const altSubs = await fs.readdir(altParent).catch(() => []);
+      // 多用户（2026-07-30）：兜底扫描收紧到本 pid 的 encoded 目录，
+      // 不再遍历全局（那是唯一一处不按 pid 约束的文件扫描）
+      const pidPrefix = encodeCwdForSDK(path.join(getProjectWorkspace(req.params.pid), 'sessions'));
+      const altSubs = (await fs.readdir(altParent).catch(() => []))
+        .filter(sub => sub.startsWith(pidPrefix));
       for (const sub of altSubs) {
         const candidate = path.join(altParent, sub, `${newSid}.jsonl`);
         try {
@@ -196,10 +198,9 @@ router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
 // ── PATCH：rename / tag ──
 router.patch('/:pid/sessions/:sid', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const { title, tag } = req.body || {};
@@ -232,10 +233,9 @@ router.patch('/:pid/sessions/:sid', async (req, res, next) => {
 //   200 { ok: true, wasActive }
 router.post('/:pid/sessions/:sid/close', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
     const wasActive = hasActiveQuerySession(req.params.sid);
     if (wasActive) closeQuerySession(req.params.sid, 'user_close');
     res.json({ ok: true, wasActive });
@@ -245,10 +245,9 @@ router.post('/:pid/sessions/:sid/close', async (req, res, next) => {
 // ── DELETE：SDK 删 jsonl + rm session 目录（产物 / git） ──
 router.delete('/:pid/sessions/:sid', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
 
@@ -333,10 +332,9 @@ async function removeBoundTaskDirs(pid, sid) {
 // 500 { code: 'REWIND_FAILED' }   临时 query 启动 / rewindFiles 失败
 router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const { userMessageId } = req.body || {};
     if (!userMessageId || typeof userMessageId !== 'string') {

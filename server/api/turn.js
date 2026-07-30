@@ -32,6 +32,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
+import { guardProject, guardRunInProject } from './_guard.js';
 import {
   ensureProjectWorkspace,
   ensureSessionWorkspace,
@@ -48,6 +49,7 @@ import {
   providePlanApprovalDecision,
 } from '../engine/runs/active-runs.js';
 import { AsyncQueue } from '../lib/async-queue.js';
+import { checkQuota, checkConcurrency } from '../lib/quota.js';
 import { getProjectBus } from '../ws/broker.js';
 import { readPendingSummary } from './pending-changes.js';
 import { pendingRewinds } from './sessions.js';
@@ -126,9 +128,8 @@ function emitPermissionModeChanged(pid, sid, mode) {
 
 router.post('/:pid/turn', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const { chat, attachments, skillId, sessionId, permissionMode, requestId, raw } = req.body || {};
     if (!chat || typeof chat !== 'string' || !chat.trim()) {
@@ -198,6 +199,26 @@ router.post('/:pid/turn', async (req, res, next) => {
       return res.status(409).json({ error: 'rewind in progress, retry shortly', code: 'REWIND_BUSY' });
     }
 
+    // ── 内测闸门（2026-07-30）：必须在 202 之前同步判 ──
+    // 日配额：所有 turn 都扣（排队的稍后也烧 token）
+    const quota = checkQuota(req.user);
+    if (!quota.ok) {
+      return res.status(429).json({
+        error: `今日额度已用完（${quota.usedToday.toLocaleString()} / ${quota.limit.toLocaleString()} tokens），明天再来`,
+        code: 'QUOTA_EXCEEDED',
+        usedToday: quota.usedToday,
+        limit: quota.limit,
+      });
+    }
+    // 并发：只拦"会立刻开跑"的 turn；session 正忙时这条消息进排队（既有串行语义，
+    // 不产生新并发）
+    if (!getQuerySession(sid)?.currentRunId) {
+      const gate = checkConcurrency(req.user);
+      if (!gate.ok) {
+        return res.status(429).json({ error: gate.message, code: gate.code });
+      }
+    }
+
     // 取 sessionRoot + 两类 workspace 主动提示：
     //   - pendingSummary（C4）：用户在 chat 间隔做的直接编辑/评论 buffer
     //   - assetsSummary（C8）：./assets/ 里的参考素材（图/文档），新 session 必报，
@@ -252,7 +273,10 @@ router.post('/:pid/turn', async (req, res, next) => {
     }
 
     // 创建 run（pending）— per-turn record，displayText 落 brief 字段做审计
-    const run = createRun({ skillId: finalSkillId, brief: displayText, projectId: project.id });
+    const run = createRun({
+      skillId: finalSkillId, brief: displayText, projectId: project.id,
+      userId: req.user?.id ?? null,
+    });
 
     // Phase A.6：写 LRU 让后续重试同 requestId 拿到一致 (runId, sid)
     // 同时 resolve in-flight Promise 通知正在 await 的并发 POST，5s 后清 in-flight
@@ -536,9 +560,9 @@ async function tryInlineImageAttachment(attachment, sessionRoot) {
  */
 router.post('/:pid/runs/:runId/cancel', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const ok = cancelRun(runId, 'user_cancel');
@@ -573,9 +597,9 @@ router.post('/:pid/runs/:runId/cancel', async (req, res, next) => {
  */
 router.post('/:pid/runs/:runId/answer', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const { toolUseId, answers } = req.body || {};
@@ -617,9 +641,9 @@ router.post('/:pid/runs/:runId/answer', async (req, res, next) => {
  */
 router.post('/:pid/runs/:runId/elicit/:reqId/answer', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId, reqId } = req.params;
     const { action, content } = req.body || {};
@@ -658,9 +682,9 @@ router.post('/:pid/runs/:runId/elicit/:reqId/answer', async (req, res, next) => 
  */
 router.post('/:pid/runs/:runId/rewind', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const { messageId } = req.body || {};
@@ -698,9 +722,9 @@ router.post('/:pid/runs/:runId/rewind', async (req, res, next) => {
  */
 router.post('/:pid/runs/:runId/permission-mode', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const { mode } = req.body || {};
@@ -764,9 +788,9 @@ router.post('/:pid/runs/:runId/permission-mode', async (req, res, next) => {
  */
 router.post('/:pid/runs/:runId/plan-request/:toolUseId/decide', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId, toolUseId } = req.params;
     const { approved } = req.body || {};
@@ -802,9 +826,9 @@ router.post('/:pid/runs/:runId/plan-request/:toolUseId/decide', async (req, res,
  */
 router.post('/:pid/runs/:runId/model', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const { model } = req.body || {};
@@ -846,9 +870,9 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
  */
 router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const { editedPlan, toolUseId } = req.body || {};
@@ -926,9 +950,9 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
  */
 router.post('/:pid/runs/:runId/plan-reject', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
+    if (!guardRunInProject(req, res)) return;
 
     const { runId } = req.params;
     const { toolUseId, reason: reasonRaw } = req.body || {};

@@ -14,6 +14,7 @@ import multer from 'multer';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
@@ -37,8 +38,7 @@ function sanitizeFilename(name) {
 
 router.post('/:pid/assets', upload.single('file'), async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     if (!req.file) return res.status(400).json({ error: 'no file (field name: file)' });
 
     await ensureProjectWorkspace(req.params.pid);
@@ -70,8 +70,7 @@ router.post('/:pid/assets', upload.single('file'), async (req, res, next) => {
 
 router.get('/:pid/assets', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
     let entries;
@@ -103,8 +102,7 @@ router.get('/:pid/assets', async (req, res, next) => {
 // H4b：删 asset 文件
 router.delete('/:pid/assets/:filename', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const filename = req.params.filename;
     // 严格防 traversal：只允许 sanitize 后产生的字符集
@@ -150,8 +148,7 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
  */
 router.get('/:pid/artifacts', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
     const artifacts = [];
@@ -305,8 +302,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
  */
 router.post('/:pid/notes', express.json(), async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const text = String(req.body?.text || '').trim();
     if (!text) return res.status(400).json({ error: 'text required' });
     if (text.length > 20_000) return res.status(400).json({ error: 'note too long (max 20k chars)' });
@@ -347,8 +343,7 @@ function parseNoteFrontmatter(raw) {
 /** DELETE /:pid/notes/:filename — 删便签（仅 notes/ 目录，字符集严格校验） */
 router.delete('/:pid/notes/:filename', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const filename = req.params.filename;
     if (!/^[A-Za-z0-9._-]+\.md$/.test(filename)) {
       return res.status(400).json({ error: 'invalid note filename' });
@@ -390,8 +385,7 @@ function resolveTaskNote(pid, task, filename) {
 /** PUT /:pid/task-notes/:task/:filename — 写/改任务便利贴（用户侧编辑） */
 router.put('/:pid/task-notes/:task/:filename', express.json(), async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const { task, filename } = req.params;
     if (!safeNoteSegment(task) || !safeNoteSegment(filename, { md: true })) {
       return res.status(400).json({ error: 'invalid task/filename' });
@@ -413,8 +407,7 @@ router.put('/:pid/task-notes/:task/:filename', express.json(), async (req, res, 
 /** DELETE /:pid/task-notes/:task/:filename — 删任务便利贴 */
 router.delete('/:pid/task-notes/:task/:filename', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const { task, filename } = req.params;
     if (!safeNoteSegment(task) || !safeNoteSegment(filename, { md: true })) {
       return res.status(400).json({ error: 'invalid task/filename' });
@@ -445,8 +438,7 @@ router.delete('/:pid/task-notes/:task/:filename', async (req, res, next) => {
  */
 router.delete('/:pid/tasks/:name', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
     const name = String(req.params.name || '');
     if (!name || name.includes('/') || name.includes('..') || name.startsWith('.')) {
       return res.status(400).json({ error: 'invalid task name' });
@@ -501,8 +493,7 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     // 会让 CF 判为 DYNAMIC 原样透传（同路由的 .html 就是这么幸免的）。
     // 所以：默认 no-store 兜底一切错误路径，成功路径按类型再覆盖。
     res.setHeader('Cache-Control', 'no-store');
-    validateProjectId(req.params.pid);
-    if (!getProject(req.params.pid)) return res.status(404).json({ error: 'project not found' });
+    if (!guardProject(req, res)) return;
 
     const raw = req.params.subPath;
     let subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');

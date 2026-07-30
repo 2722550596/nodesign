@@ -82,6 +82,38 @@ if (!projectsColNames.has('auto_named')) {
   console.log('[projects/store] projects.auto_named column added');
 }
 
+// 多用户内测（2026-07-30）：项目归属。NULL 的存量行由 bootstrapAuth() 回填 admin
+if (!projectsColNames.has('owner_id')) {
+  db.exec('ALTER TABLE projects ADD COLUMN owner_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_projects_owner_updated ON projects(owner_id, updated_at DESC)');
+  console.log('[projects/store] projects.owner_id column added');
+}
+
+// 多用户内测（2026-07-30）：runs 计量真列 + 归属。原来 usage 全塞 metadata JSON
+// （且值全 0，absorbResult 断链），配额查询要 sum，promote 成真列
+const RUN_METRIC_COLS = [
+  ['user_id', 'TEXT'],
+  ['input_tokens', 'INTEGER'],
+  ['output_tokens', 'INTEGER'],
+  ['cache_read_tokens', 'INTEGER'],
+  ['cache_create_tokens', 'INTEGER'],
+  ['total_cost_usd', 'REAL'],
+];
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(runs)').all().map(c => c.name));
+  let added = false;
+  for (const [name, type] of RUN_METRIC_COLS) {
+    if (!cols.has(name)) {
+      db.exec(`ALTER TABLE runs ADD COLUMN ${name} ${type}`);
+      added = true;
+    }
+  }
+  if (added) {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_runs_user_created ON runs(user_id, created_at DESC)');
+    console.log('[projects/store] runs 计量列 + user_id added');
+  }
+}
+
 // ── ID ──
 
 export function newProjectId() {
@@ -109,6 +141,7 @@ function rowToProject(row) {
     description: row.description || null,
     kind: row.kind || 'project',
     autoNamed: !!row.auto_named,
+    ownerId: row.owner_id || null,
     activeSessionId: row.active_session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -117,15 +150,26 @@ function rowToProject(row) {
 
 // ── CRUD ──
 
-/** 列项目（按 updated_at 倒序）。kind 选填：传 'project' / 'quick' 过滤 */
-export function listProjects({ limit = 100, kind } = {}) {
-  if (kind) {
-    const rows = db.prepare(
-      'SELECT * FROM projects WHERE kind = ? ORDER BY updated_at DESC LIMIT ?',
-    ).all(kind, limit);
-    return rows.map(rowToProject);
+/**
+ * 列项目（按 updated_at 倒序）。
+ * @param {object} opts
+ * @param {string|null} opts.owner  **必填**：用户 id 只看自己的；null = 全量
+ *   （admin / 内部调用显式声明）。做成必填是防"漏传就全库泄漏"——kind 的
+ *   默认值语义已经踩过一次这种坑
+ * @param {'project'|'quick'} [opts.kind]
+ */
+export function listProjects({ limit = 100, kind, owner } = {}) {
+  if (owner === undefined) {
+    throw new Error('listProjects: owner 必填（用户 id 或 null=全量）');
   }
-  const rows = db.prepare('SELECT * FROM projects ORDER BY updated_at DESC LIMIT ?').all(limit);
+  const wheres = [];
+  const args = [];
+  if (kind) { wheres.push('kind = ?'); args.push(kind); }
+  if (owner !== null) { wheres.push('owner_id = ?'); args.push(owner); }
+  const whereSql = wheres.length ? `WHERE ${wheres.join(' AND ')}` : '';
+  const rows = db.prepare(
+    `SELECT * FROM projects ${whereSql} ORDER BY updated_at DESC LIMIT ?`,
+  ).all(...args, limit);
   return rows.map(rowToProject);
 }
 
@@ -150,6 +194,7 @@ export function createProject({
   description = null,
   kind = 'project',
   autoNamed = false,
+  ownerId = null,
 }) {
   if (!name || typeof name !== 'string') throw new Error('createProject: name 必填');
   if (kind !== 'project' && kind !== 'quick') {
@@ -158,8 +203,8 @@ export function createProject({
   const id = newProjectId();
   const desc = (typeof description === 'string' && description.trim()) ? description.trim() : null;
   db.prepare(
-    `INSERT INTO projects (id, name, skill_id, description, kind, auto_named) VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(id, name.trim(), skillId, desc, kind, autoNamed ? 1 : 0);
+    `INSERT INTO projects (id, name, skill_id, description, kind, auto_named, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, name.trim(), skillId, desc, kind, autoNamed ? 1 : 0, ownerId);
   return getProject(id);
 }
 

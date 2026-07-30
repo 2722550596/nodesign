@@ -21,6 +21,7 @@ import express from 'express';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import { getSharedDir, ensureProjectWorkspace } from '../projects/workspace.js';
 
 const router = express.Router();
@@ -30,9 +31,8 @@ const INSTRUCTION_MAX_BYTES = 64 * 1024;
 
 router.get('/:pid/instruction', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     // ensureProjectWorkspace 幂等补齐（老 project 第一次进 instruction tab 也能读到）
     await ensureProjectWorkspace(req.params.pid);
@@ -54,9 +54,8 @@ router.get('/:pid/instruction', async (req, res, next) => {
 
 router.put('/:pid/instruction', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const { content } = req.body || {};
     if (typeof content !== 'string') {

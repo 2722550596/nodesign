@@ -29,6 +29,11 @@ async function jsonRequest(method, path, body, opts = {}) {
   }
 
   if (!res.ok) {
+    // 全局 401（2026-07-30 多用户）：cookie 过期/被登出后接口会散落报错，
+    // 这里统一广播，AuthGate 监听后切回登录页 —— 调用方照常拿到 throw
+    if (res.status === 401) {
+      try { window.dispatchEvent(new Event('nd:unauthorized')); } catch { /* SSR/test 环境无 window */ }
+    }
     const err = new Error(data?.error || res.statusText || `HTTP ${res.status}`);
     err.status = res.status;
     err.code = data?.code;

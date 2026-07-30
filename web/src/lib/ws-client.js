@@ -25,6 +25,7 @@ const MAX_BACKOFF_MS = 30_000;
 const FATAL_CLOSE_CODES = new Set([
   1008, // policy violation（含 server 主动拒）
   1011, // server error
+  4401, // 自定义：未登录 / 项目不属于你（2026-07-30 多用户；server 握手后主动关）
   4404, // 自定义：project not found（如果将来 server 用 4xxx 段）
 ]);
 
@@ -118,6 +119,10 @@ export function openProjectWS({ projectId, onEvent, onClose, onStatusChange, get
         // 永久错误 — 不重连
         stopped = true;
         emitStatus('closed');
+        // 4401 = 身份失效/项目不属于你 → 广播给 AuthGate 切回登录页
+        if (e.code === 4401) {
+          try { window.dispatchEvent(new Event('nd:unauthorized')); } catch { /* */ }
+        }
         return;
       }
       emitStatus('reconnecting');

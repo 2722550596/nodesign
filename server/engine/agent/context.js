@@ -181,6 +181,18 @@ export class AgentContext {
     if (failed) this.counters.toolFailures += 1;
   }
 
+  /**
+   * 子代理收尾用量（SDK task_notification.usage）累积（2026-07-30）。
+   * **单独记账，不加进主 inputTokens/outputTokens** —— SDK result message 的
+   * usage 大概率已包含 sidechain 消耗，直接相加会双重计数；这两个字段进
+   * metadata 做可观测（"这轮子代理烧了多少"），配额扣的是主 usage。
+   */
+  absorbSubagentUsage(usage) {
+    if (!usage || typeof usage !== 'object') return;
+    this.counters.subagentInputTokens = (this.counters.subagentInputTokens || 0) + (usage.input_tokens || 0);
+    this.counters.subagentOutputTokens = (this.counters.subagentOutputTokens || 0) + (usage.output_tokens || 0);
+  }
+
   // ── observability ──
 
   snapshot() {

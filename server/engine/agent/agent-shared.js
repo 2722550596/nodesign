@@ -313,6 +313,9 @@ function handleSystemMessage(ctx, msg) {
       break;
 
     case 'task_notification':
+      // 子代理收尾用量单独记账（进 metadata 可观测，不进主 token 列 —— 防止
+      // 与 result.usage 双重计数，详见 context.absorbSubagentUsage）
+      ctx.absorbSubagentUsage?.(msg.usage);
       ctx.emit(Events.taskNotification(
         msg.task_id, msg.status, msg.summary, msg.usage, msg.tool_use_id,
       ));

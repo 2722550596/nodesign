@@ -1332,12 +1332,14 @@ export default function ProjectWorkspace() {
         navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
       }
     } catch (err) {
+      // 429（额度用完 / 并发已满）不是故障，服务端的话术已经很白话，别再包一层"失败"
+      const politeLimit = err.code === 'QUOTA_EXCEEDED' || err.code === 'BUSY';
       setMessages(ms => [...ms, {
         id: newId('msg'),
         role: 'assistant',
-        content: `_⚠️ 发送失败：${err.message}_`,
+        content: politeLimit ? `_${err.message}_` : `_⚠️ 发送失败：${err.message}_`,
       }]);
-      showToast(`发送失败：${err.message}`, 'error');
+      showToast(politeLimit ? err.message : `发送失败：${err.message}`, politeLimit ? 'info' : 'error');
     }
   };
   // 让 handleApplyPendingEdits（在 early-return 之前定义）能查到本 closure 内最新

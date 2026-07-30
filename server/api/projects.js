@@ -13,13 +13,17 @@
 
 import express from 'express';
 import {
-  listProjects, getProject, createProject, updateProject, deleteProject,
-  validateProjectId, listRunsForProject,
+  listProjects, createProject, updateProject, deleteProject,
+  listRunsForProject,
 } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import { ensureProjectWorkspace, removeProjectWorkspace } from '../projects/workspace.js';
 import { disposeProjectBus } from '../ws/broker.js';
 
 const router = express.Router();
+
+/** 列表的归属口径：普通用户只看自己的；admin 看全部 */
+const ownerScope = (req) => (req.user?.role === 'admin' ? null : (req.user?.id ?? null));
 
 const KIND_VALUES = new Set(['project', 'quick']);
 const KIND_QUERY_VALUES = new Set(['project', 'quick', 'all']);
@@ -34,7 +38,7 @@ router.get('/', (req, res, next) => {
       return res.status(400).json({ error: `kind must be project|quick|all (got ${raw})` });
     }
     const effectiveKind = raw === 'all' ? undefined : (raw || 'project');
-    res.json({ projects: listProjects({ kind: effectiveKind }) });
+    res.json({ projects: listProjects({ kind: effectiveKind, owner: ownerScope(req) }) });
   } catch (err) { next(err); }
 });
 
@@ -55,7 +59,10 @@ router.post('/', async (req, res, next) => {
     if (kind != null && !KIND_VALUES.has(kind)) {
       return res.status(400).json({ error: `kind must be project|quick (got ${kind})` });
     }
-    const project = createProject({ name, skillId, description, kind, autoNamed: !!autoNamed });
+    const project = createProject({
+      name, skillId, description, kind, autoNamed: !!autoNamed,
+      ownerId: req.user?.id ?? null,
+    });
     await ensureProjectWorkspace(project.id);
     res.status(201).json({ project });
   } catch (err) { next(err); }
@@ -63,18 +70,16 @@ router.post('/', async (req, res, next) => {
 
 router.get('/:pid', (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
     res.json({ project });
   } catch (err) { next(err); }
 });
 
 router.patch('/:pid', (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
     const patch = {};
     if (typeof req.body?.name === 'string') patch.name = req.body.name.trim();
     if (typeof req.body?.skillId === 'string') patch.skillId = req.body.skillId;
@@ -101,9 +106,8 @@ router.patch('/:pid', (req, res, next) => {
 
 router.delete('/:pid', async (req, res, next) => {
   try {
-    validateProjectId(req.params.pid);
-    const project = getProject(req.params.pid);
-    if (!project) return res.status(404).json({ error: 'project not found' });
+    const project = guardProject(req, res);
+    if (!project) return;
 
     // 级联：先清 workspace 文件，再删 DB row（DB row 删了找不到，先文件后 DB 顺序保险）
     try { await removeProjectWorkspace(req.params.pid); } catch (err) {

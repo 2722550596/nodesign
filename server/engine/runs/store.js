@@ -100,6 +100,14 @@ function rowToRun(row) {
     artifactPath: row.artifact_path,
     error: row.error,
     metadata: safeParseJson(row.metadata, {}),
+    // 归属 + 计量真列（2026-07-30 多用户；列由 projects/store.js 幂等 ALTER 加）
+    projectId: row.project_id ?? null,
+    userId: row.user_id ?? null,
+    inputTokens: row.input_tokens ?? null,
+    outputTokens: row.output_tokens ?? null,
+    cacheReadTokens: row.cache_read_tokens ?? null,
+    cacheCreateTokens: row.cache_create_tokens ?? null,
+    totalCostUsd: row.total_cost_usd ?? null,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     createdAt: row.created_at,
@@ -123,17 +131,38 @@ function safeParseJson(text, fallback) {
  * @param {object} [input.metadata={}]     - 初始元信息（如 client / requestId）
  * @returns {object} 完整 run 对象
  */
-export function createRun({ skillId, brief, projectId = null, metadata = {} }) {
+export function createRun({ skillId, brief, projectId = null, userId = null, metadata = {} }) {
   if (!skillId || typeof skillId !== 'string') throw new Error('createRun: skillId 必填');
   if (!brief || typeof brief !== 'string') throw new Error('createRun: brief 必填');
 
   const id = newRunId();
   db.prepare(`
-    INSERT INTO runs (id, skill_id, brief, project_id, status, metadata)
-    VALUES (?, ?, ?, ?, 'pending', ?)
-  `).run(id, skillId, brief, projectId, JSON.stringify(metadata));
+    INSERT INTO runs (id, skill_id, brief, project_id, user_id, status, metadata)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?)
+  `).run(id, skillId, brief, projectId, userId, JSON.stringify(metadata));
 
   return getRun(id);
+}
+
+/**
+ * 落计量真列（2026-07-30）：turn 收尾时从 ctx.counters 写。列是配额 sum 的
+ * 数据源（metadata JSON 里同样有一份完整 counters 做审计）。
+ */
+export function setRunMetrics(id, {
+  inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens, totalCostUsd,
+} = {}) {
+  db.prepare(`
+    UPDATE runs SET
+      input_tokens = ?, output_tokens = ?,
+      cache_read_tokens = ?, cache_create_tokens = ?,
+      total_cost_usd = ?,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `).run(
+    inputTokens ?? 0, outputTokens ?? 0,
+    cacheReadTokens ?? 0, cacheCreateTokens ?? 0,
+    totalCostUsd ?? 0, id,
+  );
 }
 
 /** 读单条 */

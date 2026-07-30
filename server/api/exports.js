@@ -21,6 +21,7 @@ import path from 'path';
 import os from 'os';
 import JSZip from 'jszip';
 import { validateProjectId, getProject, listRunsForProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import {
   getSessionWorkspace, getSharedDir, validateSessionId,
 } from '../projects/workspace.js';
@@ -36,18 +37,13 @@ const router = express.Router();
 
 function guard(req, res) {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
   } catch (err) {
     res.status(400).json({ error: err.message || 'invalid pid/sid' });
     return null;
   }
-  const project = getProject(req.params.pid);
-  if (!project) {
-    res.status(404).json({ error: 'project not found' });
-    return null;
-  }
-  return project;
+  // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
+  return guardProject(req, res);
 }
 
 function safeFilename(name) {

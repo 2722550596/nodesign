@@ -36,7 +36,10 @@ router.get('/sessions/recent', async (req, res, next) => {
       return res.status(400).json({ error: `kind must be project|quick (got ${kind})` });
     }
 
-    const projects = listProjects({ kind, limit: 200 });
+    // 多用户（2026-07-30）：这是唯一的跨项目聚合口，必须按归属过滤，
+    // 否则别人的会话标题/摘要从这里横向漏出去
+    const owner = req.user?.role === 'admin' ? null : (req.user?.id ?? null);
+    const projects = listProjects({ kind, limit: 200, owner });
 
     // 并行拿每个 project 的 sessions
     const perProject = await Promise.all(projects.map(async (p) => {

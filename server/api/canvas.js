@@ -19,6 +19,7 @@ import express from 'express';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { validateProjectId, getProject } from '../projects/store.js';
+import { guardProject } from './_guard.js';
 import {
   getSessionWorkspace, ensureSessionWorkspace, validateSessionId,
   commitWorkspace, listHistory, revertWorkspace,
@@ -33,18 +34,13 @@ const MAX_HTML_BYTES = 8 * 1024 * 1024; // 8MB
 
 function guard(req, res) {
   try {
-    validateProjectId(req.params.pid);
     validateSessionId(req.params.sid);
   } catch (err) {
     res.status(400).json({ error: err.message || 'invalid pid/sid' });
     return null;
   }
-  const project = getProject(req.params.pid);
-  if (!project) {
-    res.status(404).json({ error: 'project not found' });
-    return null;
-  }
-  return project;
+  // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
+  return guardProject(req, res);
 }
 
 // 单文件 GET（assets/* 子树）—— 让 iframe 里 <img src="assets/generated/x.jpg">
