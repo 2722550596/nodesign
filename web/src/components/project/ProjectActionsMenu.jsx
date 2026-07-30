@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight } from 'lucide-react';
+import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight, RotateCcw } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
 /**
@@ -9,7 +9,7 @@ import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
  */
 export default function ProjectActionsMenu({
   open, onClose, anchorRef,
-  onRename, onDuplicate, onDelete, onHistory, onViewCode,
+  onRename, onDuplicate, onDelete, onHistory, onViewCode, onReload,
   onSaveSnapshot, onOpenSnapshots, snapshotCount = 0,
   onUpgrade, isQuickProject = false,
 }) {
@@ -50,6 +50,13 @@ export default function ProjectActionsMenu({
             onClick={onUpgrade}
             subtle="对话"
           />
+          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
+        </>
+      )}
+      {/* 刷新产物墙：同步失灵时的逃生舱，不是日常动作，2026-07-30 从顶栏收进来 */}
+      {onReload && (
+        <>
+          <Item icon={<RotateCcw size={12} />} label="刷新产物墙" onClick={onReload} />
           <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
         </>
       )}

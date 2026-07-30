@@ -421,9 +421,15 @@ export const Events = {
   // 显的就是 gateway 真正能扛的容量（不是 SDK 内部 compact 触发线）。
   contextUsage: (usage, appModel = null) => {
     // 这里 import 在 file 顶（已加），避免循环依赖问题
-    const realMax = appModel
-      ? (resolveModelContextWindow(appModel) ?? usage.maxTokens)
-      : usage.maxTokens;
+    //
+    // 分母的兜底链只能有一条（2026-07-30）：以前 hooks.js 那个生产者自己写了
+    // 一条更长的（?? rawMaxTokens ?? 256000），两条链在 appModel 缺失时给出不同
+    // 的分母，同一个会话前后两次百分比对不上。合并到这里，256000 那个 kimi 时代
+    // 的常量去掉 —— 拿它当 Claude 会话的分母只会算出个假的高百分比。
+    const realMax = (appModel ? resolveModelContextWindow(appModel) : null)
+      ?? usage.maxTokens
+      ?? usage.rawMaxTokens
+      ?? null;
     const totalTokens = usage.totalTokens;
     const percentage = realMax > 0 ? Math.round((totalTokens / realMax) * 100) : (usage.percentage || 0);
     return {

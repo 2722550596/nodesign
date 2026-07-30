@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Square, Paperclip, Upload } from 'lucide-react';
+import { Send, Square, Upload } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { useDropzone } from '../../lib/useDropzone.js';
 import ComposerTray from './ComposerTray.jsx';
 import SuggestionChip from './SuggestionChip.jsx';
-import PlanModeToggle from './PlanModeToggle.jsx';
+import ComposerMenu from './ComposerMenu.jsx';
 import ModelPicker from './ModelPicker.jsx';
 
 /**
@@ -14,7 +14,7 @@ import ModelPicker from './ModelPicker.jsx';
  *   ┌──────────────────────────────────────┐
  *   │  描述你想做什么…                     │  ← textarea（单独占行，无装饰）
  *   │                                       │
- *   │  [📎]  [深度对齐]              [✈ 发送] │  ← toolbar：附件 / plan-mode toggle / Send
+ *   │  [+]  [Sonnet]                [✈ 发送] │  ← toolbar：展开菜单 / 模型 / Send
  *   └──────────────────────────────────────┘
  *
  * 视觉：
@@ -23,7 +23,11 @@ import ModelPicker from './ModelPicker.jsx';
  *   - Send 按钮：亮黑 #2d2418（DeskSkill 主按钮色）+ 文字"发送" + 飞机图标
  *
  * 2026-05-07：移除 @引用 + AI brief 建议两个未实装占位 icon，避免点击只 toast
- *           "即将推出"的死交互；保留附件 + 深度对齐 toggle 与 QuickEntry/HubInput 三处对齐。
+ *           "即将推出"的死交互。
+ * 2026-07-30：删掉「深度对齐」toggle —— plan mode 现在只由 agent 自己判断该不该进
+ *           （request_plan_mode 工具 → banner → 你点同意），一个常驻的手动开关只是
+ *           让用户替 agent 做一个它更清楚的决定。附件收进 [+] 展开菜单，跟上下文
+ *           查看和手动压缩放在一起。
  */
 export default function ChatComposer({
   onSend, disabled, trayItems, onRemoveTrayItem, onPickFile,
@@ -32,6 +36,13 @@ export default function ChatComposer({
   // disabled 仍兼容（外部可强制禁用，如 hydrateError）但 isRunning 优先决定按钮形态。
   isRunning = false,
   onStop,
+  // [+] 菜单里的上下文分区（ChatPanel 透传）
+  contextUsage = null,
+  systemInfo = null,
+  onCompact,
+  onRefreshUsage,
+  projectId = null,
+  sessionId = null,
 }) {
   const [text, setText] = useState('');
   const ref = useRef(null);
@@ -172,11 +183,15 @@ export default function ChatComposer({
           alignItems: 'center',
           gap: GAP.sm,
         }}>
-          {/* 左：附件 + 深度对齐 toggle */}
-          <IconBtn
-            icon={<Paperclip size={14} />}
-            title="上传附件（图片 / PDF / HTML / 等）"
-            onClick={() => fileInputRef.current?.click()}
+          {/* 左：[+] 展开菜单（附件 / 上下文 / 压缩） */}
+          <ComposerMenu
+            onUpload={() => fileInputRef.current?.click()}
+            usage={contextUsage}
+            info={systemInfo}
+            onCompact={onCompact}
+            onRefreshUsage={onRefreshUsage}
+            isStreaming={isRunning}
+            disabled={disabled}
           />
           <input
             ref={fileInputRef}
@@ -191,12 +206,9 @@ export default function ChatComposer({
             }}
             style={{ display: 'none' }}
           />
-          <div style={{ marginLeft: GAP.xs }}>
-            <PlanModeToggle disabled={disabled} syncToActiveRun />
-          </div>
           {/* 模型 picker：切换从下一条消息生效（服务端空闲时重启 query），
               正在跑时禁用 —— 不给"点了立刻切"的错觉 */}
-          <ModelPicker disabled={disabled || isRunning} />
+          <ModelPicker disabled={disabled || isRunning} projectId={projectId} sessionId={sessionId} />
 
           <div style={{ flex: 1 }} />
 
@@ -250,28 +262,5 @@ export default function ChatComposer({
         </div>
       </div>
     </div>
-  );
-}
-
-function IconBtn({ icon, title, onClick }) {
-  return (
-    <button
-      title={title}
-      onClick={onClick}
-      style={{
-        width: 28, height: 28,
-        borderRadius: 6,
-        color: COLOR.text4,
-        background: 'transparent',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0,
-        cursor: 'pointer',
-        transition: 'background 0.15s, color 0.15s',
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; e.currentTarget.style.color = COLOR.text2; }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.text4; }}
-    >
-      {icon}
-    </button>
   );
 }

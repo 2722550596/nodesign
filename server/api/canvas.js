@@ -383,6 +383,15 @@ router.patch('/:pid/sessions/:sid/config', async (req, res, next) => {
     if (typeof patch !== 'object' || Array.isArray(patch)) {
       return res.status(400).json({ error: 'body must be object' });
     }
+    // model 不能从这条泛用通道改：改模型除了写字段还要让跑着的 query 认账
+    // （空闲时关掉重启），只写文件会让配置和进程各说各话。走
+    // PUT /sessions/:sid/model —— 那条把两步绑在一起。
+    if ('model' in patch) {
+      return res.status(400).json({
+        error: 'model 不能通过 config PATCH 修改，请用 PUT /sessions/:sid/model',
+        code: 'USE_MODEL_ENDPOINT',
+      });
+    }
     const current = await readSessionConfig(sessionRoot);
     const merged = { ...current, ...patch, updatedAt: new Date().toISOString() };
     await fs.writeFile(

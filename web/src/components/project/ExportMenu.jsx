@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare, Globe } from 'lucide-react';
+import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare, Globe, Share2 } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
@@ -81,6 +81,26 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
         zIndex: 50,
       }}
     >
+      {/* 分享排第一（2026-07-30）：对创作者，分享链接和导出文件是同一件事的两种出口，
+          原来它们是顶栏上两个并排按钮，合并成一个菜单省一个常驻元素。 */}
+      {onShare && (
+        <>
+          <button
+            onClick={() => { onClose?.(); onShare(); }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: GAP.sm, width: '100%',
+              padding: `${GAP.sm}px ${GAP.md}px`,
+              background: 'transparent', border: 0, borderRadius: 6, cursor: 'pointer',
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, textAlign: 'left',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            <Share2 size={12} /> 分享链接…
+          </button>
+          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
+        </>
+      )}
       {itemsFor(artifactKind, artifactExports).map(item => {
         const Icon = item.icon;
         return (

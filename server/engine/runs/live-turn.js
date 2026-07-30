@@ -41,6 +41,46 @@ const ENDED_GRACE_MS = 3_000;
 /** @type {Map<string, object>} sessionId → live turn state */
 const liveTurns = new Map();
 
+/**
+ * sessionId → 最近一次 run.context_usage 事件（2026-07-30）
+ *
+ * 跟 liveTurns 分开活着：turn 一结束 liveTurns 就清，但"这个会话现在装了多少上下文"
+ * 在两轮之间照样成立 —— 而那恰恰是用户最想看它的时刻（要不要先压缩再开新活）。
+ *
+ * query 结束也**不清**：关掉标签页就会触发 grace 超时关 session，而下次打开这个会话
+ * 时 SDK 从同一份 jsonl resume，上下文体量基本还是那么大。这时给个带"当前没有活跃
+ * 会话"标注的旧数字（live:false），比一句"还没开始对话"有用得多。只有 query 活着时才向 SDK 现问
+ * （见 GET /sessions/:sid/context-usage），所以准确的那条路一直优先。
+ *
+ * 只活在内存里：进程重启就没了，下一轮 turn 自然补上。
+ */
+const lastUsage = new Map();
+const LAST_USAGE_CAP = 200;
+
+export function getLastContextUsage(sessionId) {
+  return lastUsage.get(sessionId) || null;
+}
+
+/**
+ * 不变量守卫：只记 Events.contextUsage 构造出来的那种形状。
+ *
+ * `run.context_usage` 曾经有两个生产者，字段名对不上：session-loop 每条 assistant
+ * message 后发 { totalTokens, maxTokens, percentage }（前端读这套），hooks.js 的 Stop
+ * handler 每轮收尾发 { used, max, percent, categories }。前端靠 store 的"不覆盖已有值"
+ * 侥幸没显形，但每轮的**最后**一条恰好总是后者，凡是"取最新一条"的下游拿到的都是
+ * 一片 undefined —— 这个记忆层就是这么栽的。两个生产者已经合并成一个构造函数
+ * （2026-07-30），这里留一道守卫：以后再冒出第三种形状，是它被丢掉，不是这里出错数。
+ */
+function rememberUsage(sid, evt) {
+  if (typeof evt.totalTokens !== 'number') return;
+  if (lastUsage.size >= LAST_USAGE_CAP && !lastUsage.has(sid)) {
+    // 先进先出丢一条：进程活得久了不至于攒着所有历史 session
+    const oldest = lastUsage.keys().next().value;
+    if (oldest) lastUsage.delete(oldest);
+  }
+  lastUsage.set(sid, evt);
+}
+
 function truncate(s) {
   if (typeof s !== 'string') return s;
   if (s.length <= MAX_TOOL_TEXT) return s;
@@ -84,11 +124,16 @@ export function getLiveTurnSnapshot(sessionId) {
 
 export function clearLiveTurn(sessionId) {
   liveTurns.delete(sessionId);
+  lastUsage.delete(sessionId);
 }
 
 function fold(evt) {
   const sid = evt.sessionId;
   if (!sid) return;
+
+  // 记在 liveTurns 之外：turn 结束、快照删掉之后，这个数字还要继续给 composer
+  // 的 [+] 菜单用。放在 st 判空之前，快照已经清了也照记。
+  if (evt.type === 'run.context_usage') rememberUsage(sid, evt);
 
   if (evt.type === 'run.start') {
     liveTurns.set(sid, {

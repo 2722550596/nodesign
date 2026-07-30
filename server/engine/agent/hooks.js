@@ -48,7 +48,6 @@ import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
-import { resolveModelContextWindow } from './model-context.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
 import {
@@ -443,20 +442,25 @@ function makeStopReflectionHandler({ ctx, workspaceRoot }) {
           if (query?.getContextUsage) {
             const usage = await query.getContextUsage();
             if (usage && typeof usage.totalTokens === 'number') {
-              const used = usage.totalTokens;
-              // 真实容量按 appModel 查（kimi=256k）；SDK 给的 maxTokens 是 compact
-              // 触发线（autoCompactWindow=230400），不是 gateway 硬上限。
-              const realMax = resolveModelContextWindow(ctx.appModel) ?? usage.maxTokens ?? usage.rawMaxTokens ?? 256000;
-              const percent = realMax > 0 ? Math.round((used / realMax) * 100) : 0;
-              ctx.emit({
-                type: 'run.context_usage',
-                runId: ctx.runId,
-                used, max: realMax, percent,
-                model: ctx.appModel || usage.model,
-                categories: usage.categories,
-              });
+              // 2026-07-30：这里原来手搓了第二种事件体 { used, max, percent, categories }。
+              // 事件名跟 session-loop 那条一样，字段名一个都对不上 —— 前端读的是
+              // totalTokens / maxTokens / percentage，所以这条在前端一直是纯噪音，
+              // 全靠 store 的 merge「不覆盖已有值」才没显形。而每个 turn 的**最后**
+              // 一条 context_usage 恰好总是它，任何"取最新一条"的下游拿到的都是
+              // 一片 undefined。现在统一走 Events.contextUsage，全局只此一种形状。
+              const evt = Events.contextUsage(usage, ctx.appModel);
+              ctx.emit({ ...evt, runId: ctx.runId });
 
-              const hit = [...CONTEXT_USAGE_WARN_LEVELS].reverse().find((l) => percent >= l.percent);
+              const used = evt.totalTokens;
+              const realMax = evt.maxTokens;
+              const percent = evt.percentage;
+
+              // realMax 有可能是 null（appModel 认不出、SDK 也没给容量）——
+              // 那时 percentage 退回 SDK 自己的值，但下面的文案要拿 realMax 做减法，
+              // 算不出容量就不提醒（宁可不说，也别说个编的数字）
+              const hit = (Number.isFinite(realMax) && realMax > 0)
+                ? [...CONTEXT_USAGE_WARN_LEVELS].reverse().find((l) => percent >= l.percent)
+                : null;
               if (hit) {
                 const usedStr = used.toLocaleString();
                 const maxStr = realMax.toLocaleString();

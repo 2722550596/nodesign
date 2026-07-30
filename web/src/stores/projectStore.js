@@ -46,6 +46,23 @@ export const useProjectStore = create((set, get) => ({
   },
 
   /**
+   * 整体替换 contextUsage（含置 null）。
+   *
+   * merge 版本永远只叠加，切会话时上一场的数字会留在原地当成这一场的 ——
+   * contextByProject 是按 pid 存的，而上下文是按 session 算的。切 session 必须
+   * 先清（传 null），再由 /sessions/:sid/context-usage 填这一场的真值。
+   */
+  setProjectContextUsage: (pid, usage) => {
+    if (!pid) return;
+    set((s) => ({
+      contextByProject: {
+        ...s.contextByProject,
+        [pid]: { ...(s.contextByProject[pid] || {}), contextUsage: usage || null },
+      },
+    }));
+  },
+
+  /**
    * Merge contextUsage —— partial 中 null/undefined 字段不覆盖已有值。
    * eg run.context_usage 偶尔少传 messageBreakdown，旧值保留。
    */

@@ -95,9 +95,43 @@ function groupKey(_index, g) {
   return `m-${g.message?.id || _index}`;
 }
 
+/**
+ * 流式占位行（2026-07-30）：agent 在跑时的状态原来挂在会话头上，可是回答出现在
+ * 消息流**底部** —— 用户要往上跳一次视线才知道它还活着。挪到流尾以后，状态就长在
+ * 正文将要出现的地方，正文一到它就被顶掉。
+ *
+ * 副作用是会话头静息态和流式态完全一样，不再有随状态闪烁的 chrome。
+ * tokens 是后端 thinking 心跳的累计量，是"服务还活着"的唯一证据，保留。
+ */
+function PendingRow({ show, active, tokens }) {
+  if (!show) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: GAP.sm,
+      padding: `${GAP.sm}px ${GAP.lg}px ${GAP.lg}px`,
+      fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+    }}>
+      <span
+        title={active ? 'agent 正在输出' : 'agent 在 turn 内但暂无输出（深度思考 / 长工具 / 外部资源）'}
+        style={{
+          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          background: active ? COLOR.success : COLOR.sub,
+          animation: active ? 'pulse 1.2s ease-in-out infinite' : 'none',
+          transition: 'background 0.3s ease',
+        }}
+      />
+      {tokens != null && (
+        <span>思考中 · ~{tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tok</span>
+      )}
+    </div>
+  );
+}
+
 export default function MessageList({
   messages = [],
   isStreaming = false,
+  thinkingTokens = null,
+  agentActive = false,
   projectId,
   sessionId,
   onCanvasReload,
@@ -123,6 +157,7 @@ export default function MessageList({
       itemContent={(_index, g) => g.type === 'timeline'
         ? <TimelineGroup messages={g.items} closed={g.closed} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />
         : <Message message={g.message} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />}
+      components={{ Footer: () => <PendingRow show={isStreaming} active={agentActive} tokens={thinkingTokens} /> }}
     />
   );
 }

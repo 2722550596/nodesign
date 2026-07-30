@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
-import { Share2, Download, MoreHorizontal, FoldVertical, RotateCcw } from 'lucide-react';
+import { Download, MoreHorizontal } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 // 主区两栏固定（左 chat + 右 canvas 占满）；5 个次级 UI = 浮窗 bounds=parent
 // 限制在 canvas section 内（chat / canvas 不再可拖动 — PLAN.md:431 旧决策回归）。
@@ -23,7 +23,6 @@ import UpgradeQuickModal from '../components/project/UpgradeQuickModal.jsx';
 import DirectEditModal from '../components/canvas/DirectEditModal.jsx';
 import PlanReviewCard from '../components/project/PlanReviewCard.jsx';
 import PlanRequestBanner from '../components/project/PlanRequestBanner.jsx';
-import ContextUsageBar from '../components/project/ContextUsageBar.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
 import PickExportModal from '../components/project/PickExportModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
@@ -89,6 +88,7 @@ export default function ProjectWorkspace() {
   // partial event 走 merge 不覆盖已有非空字段。
   const setProjectSystemInfo = useProjectStore(s => s.setProjectSystemInfo);
   const mergeProjectContextUsage = useProjectStore(s => s.mergeProjectContextUsage);
+  const setProjectContextUsage = useProjectStore(s => s.setProjectContextUsage);
   const systemInfo = useProjectStore(s => s.contextByProject[id]?.systemInfo || null);
   const contextUsage = useProjectStore(s => s.contextByProject[id]?.contextUsage || null);
   const showToast = useGlobalStore(s => s.showToast);
@@ -135,6 +135,27 @@ export default function ProjectWorkspace() {
   // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
   const [subagents, setSubagents] = useState({});
   useEffect(() => { setSubagents({}); }, [currentSessionId]);
+
+  // 上下文用量：切会话 / 刷新页面时先清掉（上一场的数字不能当这一场用），再向
+  // 服务端要这个 session 的当前值。run.context_usage 只在 turn 内推，两轮之间和
+  // 刷新之后前端手里是空的 —— 而"要不要先压缩再开新活"恰恰是在这个时候问的。
+  useEffect(() => {
+    let alive = true;
+    setProjectContextUsage(id, null);
+    if (!currentSessionId) return () => { alive = false; };
+    Sessions.contextUsage(id, currentSessionId)
+      .then((u) => { if (alive && u) setProjectContextUsage(id, u); })
+      .catch(() => { /* 拿不到就空着，菜单里显示"还没开始对话" */ });
+    return () => { alive = false; };
+  }, [id, currentSessionId, setProjectContextUsage]);
+
+  /** composer 的 [+] 菜单展开时重新问一次 —— query 活着的话这是 SDK 的现值 */
+  const refreshContextUsage = useCallback(() => {
+    if (!currentSessionId) return;
+    Sessions.contextUsage(id, currentSessionId)
+      .then((u) => { if (u) setProjectContextUsage(id, u); })
+      .catch(() => { /* fail-soft：菜单继续显示手里已有的数字 */ });
+  }, [id, currentSessionId, setProjectContextUsage]);
   // 稳定引用让 ChatPanel/MessageList 下游 React.memo 生效；之前 inline 箭头每次
   // render 都 new function，子组件 props 浅比较永不命中。
   const handleCanvasReload = useCallback(() => setReloadToken(t => t + 1), []);
@@ -501,18 +522,15 @@ export default function ProjectWorkspace() {
       // 跟 handleSend 同步：sidForRequest 优先用 ref（避 React 闭包陈旧）
       const sidForRequest = sessionIdRef.current ?? currentSessionId;
       try {
-        // Plan mode wiring 修复：Home QuickEntry / ProjectHub 都 navigate 到这条
-        // initialMessage 路径，store 里的 planModeEnabled 必须传给 Turn.send，否则
-        // 首条 turn 落进后端时 initialPermissionMode='bypassPermissions'，session
-        // 起在 default mode；用户即便在 Home/Hub 开了 toggle 也无效。
-        const planModeEnabled = useGlobalStore.getState().planModeEnabled;
         const { runId, sessionId: returnedSid } = await Turn.send({
           pid: id,
           chat: text,
           attachments: stateAttachments,
           sessionId: sidForRequest,  // /work 路径 → null（新会话）；/sessions/:sid → 续约
-          permissionMode: planModeEnabled ? 'plan' : undefined,
-          model: useGlobalStore.getState().modelPref || undefined,
+          // 只有**新建会话**才带模型偏好：会话建起来之后模型的真相在服务端的
+          // session-config，picker 直接改那边。每条消息都捎上本地偏好的话，在另一台
+          // 机器上为这个会话选的模型会被本机的旧偏好悄悄改回去。
+          model: sidForRequest ? undefined : (useGlobalStore.getState().modelPref || undefined),
         });
         setCurrentRunId(runId);
         setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
@@ -673,17 +691,11 @@ export default function ProjectWorkspace() {
           setActiveRun({ pid: id, runId: evt.runId });
         }
         break;
-      case 'run.permission_mode_changed': {
-        // 后端 mode 切换（用户 toggle / plan-approve / plan-reject / turn 入口校正 /
-        // agent 进 plan mode 走 SDK setPermissionMode）→ 同步 PlanModeToggle 按钮 visual。
-        // 防"按钮显示状态跟 SDK 实际不一致"——agent 自主进入 plan mode 时 toggle 仍
-        // 显示"关闭"等 UX 错位。
-        // 单 sid 校验：跨 session 事件已被 ws/index.js sid 过滤掉，这里 isStale guard
-        // 兜底（多 tab / WS replay 可能误带）。
-        if (isStale) break;
-        useGlobalStore.getState().setPlanModeEnabled(evt.mode === 'plan');
+      case 'run.permission_mode_changed':
+        // 原来用来同步「深度对齐」toggle 的 visual。toggle 已删（2026-07-30），
+        // 前端不再镜像 mode —— plan mode 期间用户看到的是 PlanRequestBanner /
+        // PlanReviewCard，那两个卡本身就是状态显示。事件保留不处理。
         break;
-      }
       case 'run.queue.depth':
         if (isStale) break;
         // streamInput 模式：inputQueue 积压数变化（push 后 / 处理完一条后）
@@ -835,7 +847,7 @@ export default function ProjectWorkspace() {
       case 'run.context_usage': {
         if (isStale) break;
         // A2.1 后端 loop.js 每个 assistant message 后推一次。
-        // 整条 evt 已是 ContextUsageBar 期望的 liveUsage 形态（events.js
+        // 整条 evt 已是 ContextMeter 期望的 liveUsage 形态（events.js
         // Events.contextUsage 已轻量化）。merge 而非 replace —— partial event 缺字段时不
         // 覆盖已有值（用户反馈"动不动丢失信息"，根因是直接 replace 把上次的 messageBreakdown
         // 等慢字段清掉了）。
@@ -1298,9 +1310,6 @@ export default function ProjectWorkspace() {
       .filter(it => it.type === 'asset' && it.path)
       .map(it => ({ type: 'asset', path: it.path, name: it.name, size: it.size, mime: it.mime }));
 
-    // Phase 3.2：plan-mode toggle 状态决定本次 turn 走 SDK 原生 plan mode
-    const planModeEnabled = useGlobalStore.getState().planModeEnabled;
-
     // Phase B 批次 3：用户主动 recall 的 project memory 拼到 chat 头部
     // <memory-recall> 包裹让 agent 知道这是用户主动注入的记忆而不是普通文本
     const pendingRecalls = useGlobalStore.getState().consumePendingMemoryRecalls();
@@ -1324,8 +1333,8 @@ export default function ProjectWorkspace() {
         attachments,
         // S4：显式传选中的 sessionId；null 时后端识别为"新建 session"
         sessionId: sidForRequest,
-        permissionMode: planModeEnabled ? 'plan' : undefined,
-        model: useGlobalStore.getState().modelPref || undefined,
+        // 同上：已有会话时不带 model（真相在 session-config，picker 直接改那边）
+        model: sidForRequest ? undefined : (useGlobalStore.getState().modelPref || undefined),
       });
       setCurrentRunId(runId);  // 终止生成用
       setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
@@ -1743,7 +1752,8 @@ export default function ProjectWorkspace() {
     <PanelManagerProvider projectId={id} defaultPanels={defaultPanels} panelMeta={panelMeta}>
     <AppShell
       breadcrumb={[
-        { label: '项目', to: '/' },
+        // 「项目」这一级删了（2026-07-30）：左边的 logo 本来就回首页，两个入口指同一处。
+        // 面包屑最多两级 —— 项目名 / 任务名。
         // 项目名这一级就是项目区（点它 = 退回全景），不再单列一个「项目区」——
         // 两个标签指向同一个地方，重复。在工作区里时它可点，已经在项目区时是当前位置。
         boardUi?.focus
@@ -1758,36 +1768,17 @@ export default function ProjectWorkspace() {
         ...(boardUi?.focus
           ? [{
               label: boardUi.focus.title === project.name ? '工作区' : boardUi.focus.title,
-              hint: `${boardUi.focus.count} 项`,
+              // 0 项时不写计数：为零的计数是噪音
+              ...(boardUi.focus.count > 0 ? { hint: `${boardUi.focus.count} 项` } : {}),
             }]
           : []),
       ]}
       actions={
         <>
-          {(systemInfo || contextUsage) && (
-            <ContextUsageBar info={systemInfo} liveUsage={contextUsage} />
-          )}
-          <button
-            style={iconBtnStyle}
-            onClick={() => boardApiRef.current?.reload()}
-            title="刷新产物墙"
-          ><RotateCcw size={13} /></button>
-          {currentSessionId && (
-            <button
-              style={{ ...iconBtnStyle, ...(isStreaming ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
-              disabled={isStreaming}
-              onClick={handleCompact}
-              title={isStreaming ? 'agent 正在跑，先等本轮结束' : '手动压缩上下文（/compact：历史换摘要，给长会话腾空间）'}
-            >
-              <FoldVertical size={13} /> 压缩
-            </button>
-          )}
-          {/* UndoButton (git checkout) 已砍（2026-05-07）—— SDK rewindFiles 通过
-              对话里"回到此处"覆盖所有 undo 场景（含历史 session resume 链路）。
-              git undo 不再必要，且语义跟对话里的精确 undo 重叠混淆。 */}
-          <button style={iconBtnStyle} onClick={() => setShareOpen(true)}>
-            <Share2 size={13} /> 分享
-          </button>
+          {/* 顶栏只留导航和动作两类（2026-07-30 重构）。原来这里还挂着上下文进度条 +
+              model + 5 个会话常量 chip + 刷新 + 压缩 + 分享，一行 21 个元素。
+              上下文属于「这次对话」不属于项目，整组挪进聊天栏 composer 上沿；
+              刷新进 ⋯，分享进导出菜单。留驻判据：每周会主动点的才配占常驻像素。 */}
           <div style={{ position: 'relative' }}>
             <button
               ref={exportBtnRef}
@@ -1802,6 +1793,7 @@ export default function ProjectWorkspace() {
               onExport={handleExport}
               onOpenList={() => setExportsListOpen(true)}
               onPick={() => setPickExportOpen(true)}
+              onShare={() => setShareOpen(true)}
               artifactKind={boardUi?.artifactKind || null}
               artifactExports={boardUi?.artifactExports || null}
               anchorRef={exportBtnRef}
@@ -1819,6 +1811,7 @@ export default function ProjectWorkspace() {
               open={actionsOpen}
               onClose={() => setActionsOpen(false)}
               anchorRef={actionsBtnRef}
+              onReload={() => { setActionsOpen(false); boardApiRef.current?.reload(); }}
               onRename={handleRename}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
@@ -1841,11 +1834,16 @@ export default function ProjectWorkspace() {
         overflow: 'hidden',
       }}>
         {/* 左栏 chat 固定 */}
+        {/* 分界用软投影不用硬线（2026-07-30）：一条 1px 边框是"画了一条线"，
+            右向的淡投影是"这一栏有点厚度"，跟画布那张纸的层次读起来更顺。
+            圆角留给真正浮起来的东西（站点窗 / deck 窗），固定轨道不做成卡片 ——
+            它既不能拖也不能关，浮起来的暗示是假的，还要吃掉本就只有 360 的宽度。 */}
         <aside style={{
           width: 360, flexShrink: 0,
           display: 'flex', flexDirection: 'column',
           background: '#fff',
-          borderRight: `1px solid ${COLOR.border}`,
+          boxShadow: '2px 0 10px rgba(45,36,24,0.05)',
+          zIndex: 1,
           minHeight: 0,
         }}>
           <ChatPanel
@@ -1870,6 +1868,10 @@ export default function ProjectWorkspace() {
             onCloseSession={handleCloseSession}
             onNewChat={() => navigate(`/projects/${id}/work`)}
             hasActiveSession={!!currentSessionId}
+            systemInfo={systemInfo}
+            contextUsage={contextUsage}
+            onCompact={handleCompact}
+            onRefreshUsage={refreshContextUsage}
             projectId={id}
             sessionId={currentSessionId}
             onCanvasReload={handleCanvasReload}

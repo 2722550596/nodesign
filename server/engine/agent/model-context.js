@@ -48,6 +48,39 @@ const APP_MODEL_REAL_WINDOW = {
 };
 
 /**
+ * 前端 picker 能选的模型 —— 放在这里而不是前端硬编码，是因为 id 必须跟上面
+ * 两张表对得上：写错一个字，spoofing 查不到、真实容量查不到，两处都只会静默
+ * 降级（SDK 自己 fallback + 进度条分母掉回 compact 触发线），没人会报错。
+ *
+ * label / desc 是给用户看的短名；null 那一档（跟随全局默认）由前端自己加，
+ * 因为"默认是谁"是运行时的 env，不是这张表的内容。
+ */
+export const SELECTABLE_MODELS = Object.freeze([
+  Object.freeze({
+    id: 'claude-sonnet-5[1m]',
+    label: 'Sonnet',
+    desc: '快 · 日常改稿和铺页够用',
+  }),
+  Object.freeze({
+    id: 'claude-opus-5[1m]',
+    label: 'Opus 5',
+    desc: '前端与审美更强 · 烧订阅额度快得多，重活再开',
+  }),
+]);
+
+/** 短名：给按钮用。认不出就原样返回（宁可长，不要撒谎） */
+export function shortModelLabel(appModel) {
+  if (!appModel) return '';
+  const hit = SELECTABLE_MODELS.find((m) => m.id === appModel);
+  if (hit) return hit.label;
+  if (/opus/i.test(appModel)) return 'Opus';
+  if (/sonnet/i.test(appModel)) return 'Sonnet';
+  if (/haiku/i.test(appModel)) return 'Haiku';
+  if (/^kimi/i.test(appModel)) return 'Kimi';
+  return appModel;
+}
+
+/**
  * 决定 sdkOptions.model 喂什么。未知 model 原样返回（让 SDK 自己 fallback）。
  */
 export function resolveSdkSpoofModel(appModel) {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, XCircle, SquarePen, History } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
+import ContextMeter from './ContextMeter.jsx';
 import TodoPanel from './TodoPanel.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
 
@@ -42,6 +43,10 @@ export default function ChatPanel({
   projectId,                   // Phase B 批次 2：rewindFiles 走 /api/projects/:pid/sessions/:sid/rewind
   sessionId,
   onCanvasReload,              // 回调：rewindFiles 成功后让 iframe bump reloadToken
+  systemInfo = null,           // run.system_init 的会话常量（model / 工具数…）→ ContextMeter popover
+  contextUsage = null,         // run.context_usage 实时用量 → composer 上沿指示条
+  onCompact,                   // 手动 /compact（指示条 ≥85% 时长出入口 + [+] 菜单常驻入口）
+  onRefreshUsage,              // [+] 菜单展开时重问一次用量（两轮之间 WS 不推）
 }) {
   // V2：streaming 状态从 header 移到 Send 按钮，header 不再显示文字。
   // agentProgress 还保留——后续如果想加进度气泡（hover Send 看 last tool）可用。
@@ -101,7 +106,7 @@ export default function ChatPanel({
             border: `1px solid ${COLOR.borderLt}`,
             borderRadius: 6,
             cursor: onOpenSessionList ? 'pointer' : 'default',
-            maxWidth: '60%',
+            flex: 1,
             minWidth: 0,
             transition: 'background 0.15s, border-color 0.15s',
           }}
@@ -127,31 +132,6 @@ export default function ChatPanel({
           <ChevronDown size={12} strokeWidth={1.75} color={COLOR.sub} style={{ flexShrink: 0 }} />
         </button>
 
-        {/* Liveness dot — isStreaming 期间常驻，event 进来时 pulse，2s 静默后转灰静态 */}
-        {isStreaming && (
-          <span
-            title={iconActive ? 'Agent 正在输出' : 'Agent 在 turn 内但暂无输出（深度思考 / 长工具 / 外部资源）'}
-            style={{
-              width: 7, height: 7, borderRadius: '50%',
-              flexShrink: 0,
-              background: iconActive ? COLOR.success : COLOR.sub,
-              animation: iconActive ? 'pulse 1.2s ease-in-out infinite' : 'none',
-              transition: 'background 0.3s ease',
-            }}
-          />
-        )}
-
-        {/* 思考进度 — run.status status='thinking' 心跳（~1s/条，累计 tokens）。
-            有它在跳说明后端活着且模型在思考；正文/工具事件到达即被父级清掉 */}
-        {isStreaming && thinkingTokens != null && (
-          <span style={{
-            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
-            flexShrink: 0, whiteSpace: 'nowrap',
-          }}>
-            思考中 · ~{thinkingTokens >= 1000 ? `${(thinkingTokens / 1000).toFixed(1)}k` : thinkingTokens} tok
-          </span>
-        )}
-
         {/* 开新对话：原来在画布工具槽叫"新任务"（名不副实——它开的是对话通道，
             不是任务文件夹）。2026-07-28 挪到会话头，跟结束会话并排 */}
         {hasActiveSession && onNewChat && (
@@ -167,12 +147,15 @@ export default function ChatPanel({
           </button>
         )}
 
-        {/* 结束本会话：streamInput query 终结 + URL 跳回 /work（前端 state 由 effect reset）
-            仅当有 active session 时显示，避免 /work 路径误触 */}
+        {/* 结束本会话：streamInput query 终结 + URL 跳回 /work（前端 state 由 effect reset）。
+            2026-07-30 想把它收进会话下拉（低频 + 不可逆，跟高频的「新对话」并排容易误点），
+            但它同时是**释放 agent 进程的唯一显式出口**，而内测有每用户并发上限：
+            埋起来 → 用户留一堆活会话 → 撞 429 BUSY 且不知道为什么。等空闲自动回收
+            落地后再移。眼下只降级成图标，不跟「新对话」争视觉重量。 */}
         {hasActiveSession && onCloseSession && (
           <button
             onClick={onCloseSession}
-            title="结束当前会话（终结 agent，session 历史保留可从列表找回）"
+            title="结束当前会话（终结 agent，历史保留，可从会话列表找回）"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: `${GAP.xs}px ${GAP.sm}px`,
@@ -191,8 +174,7 @@ export default function ChatPanel({
               e.currentTarget.style.color = COLOR.sub;
             }}
           >
-            <XCircle size={12} strokeWidth={1.75} />
-            结束会话
+            <XCircle size={13} strokeWidth={1.75} />
           </button>
         )}
       </div>
@@ -224,6 +206,8 @@ export default function ChatPanel({
         onOpenSessionList={onOpenSessionList}
         messages={shownMessages}
         isStreaming={isStreaming}
+        thinkingTokens={thinkingTokens}
+        agentActive={iconActive}
         projectId={projectId}
         sessionId={sessionId}
         onCanvasReload={onCanvasReload}
@@ -272,6 +256,13 @@ export default function ChatPanel({
           已排队 {queueDepth} 条 · agent 跑完当前会自动处理
         </div>
       )}
+      {/* 上下文指示：composer 上沿的一条 hairline，60% 以下零像素（见 ContextMeter） */}
+      <ContextMeter
+        usage={contextUsage}
+        info={systemInfo}
+        onCompact={onCompact}
+        isStreaming={isStreaming}
+      />
       <ChatComposer
         onSend={onSend}
         // disabled 给外部留口（hydrateError 等）；isRunning 单独控 Send/停止 形态
@@ -283,6 +274,12 @@ export default function ChatPanel({
         onPickFile={onPickFile}
         promptSuggestion={promptSuggestion}
         onDismissSuggestion={onDismissSuggestion}
+        contextUsage={contextUsage}
+        systemInfo={systemInfo}
+        onCompact={onCompact}
+        onRefreshUsage={onRefreshUsage}
+        projectId={projectId}
+        sessionId={sessionId}
       />
     </div>
   );

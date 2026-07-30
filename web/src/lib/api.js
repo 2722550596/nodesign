@@ -402,6 +402,17 @@ export const Sessions = {
     const tail = includeSystem ? '?includeSystem=1' : '';
     return jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}${tail}`);
   },
+  /** 这个会话实际跑在哪个模型上 → { model, override, default, options }。
+   *  model = 生效值；override = 会话自己选过的（null 表示跟随全局默认）。 */
+  model: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/model`),
+  /** 设这个会话的模型；传 null 清掉覆盖回到全局默认。服务端顺带让空闲 query 重启。 */
+  setModel: (pid, sid, model) =>
+    jsonRequest('PUT', `/api/projects/${pid}/sessions/${sid}/model`, { model: model ?? null }),
+  /** 按需查这个 session 现在装了多少上下文（composer [+] 菜单展开时打）。
+   *  query 活着就是 SDK 现问的权威值（live:true）；已经结束则是最后记住的一次；
+   *  两者都没有 → null（从没跑过 turn / 服务端重启过）。 */
+  contextUsage: (pid, sid) =>
+    jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/context-usage`),
   /** Fork 出一个新 session，可指定截断点和标题 */
   fork: (pid, sid, { upToMessageId, title } = {}) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/fork`, { upToMessageId, title }),

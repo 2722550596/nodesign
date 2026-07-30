@@ -54,6 +54,7 @@ import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel } from './model-context.js';
+import { resolveSessionModel } from './session-model.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
@@ -308,15 +309,10 @@ export async function runSession({
   // sessionId 传入让 ctx.emit 自动 enrich event.sessionId，WS handler 按 sid 过滤
   // 防多 session / 多 tab 跨 session 串扰（project bus 共享）。
   // model 优先级：调用方显式 > session-config.json（用户在 picker 选的，随会话
-  // 持久）> env 全局默认。session-config 是模型选择的唯一真相源 —— turn.js 收到
-  // body.model 也是先写进 config 再走到这，loop 重启（含 idle 后 resume）不丢选择。
-  let sessionModelPref = null;
-  try {
-    const rawCfg = await fs.readFile(path.join(cwdRoot, 'session-config.json'), 'utf8');
-    const cfg = JSON.parse(rawCfg);
-    if (typeof cfg?.model === 'string' && cfg.model) sessionModelPref = cfg.model;
-  } catch { /* 没有 config / 解析失败：走默认 */ }
-  const model = modelOverride.model || sessionModelPref || process.env.NODESIGN_MODEL || 'kimi-k2.6';
+  // 持久）> env 全局默认。这条链现在只写在 session-model.js 一处 —— 以前它在这里、
+  // turn.js、canvas.js 各有一份写法不同的复制品，对不上的时候没人发现。
+  const { model: resolvedModel } = await resolveSessionModel(cwdRoot);
+  const model = modelOverride.model || resolvedModel;
   const sdkModel = resolveSdkSpoofModel(model);
 
   // appModel env：session-level，由 try 块内 + finally 配对管理。详见 line 558 注释。

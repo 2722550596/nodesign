@@ -48,6 +48,7 @@ import {
   providePlanRequestDecision,
   providePlanApprovalDecision,
 } from '../engine/runs/active-runs.js';
+import { applySessionModel } from '../engine/agent/session-model.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkConcurrency } from '../lib/quota.js';
 import { getProjectBus } from '../ws/broker.js';
@@ -101,12 +102,13 @@ function lruPut(requestId, rec) {
 }
 
 /**
- * Emit run.permission_mode_changed —— 让前端 PlanModeToggle 按钮 visual 跟 SDK
- * 实际 permissionMode 双向同步。所有 mode 切换路径（用户 toggle / plan-approve /
- * plan-reject / turn 入口 mode 校正）调完 setPermissionMode 后都该 emit 一次。
+ * Emit run.permission_mode_changed —— 广播 SDK 实际 permissionMode 的变化。所有
+ * mode 切换路径（plan-approve / plan-reject / turn 入口 mode 校正）调完
+ * setPermissionMode 后都该 emit 一次。
  *
- * 前端 ProjectWorkspace.handleEvent case 'run.permission_mode_changed' 收事件
- * → setPlanModeEnabled(mode === 'plan')，UI toggle 自动反映 SDK 真相。
+ * 前端 2026-07-30 起不再镜像这个事件（「深度对齐」toggle 已删，plan mode 期间的
+ * 状态显示由 PlanRequestBanner / PlanReviewCard 承担）。事件保留给多 tab 观测和
+ * 排障用 —— mode 是 SDK 真相的一部分，不该只活在服务端日志里。
  *
  * @param {string} pid
  * @param {string} sid
@@ -226,29 +228,17 @@ router.post('/:pid/turn', async (req, res, next) => {
     await ensureProjectWorkspace(project.id);
     const sessionRoot = await ensureSessionWorkspace(project.id, sid);
 
-    // 模型选择（可选 body.model）：写进 session-config.json —— 它是模型的唯一
-    // 真相源，session-loop 启动时读它。已有活 query 且**空闲**时把 query 关掉，
-    // 本条消息就会走 startNewRunSession 以新模型 resume（jsonl 对话无损，上下文
-    // 窗口 / appModel / thinking 配置全按新模型重算）。turn 正在跑时不动它 ——
-    // 前端 picker 在运行中是禁用的，这里只是兜底。
+    // 模型选择（可选 body.model）：只用于**新建会话**时把首选模型带进来
+    // （首页 / Hub 那条路，会话还不存在，前端只有 localStorage 偏好）。
+    //
+    // 会话建起来之后模型的真相在 session-config.json，改它走 PUT /sessions/:sid/model。
+    // 这里之所以不再无脑接受 body.model：前端每条消息都带偏好的话，在另一台机器上
+    // 为这个会话选的模型会被本机的旧偏好悄悄改回去 —— 一次发消息顺带改配置，
+    // 用户完全看不见。
     const requestedModel = typeof req.body?.model === 'string' && req.body.model.trim()
       ? req.body.model.trim() : null;
     if (requestedModel) {
-      const cfgPath = path.join(sessionRoot, 'session-config.json');
-      let cfg = {};
-      try { cfg = JSON.parse(await fs.readFile(cfgPath, 'utf8')) || {}; } catch { /* 新 config */ }
-      const prevEffective = cfg.model || process.env.NODESIGN_MODEL || 'kimi-k2.6';
-      if (cfg.model !== requestedModel) {
-        await fs.writeFile(cfgPath, JSON.stringify(
-          { ...cfg, model: requestedModel, updatedAt: new Date().toISOString() }, null, 2), 'utf8');
-      }
-      if (requestedModel !== prevEffective) {
-        const qs = getQuerySession(sid);
-        if (qs && !qs.currentRunId) {
-          closeQuerySession(sid, 'model_change');
-          console.info(`[turn] sid=${sid.slice(0, 8)} model ${prevEffective} → ${requestedModel}, query restarted`);
-        }
-      }
+      await applySessionModel(sid, sessionRoot, requestedModel, 'turn');
     }
 
     const pendingSummary = isNewSession ? { count: 0, summary: '' } : await readPendingSummary(sessionRoot);
@@ -304,11 +294,10 @@ router.post('/:pid/turn', async (req, res, next) => {
       // push 这条 message 进 queue，由 runSession 的 for-await-of 拉走处理。
       // 适用：① 续 chat（agent 已结束上一轮 idle 等）② 用户在 agent 跑时追加消息
       //
-      // permissionMode 校正：用户 cancel 后切了"深度对齐" toggle 时，PlanModeToggle
-      // 看 activeRun=null 跳过了 /permission-mode API（前端 store 切了但 SDK 没切），
-      // pushUserMessage 路径下 SDK 仍按旧 mode 处理新 chat → canUseTool 拦 Write/Edit。
-      // 这里在 push 前对齐 mode 让 SDK 看到用户最新意图。setPermissionMode 是 SDK
-      // 原生 API，可在 turn 边界外调；fail-soft 不阻塞。
+      // permissionMode 校正：请求带的 mode 和 SDK 当前 mode 不一致时（例如上一轮
+      // agent 自己进了 plan mode，用户直接又发了一条普通消息），pushUserMessage 路径
+      // 下 SDK 会按旧 mode 处理新 chat → canUseTool 拦 Write/Edit。这里在 push 前对齐。
+      // setPermissionMode 是 SDK 原生 API，可在 turn 边界外调；fail-soft 不阻塞。
       const querySession = getQuerySession(sid);
       const currentMode = querySession?.currentPermissionMode;
       const desiredMode = initialPermissionMode;
@@ -819,10 +808,14 @@ router.post('/:pid/runs/:runId/plan-request/:toolUseId/decide', async (req, res,
 /**
  * POST /api/projects/:pid/runs/:runId/model
  *
- * 运行时切 model（如 kimi-k2.6 / claude-sonnet-4-6 / claude-opus-4-7）。
- * 前端 model picker 用。Kimi gateway 可用 model 列表受 gateway 限制。
+ * 运行中切 model（SDK query.setModel，当场对下一次 LLM 调用生效）。
  *
- * Body: { model: string }  - 传 null 或 omit 让 SDK 用 default
+ * 2026-07-30：切完**必须同时落 session-config**。原来这条只改运行时不写文件，
+ * 于是"当前这轮是 Opus、下次 resume 变回 Sonnet"，而且界面无从得知；跟另外两条
+ * 写模型的路加起来，同一个事实有三个互不知情的写者。现在统一走 applySessionModel，
+ * 它自己会判断要不要重启空闲 query（这里 query 正在跑，不会重启）。
+ *
+ * Body: { model: string | null }  - null = 清掉覆盖回到全局默认
  */
 router.post('/:pid/runs/:runId/model', async (req, res, next) => {
   try {
@@ -850,8 +843,15 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
       });
     }
 
+    const sid = getSessionIdByRunId(runId);
     await query.setModel(model || undefined);
-    res.json({ ok: true, model });
+    // 运行时切完再落盘：setModel 失败就不该留下"配置说切了"的假象
+    let persisted = null;
+    if (sid) {
+      const sessionRoot = await ensureSessionWorkspace(project.id, sid);
+      persisted = await applySessionModel(sid, sessionRoot, model ?? null, 'runtime');
+    }
+    res.json({ ok: true, model: persisted?.model ?? model, override: persisted?.override ?? null });
   } catch (err) { next(err); }
 });
 

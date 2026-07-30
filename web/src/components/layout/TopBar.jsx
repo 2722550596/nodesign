@@ -1,17 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { LogOut, AlertTriangle } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
- * 用户角标（2026-07-30 多用户内测）：用户名 + 今日用量/限额 + 登出。
- * 用量拉 /api/me/usage：mount 一次 + 每 90s 轻刷（run.done 不在这层，轮询兜住）。
- * admin 不显示限额（不限），登录墙关闭（authUser null）整块不渲染。
+ * 用户角标（2026-07-30 多用户内测；07-30 晚收成头像）
+ *
+ * 原来是「用户名 + 今日用量 + ⚠ + 登出」四件横排，顶栏本来就挤。收成一个头像点开菜单。
+ *
+ * 但**用量警告不能一起收进去**：内测有日限额，撞上了是硬失败（429 + 白话 toast），
+ * 收进 popover 等于毫无预警。所以头像平时安静，接近限额时加一圈警告色描边——
+ * 常驻的只剩"要不要紧"这一个比特，细节点开看。
+ *
+ * 轮询也因此不能改成"打开才拉"（那样描边永远不会亮），只是从 90s 放慢到 5 分钟。
  */
 function UserBadge() {
   const authUser = useGlobalStore(s => s.authUser);
   const [usage, setUsage] = useState(null);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
   useEffect(() => {
     if (!authUser) return undefined;
     let dead = false;
@@ -21,48 +30,100 @@ function UserBadge() {
         .catch(() => {});
     };
     pull();
-    const t = setInterval(pull, 90_000);
+    const t = setInterval(pull, 300_000);
     return () => { dead = true; clearInterval(t); };
   }, [authUser]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
+  }, [open]);
+
   if (!authUser) return null;
   const fmt = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
   const nearCap = usage?.limit != null && usage.usedToday >= usage.limit * 0.8;
+  const initial = (authUser.username || '?').trim().slice(0, 1).toUpperCase();
+
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 8,
-      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-      padding: `${GAP.xs}px ${GAP.md}px`, background: 'rgba(0,0,0,0.04)', borderRadius: 100,
-    }}>
-      <span style={{ color: COLOR.text, fontWeight: 500 }}>{authUser.username}</span>
-      {authUser.role === 'admin' && (
-        <Link to="/admin/issues" title="Harness 问题库" style={{ color: COLOR.sub, display: 'flex' }}>
-          <AlertTriangle size={12} />
-        </Link>
-      )}
-      {usage && (
-        <span title="今日 token 用量" style={{ color: nearCap ? COLOR.warn : COLOR.sub }}>
-          {fmt(usage.usedToday)}{usage.limit != null ? ` / ${fmt(usage.limit)}` : ''}
-        </span>
-      )}
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
       <button
-        title="登出"
-        onClick={async () => {
-          try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* */ }
-          window.location.reload();
+        onClick={() => setOpen(v => !v)}
+        title={authUser.username}
+        style={{
+          width: 26, height: 26, borderRadius: 13,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: FONT_MONO, fontSize: 11, fontWeight: 600,
+          color: COLOR.text2,
+          background: 'rgba(0,0,0,0.045)',
+          border: nearCap ? `1.5px solid ${COLOR.warn}` : '1.5px solid transparent',
+          cursor: 'pointer',
+          padding: 0,
         }}
-        style={{ border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.sub, display: 'flex', padding: 0 }}
-      ><LogOut size={12} /></button>
-    </span>
+      >{initial}</button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: '100%', right: 0, marginTop: 6,
+          minWidth: 176,
+          background: '#fff',
+          border: `1px solid ${COLOR.borderMd}`,
+          borderRadius: 10,
+          boxShadow: '0 12px 32px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
+          padding: GAP.xs,
+          zIndex: 60,
+        }}>
+          <div style={{
+            padding: `${GAP.sm}px ${GAP.md}px`,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text,
+          }}>
+            {authUser.username}
+            {usage && (
+              <div style={{ marginTop: 3, color: nearCap ? COLOR.warn : COLOR.sub, fontSize: 10 }}>
+                今日 {fmt(usage.usedToday)}{usage.limit != null ? ` / ${fmt(usage.limit)}` : ''}
+              </div>
+            )}
+          </div>
+          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px 0` }} />
+          {authUser.role === 'admin' && (
+            <Link to="/admin/issues" onClick={() => setOpen(false)} style={menuItem}>
+              <AlertTriangle size={12} /> Harness 问题库
+            </Link>
+          )}
+          <button
+            onClick={async () => {
+              try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* */ }
+              window.location.reload();
+            }}
+            style={{ ...menuItem, width: '100%', border: 0, background: 'transparent', cursor: 'pointer' }}
+          ><LogOut size={12} /> 登出</button>
+        </div>
+      )}
+    </div>
   );
 }
+
+const menuItem = {
+  display: 'flex', alignItems: 'center', gap: GAP.sm,
+  padding: `${GAP.sm}px ${GAP.md}px`,
+  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+  color: COLOR.text2, textDecoration: 'none',
+  borderRadius: 6,
+  textAlign: 'left',
+};
 
 /**
  * TopBar — 顶栏（h: 56px）
  *
  * @param {object} props
  * @param {Array<{label, to?}>} [props.breadcrumb]  - 面包屑 [{label:'Nodesign', to:'/'}, {label:'项目名'}]
- * @param {object} [props.status]                   - 状态指示 { dot: 'idle'|'running'|'failed', text: '运行中…' }
  * @param {ReactNode} [props.actions]               - 右侧操作区（按钮组）
+ *
+ * 注：原来还有个 status 药丸（运行中 / 上次失败 / 就绪），全仓没有任何路由传过它，
+ * 2026-07-30 删掉。agent 在不在跑由聊天流尾部的占位行说，那儿才是用户看着的地方。
  */
 /**
  * 面包屑单级。三种形态：
@@ -118,7 +179,7 @@ function Crumb({ item, last }) {
   return <span title={item.title} style={{ ...base, ...(last ? {} : {}) }}>{inner}</span>;
 }
 
-export default function TopBar({ breadcrumb = [], status, actions }) {
+export default function TopBar({ breadcrumb = [], actions }) {
   return (
     <header style={{
       height: 56,
@@ -164,26 +225,6 @@ export default function TopBar({ breadcrumb = [], status, actions }) {
             ))}
           </nav>
         </>
-      )}
-
-      {/* Status */}
-      {status && (
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
-          color: status.dot === 'failed' ? COLOR.error : status.dot === 'running' ? COLOR.warn : COLOR.sub,
-          padding: `${GAP.xs}px ${GAP.md}px`,
-          background: status.dot === 'failed' ? 'rgba(184,58,42,0.08)' : status.dot === 'running' ? 'rgba(184,92,26,0.08)' : 'rgba(0,0,0,0.04)',
-          borderRadius: 100,
-        }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: 3,
-            background: status.dot === 'failed' ? COLOR.error : status.dot === 'running' ? COLOR.warn : COLOR.success,
-            animation: status.dot === 'running' ? 'pulse 1.6s ease-in-out infinite' : 'none',
-          }} />
-          {status.text}
-          <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
-        </span>
       )}
 
       {/* Spacer */}

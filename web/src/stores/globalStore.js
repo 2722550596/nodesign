@@ -66,17 +66,10 @@ export const useGlobalStore = create((set) => ({
 
   // 注：pendingImageApproval state 已删除（2026-05-06）—— 见 ImageApprovalBanner 移除说明。
 
-  // ── Phase 3.2：plan-mode toggle ──
-  // ChatComposer 旁边的 segmented control "快速做 / 深度对齐"。开 plan-mode
-  // 时下次 turn 会走 SDK 原生 plan mode（permissionMode='plan' + ExitPlanMode 流程）。
-  // toggle 持久化到 localStorage（用户偏好），单 session 内保持。
-  planModeEnabled: (() => {
-    try { return localStorage.getItem('nodesign:planMode') === '1'; } catch { return false; }
-  })(),
-  setPlanModeEnabled: (enabled) => {
-    try { localStorage.setItem('nodesign:planMode', enabled ? '1' : '0'); } catch { /* ignore */ }
-    set({ planModeEnabled: enabled });
-  },
+  // 注：planModeEnabled（「深度对齐」toggle）已删除（2026-07-30）。plan mode 只剩
+  // agent 自己发起那条路：request_plan_mode → PlanRequestBanner → 用户同意 →
+  // Plan.grantViaPermissionMode 切 SDK mode。手动开关连 localStorage 一起删掉了 ——
+  // 留着状态但没有 UI 关它，等于给开过的人留一个永久开启的 plan mode。
 
   // ── 模型选择（2026-07-29）──
   // Composer 里的 picker。选择随每条消息的 body.model 下发，服务端写进

@@ -40,6 +40,10 @@ import { patchBoard } from '../projects/board-store.js';
 import { platform } from '../runtime/platform.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
+import { getLastContextUsage } from '../engine/runs/live-turn.js';
+import { Events } from '../engine/agent/events.js';
+import { resolveSessionModel, applySessionModel } from '../engine/agent/session-model.js';
+import { SELECTABLE_MODELS } from '../engine/agent/model-context.js';
 
 /**
  * 进行中的 rewind 操作 sid 集合 —— 供 turn.js startNewRunSession 守卫使用，
@@ -136,6 +140,103 @@ router.get('/:pid/sessions/:sid', async (req, res, next) => {
       }),
     );
     res.json({ messages });
+  } catch (err) { next(err); }
+});
+
+/**
+ * ── 上下文用量（按需查询）──
+ *
+ * run.context_usage 是 turn 内推的，turn 一结束前端就只剩一个空值。可用户想看
+ * "现在装了多少、要不要压缩"恰恰是在两轮之间。composer 的 [+] 菜单展开时打这条。
+ *
+ * 两个来源，优先级从高到低：
+ *   1. query 还活着 → 直接向 SDK 现问（streamInput 模式下 query 在 turn 之间不死），
+ *      这是权威值
+ *   2. query 已经没了 → 内存里记着的最后一次事件，标 live:false 让前端说明白
+ * 都没有 → 204，前端显示"还没开始对话"。
+ */
+router.get('/:pid/sessions/:sid/context-usage', async (req, res, next) => {
+  try {
+    validateSessionId(req.params.sid);
+    const project = guardProject(req, res);
+    if (!project) return;
+
+    const sid = req.params.sid;
+    const qs = getQuerySession(sid);
+    if (typeof qs?.query?.getContextUsage === 'function') {
+      try {
+        const usage = await qs.query.getContextUsage();
+        // appModel 决定分母（真实容量 vs SDK 的 compact 触发线），跟 turn 内推的
+        // 事件走同一个构造函数，前端拿到的两份数据形状一致。
+        // 模型从 session-config 现读 —— 原来这里问的是 querySession.ctx?.appModel，
+        // 而那个 ctx 字段从注册起就是 null 且无人填写，那一支永远走不到，分母只能
+        // 掉回 SDK 的 compact 触发线，同一个会话两次读数对不上。
+        const { model: appModel } = await resolveSessionModel(getSessionWorkspace(req.params.pid, sid));
+        if (usage) return res.json({ ...Events.contextUsage(usage, appModel), live: true });
+      } catch (err) {
+        // SDK 拒答不算错（query 正在收尾等）—— 掉到记忆值上，别把菜单打成红的
+        console.warn(`[sessions] getContextUsage failed sid=${sid.slice(0, 8)}: ${err.message}`);
+      }
+    }
+
+    const remembered = getLastContextUsage(sid);
+    if (remembered) return res.json({ ...remembered, live: false });
+    return res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+/**
+ * ── 会话模型 ──
+ *
+ * GET  → { model, override, default, options }
+ *        model    = 这个会话实际会跑的（session-config 的覆盖，没有就是全局默认）
+ *        override = 用户在这个会话里选过的；null 表示「跟随默认」
+ *        options  = 可选清单，来自 model-context.js 那两张映射表旁边 ——
+ *                   前端不再自己硬编码 id，写错一个字只会静默降级没人报错
+ * PUT  → body { model: string | null }，null = 清掉覆盖回到默认
+ *
+ * 为什么单独开一条而不复用 PATCH /config：改模型不只是写字段，还得让**已经跑着的
+ * query 认账**（空闲时关掉，下条消息以新模型 resume）。这两步分开过一次，结果是
+ * 配置说一套、进程跑另一套。
+ */
+router.get('/:pid/sessions/:sid/model', async (req, res, next) => {
+  try {
+    validateSessionId(req.params.sid);
+    const project = guardProject(req, res);
+    if (!project) return;
+    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const { model, override, fallback } = await resolveSessionModel(sessionRoot);
+    res.json({ model, override, default: fallback, options: SELECTABLE_MODELS });
+  } catch (err) { next(err); }
+});
+
+router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
+  try {
+    validateSessionId(req.params.sid);
+    const project = guardProject(req, res);
+    if (!project) return;
+
+    const raw = req.body?.model;
+    if (raw !== null && typeof raw !== 'string') {
+      return res.status(400).json({ error: 'model must be a string or null' });
+    }
+    // 只收清单里的 id：随手传个拼错的 model 进去，SDK 会自己 fallback、真实容量
+    // 查不到，两处都不报错，事后只能从"怎么变慢了"倒推
+    if (typeof raw === 'string' && !SELECTABLE_MODELS.some((m) => m.id === raw)) {
+      return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
+    }
+
+    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const result = await applySessionModel(req.params.sid, sessionRoot, raw, 'picker');
+    const { fallback } = await resolveSessionModel(sessionRoot);
+    res.json({
+      model: result.model,
+      override: result.override,
+      default: fallback,
+      changed: result.changed,
+      restarted: result.restarted,
+      options: SELECTABLE_MODELS,
+    });
   } catch (err) { next(err); }
 });
 
