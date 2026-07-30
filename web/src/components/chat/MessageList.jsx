@@ -133,9 +133,9 @@ export default function MessageList({
 // 三件事讲清楚：怎么开头（可点的起手式，点了填进输入框）、agent 在这儿能干什么、
 // 之前的对话去哪找。文案克制，不做成说明书。
 const STARTERS = [
-  '做一份产品介绍演示文稿，给投资人看',
+  '做一个作品集页面，安静克制一点',
   '把这组图排成一张竖版海报',
-  '梳理一下项目的视觉风格，写进品牌档案',
+  '梳理一下这个项目的视觉风格，写进风格档案',
 ];
 
 function EmptyState({ onOpenSessionList }) {
@@ -148,8 +148,8 @@ function EmptyState({ onOpenSessionList }) {
       fontFamily: FONT_SANS, color: COLOR.sub, textAlign: 'center',
     }}>
       <div style={{ fontSize: FONT_SIZE.sm, lineHeight: 1.7 }}>
-        输入 brief 开始<br />
-        描述你想做什么、给谁看、传达什么。
+        说一句话开始<br />
+        想做什么、什么场合看、想让人感觉到什么。
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', maxWidth: 300 }}>

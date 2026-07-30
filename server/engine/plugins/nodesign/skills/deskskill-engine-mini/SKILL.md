@@ -55,7 +55,7 @@ brief 里读不出场合就问一句 —— 这一步答错，风格做得再好
 
 - `<style id="design-tokens">` 的 `:root` 整组写死（色号、字号、字体链）
 - `record_decision({ topic: 'style-anchor', ... })` 记一句话："这个 deck 的样子是 X"
-- 品牌类项目顺手更新 `agent-memory/brand/memory.md`
+- 风格锚定之后顺手更新 `agent-memory/brand/memory.md`（风格档案）
 
 锚一句话说不出口，说明还没定下来，回去再试一轮。
 

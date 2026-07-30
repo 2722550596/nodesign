@@ -15,7 +15,7 @@ import { MARGIN_X, PROJECT_BAND_Y, PROJECT_CARD_W, PROJECT_CARD_H, POP_IN } from
 const CARDS = [
   { key: 'memory', title: '记忆', icon: BookOpen, hint: 'agent 按需记的长期记忆' },
   { key: 'guide', title: '项目指引', icon: ScrollText, hint: '每次 session 进 system prompt' },
-  { key: 'brand', title: '品牌档案', icon: Palette, hint: '视觉风格基线' },
+  { key: 'brand', title: '风格档案', icon: Palette, hint: '视觉风格基线' },
   { key: 'files', title: '项目文件', icon: Files, hint: 'agent 能直接 Read 的素材' },
 ];
 

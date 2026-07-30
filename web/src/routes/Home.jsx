@@ -113,16 +113,16 @@ export default function Home() {
  */
 const GREETINGS_GENERIC = [
   '今天想做点什么？',
-  '嗨，需要个 deck 吗？',
+  '嗨，想做个什么东西？',
   '说一句，我帮你画出来',
   '灵感来了？敲下来试试',
   '随便聊聊，看能做出什么',
   '把脑子里那张图描述一下',
-  '今天的设计任务是？',
+  '今天想折腾点什么？',
 ];
 const GREETINGS_MORNING = ['早，今天先做哪个？', '早上好 ☕ 想做什么？'];
-const GREETINGS_AFTERNOON = ['下午想啃哪块？', '午后小憩，做点什么？'];
-const GREETINGS_EVENING = ['晚上还有任务？说说看', '深夜灵感最值钱，敲下来'];
+const GREETINGS_AFTERNOON = ['下午想做点什么？', '午后小憩，做点什么？'];
+const GREETINGS_EVENING = ['晚上有想做的吗？说说看', '深夜灵感最值钱，敲下来'];
 
 function pickGreeting() {
   const h = new Date().getHours();
@@ -138,12 +138,12 @@ function pickGreeting() {
  * 那种过程描述更直观。mount 时随机挑一条。
  */
 const PLACEHOLDER_EXAMPLES = [
-  '比如：给团队做一份 Q3 总结 deck',
+  '比如：给我的新歌做一个歌词视觉页',
   '比如：春节活动海报，暖色调',
-  '比如：产品发布会主视觉',
-  '比如：招聘海报，技术岗',
-  '比如：会议邀请函，简洁风',
-  '比如：年终复盘 deck，给老板看',
+  '比如：作品集主页，安静一点的',
+  '比如：同人本的宣传图，暗色系',
+  '比如：一篇长文的阅读页，衬线字',
+  '比如：把这半年做的东西整理成一份 deck',
   '想画个什么？说说看',
   '把脑子里的画面写下来…',
 ];
@@ -765,11 +765,11 @@ function EmptyState({ onCreate }) {
     }}>
       <Sparkles size={32} color={COLOR.dim} style={{ marginBottom: GAP.md }} />
       <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, color: COLOR.text2, marginBottom: GAP.sm }}>
-        还没有标准项目
+        还没有项目
       </div>
       <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginBottom: GAP.lg, lineHeight: 1.6 }}>
-        想长期保持设计风格 → 点「+ 新建项目」<br />
-        只是临时聊一下 → 用上方的输入框
+        一件要做很久、想让风格连贯的东西 → 点「+ 新建项目」<br />
+        只是临时试一下 → 用上方的输入框
       </div>
       <button onClick={onCreate} style={{
         padding: `${GAP.md}px ${GAP.xxl}px`,

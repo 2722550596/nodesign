@@ -39,7 +39,7 @@ export default function InstructionsCard({ projectId }) {
 
   const isEmpty = !content.trim();
   const preview = isEmpty
-    ? '添加项目指引来定制 agent 的设计风格与约束'
+    ? '写一份项目指引，告诉 agent 这个项目要什么、不要什么'
     : content.replace(/^#+ .*\n+/g, '').slice(0, 240);
 
   return (
@@ -116,8 +116,8 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           lineHeight: 1.55,
         }}>
-          AI 进每次 session 自动读这份指令到 system prompt（设计风格、品牌约束、
-          受众、不要做什么）。保存后下一轮对话生效。
+          agent 每次开工都会先读这份（想要的风格、不能碰的东西、给谁看、别做什么）。
+          保存后下一轮对话生效。
           <span style={{ color: COLOR.dim, marginLeft: GAP.sm, fontFamily: FONT_MONO, fontSize: 10 }}>
             shared/.claude/CLAUDE.md
           </span>

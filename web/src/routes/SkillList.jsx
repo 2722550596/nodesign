@@ -21,7 +21,7 @@ import { Plugins, Skills } from '../lib/api.js';
 
 const SCOPE_LABEL = {
   builtin: '内置',
-  user: '用户级',
+  user: '我的',
 };
 const SCOPE_COLOR = {
   builtin: '#4A8A4A',
@@ -87,7 +87,7 @@ export default function SkillList() {
   const handleUninstall = useCallback(async (name) => {
     const ok = await confirm({
       title: '卸载 plugin？',
-      message: `从用户级目录移除 \`${name}\`。文件会被删除，新会话不再加载。`,
+      message: `从你的 skill 库里移除 \`${name}\`。文件会被删除，新会话不再加载。`,
       confirmLabel: '卸载',
       cancelLabel: '取消',
       danger: true,
@@ -141,13 +141,14 @@ export default function SkillList() {
           <h1 style={{
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
             color: COLOR.text, marginBottom: GAP.sm,
-          }}>Skill 注册表</h1>
+          }}>我的 Skill</h1>
           <p style={{
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2,
             lineHeight: 1.6, margin: 0,
           }}>
-            按 SDK plugin convention 组织：一个 plugin 含多个 skill。
-            内置不可卸载；用户级（跨 project）可上传 zip 包安装。Project 级在每个项目的 System 面板里管。
+            skill 是一套做事的方法论，agent 开工前会读。内置的两份管 deck 和站点，卸不掉；
+            你自己的（做完一件东西让 agent 固化下来、或者别人发你的文件）装在这里，所有项目通用。
+            只想给某一个项目用的，在那个项目的 System 面板里装。
           </p>
         </div>
 

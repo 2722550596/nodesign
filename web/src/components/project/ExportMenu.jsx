@@ -14,7 +14,7 @@ const FORMAT_META = {
   pdf:     { icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）' },
   pptx:    { icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
   site:    { icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 图，解压双击就能看' },
-  handoff: { icon: Hammer,       label: '工程交付包',           desc: 'ZIP: HTML + spec + assets + README',
+  handoff: { icon: Hammer,       label: '源码包',               desc: 'ZIP: HTML + spec + assets + README',
              siteDesc: 'ZIP: 整站 + spec + assets + README' },
 };
 
@@ -161,7 +161,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
           >
             <FolderOpen size={14} color={COLOR.text4} style={{ flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>已生成的交付文件</div>
+              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>agent 打过的包</div>
               <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, marginTop: 1 }}>agent 主动 export_handoff 后产出</div>
             </div>
           </button>

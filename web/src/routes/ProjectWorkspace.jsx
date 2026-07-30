@@ -31,7 +31,6 @@ import ElicitationModal from '../components/run/ElicitationModal.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO, STAGE } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { MOCK_DECK_SPEC } from '../mock/deck-spec.js';
 import { newId } from '../lib/helpers.js';
 import { findElementByAnchor } from '../lib/html-utils.js';
 import { serializeForAI } from '../lib/element-semantics.js';
@@ -199,7 +198,10 @@ export default function ProjectWorkspace() {
   const compactWarnedRef = useRef(false);
 
   // ── memo / callback（必须在 early return 之前）──
-  const deckSpec = useMemo(() => MOCK_DECK_SPEC, []);
+  // 设计意图面板一直在渲染一份 mock（"audience: 团队内部"、"首跑 ~30 min" 这种），
+  // 对每个项目都显示同一套编出来的内容，看着像是真读了这个项目的 spec。宁可不显示：
+  // 假的"设计意图"比空白更误导。真 spec.json 在 workspace 里，接通之前这里给 null。
+  const deckSpec = null;
 
   /**
    * 画布拖移工具：用户拖完一个元素 → DragOverlay 把 payload 推上来
@@ -978,7 +980,7 @@ export default function ProjectWorkspace() {
       case 'run.export_built':
         if (isStale) break;
         // MCP export_handoff 调用成功 —— agent 主动打了交付包
-        showToast(`已生成交付包：${evt.path || ''}`, 'success');
+        showToast(`已打好源码包：${evt.path || ''}`, 'success');
         break;
 
       case 'run.download_ready': {
@@ -995,9 +997,9 @@ export default function ProjectWorkspace() {
           document.body.appendChild(a);
           a.click();
           a.remove();
-          showToast(`agent 交付了 ${evt.filename}${evt.note ? ` · ${evt.note}` : ''}`, 'success');
+          showToast(`agent 给了你 ${evt.filename}${evt.note ? ` · ${evt.note}` : ''}`, 'success');
         } catch (err) {
-          showToast(`交付文件下载失败：${err.message}`, 'error');
+          showToast(`下载失败：${err.message}`, 'error');
         }
         break;
       }
@@ -1683,8 +1685,7 @@ export default function ProjectWorkspace() {
   };
   const handleViewCode = () => {
     setActionsOpen(false);
-    console.log('[spec mock]', deckSpec);
-    showToast('spec mock 已 console.log（真 spec.json 在 workspace）', 'info');
+    showToast('spec.json 在 workspace 里，面板还没接真数据', 'info');
   };
 
   // ── snapshot / candidate handlers（P0 占位，noop）──
@@ -1746,7 +1747,7 @@ export default function ProjectWorkspace() {
               onClick: () => boardApiRef.current?.exitToProject(),
               title: '退出任务，回到项目区（会话一起退出，ESC 同效）',
             }
-          : { label: project.name, title: '项目区：记忆 / 指引 / 品牌 / 文件 + 全部工作区' },
+          : { label: project.name, title: '项目区：记忆 / 指引 / 风格 / 文件 + 全部工作区' },
         // 工作区那一级：名字跟项目名撞了就只写「工作区」——首页建的项目由会话摘要
         // 正名，单会话项目里这两个名字天然一样，重复写两遍纯噪音。
         ...(boardUi?.focus

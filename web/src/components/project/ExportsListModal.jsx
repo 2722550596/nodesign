@@ -58,7 +58,7 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
   };
 
   return (
-    <Modal show={show} onClose={onClose} title="已生成的交付文件" width={620}>
+    <Modal show={show} onClose={onClose} title="agent 打过的包" width={620}>
       <div style={{ padding: GAP.xl, paddingBottom: GAP.lg }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -115,7 +115,7 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
             color: COLOR.sub,
           }}>
-            （还没有 agent 生成的交付文件）
+            （agent 还没打过包）
           </div>
         )}
 

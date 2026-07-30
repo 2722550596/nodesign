@@ -7,7 +7,7 @@ import { useGlobalStore } from '../../stores/globalStore.js';
 
 const BRAND_AGENT_TYPE = 'brand';
 
-const TEMPLATE = `# 品牌档案
+const TEMPLATE = `# 风格档案
 
 ## 来源
 （在 chat 里上传 PDF / 截图后让 agent 整理；或手动编辑）
@@ -31,7 +31,7 @@ const TEMPLATE = `# 品牌档案
 \`\`\`
 
 ## 备注 / Don'ts（人类消费）
-- 强调红是主品牌色，不要替换
+- 强调红是这套视觉的主色，不要替换
 - 标题不超过 12 个汉字
 `;
 
@@ -70,7 +70,7 @@ export default function BrandCard({ projectId }) {
 
   const handleExtract = () => {
     showToast(
-      '在 chat 里说：「扫 ./assets/ 抽风格 token，按品牌档案模板写到 .claude/agent-memory/brand/memory.md」',
+      '在 chat 里说：「扫 ./assets/ 抽风格 token，按风格档案模板写到 .claude/agent-memory/brand/memory.md」',
       'info',
     );
   };
@@ -79,7 +79,7 @@ export default function BrandCard({ projectId }) {
     <>
       <div style={cardStyle}>
         <div style={cardHeader}>
-          <span style={cardTitle}>品牌档案</span>
+          <span style={cardTitle}>风格档案</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 3,
@@ -93,7 +93,7 @@ export default function BrandCard({ projectId }) {
             <button
               onClick={() => setEditOpen(true)}
               disabled={loading}
-              title="编辑品牌档案"
+              title="编辑风格档案"
               style={iconBtnStyle}
             >
               <Pencil size={13} />
@@ -109,8 +109,8 @@ export default function BrandCard({ projectId }) {
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
               lineHeight: 1.55,
             }}>
-              上传品牌资料（PDF / 截图）后，让 agent 帮你整理一份风格档案。
-              agent 进 session 时会优先读这份档案，保证视觉风格一致。
+              把喜欢的参考（截图 / PDF / 之前做的东西）传上来，让 agent 整理成一份风格档案。
+              之后每次开工它都先读这份，你的东西看起来才是一套的。
             </div>
             <button
               onClick={handleExtract}
@@ -163,7 +163,7 @@ export default function BrandCard({ projectId }) {
         initialContent={content}
         onSaved={(next) => {
           setContent(next);
-          showToast('品牌档案已保存', 'success');
+          showToast('风格档案已保存', 'success');
         }}
       />
     </>
@@ -289,14 +289,14 @@ function BrandEditModal({ show, onClose, projectId, initialContent, onSaved }) {
   };
 
   return (
-    <Modal show={show} onClose={onClose} title="品牌档案" width={680}>
+    <Modal show={show} onClose={onClose} title="风格档案" width={680}>
       <div style={{ padding: `${GAP.md}px ${GAP.xl}px`, display: 'flex', flexDirection: 'column', gap: GAP.md }}>
         <div style={{
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           lineHeight: 1.55,
         }}>
           markdown 格式。中间的 <code style={{ fontFamily: FONT_MONO, color: COLOR.text2 }}>```json</code> code block 是给
-          agent 读的结构化 token；周围的备注 / Don'ts 是给团队看的。
+          agent 读的结构化 token；周围的备注 / Don'ts 是写给你自己看的。
           <span style={{ color: COLOR.dim, marginLeft: GAP.sm, fontFamily: FONT_MONO, fontSize: 10 }}>
             shared/.claude/agent-memory/brand/memory.md
           </span>

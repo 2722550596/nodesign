@@ -83,7 +83,7 @@ export default function UpgradeQuickModal({ show, onClose, project, onUpgraded }
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            placeholder="给团队看的项目摘要（agent 不读）"
+            placeholder="给自己留的备忘（agent 不读）"
             rows={3}
             maxLength={2000}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_SANS, lineHeight: 1.5 }}

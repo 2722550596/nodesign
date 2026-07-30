@@ -54,18 +54,18 @@ export default function CreateProjectModal({ show, onClose, onCreated }) {
           <input
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="例如：Q3 产品发布会 deck"
+            placeholder="例如：Space Colony 歌词视觉"
             style={inputStyle}
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           />
         </Section>
 
-        <Section label="项目描述（可选 · 给团队看的项目摘要）">
+        <Section label="项目描述（可选 · 只给你自己看的备忘）">
           <textarea
             value={description}
             onChange={e => setDescription(e.target.value)}
-            placeholder="例如：年度发布会主 deck，团队内部协作用"
+            placeholder="例如：这首歌的整套视觉，页面和图都放这里"
             rows={3}
             maxLength={2000}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_SANS, lineHeight: 1.5 }}

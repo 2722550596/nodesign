@@ -41,7 +41,7 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 | `spec.json` | 压缩历史等暗档案（系统写；决策不再进这里，走便利贴） |
 | `design-plan.md` | plan mode 的故事弧（只有走过 plan mode 才有） |
 | `assets/` → shared | 上传素材 + 生成图。**Glob/Grep 不跟软链，对 `assets/*` 返回空**，用每轮注入的素材清单直接 Read，或 `ls assets/` |
-| `agent-memory/` → shared | `memory.md` 用户偏好档（他说"记住…"就 Read 后 Edit 追加，别覆盖）· `brand/memory.md` 品牌档案（锚定风格后写：色号 / 字体链 / 版式语言 / 动效预算）· `auto/` 系统自动记的，**不要碰** |
+| `agent-memory/` → shared | `memory.md` 用户偏好档（他说"记住…"就 Read 后 Edit 追加，别覆盖）· `brand/memory.md` 风格档案（锚定风格后写：色号 / 字体链 / 版式语言 / 动效预算）· `auto/` 系统自动记的，**不要碰** |
 | `skills/` `agents/` → shared | 项目级自定义 skill / 子代理 |
 | `exports/` | export_handoff 的落点 |
 | `.claude/CLAUDE.md` | 项目指引。用户点头才写，别自作主张 |
@@ -80,7 +80,7 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 
 ## 用户的界面
 
-一张桌面。项目区看全部任务和项目级四件套（记忆 / 指引 / 品牌档案 / 项目文件），
+一张桌面。项目区看全部任务和项目级四件套（记忆 / 指引 / 风格档案 / 项目文件），
 点进任务就是工作区。你写的每一步实时演在上面：代码直播卡贴着目标文件，正在动的
 物件外圈亮橙色光圈。
 

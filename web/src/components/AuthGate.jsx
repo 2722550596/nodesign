@@ -154,10 +154,10 @@ export default function AuthGate({ children }) {
           />
         )}
         <button style={S.button} type="submit" disabled={busy}>
-          {busy ? '验证中…' : isRegister ? '注册并进入' : '进入工作台'}
+          {busy ? '验证中…' : isRegister ? '注册并进入' : '进去'}
         </button>
         <p style={S.error}>{error}</p>
-        <p style={S.hint}>私有部署 · 凭邀请进入</p>
+        <p style={S.hint}>小范围内测 · 凭邀请进入</p>
       </form>
     </div>
   );
