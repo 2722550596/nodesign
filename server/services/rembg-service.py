@@ -37,6 +37,9 @@ Env:
 """
 import asyncio
 import atexit
+import ctypes
+import ctypes.util
+import gc
 import io
 import os
 import sys
@@ -50,6 +53,25 @@ from fastapi.responses import Response
 from PIL import Image
 import onnxruntime as ort
 from rembg import remove, new_session
+
+
+def _make_malloc_trim():
+    """glibc 的 malloc_trim(0)：把 free 出来但还挂在堆上的内存还给内核。
+
+    只对 glibc 有效（这台是 Debian，有）。musl / macOS 拿不到符号就返回一个空
+    函数，调用处不用关心平台差异。
+    """
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
+        trim = libc.malloc_trim
+        trim.argtypes = [ctypes.c_size_t]
+        trim.restype = ctypes.c_int
+        return lambda: trim(0)
+    except Exception:
+        return lambda: None
+
+
+_malloc_trim = _make_malloc_trim()
 
 
 def _resolve_providers():
@@ -168,12 +190,32 @@ async def _on_startup():
         asyncio.create_task(_preload(models))
 
 
+# 在途请求数。launcher 的 RSS 看门狗只在这个数为 0 时才敢回收本进程，
+# 否则会把用户正在等的那次抠图打断。
+_inflight = 0
+
+
+def _self_rss_mb():
+    """本进程 RSS（MB）。读 /proc 而不是引 psutil：少一个依赖，Linux 上够用。"""
+    try:
+        with open('/proc/self/status') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    return round(int(line.split()[1]) / 1024)
+    except OSError:
+        pass
+    return None
+
+
 @app.get('/health')
 def health():
     return {
         'ok': True,
         'loaded_models': sorted(sessions.keys()),
         'preload_done': _preload_done,
+        # 下面两个给 launcher 的看门狗用（见 rembg-launcher.js）
+        'inflight': _inflight,
+        'rss_mb': _self_rss_mb(),
     }
 
 
@@ -231,11 +273,13 @@ def _remove_with_am_cap(image_bytes, session, alpha_matting):
 
 @app.post('/remove')
 async def remove_endpoint(request: Request):
+    global _inflight
     model = request.headers.get('x-model', 'birefnet-general-lite')
     alpha_matting = request.headers.get('x-alpha-matting', '0') == '1'
     image_bytes = await request.body()
     if not image_bytes:
         raise HTTPException(400, detail='empty body')
+    _inflight += 1
     try:
         session = await ensure_session(model)
         # rembg remove 是 CPU 密集——丢线程池防阻塞 event loop
@@ -247,6 +291,14 @@ async def remove_endpoint(request: Request):
         print(f'[rembg-service] /remove error: {type(e).__name__}: {e}',
               file=sys.stderr, flush=True)
         raise HTTPException(500, detail=f'{type(e).__name__}: {e}')
+    finally:
+        _inflight -= 1
+        # 主动还内存：pymatting 的稀疏矩阵和 PIL 的全分辨率图都是大块 numpy /
+        # buffer，Python 的分配器不一定马上还给系统。gc 一次 + malloc_trim 把
+        # 空闲堆顶还回去，能明显压低 RSS 高水位（2026-07-31 事故就是高水位不降
+        # 一路把机器推进内存抖动）。拿不到 malloc_trim 的平台静默跳过。
+        gc.collect()
+        _malloc_trim()
 
 
 def cleanup_socket(socket_path: str):

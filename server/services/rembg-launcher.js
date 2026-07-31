@@ -7,17 +7,31 @@
  *
  * Service 死了不影响主流程（fallback 到老的 spawn-bridge 路径，详见 helpers/rembg.js）。
  *
+ * ── RSS 看门狗（2026-07-31 事故后加）──────────────────────────────
+ * onnxruntime + pymatting 的内存高水位**不会自己降**：抠 8 张 1.5-2MP 的图能让
+ * 这个进程从 345MB 涨到 1.2GB 并停在那儿。这台机器 3.9G 内存 + 2G swap，塞着
+ * Cursor server（约 970MB）、SillyTavern、Claude SDK 子进程之后余量本来就薄，
+ * 高水位不降就一路把系统推进内存抖动：内核忙于回收/换页，单核 CPU 被钉死 99%，
+ * 机器活着但 SSH 和 HTTP 全都握不上手，只能人工关机。2026-07-31 04:24 就是这么死的。
+ *
+ * 所以：定期看 RSS，超阈值且**在途请求为 0** 时把 service 回收重开。它是无状态的，
+ * 代价只是下次调用重新 load 一次模型（~20-40s，且预热是异步的不挡请求）。
+ * service 侧还会在每次抠图后 gc + malloc_trim 主动还内存，看门狗是兜底不是主力。
+ *
  * Env override：
  *   NODESIGN_REMBG_PYTHON     venv python 解释器路径
  *   NODESIGN_REMBG_SERVICE    service 脚本路径
  *   NODESIGN_REMBG_SOCKET     Unix socket 路径
- *   NODESIGN_REMBG_PRELOAD    逗号分隔预加载模型列表（默认 isnet-general-use,birefnet-general-lite）
+ *   NODESIGN_REMBG_PRELOAD    逗号分隔预加载模型列表（默认 isnet-general-use）
+ *   NODESIGN_REMBG_MAX_RSS_MB RSS 回收阈值（默认 900；0 = 关掉看门狗）
+ *   NODESIGN_REMBG_WATCH_MS   看门狗巡检间隔（默认 60000）
  */
 
 import { spawn, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { promises as fs } from 'node:fs';
+import http from 'node:http';
+import { promises as fs, readFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // services/ 在 server/services/，server root 上溯 1 层
@@ -31,8 +45,61 @@ const DEFAULT_SERVICE = path.join(__dirname, 'rembg-service.py');
 // 改回多模型预热：env NODESIGN_REMBG_PRELOAD=isnet-general-use,birefnet-general-lite
 const DEFAULT_PRELOAD = 'isnet-general-use';
 
+const DEFAULT_SOCKET = '/tmp/nodesign-rembg.sock';
+const MAX_RSS_MB = Number(process.env.NODESIGN_REMBG_MAX_RSS_MB ?? 900);
+const WATCH_MS = Number(process.env.NODESIGN_REMBG_WATCH_MS ?? 60_000);
+
 let serviceProc = null;
 let started = false;
+let watchTimer = null;
+/** 看门狗主动回收时置位：让 exit handler 知道该重开，而不是当成异常退出 */
+let recycling = false;
+
+/** 问 service 的 /health（走 Unix socket）。拿不到就返 null，看门狗这轮跳过 */
+function probeHealth(timeoutMs = 3000) {
+  const socketPath = process.env.NODESIGN_REMBG_SOCKET || DEFAULT_SOCKET;
+  return new Promise((resolve) => {
+    const req = http.request({ socketPath, path: '/health', method: 'GET', timeout: timeoutMs }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.end();
+  });
+}
+
+/**
+ * 一轮巡检。超阈值且在途为 0 → 回收。
+ *
+ * 在途不为 0 时**不回收**：宁可这一轮继续超着，也不能把用户正在等的抠图打断。
+ * 下一轮还会再看，抠图是秒级的，不会一直忙。
+ */
+async function watchdogTick() {
+  if (!serviceProc || recycling) return;
+  const health = await probeHealth();
+  if (!health || typeof health.rss_mb !== 'number') return;
+  if (health.rss_mb < MAX_RSS_MB) return;
+  if (health.inflight > 0) {
+    console.log(`[rembg-service] RSS ${health.rss_mb}MB 超阈值 ${MAX_RSS_MB}MB，但有 ${health.inflight} 个在途请求，本轮不回收`);
+    return;
+  }
+  console.log(`[rembg-service] RSS ${health.rss_mb}MB ≥ ${MAX_RSS_MB}MB 且空闲 → 回收重开（内存高水位不会自己降，见文件头注释）`);
+  recycling = true;
+  try {
+    serviceProc.kill('SIGTERM');
+  } catch { /* 已经死了，exit handler 会接手 */ }
+}
+
+function startWatchdog() {
+  if (watchTimer || !(MAX_RSS_MB > 0) || !(WATCH_MS > 0)) return;
+  watchTimer = setInterval(() => { watchdogTick().catch(() => {}); }, WATCH_MS);
+  watchTimer.unref();   // 不因为它拖着不让进程退出
+}
 
 /**
  * 杀掉所有 stale rembg-service.py 进程（不属于本 launcher 的）。
@@ -44,6 +111,7 @@ let started = false;
  * 启动时一次性清干净，spawn 新 service 之前。
  */
 function killStaleServices() {
+  const mySocket = process.env.NODESIGN_REMBG_SOCKET || DEFAULT_SOCKET;
   try {
     // pgrep -f 匹配完整 cmdline，-d ' ' 用空格分隔多 PID。
     // pattern "python.*rembg-service\\.py" 收紧只匹配 python 解释器执行
@@ -54,7 +122,23 @@ function killStaleServices() {
     if (!out) return;
     // 排除自己当前进程（防自杀的边角）
     const myPid = process.pid;
-    const pids = out.split(/\s+/).filter(Boolean).filter((p) => Number(p) !== myPid);
+    let pids = out.split(/\s+/).filter(Boolean).filter((p) => Number(p) !== myPid);
+    // 只杀**绑同一个 socket** 的实例。socket 路径在 env 里不在 argv 里，所以
+    // 读 /proc/<pid>/environ 判断。
+    //
+    // 为什么必须过滤：不加这层，任何第二个 nodesign 实例（隔离 e2e、本地
+    // 另开一份、看门狗自测）一启动就会把生产实例的抠图服务杀掉，而生产侧
+    // 对"意外退出"是不自动重启的，于是抠图静默降级成 per-call cold spawn，
+    // 没人会发现。2026-07-31 我自己踩了一次。
+    // 读不到 environ 的（权限/进程刚没）当作不是自己的，宁可漏杀不可错杀。
+    pids = pids.filter((p) => {
+      try {
+        const env = readFileSync(`/proc/${p}/environ`, 'utf8');
+        return env.split('\0').includes(`NODESIGN_REMBG_SOCKET=${mySocket}`)
+          // 老进程可能没显式设这个 env（走的是 service 侧默认值）
+          || (mySocket === DEFAULT_SOCKET && !env.includes('NODESIGN_REMBG_SOCKET='));
+      } catch { return false; }
+    });
     if (pids.length === 0) return;
     console.log(`[rembg-service] killing ${pids.length} stale service process(es): ${pids.join(', ')}`);
     for (const pid of pids) {
@@ -112,12 +196,30 @@ export async function startRembgService() {
     return false;
   }
 
+  const ok = spawnService(py, script, preload);
+  if (ok) startWatchdog();
+  return ok;
+}
+
+/**
+ * 真正 spawn 一次。startRembgService 首次调，看门狗回收后也调。
+ *
+ * 退出处理分两种：
+ *   看门狗主动回收（recycling=true）→ 立刻重开，这是预期行为
+ *   意外退出（崩了 / 被 earlyoom 或 OOM killer 杀了）→ **不自动重启**，
+ *     保持原有约定：单方面重启子进程会掩盖问题。抠图会 fallback 到 per-call
+ *     cold spawn（慢但能用），日志里那行 exited 就是要让人看见的信号。
+ */
+function spawnService(py, script, preload) {
   try {
     serviceProc = spawn(py, [script], {
       stdio: ['ignore', 'inherit', 'inherit'],
       env: {
         ...process.env,
         NODESIGN_REMBG_PRELOAD: preload,
+        // 显式写进子进程 env：killStaleServices 靠读 /proc/<pid>/environ
+        // 判断某个 service 是不是"自己这一份"，不写的话认不出来
+        NODESIGN_REMBG_SOCKET: process.env.NODESIGN_REMBG_SOCKET || DEFAULT_SOCKET,
       },
       // detached:false → child 跟父 share 进程组，父收 SIGINT 时 shell 也会
       // 转给 child（双保险）；显式 SIGTERM 仍走 stopRembgService()
@@ -134,8 +236,16 @@ export async function startRembgService() {
   serviceProc.on('exit', (code, signal) => {
     console.log(`[rembg-service] exited code=${code} signal=${signal}`);
     serviceProc = null;
-    // 不自动重启——server shutdown / 真崩了由 pm2 重启 server 一并起。
-    // 单方面重启子进程容易掩盖问题。
+    if (recycling) {
+      recycling = false;
+      // 隔一拍再起：给 atexit 清 socket 的时间，否则新进程 bind 会撞上旧 socket 文件
+      setTimeout(() => {
+        if (started) {
+          console.log('[rembg-service] 回收后重开');
+          spawnService(py, script, preload);
+        }
+      }, 500).unref();
+    }
   });
 
   serviceProc.on('error', (err) => {
@@ -149,6 +259,9 @@ export async function startRembgService() {
  * 优雅关闭 rembg-service。SIGTERM 让 service 走 atexit 清 socket。
  */
 export function stopRembgService() {
+  started = false;              // 让 exit handler 里的重开分支不再触发
+  recycling = false;
+  if (watchTimer) { clearInterval(watchTimer); watchTimer = null; }
   if (!serviceProc) return;
   console.log(`[rembg-service] stopping PID ${serviceProc.pid}`);
   try {
