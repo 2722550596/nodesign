@@ -39,33 +39,48 @@ import { removeBackground as rembgRemove, isAvailable as rembgIsAvailable } from
 const SUPPORTED_INPUT_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.tiff']);
 
 // quality enum → 内部 (model, alphaMatting) 映射
-// 2026-05-11 改：fast 关 alpha matting 真快（与 description 对齐 + 跟原
-// fa0cc32 commit msg 标记的 "fast 加 AM (未通)" 实测一致——AM 是 pymatting
-// 解稀疏线性方程组 ~30-90s/MP，加在 fast 上让 fast 失去意义且 90s timeout
-// 必挂）。balanced / best 保 AM 是消 halo 核心手段。
 //
-// service 路径 warm 时间（onnxruntime session 已在内存）：
-//   fast:     isnet-general-use (170MB), 无 AM         — ~3-8s
-//   balanced: birefnet-general-lite (214MB) + AM       — ~30-90s（视图像 size）
-//   best:     birefnet-general (880MB) + AM            — ~60-180s（首次下 880MB ~3-5min）
+// 2026-07-31 重排。起因是 balanced/best 长期被 env 顶到 fast，等于只有一档能用。
+// service 侧给 alpha matting 加了分辨率上限（见 rembg-service.py 的
+// _remove_with_am_cap）之后，"AM 太慢所以 fast 不能开 AM" 这条前提不成立了：
+// AM 在 ≤1024 长边上解，代价从分钟级掉到 1-2 秒。
+//
+// 本机实测（1023×1537 = 1.57MP，warm session，单核 Neoverse-V2）：
+//   isnet-general-use  无 AM   6.6s   峰值  892MB   ✓
+//   isnet-general-use  + AM    8.4s   峰值  923MB   ✓  ← balanced 换成它
+//   birefnet-lite      无 AM  18-21s  峰值 2435MB   ✗ OOM killed
+// birefnet 那档撑爆内存的是模型推理本身，不是 AM（关掉 AM 照样死），ort 的
+// arena 调优也没救回来。所以在加 swap 之前它就是不可用，best 仍会被 env 顶掉。
+//
+// 边缘质量差异（同一张图，alpha 通道统计）：
+//   无 AM  半透明杂散像素 34.4%（halo 就是这些）
+//   + AM   半透明杂散像素  9.9%，真过渡像素反而略增
+// 观感上 AM 那档发丝更细更自然，但整体略"雾"（alpha 从 1024 插值回原尺寸）。
+// 两种取向各有适用，所以是两档而不是一档取代另一档。
+//
+// best 从 birefnet-general(880MB) 降到 lite：880MB 那个从来没在这台机器上跑起来
+// 过，连模型都没下载。换到更大的机器时把它加回来即可。
 const QUALITY_MAP = {
   fast:     { model: 'isnet-general-use',     alphaMatting: false },
-  balanced: { model: 'birefnet-general-lite', alphaMatting: true  },
-  best:     { model: 'birefnet-general',      alphaMatting: true  },
+  balanced: { model: 'isnet-general-use',     alphaMatting: true  },
+  best:     { model: 'birefnet-general-lite', alphaMatting: true  },
 };
 
-// 质量上限（env NODESIGN_REMBG_QUALITY_CAP）。birefnet 系模型在小内存机器上会被
-// OOM killer 直接杀掉 —— 而且杀的是常驻 service 进程，连带 fast 档一起死。
-// 超上限**显式拒绝并说明原因**（agent 看得见、能改传 fast），不做静默降档：
-// 静默降档意味着 agent 以为拿到了 birefnet 的边缘质量，实际是 isnet 的。
+// 质量上限（env NODESIGN_REMBG_QUALITY_CAP）。birefnet 系模型一次推理峰值 2.4GB+，
+// 在小内存机器上会被 OOM killer 直接杀掉 —— 而且杀的是常驻 service 进程，连带
+// fast 档一起死。
+// 超上限**显式拒绝并说明原因**（agent 看得见、能改档重试），不做静默降档：
+// 静默降档意味着 agent 以为拿到了 birefnet 的分割质量，实际是 isnet 的。
 const QUALITY_ORDER = ['fast', 'balanced', 'best'];
 function qualityCapError(quality) {
   const cap = process.env.NODESIGN_REMBG_QUALITY_CAP;
   if (!cap || !QUALITY_ORDER.includes(cap)) return null;
   if (QUALITY_ORDER.indexOf(quality) <= QUALITY_ORDER.indexOf(cap)) return null;
-  return `quality "${quality}" 在这台机器上被禁用（上限 "${cap}"）：birefnet 系模型`
-    + '会触发 OOM kill 并连带杀掉常驻抠图服务。请改用 quality: "' + cap + '" 重试；'
-    + '需要更高边缘质量时告知用户当前机器内存不够。';
+  return `quality "${quality}" 在这台机器上被禁用（上限 "${cap}"）：它用的 birefnet `
+    + '模型一次推理峰值内存 2.4GB+，会触发 OOM kill 并连带杀掉常驻抠图服务。'
+    + `请改用 quality: "${cap}" 重试 —— 边缘质量问题（halo / 毛边 / 发丝）"balanced" `
+    + '已经能解决，"best" 只在主体形状本身被分割错时才有意义。'
+    + '确实需要更强分割时告知用户：这台机器要先加 swap 或换更大内存的机器。';
 }
 
 /**
@@ -136,20 +151,24 @@ Unix socket; cold fallback per-call spawn when service down. BiRefNet ML
 segmentation by default; trimap alpha matting post-process (pymatting) for
 clean edges. Default "balanced" trades ~30-90s for SOTA-tier edges.
 
-QUALITY OPTIONS (tradeoff: speed vs edge fidelity):
-- fast:     isnet-general-use, no alpha matting (~3-8s warm). DEFAULT —
+QUALITY OPTIONS (tradeoff: speed vs edge character):
+- fast:     isnet-general-use, no alpha matting (~7s warm). DEFAULT —
             reliable for batch / cards / collages / high-contrast bg.
-- balanced: birefnet-general-lite + alpha matting (~30-180s warm, scales with
-            image megapixels and machine load). Cleaner edges; pymatting is
-            single-threaded and CPU-bound — slow on memory-pressured machines.
-- best:     birefnet-general (full SOTA) + alpha matting (~60-300s warm). For
-            critical hero / portrait shots where edge quality matters most.
-            First call downloads 880MB model (~3-5min one-time).
+            Crisp, decisive cuts; leaves some semi-transparent haze (halo).
+- balanced: isnet-general-use + alpha matting (~8s warm). Escalate here when
+            fast leaves visible halo, or on hair / fur / soft edges. Cuts
+            semi-transparent stray pixels from ~34% to ~10% and keeps finer
+            wisps, at the cost of a slightly softer overall edge.
+            Alpha matting runs capped at 1024px long edge then the alpha is
+            scaled back, so cost no longer grows with input megapixels.
+- best:     birefnet-general-lite + alpha matting. Strongest segmentation, but
+            needs ~2.5GB RAM for inference — may be disabled by the machine cap
+            (the tool tells you explicitly if so; it never silently downgrades).
 
-Tip: alpha matting (balanced/best) cost scales linearly with image megapixels.
-Resize input to ≤1MP first if balanced/best feels too slow. For most layout /
-icon / collage uses, fast is sufficient — start there, only escalate when you
-see edge halo / 伪影 in the result.
+Escalation order: start at fast. Go to balanced when you see edge halo / 伪影
+or the subject has hair, fur, smoke, or fabric. Only reach for best when
+balanced still mis-segments the subject shape itself (a model problem, not an
+edge problem) — balanced already fixes edges.
 
 LIMITATIONS:
 - Heuristic ML segmentation — clean cuts when subject has clear visual boundaries
@@ -181,7 +200,7 @@ Returns: text caption with output path + image content block (preview the result
       quality: z
         .enum(['fast', 'balanced', 'best'])
         .optional()
-        .describe('Speed/edge-fidelity tradeoff. Default "fast" (isnet-general-use, NO alpha matting, ~3-8s warm) — reliable for batch / cards / collages. "balanced" (birefnet-general-lite + alpha matting, ~30-180s warm) for cleaner edges; pymatting is CPU-bound + single-threaded, slow on memory-pressured machines. "best" (birefnet-general 880MB + alpha matting, ~60-300s warm; first call downloads model ~3-5min) for critical hero shots. Resize >1MP inputs before balanced/best.'),
+        .describe('Speed vs edge character. Default "fast" (isnet, no alpha matting, ~7s warm): crisp decisive cuts, some semi-transparent halo — fine for batch / cards / collages. "balanced" (isnet + alpha matting, ~8s warm): escalate here when fast leaves visible halo, or for hair / fur / smoke / fabric; cuts stray semi-transparent pixels ~34%→~10% and keeps finer wisps, slightly softer overall edge. Alpha matting is capped at 1024px long edge, so cost no longer scales with input megapixels — no need to pre-resize. "best" (birefnet-general-lite + alpha matting): strongest segmentation but needs ~2.5GB RAM; may be disabled by the machine cap, in which case the tool says so explicitly rather than silently downgrading. Only reach for best when balanced mis-segments the subject SHAPE — balanced already fixes edges.'),
     },
     async ({ inputPath, outputName, overwrite = false, quality = 'fast' }) => {
       // 0a. 质量上限（小内存机器禁 birefnet，显式拒绝不静默降档）
@@ -243,16 +262,18 @@ Returns: text caption with output path + image content block (preview the result
       }
 
       // 5. 抠图——按 quality 选 model + alphaMatting
-      // service warm 走 Unix socket（~3-8s fast / ~30-90s balanced / ~60-180s best）；
-      // fallback spawn cold 走 .venv-rembg per-call（fast ~15-30s / balanced ~80-200s /
-      // best ~120-300s + 首次 880MB 下载）。
-      // timeout 按 quality 阶梯 + AM 是否开：fast 无 AM 快；balanced AM 1-2MP 容易 100s+ 留余量。
+      // service warm 走 Unix socket（本机实测 fast 6.6s / balanced 8.4s）；
+      // fallback spawn cold 走 .venv-rembg per-call，每次多付 20-40s 模型 load。
+      //
+      // timeout 留的余量比实测大一个数量级，因为这台机器只有 1 核：同时有生图预热
+      // 或导出截图在跑的时候，同一个调用能慢好几倍。宁可等也别误杀一次成功的抠图。
+      // AM 加了 1024 分辨率上限之后不再随输入 MP 增长，所以 balanced 不用再留
+      // 原来那种"1-2MP 容易 100s+"的巨量余量。
       const qualityCfg = QUALITY_MAP[quality];
       const timeoutByQuality = {
-        fast: 60_000,       // 1min（无 AM，isnet cold <30s 够）
-        balanced: 360_000,  // 6min（pymatting AM 单线程，受机器内存压力影响大；
-                            // 1MP 通常 60-120s，机器 swap 时易 3-5min）
-        best: 900_000,      // 15min（首次含 880MB 下载 + 大模型 AM 推理）
+        fast: 60_000,       // 1min（无 AM，cold load 也够）
+        balanced: 120_000,  // 2min（warm 8.4s，留 14 倍余量给 CPU 争抢）
+        best: 300_000,      // 5min（birefnet 推理本身就重，且可能触发模型下载）
       };
       const t0 = Date.now();
       const rgba = await rembgRemove(inputBuf, {

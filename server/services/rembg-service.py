@@ -32,9 +32,12 @@ Env:
                                 项绕过 CoreML+birefnet 卡死 bug（onnxruntime
                                 1.19.2 验证），其它平台传 None 让 ort 自选
                                 （Linux CUDA EP / Windows DML 等）。
+  NODESIGN_REMBG_AM_MAX_DIM     alpha matting 的分辨率上限（长边 px，默认 1024）。
+                                见下方 _remove_with_am_cap 的长注释。0 = 不限制。
 """
 import asyncio
 import atexit
+import io
 import os
 import sys
 import warnings
@@ -44,6 +47,8 @@ warnings.filterwarnings('ignore')
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
+from PIL import Image
+import onnxruntime as ort
 from rembg import remove, new_session
 
 
@@ -90,11 +95,39 @@ def _get_lock(model_name: str) -> asyncio.Lock:
     return _session_locks[model_name]
 
 
+def _mem_tuned_options():
+    """省内存优先的 onnxruntime SessionOptions。
+
+    起因：birefnet-general-lite 只有 214MB 权重，但一次 1.57MP 推理的峰值 RSS
+    到 2.4GB，在 3.9G 无 swap 的机器上直接被 OOM killer 杀掉（2026-07-29 两次、
+    07-31 复现一次，dmesg 有记录）。杀的是这个常驻进程，连带 fast 档一起死，
+    所以整档被 env 禁掉了。
+
+    钱花在哪：ort 默认开 CPU arena 分配器，它按需成倍扩张且**不还给系统**，
+    对 birefnet 这种 transformer backbone（大量临时激活）峰值会翻好几倍。
+      enable_cpu_mem_arena=False  —— 用完即还，峰值大幅下降，代价是分配器调用
+                                     多一点（单核上这点开销远小于被 OOM 杀掉）
+      enable_mem_pattern=False    —— 内存复用模式表本身也要预分配一大块
+      intra/inter_op=1            —— 这台机器就 1 核，多线程只是每条线程再占一份
+                                     临时缓冲，一点也不快
+
+    isnet 那档本来就只占 997MB，加上这些也不会变慢到哪去，统一走同一份配置。
+    """
+    opts = ort.SessionOptions()
+    opts.enable_cpu_mem_arena = False
+    opts.enable_mem_pattern = False
+    opts.intra_op_num_threads = int(os.environ.get('NODESIGN_REMBG_THREADS', '1'))
+    opts.inter_op_num_threads = 1
+    return opts
+
+
 def _load_session_sync(model_name: str):
     """同步 load——锁内调用。onnxruntime new_session 是阻塞 CPU 工作，
     用 asyncio.to_thread 在外层包裹。"""
     if model_name not in sessions:
-        sessions[model_name] = new_session(model_name, providers=PROVIDERS)
+        sessions[model_name] = new_session(
+            model_name, providers=PROVIDERS, sess_opts=_mem_tuned_options(),
+        )
     return sessions[model_name]
 
 
@@ -144,6 +177,58 @@ def health():
     }
 
 
+AM_MAX_DIM = int(os.environ.get('NODESIGN_REMBG_AM_MAX_DIM', '1024'))
+
+
+def _remove_with_am_cap(image_bytes, session, alpha_matting):
+    """抠图。开 alpha matting 时把 AM 那一步限制在 AM_MAX_DIM 之内。
+
+    alpha matting 走 pymatting，它对 W×H 的图建一个 (W·H)×(W·H) 的稀疏拉普拉斯
+    矩阵再解方程组，内存和时间都随**像素数**走。这里的生图动辄 1.6MP 到 6.5MP，
+    不限制的话解算既慢又吃内存，原来 "fast 加 AM" 试过一次没通就是卡在这。
+
+    限制之后：AM 在 ≤1024 长边上算（≤1MP），算出来的 alpha 再 LANCZOS 放大回原
+    尺寸，跟**原分辨率的 RGB** 合成。输出仍是全分辨率，只有边缘的柔和过渡是在低
+    分辨率上解出来再插值的。代价是边缘比全分辨率 AM 略"雾"一点；收益是这一档在
+    这台机器上第一次变得可用。
+
+    ⚠️ 这个上限**不是** birefnet 档 OOM 的解药，别把两件事记混。2026-07-31 实测：
+    birefnet-general-lite 在 alpha_matting=0 的情况下，一张 1.57MP 的图峰值 RSS
+    就到 2435MB，照样被 OOM killer 杀掉（可用内存 2234MB）。撑爆的是模型推理本身，
+    跟 AM 无关。ort 的 arena/mem_pattern 调优只把 fast 从 997MB 压到 892MB，对
+    birefnet 那 2.4GB 基本没动。birefnet 档要能用，得先给这台机器加 swap。
+
+    不开 AM 时原样走 rembg，一个像素都不动。
+    """
+    if not alpha_matting:
+        return remove(image_bytes, session=session, alpha_matting=False)
+
+    src = Image.open(io.BytesIO(image_bytes))
+    src.load()
+    w, h = src.size
+    long_edge = max(w, h)
+
+    if AM_MAX_DIM <= 0 or long_edge <= AM_MAX_DIM:
+        return remove(image_bytes, session=session, alpha_matting=True)
+
+    scale = AM_MAX_DIM / long_edge
+    small = src.convert('RGB').resize(
+        (max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS,
+    )
+    buf = io.BytesIO()
+    small.save(buf, format='PNG')
+    cut_small = remove(buf.getvalue(), session=session, alpha_matting=True)
+
+    alpha = Image.open(io.BytesIO(cut_small)).convert('RGBA').getchannel('A')
+    alpha = alpha.resize((w, h), Image.LANCZOS)
+
+    out = src.convert('RGB')
+    out.putalpha(alpha)
+    result = io.BytesIO()
+    out.save(result, format='PNG')
+    return result.getvalue()
+
+
 @app.post('/remove')
 async def remove_endpoint(request: Request):
     model = request.headers.get('x-model', 'birefnet-general-lite')
@@ -155,7 +240,7 @@ async def remove_endpoint(request: Request):
         session = await ensure_session(model)
         # rembg remove 是 CPU 密集——丢线程池防阻塞 event loop
         rgba = await asyncio.to_thread(
-            remove, image_bytes, session=session, alpha_matting=alpha_matting,
+            _remove_with_am_cap, image_bytes, session, alpha_matting,
         )
         return Response(content=rgba, media_type='image/png')
     except Exception as e:
