@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import WorldMap from './WorldMap.jsx';
 import {
   DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H, SIZES,
   SITE_VIEWPORTS, EASE, POP_IN, sizeOf, newStackedZoneRect, resolveZoneAvoidance,
@@ -235,7 +236,22 @@ export default function BoardCanvas({
     //   单页（原 _drafts 试作）→ `site:task/<t>/_drafts/<文件>.html`
     for (const t of tasks) {
       for (const a of (t.artifacts || [])) {
-        if (a.kind === 'site') {
+        if (a.kind === 'world') {
+          // 一个任务一个世界（world 命中即独占，见 kinds/index.js），所以 id
+          // 不带产物后缀。nodes 是地图本身，不是布局属性 —— 它描述的是磁盘上
+          // 的文件夹树，画布只负责把它画出来。
+          out.push({
+            id: `world:task/${t.id}`,
+            type: 'world',
+            task: t.id,
+            base: a.base || `tasks/${t.id}`,
+            entry: a.entryRel || '世界.md',
+            nodes: a.nodes || [],
+            exports: a.exports,
+            title: a.title || t.title,
+            mtime: t.mtime,
+          });
+        } else if (a.kind === 'site') {
           out.push({
             id: a.single
               ? `site:task/${t.id}/${a.entryRel}`
@@ -956,7 +972,12 @@ export default function BoardCanvas({
   };
 
   const focusDeck = (o) => {
-    if (o.type === 'site') {
+    if (o.type === 'world') {
+      // 阶段 1 还没有 WorldWindow：先开世界书本身。世界的「打开」到底该是
+      // 什么（星形展开？地图全屏？）是阶段 5 的产品决定，在那之前落到最不
+      // 会错的地方 —— 那份文件。
+      onFocusDeck?.({ kind: 'task', task: o.task, file: o.entry || '世界.md', title: o.title });
+    } else if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
       onFocusDeck?.({
@@ -982,7 +1003,7 @@ export default function BoardCanvas({
     if (o.type === 'doc' || o.type === 'note') openViewer(o);
     else if (o.type === 'image') setDetail(o);
     else if (o.type === 'file') openFile(o);
-    else if (o.type === 'deck' || o.type === 'site') {
+    else if (o.type === 'deck' || o.type === 'site' || o.type === 'world') {
       if (o.pos.expanded) focusDeck(o);
       else patchLayout(o.id, { expanded: true, z: ++zMaxRef.current });
     }
@@ -1889,6 +1910,63 @@ function BoardObject({
                 pointerEvents: 'none',
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {o.type === 'world' && !o.pos.expanded && (
+        <div style={{ padding: GAP.md }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <Globe size={13} color={COLOR.sub} />
+            <span style={{
+              fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+            }}>{o.title}</span>
+            <button data-board-action title="打开世界书" onClick={onFocus} style={winBtn}>
+              <PencilLine size={11} />
+            </button>
+            <button data-board-action title="铺开地图" onClick={onToggleExpand} style={winBtn}>
+              <ChevronsUpDown size={11} />
+            </button>
+          </div>
+          <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+            {(() => {
+              const n = o.nodes || [];
+              const p = n.filter(x => x.type !== 'character').length;
+              const c = n.filter(x => x.type === 'character').length;
+              return n.length ? `世界 · ${p} 个地点 / ${c} 个角色 · 双击铺开` : '世界 · 地图还是空的 · 双击查看';
+            })()}
+          </div>
+        </div>
+      )}
+
+      {o.type === 'world' && o.pos.expanded && (
+        <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
+          <div style={{
+            height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: `0 ${GAP.sm}px`,
+            borderBottom: `1px solid ${COLOR.borderLt}`,
+          }}>
+            <Globe size={12} color={COLOR.sub} />
+            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {o.title}
+            </span>
+            <button data-board-action title="打开世界书" onClick={onFocus} style={winBtn}>
+              <PencilLine size={11} />
+            </button>
+            <button data-board-action title="收起" onClick={onToggleExpand} style={winBtn}>
+              <ChevronsUpDown size={11} />
+            </button>
+          </div>
+          {/* 地图比框高就自己滚，不去顶别人的位置（布局按固定矩形做避让） */}
+          <div
+            data-board-action
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              width: DECK_EMBED_W, height: 420, overflowY: 'auto', overflowX: 'hidden',
+              background: COLOR.bg, borderRadius: '0 0 10px 10px',
+            }}
+          >
+            <WorldMap projectId={projectId} base={o.base || `tasks/${o.task}`} nodes={o.nodes} />
           </div>
         </div>
       )}

@@ -43,6 +43,11 @@ export const SIZES = {
   // （站点没有固定比例，取 16:10 一屏做取景框，够看出版式和配色）
   site:  { w: 240, h: 88 },
   siteExpanded: { w: DECK_EMBED_W, h: 28 + 400 },
+  // 世界：收起态是一张带地点/角色计数的条；展开态铺开地图（嵌套地点框 +
+  // 立绘）。高度给固定值不给自适应 —— 布局系统按矩形做避让，尺寸得可预知；
+  // 地图比框高就内部滚动，不去顶别人的位置。
+  world: { w: 240, h: 88 },
+  worldExpanded: { w: DECK_EMBED_W, h: 28 + 420 },
 };
 
 /**
@@ -65,6 +70,7 @@ export const POP_IN = 'ndPopIn 260ms cubic-bezier(0.32, 0.72, 0, 1)';
 export function sizeOf(o) {
   if (o.type === 'deck') return o.pos?.expanded ? SIZES.deckExpanded : SIZES.deck;
   if (o.type === 'site') return o.pos?.expanded ? SIZES.siteExpanded : SIZES.site;
+  if (o.type === 'world') return o.pos?.expanded ? SIZES.worldExpanded : SIZES.world;
   return SIZES[o.type] || SIZES.file;
 }
 
