@@ -93,6 +93,7 @@ async function discoverInstances(taskDir, marker) {
 
 export default {
   id: 'site',
+  capabilities: ['browsable'],   // 入口是 html，能塞进 iframe / playwright
   entryFile: ENTRY,
   view: 'site',
   injectFit: false,         // 整屏翻页脚本会把长页改造成翻页器；stripFitScripts 的启发式也会误删站点动画

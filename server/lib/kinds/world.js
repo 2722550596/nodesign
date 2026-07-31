@@ -178,6 +178,11 @@ export default {
   entryFile: ENTRY,
   view: 'world',
   injectFit: false,               // 没有翻页语义，不注入整屏 fit script
+  // 入口是 markdown，内容是文件夹树。screenshot / read_page / query_elements
+  // 这些工具全都先 resolveCanvasTarget 再喂 playwright，对 world 是把一份 .md
+  // 当网页开，在 1 核机器上白烧一次 chromium 还给不出有用结果。空数组是**声明**
+  // 不是遗漏，requireBrowsable 靠它挡。
+  capabilities: [],
   exportFormats: ['handoff'],     // 阶段 6 加 'book'（仿书是导出格式，不是窗）
   referenceDoc: { file: 'world-reference', title: '世界形态技术参考' },
 

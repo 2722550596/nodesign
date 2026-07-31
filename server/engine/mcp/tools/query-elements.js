@@ -18,7 +18,8 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
-import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/artifact-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
+} from '../../../lib/artifact-target.js';
 
 const MAX_RESULTS = 50;
 
@@ -66,6 +67,8 @@ Returns up to 50 matches; further results truncated with a hint.`,
       }
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const notBrowsable = requireBrowsable(target);
+      if (notBrowsable) return { content: [{ type: 'text', text: notBrowsable }], isError: true };
       const canvasPath = target.absPath;
       let html;
       try {

@@ -45,6 +45,24 @@ export function kindDef(kind) {
   return KINDS[kind] || null;
 }
 
+/**
+ * 这个形态有没有某项能力。
+ *
+ * 加这层是因为代码里反复在问的其实不是「这是不是站点」，而是「这东西能不能
+ * 用浏览器打开」。deck 和 site 都能，world 不能（入口是 markdown，内容是文件夹
+ * 树）。以前没有 world 时两个问题的答案恰好一样，所以到处写 `kind === KIND_SITE`
+ * 也没出事；world 一进来就露馅了 —— screenshot / read_page / query_elements /
+ * list_pages / get_computed_styles 全都会拿一份 .md 去喂 playwright。
+ *
+ * 只声明**当前真的有人查**的能力，不预先铺一张能力表。
+ *
+ * @param {string} kind
+ * @param {string} cap  目前只有 'browsable'
+ */
+export function can(kind, cap) {
+  return !!KINDS[kind]?.capabilities?.includes(cap);
+}
+
 /** 读任务标记（`.nd-task.json`）。没有 / 读不动 → null */
 export async function readTaskMarker(taskDir) {
   try {

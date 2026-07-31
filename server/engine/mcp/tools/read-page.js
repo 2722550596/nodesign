@@ -23,7 +23,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/artifact-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
+} from '../../../lib/artifact-target.js';
 
 /**
  * Thumbnail hint：检测 sectionHtml 是否含 `assets/generated/` 图 + thumbnails 目录存在
@@ -159,6 +160,8 @@ When NOT to use:
 
         const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
         if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+        const notBrowsable = requireBrowsable(target);
+        if (notBrowsable) return { content: [{ type: 'text', text: notBrowsable }], isError: true };
         const canvasPath = target.absPath;
         let raw;
         try {

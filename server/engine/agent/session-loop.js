@@ -68,6 +68,8 @@ import {
   detectArtifact,
 } from './agent-shared.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
+import { commitTaskWorkspace } from '../../projects/workspace.js';
+import { listTasks } from '../../lib/artifact-target.js';
 
 /**
  * Plan-mode 硬 deny 列表（canUseTool 钩子拦）。Allowlist 反过来推：
@@ -771,6 +773,22 @@ export async function runSession({
     return run.id;
   };
 
+  /**
+   * 把这个 workspace 里所有 world 任务各落一条 commit。
+   *
+   * 逐个任务而不是整个 workspace 一把梭：每个世界是独立的历史，回退一个世界
+   * 不该动到另一个。commitTaskWorkspace 内部有 per-taskDir mutex，用户同时在
+   * 画布上编辑同一份文件也不会撞 index.lock。
+   */
+  const commitWorldTasks = async (root, status) => {
+    const tasks = await listTasks(root);
+    for (const t of tasks) {
+      if (t.kind !== 'world') continue;
+      const tag = status === 'success' ? '' : `（${status}）`;
+      await commitTaskWorkspace(t.dir, `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`);
+    }
+  };
+
   const finishTurn = async (status, info) => {
     if (!activeTurnRunId) return;
     const runId = activeTurnRunId;
@@ -808,6 +826,21 @@ export async function runSession({
       try { markRunFailed(runId, info?.message || 'unknown'); } catch { /* */ }
       sharedCtx.emit(Events.error(info?.message || 'unknown', info?.code, info?.stack));
     }
+    // world 任务：一回合一条 git commit（2026-08-01）。
+    //
+    // 这不是「顺手存个档」，是这个形态的撤销机制本身：世界状态就是文件，
+    // 所以世界的历史就是这个仓的 log。没有逐回合的落点，RP 的「回退三轮」和
+    // 小说的「这条线不要了」都没有可 checkout 的东西。
+    //
+    // 只对 world 做：deck / site 任务现在没有 per-task 仓，给它们凭空加上是
+    // 影响存量用户的行为变更，跟本阶段无关。失败只 warn —— 一个 commit 落不下
+    // 不该让已经跑完的 turn 变成失败。
+    if (wsRoot) {
+      commitWorldTasks(wsRoot, status).catch(
+        (err) => console.warn('[world/git] commit failed:', err.message),
+      );
+    }
+
     activeTurnRunId = null;
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
     // 晋升排队的下一 turn（无排队时置 null）—— 追加消息在 turn 内不再抢占

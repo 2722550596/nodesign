@@ -14,7 +14,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import {
-  resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, taskManifest,
+  resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, taskManifest, requireBrowsable,
 } from '../../../lib/artifact-target.js';
 
 /**
@@ -50,6 +50,8 @@ Lighter than read_page (which returns full outerHTML of one page).`,
       }
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const notBrowsable = requireBrowsable(target);
+      if (notBrowsable) return { content: [{ type: 'text', text: notBrowsable }], isError: true };
 
       // 站点：「页」是独立文件，不是同一份文档里的 section。硬按 deck 那套扫
       // `section[data-page]` 会 0 命中，然后回一句"这份画布没有页面"—— 一个内容

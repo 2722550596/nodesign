@@ -671,7 +671,8 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         if (artifacts.length === 0) {
           parts.push(
             '这个 workspace 还没有产物 —— 产出型工作先建 tasks/<任务名>/，'
-            + `deck 往里写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}。`,
+            + `deck 往里写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
+            + `世界（小说 / RP）写 ${ENTRY_FILE.world}。`,
           );
         } else {
           const active = getActiveArtifact(sessionId)?.path || null;
@@ -1440,9 +1441,15 @@ function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
   const injected = new Set();
   return async (input, _toolUseId, _options) => {
     const fp = input?.tool_input?.file_path;
-    if (typeof fp !== 'string' || !/\.html?$/i.test(fp)) return {};
+    if (typeof fp !== 'string') return {};
     const rel = workspaceRoot ? toWorkspaceRel(fp, workspaceRoot) : fp;
     const kind = workspaceRoot ? await kindOfPath(workspaceRoot, rel) : KIND_DECK;
+    // 触发条件从「写 .html」改成「写的文件跟这个形态的入口同类型」（2026-08-01）。
+    // 写死 .html 的年代只有 deck 和 site，两者入口都是 html 所以恰好没错；world
+    // 的入口是 世界.md，于是它的技术参考**永远不会被注入**，agent 一辈子不知道
+    // 目录结构该长什么样。扩展名从注册表的 entryFile 推，加形态不用再回来改。
+    const wantExt = path.extname(kindDef(kind)?.entryFile || '.html').toLowerCase();
+    if (path.extname(fp).toLowerCase() !== wantExt) return {};
     if (injected.has(kind)) return {};
     injected.add(kind);
     // 技术参考按注册表分发（kinds/<kind>.referenceDoc）—— 新形态自带自己那份

@@ -19,6 +19,7 @@ export default {
   entryFile: ENTRY,
   view: 'deck',
   injectFit: true,          // 导出 / 独立打开时注入整屏翻页 fit script
+  capabilities: ['browsable'],   // 入口是 html，能塞进 iframe / playwright
   exportFormats: ['html', 'pdf', 'pptx', 'handoff'],
   referenceDoc: { file: 'hybrid-reference', title: 'Hybrid deck 技术参考' },
 

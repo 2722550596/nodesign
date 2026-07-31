@@ -517,6 +517,44 @@ export async function commitWorkspace(projectId, sessionId, message, { author = 
   });
 }
 
+/**
+ * 任务目录自己的 git（2026-08-01，world 形态需要）。
+ *
+ * 为什么不复用 per-session git：**它根本盖不到任务文件。** git 仓在
+ * `sessions/<sid>/.git`，而任务物理上在 `shared/tasks/`，会话里的 `tasks/` 只是
+ * 一条软链。git 不跟随软链，`git add -A` 把 `tasks` 存成一个 mode 120000 的软链
+ * 对象，任务文件内容从来没进过任何历史。线上实测过：随便挑个会话仓 cat-file，
+ * tasks 就是个 120000 blob，且仓里只有一条 init commit。
+ *
+ * 就算能盖到也不该复用：session 仓的 checkout 会把 spec.json、notes 这些**会话
+ * 状态**一起回退，而 world 要的回退是「世界回到三轮之前」，粒度完全不同。
+ *
+ * 世界的历史 = 这个仓的 log。RP 的「回退三轮」是 checkout，小说的「这条线不要
+ * 了」是 branch。所以每一回合结束都要落一条，不然回退没有落点。
+ *
+ * 懒初始化：第一次提交时才 init，非 world 任务永远不会有 .git。
+ *
+ * @returns {Promise<string|null>} commit hash；没有改动返回 null
+ */
+export async function commitTaskWorkspace(taskDir, message, { author = 'agent' } = {}) {
+  if (!(await fileExists(taskDir))) return null;
+  return mutex(`git:${taskDir}`, async () => {
+    if (!(await fileExists(path.join(taskDir, '.git')))) {
+      await runGit(taskDir, ['init', '-q', '-b', 'main']);
+    }
+    await runGit(taskDir, ['add', '-A']);
+    const { stdout } = await runGit(taskDir, ['status', '--porcelain'], { capture: true });
+    if (!stdout.trim()) return null;
+    await runGit(taskDir, [
+      '-c', `user.email=${author}@nodesign`,
+      '-c', `user.name=${author}`,
+      'commit', '-q', '-m', message,
+    ]);
+    const { stdout: hash } = await runGit(taskDir, ['rev-parse', 'HEAD'], { capture: true });
+    return hash.trim();
+  });
+}
+
 export async function listHistory(projectId, sessionId, { limit = 50 } = {}) {
   const sessionRoot = getSessionWorkspace(projectId, sessionId);
   if (!(await fileExists(sessionRoot))) return [];

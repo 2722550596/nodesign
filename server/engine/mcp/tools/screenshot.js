@@ -32,7 +32,8 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
-import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE } from '../../../lib/artifact-target.js';
+import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
+} from '../../../lib/artifact-target.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -280,6 +281,8 @@ Do NOT use this tool when:
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      const notBrowsable = requireBrowsable(target);
+      if (notBrowsable) return { content: [{ type: 'text', text: notBrowsable }], isError: true };
       const canvasPath = target.absPath;
       let html;
       try {
