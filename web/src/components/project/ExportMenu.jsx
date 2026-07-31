@@ -50,7 +50,7 @@ function itemsFor(artifactKind, artifactExports) {
  *
  * PPTX 标灰禁点，留 P0+。
  */
-export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick, artifactKind = null, artifactExports = null }) {
+export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick, onShare, artifactKind = null, artifactExports = null }) {
   const ref = useRef(null);
 
   // 点外面关闭
