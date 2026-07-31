@@ -38,7 +38,7 @@ async function detectThumbnailHint(workspaceRoot, sectionHtml) {
   if (!/assets\/generated\//.test(sectionHtml)) return '';
   try {
     await fs.access(path.join(workspaceRoot, 'assets', 'generated', '.thumbnails'));
-    return '[hint] preview iframe 加载的 <img src> 指向 thumbnail（assets/generated/.thumbnails/*.thumb.jpg）；'
+    return '[hint] preview iframe 加载的 <img src> 指向 thumbnail（assets/generated/.thumbnails/*.thumb.webp）；'
       + '下面 outerHTML 中的 src 是真实 src（同 Read canvas.html），重生原图 N 秒内 thumbnail 自动更新。';
   } catch {
     return '';

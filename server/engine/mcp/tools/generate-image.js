@@ -46,19 +46,25 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { Events } from '../../agent/events.js';
 import { z } from 'zod';
 import sharp from 'sharp';
+import {
+  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor,
+} from '../../../lib/image-variant.js';
 
 // Thumbnail 配置（env 可调）。**原图不动**——保留 Gemini 输出的全分辨率（通常
 // 1080×1920+ PNG，6-8MB）让用户最终交付不损失质量。仅生成低清 thumbnail 给
 // chat 缩略图 + WS 推送用，避免单条 message 8MB+ 让浏览器 parse 卡。
 // 长边 512 + JPEG q80 → ~50KB，chat / WS 流畅。原图通过 HTTP /api/.../assets/...
 // 按需加载（iframe 引用原图，用户点查看大图也加载原图）。
-const THUMBNAIL_MAX_DIM = Number(process.env.NODESIGN_THUMBNAIL_MAX_DIM) || 512;
-const THUMBNAIL_QUALITY = Number(process.env.NODESIGN_THUMBNAIL_QUALITY) || 80;
-
 /**
  * 用 sharp 生成低清 thumbnail（不动原图）。
- * 长边 ≤ THUMBNAIL_MAX_DIM；统一 JPEG 输出（小 + 兼容性好）；有 alpha 平铺白底
- * 让 JPEG 不丢透明边角的视觉信息。fail-soft：sharp 抛错返 null 让调用方降级。
+ * 长边 ≤ THUMBNAIL_MAX_DIM；统一 webp 输出。
+ *
+ * 2026-07-31 从 JPEG 换成 webp：同观感小三成，而且 webp 有 alpha，抠图产物
+ * 不用再平铺白底 —— 原来那圈白底在预览里是真能看见的。
+ * 规格常量从 lib/image-variant.js 来：资源路由给老图现补缩略图时用的是同一份，
+ * 两边各写各的数字只会表现为某些图偶尔糊一点，查不出来。
+ *
+ * fail-soft：sharp 抛错返 null 让调用方降级。
  *
  * @param {Buffer} rawBuf
  * @returns {Promise<{ buf: Buffer, mimeType: string }|null>}
@@ -78,11 +84,8 @@ async function makeThumbnail(rawBuf) {
         withoutEnlargement: true,
       });
     }
-    if (meta.hasAlpha) {
-      pipeline = pipeline.flatten({ background: '#ffffff' });
-    }
-    const buf = await pipeline.jpeg({ quality: THUMBNAIL_QUALITY, mozjpeg: true }).toBuffer();
-    return { buf, mimeType: 'image/jpeg' };
+    const buf = await pipeline.webp({ quality: THUMBNAIL_QUALITY }).toBuffer();
+    return { buf, mimeType: 'image/webp' };
   } catch (err) {
     console.warn(`[generate-image] thumbnail failed (${err.message}), chat will use raw or skip`);
     return null;
@@ -672,10 +675,10 @@ become part of the spec.json design history.`,
 
       // 额外生成 thumbnail（仅给 chat 缩略图 / WS 推送用，原图保留）
       // 落到 .thumbnails/ 子目录，agent 通常不引用（隐藏目录命名暗示），但能被
-      // /api/.../assets/.thumbnails/foo.thumb.jpg 路径访问（assets endpoint 不限子树）
+      // /api/.../assets/.thumbnails/foo.thumb.webp 路径访问（assets endpoint 不限子树）
       const thumbDir = path.join(outDir, '.thumbnails');
       await fs.mkdir(thumbDir, { recursive: true });
-      const thumbName = `${finalName}.thumb.jpg`;
+      const thumbName = `${finalName}.thumb.webp`;
       const absThumb = path.join(thumbDir, thumbName);
       const thumb = await makeThumbnail(imgBuf);
       if (thumb) {
@@ -685,6 +688,16 @@ become part of the spec.json design history.`,
         console.log(`[generate-image] saved ${fileName} ${imgBuf.length}B (thumb skipped)`);
       }
       const thumbAgentRelPath = thumb ? path.posix.join('assets', 'generated', '.thumbnails', thumbName) : null;
+
+      // 预热派生图：全尺寸 webp / 三档响应式宽度 / 各档 avif，全部排后台串行编。
+      //
+      // 为什么放在这里：这一刻用户正在等模型说下一句话，CPU 是闲的；而如果不预热，
+      // 第一个打开站点的人要在请求路径上等 12 张图各编一次。单核实测冷开一个
+      // 12 图站点 5.4s，预热之后 72ms。
+      // 不 await：编码是后台队列的事，生图工具不该被它拖住。
+      fs.stat(absOut)
+        .then(st => enqueueWarm(absOut, st, warmSpecsFor()))
+        .catch(() => { /* 预热失败不影响生图，下次请求现编 */ });
 
       // 语义 sidecar（2026-07-27 工作台）：.meta/<name>.json 记录物件来历，
       // /api/.../artifacts 清单合并给产物墙显示（prompt / 角色 / 来源 run）。

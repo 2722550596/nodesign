@@ -3,7 +3,7 @@
  *
  *   GET    /api/me/usage              → { usedToday, limit, username, role }
  *   GET    /api/me/showcase           → 个人作品橱窗（作品 + 它沉淀出来的 skill）
- *   GET    /api/me/showcase/:id/cover → 该作品封面 JPEG（复用首页那套截图缓存）
+ *   GET    /api/me/showcase/:id/cover → 该作品封面 webp（复用首页那套截图缓存）
  *   DELETE /api/me/showcase/:id       → 移出橱窗（只删卡片，不动作品本体）
  *
  * 橱窗条目目前由 agent 的 crystallize_skill 工具产生；跨用户的"市场"还没开
@@ -55,7 +55,7 @@ router.get('/showcase/:id/cover', async (req, res, next) => {
     if (req.headers['if-none-match'] === `"${result.etag}"`) return res.status(304).end();
     res.set('ETag', `"${result.etag}"`);
     res.set('Cache-Control', 'private, max-age=60');
-    res.type('image/jpeg').send(result.buffer);
+    res.type('image/webp').send(result.buffer);
   } catch (err) { next(err); }
 });
 

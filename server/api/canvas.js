@@ -27,6 +27,11 @@ import {
 import { fitInjectionBlock } from './standalone-fit.js';
 import { resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { kindOfPath } from '../lib/artifact-target.js';
+import {
+  sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
+  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY,
+} from '../lib/image-variant.js';
+import { sendVideo, isVideo } from '../lib/video-variant.js';
 
 const router = express.Router();
 
@@ -53,27 +58,8 @@ const ASSET_MIME = {
   '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.webm': 'video/webm',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
 };
-/**
- * thumbnail 路径模式：assets/generated/.thumbnails/<name>.thumb.jpg
- * 文件不存在时尝试找原图 assets/generated/<name>.<ext>（任一支持后缀）作 fallback。
- * 用途：① 老图（generate_image 加 thumbnail 流程之前生成的）没 thumb → 用原图
- * ② thumbnail 生成失败 → 用原图。preview 体验降级而非破图。
- *
- * @returns {Promise<string|null>} 原图绝对路径，找不到时 null
- */
-async function findOriginalForThumbnail(absThumbPath) {
-  const m = absThumbPath.match(/^(.*)\/\.thumbnails\/(.+)\.thumb\.jpg$/);
-  if (!m) return null;
-  const [, parentDir, baseName] = m;
-  for (const ext of ['.png', '.jpg', '.jpeg', '.webp', '.gif']) {
-    const candidate = path.join(parentDir, baseName + ext);
-    try {
-      const s = await fs.stat(candidate);
-      if (s.isFile()) return candidate;
-    } catch { /* try next ext */ }
-  }
-  return null;
-}
+// thumbnail 地址的解析与兜底（缺 thumb → 回原图 → 现编 512 webp）在
+// lib/image-variant.js，artifact-file 路由吃的是同一份，两条路由行为一致。
 
 router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
   try {
@@ -91,17 +77,22 @@ router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
       return res.status(403).json({ error: 'path escapes assets/' });
     }
 
+    // 请求的是不是缩略图地址 —— 决定 fallback 到原图之后要不要顺手缩到 512
+    const wantsThumb = isThumbPath(absPath);
+
     let stat;
+    let servedOriginalForThumb = false;
     try {
       stat = await fs.stat(absPath);
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
       // ENOENT 兜底：thumbnail 路径不存在 → fallback 到原图（老图 / 生成失败 case）
-      if (absPath.includes(`${path.sep}.thumbnails${path.sep}`) && absPath.endsWith('.thumb.jpg')) {
+      if (wantsThumb) {
         const original = await findOriginalForThumbnail(absPath);
         if (original) {
           absPath = original;
           stat = await fs.stat(original);
+          servedOriginalForThumb = true;
         } else {
           return res.status(404).json({ error: 'thumbnail and original both missing' });
         }
@@ -112,22 +103,32 @@ router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
     if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
 
     const ext = path.extname(absPath).toLowerCase();
-    const mime = ASSET_MIME[ext] || 'application/octet-stream';
-    res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Length', stat.size);
-    res.setHeader('Cache-Control', 'private, max-age=300');  // 5 分钟 cache，HMR / iframe reload 友好
-    const buf = await fs.readFile(absPath);
-    res.end(buf);
+    // 带 ?v= 的是内容寻址 URL（源图一变 v 就变），可以永久缓存；不带的只能短缓存
+    res.setHeader('Cache-Control', imageCacheControl(req));
+    // 视频走 Range + 派生档（deck 里 <video src="assets/x.mp4"> 也打这条路由）
+    if (isVideo(ext)) {
+      return sendVideo(req, res, absPath, stat, {
+        fallbackMime: ASSET_MIME[ext] || 'application/octet-stream',
+      });
+    }
+
+    // 显示路径一律发派生图（原图只留给导出，见 lib/image-variant.js）。
+    // 走 thumbnail 地址却拿到原图时补上 512 长边，等于把当年该生成的那张现补出来。
+    return sendImage(req, res, absPath, stat, {
+      fallbackMime: ASSET_MIME[ext] || 'application/octet-stream',
+      maxDim: servedOriginalForThumb ? THUMBNAIL_MAX_DIM : null,
+      quality: servedOriginalForThumb ? THUMBNAIL_QUALITY : undefined,
+    });
   } catch (err) { next(err); }
 });
 
 /**
  * Preview-only：把 canvas.html 里 <img src="assets/generated/<name>.<ext>"> 透明
- * 重写成 src="assets/generated/.thumbnails/<name>.thumb.jpg"。仅 GET /canvas serve
+ * 重写成 src="assets/generated/.thumbnails/<name>.thumb.webp"。仅 GET /canvas serve
  * 时改输出，**不动** agent 写的源文件。
  *
  * 理由：单图原始 6-8MB（Gemini 默认 1080×1920+ PNG），iframe 缩放（zoom=transform
- * scale）+ 多图同时渲染让 GPU/RAM 暴涨，preview 体感卡。thumbnail 长边 512 / ~50KB
+ * scale）+ 多图同时渲染让 GPU/RAM 暴涨，preview 体感卡。thumbnail 长边 512 / ~20KB
  * 足够 preview 看清布局。导出走 build-standalone 仍 inline 原图，最终交付不损质量。
  *
  * 也覆盖 CSS 内 url(...) 引用的图片（agent 用 background-image 时常见）。
@@ -156,9 +157,9 @@ function rewriteImagesToThumbnails(html) {
   const cssUrlRe = /(url\(\s*["']?)assets\/generated\/(?!\.thumbnails\/)([^"')]+?)\.(png|jpg|jpeg|webp|gif)(["']?\s*\))/gi;
   return html
     .replace(imgRe, (_m, prefix, name, _ext, suffix) =>
-      `${prefix}assets/generated/.thumbnails/${name}.thumb.jpg${suffix}`)
+      `${prefix}assets/generated/.thumbnails/${name}.thumb.webp${suffix}`)
     .replace(cssUrlRe, (_m, prefix, name, _ext, suffix) =>
-      `${prefix}assets/generated/.thumbnails/${name}.thumb.jpg${suffix}`);
+      `${prefix}assets/generated/.thumbnails/${name}.thumb.webp${suffix}`);
 }
 
 router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {

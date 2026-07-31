@@ -5,7 +5,7 @@
  *   首页早期版本用 iframe 直接挂 canvas.html 当封面，且 sandbox 不给 allow-scripts
  *   （一屏十几张卡，放开脚本等于每张卡都跑一遍生成页的动画 / 3D）。代价是**凡是靠
  *   JS 出画面的产物封面全是空白**——站点的滚动揭示、three.js 场景、图表库全中招。
- *   服务端截一次图就没这个矛盾：脚本在 chromium 里真跑，浏览器只收一张 JPEG。
+ *   服务端截一次图就没这个矛盾：脚本在 chromium 里真跑，浏览器只收一张 webp。
  *
  * 选谁当封面：/artifacts 的口径——任务目录 mtime 新→旧，第一个真有产物的任务的
  * artifacts[0]（形态注册表已经把 canvas.html / 根 index.html 排在别的稿前面）。
@@ -14,7 +14,7 @@
  *   deck — viewport = 真实画幅（16:9 / 16:10 / 9:16 / 4:3），整页入镜
  *   site — 页面高度无上界，按桌面宽 1440 渲染取顶部一屏（首屏即封面）
  *
- * 缓存：<cacheDir>/<pid>/<sha1(任务|入口|mtime|宽)>.jpg。key 带源 mtime，
+ * 缓存：<cacheDir>/<pid>/<sha1(任务|入口|mtime|宽)>.webp。key 带源 mtime，
  * agent 改完产物下次请求自然重截；旧文件留着不清（一个项目也就攒几张几十 KB）。
  * 并发：截图串行（chromium 一次一个），十张卡同时冷启也只排队不炸内存。
  */
@@ -122,7 +122,7 @@ export async function renderCoverShot(cover) {
     const { default: sharp } = await import('sharp');
     return await sharp(png)
       .resize({ width: OUT_WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: 80 })
+      .webp({ quality: 80 })
       .toBuffer();
   } finally {
     await browser?.close().catch(() => {});
@@ -179,7 +179,7 @@ async function renderOrRead(pid, cover) {
   const etag = crypto.createHash('sha1')
     .update(`${cover.relPath}|${cover.mtimeMs}|${OUT_WIDTH}`)
     .digest('hex');
-  const file = path.join(CACHE_DIR, pid, `${etag}.jpg`);
+  const file = path.join(CACHE_DIR, pid, `${etag}.webp`);
 
   try {
     return { buffer: await fs.readFile(file), etag, cover };

@@ -2021,7 +2021,7 @@ function Overlay({ children, onClose }) {
 function thumbSrcOf(projectId, item) {
   if (item.hasThumb) {
     const base = item.name.replace(/\.[^.]+$/, '');
-    return Assets.artifactFileUrl(projectId, `assets/generated/.thumbnails/${base}.thumb.jpg`);
+    return Assets.artifactFileUrl(projectId, `assets/generated/.thumbnails/${base}.thumb.webp`);
   }
   return Assets.artifactFileUrl(projectId, item.path);
 }

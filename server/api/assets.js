@@ -22,6 +22,12 @@ import { setActiveSession } from '../projects/store.js';
 import { patchBoard } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { getProjectCover } from '../lib/cover.js';
+import {
+  sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
+  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY,
+} from '../lib/image-variant.js';
+import { injectSrcset } from '../lib/html-srcset.js';
+import { sendVideo, isVideo } from '../lib/video-variant.js';
 
 const router = express.Router();
 
@@ -228,9 +234,11 @@ router.get('/:pid/artifacts', async (req, res, next) => {
           mtime: stat.mtime.toISOString(),
           ext,
           isImage: IMAGE_EXTS.has(ext),
-          hasThumb: kind === 'generated' && IMAGE_EXTS.has(ext)
-            ? await exists(path.join(dir, '.thumbnails', `${e.name.slice(0, -ext.length)}.thumb.jpg`))
-            : false,
+          // 不再探盘：缩略图地址对任何 generated 图都一定能出图（artifact-file
+          // 缺文件时回原图现编一张，见 lib/image-variant.js）。原来那次 exists()
+          // 探的是 .thumb.jpg，改名成 .thumb.webp 之后它会对老图一律返 false，
+          // 让产物墙退回去加载 3MB 原图 —— 正好是这轮要消灭的东西。
+          hasThumb: kind === 'generated' && IMAGE_EXTS.has(ext),
         };
         // 语义元数据（generate-image.js 落 .meta/<base>.json sidecar：prompt /
         // assetRole / provider / aspectRatio / sessionId / runId）—— 物件不只是
@@ -343,7 +351,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
 });
 
 /**
- * GET /:pid/cover — 项目封面 JPEG（首页卡片缩略图）
+ * GET /:pid/cover — 项目封面 webp（首页卡片缩略图）
  *
  * 服务端截最新产物的图（见 lib/cover.js 里为什么不是 iframe）。缓存按源 mtime，
  * 命中就是读盘；没命中要起一次 chromium，串行排队，冷启动 1-3s。
@@ -363,7 +371,7 @@ router.get('/:pid/cover', async (req, res, next) => {
     if (req.headers['if-none-match'] === `"${result.etag}"`) return res.status(304).end();
     res.set('ETag', `"${result.etag}"`);
     res.set('Cache-Control', 'private, max-age=60');
-    res.type('image/jpeg').send(result.buffer);
+    res.type('image/webp').send(result.buffer);
   } catch (err) { next(err); }
 });
 
@@ -593,11 +601,18 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
 
     let stat;
     let servePath = absPath;
+    // 缩略图地址缺文件时回原图现编一张（老图 / 生成失败 / 07-31 前的 .thumb.jpg）。
+    // 产物墙的缩略图走的就是这条路由，跟 canvas 那条 session assets 路由同一份兜底。
+    let servedOriginalForThumb = false;
     try {
       stat = await fs.stat(servePath);
     } catch (err) {
-      if (err.code === 'ENOENT') return res.status(404).json({ error: 'file not found' });
-      throw err;
+      if (err.code !== 'ENOENT') throw err;
+      const original = isThumbPath(servePath) ? await findOriginalForThumbnail(servePath) : null;
+      if (!original) return res.status(404).json({ error: 'file not found' });
+      servePath = original;
+      stat = await fs.stat(original);
+      servedOriginalForThumb = true;
     }
     // 目录 → 找 index.html（站点常见的 `href="about/"` 写法；deck 场景用不到但无害）
     if (stat.isDirectory()) {
@@ -610,13 +625,50 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
 
     const ext = path.extname(servePath).toLowerCase();
+    // 站点在编辑中要看到最新的那一份：html/css/js 一律 no-store —— no-cache 不够，
+    // CF 会对这些扩展名边缘缓存 + 把浏览器 TTL 改写成 4 小时（见路由入口注释）。
+    // 图片按 URL 有没有版本标记决定能缓多久（见 imageCacheControl）。
+    const editable = ext === '.html' || ext === '.htm' || ext === '.css' || ext === '.js';
+    res.setHeader('Cache-Control', editable ? 'no-store' : imageCacheControl(req));
+
+    // 这条路由是站点窗的图片入口：站点页面里的 <img src="assets/x.png"> 全打这儿。
+    // deck 那条 thumbnail 重写只作用于 GET /canvas，站点从来没享受过，于是一页
+    // 三张生图就是 5MB 起。显示一律发派生图（原图只留给导出）后降 ~90%。
+    // 尺寸由 ?w= 决定（srcset 注入产生），不传就是原尺寸：站点按真实设备宽取景，
+    // 服务端自作主张缩会让桌面糊。
+    if (IMAGE_EXTS.has(ext)) {
+      return sendImage(req, res, servePath, stat, {
+        fallbackMime: ARTIFACT_MIME[ext] || 'application/octet-stream',
+        maxDim: servedOriginalForThumb ? THUMBNAIL_MAX_DIM : null,
+        quality: servedOriginalForThumb ? THUMBNAIL_QUALITY : undefined,
+      });
+    }
+
+    // 视频：Range + 派生档。以前这条路由对视频是整个文件一次性 res.end，
+    // 没有 206 浏览器拖不动进度条（见 lib/video-variant.js）。
+    if (isVideo(ext)) {
+      return sendVideo(req, res, servePath, stat, {
+        fallbackMime: ARTIFACT_MIME[ext] || 'application/octet-stream',
+      });
+    }
+
+    // 站点页面：注入 srcset 让浏览器按视口挑尺寸。只加属性不动 DOM 结构，
+    // 理由见 lib/html-srcset.js（<picture> 会改盒模型，站点布局是 agent 写的）。
+    if (ext === '.html' || ext === '.htm') {
+      let html = await fs.readFile(servePath, 'utf8');
+      try {
+        html = await injectSrcset(html, path.dirname(servePath), sharedRoot);
+      } catch (err) {
+        console.warn('[artifact-file] srcset inject failed:', err.message);
+      }
+      const body = Buffer.from(html, 'utf8');
+      res.setHeader('Content-Type', ARTIFACT_MIME[ext]);
+      res.setHeader('Content-Length', body.length);
+      return res.end(body);
+    }
+
     res.setHeader('Content-Type', ARTIFACT_MIME[ext] || 'application/octet-stream');
     res.setHeader('Content-Length', stat.size);
-    // 站点在编辑中要看到最新的那一份：图片可以浏览器缓存 5 分钟（private 让 CF
-    // 不边缘缓存），html/css/js 一律 no-store —— no-cache 不够，CF 会对这些扩展
-    // 名边缘缓存 + 把浏览器 TTL 改写成 4 小时（见路由入口注释）。
-    const editable = ext === '.html' || ext === '.htm' || ext === '.css' || ext === '.js';
-    res.setHeader('Cache-Control', editable ? 'no-store' : 'private, max-age=300');
     res.end(await fs.readFile(servePath));
   } catch (err) { next(err); }
 });
