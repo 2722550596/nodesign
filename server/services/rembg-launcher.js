@@ -31,7 +31,7 @@ import { spawn, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import http from 'node:http';
-import { promises as fs, readFileSync } from 'node:fs';
+import { promises as fs, readFileSync, writeFileSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // services/ 在 server/services/，server root 上溯 1 层
@@ -93,6 +93,32 @@ async function watchdogTick() {
   try {
     serviceProc.kill('SIGTERM');
   } catch { /* 已经死了，exit handler 会接手 */ }
+}
+
+/**
+ * 把 service 进程钉成"内存不够时第一个该死的人"。
+ *
+ * 为什么需要：内存告急时，内核 OOM killer 和 earlyoom 都是按 oom_score 挑人，
+ * 而这台机器上前几名的分数挤在一起（实测 rembg 712 / Cursor 708 / claude 扩展
+ * 705 / nodesign 服务端 692，满分 1000）。差 4 分意味着 RSS 稍一波动排序就翻，
+ * 于是本该背锅的抠图服务躲过去，反而杀掉 nodesign 或者你的 IDE 连接。
+ *
+ * oom_score_adj 加 500 分把它顶到榜首且拉开差距，让"谁会被杀"变成确定的事：
+ * 抠图服务无状态，被杀了 helpers/rembg.js 会 fallback 到 per-call cold spawn，
+ * 用户最多觉得慢一次；杀 nodesign 会丢掉正在跑的 agent 回合。
+ *
+ * 非 root 只能调高不能调低，加分这个方向一定能成功。
+ */
+function pinOomScore(pid) {
+  const adj = Number(process.env.NODESIGN_REMBG_OOM_ADJ ?? 500);
+  if (!Number.isFinite(adj) || adj === 0) return;
+  try {
+    writeFileSync(`/proc/${pid}/oom_score_adj`, String(adj));
+    console.log(`[rembg-service] oom_score_adj=${adj}（内存告急时优先被杀，它是无状态的）`);
+  } catch (err) {
+    // 非 Linux / 权限不足：不是致命问题，earlyoom 的 --prefer 仍在兜着
+    console.warn(`[rembg-service] oom_score_adj 设置失败（不影响功能）: ${err.message}`);
+  }
 }
 
 function startWatchdog() {
@@ -232,6 +258,7 @@ function spawnService(py, script, preload) {
   }
 
   console.log(`[rembg-service] spawned PID ${serviceProc.pid}, preload=[${preload}]`);
+  pinOomScore(serviceProc.pid);
 
   serviceProc.on('exit', (code, signal) => {
     console.log(`[rembg-service] exited code=${code} signal=${signal}`);
