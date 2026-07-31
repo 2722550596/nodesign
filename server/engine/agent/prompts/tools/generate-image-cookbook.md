@@ -369,7 +369,7 @@ NB2 不是万能的——以下是 final 接受前**必扫**的 checklist：
 | **Mask / sketch 残墨** | reference 是带涂鸦/标注的截图时 NB2 偶尔把标注当主体复制 | 截图前清干净 reference 上的标注 / 红框 / 箭头 |
 | **Paste-artifact** | 多 reference 合成时偶尔把 reference 的局部 1:1 paste 进来 | 检查输出图有没有突兀的"贴片"边缘；有就改 prompt 强调 "naturally blend" / "reinterpret" |
 | **factuality** | reference 没给的信息 NB2 可能编（datestamp / sources / 数字）| 数据 / 事实类内容用 HTML 渲，别让 NB2 自己写 |
-| **transparent bg** | NB2 模型本身不支持，永远填某色背景 | **server 端独立工具兜底**：调 `mcp__nodesign__remove_background({ inputPath })` 抠任意 workspace 图片（rembg U²-Net），输出 RGBA PNG。+5-10s 首次 / +1-2s 后续。复杂主体 / 清晰边界场景效果好；薄透元素（玻璃 / 烟雾 / 飘发）边缘可能软。SVG 图标仍优先 lucide-react。详见 § M |
+| **transparent bg** | NB2 模型本身不支持，永远填某色背景 | **server 端独立工具兜底**：调 `mcp__nodesign__remove_background({ inputPath })` 抠任意 workspace 图片（rembg isnet + alpha matting），输出 RGBA PNG。warm ~8s。默认档已开 alpha matting，飘发 / 烟雾这类软边留得住；硬边主体（产品 / 图标 / UI 截图）主动降到 quality:'fast' 拿更利落的切口。SVG 图标仍优先 lucide-react。详见 § M |
 | **SynthID watermark** | 所有 NB2 生图自带不可见 watermark | 知道即可；商用素材用户该知情 |
 
 ## J. 调完必做
@@ -471,21 +471,25 @@ mcp__nodesign__generate_image({
 
 NB2 模型本身不支持 transparent bg（永远填某色背景），canvas bg 跟 NB2 默认色冲突时（agent 写黄底 deck，NB2 出灰底图直接糊）。**独立工具** `mcp__nodesign__remove_background({ inputPath })` 调 server 端 rembg 抠掉背景，输出 RGBA PNG 给你叠在任何 canvas 上。
 
-**默认 model = birefnet-general-lite + alpha matting** —— 2024 SOTA-tier 边缘质量，比老 u2net 显著少 halo / 色边伪影。warm 推理 ~3-5s。
+**默认 quality = `balanced`（isnet-general-use + alpha matting）**，warm ~8s。alpha matting 是消 halo 的关键：不开的话抠完会剩大约 34% 的半透明杂散像素，开了降到 10%，飘发这类细节也留得住。
 
 **为什么独立工具不绑 generate_image flag**：实际场景比"刚生的图想透明"更广——用户上传的产品照、之前生过的图、截图都该能抠。生图后想抠就再调一次本工具，0 重复 token。
 
-### quality 三档（全开 alpha matting）
+### quality 三档
 
-| quality | 模型 | warm 时间 | 适用 |
+| quality | 组成 | warm 时间 | 什么时候用 |
 |---|---|---|---|
-| `fast` | isnet-general-use (170MB) + AM | ~5-10s | 批量 / 非关键 / 边缘要求中等 |
-| `balanced` (default) | birefnet-general-lite (214MB) + AM | ~10-20s | **绝大多数场景**——hero / portrait / product，边缘干净 |
-| `best` | birefnet-general (880MB) + AM | ~20-40s | 关键 hero shot / 边缘极挑剔（首次额外下 880MB ~3-5min） |
+| `balanced` (default) | isnet + alpha matting | ~8s | **默认就用它**。人物 / 毛发 / 皮草 / 烟雾 / 织物 / 任何软边 |
+| `fast` | isnet，不开 AM | ~7s | **主动降档**：硬边主体，软边会被看成糊——产品图 / 图标 / logo / UI 截图 / 平涂图形。大批量时也用它 |
+| `best` | birefnet-general-lite + AM | 视机器 | 峰值内存 2.4GB+，**当前机器上被禁用**。只有 balanced 把主体形状本身分割错时才值得试 |
 
-**warm vs cold**：server 启动时已 spawn 常驻 `rembg-service` python 进程（onnxruntime session 在内存），一般情况都走这条 warm 路径。service 不可用时 fallback 到 per-call cold spawn（30-180s），caption 不变但慢。
+**别为了提速预先缩图**：alpha matting 限死在 1024 长边算完再把 alpha 放大回原尺寸，耗时不随输入像素数增长。缩了只会白丢分辨率。
 
-deck 里要抠 N 张串行调即可；service 路径多张并行也 OK（单 python 进程 thread 安全）。
+**超上限会被显式拒绝**，不会静默降档。拿到拒绝信息就按它说的改档重试，别反复试同一档。
+
+**warm vs cold**：server 启动时已 spawn 常驻 `rembg-service` python 进程（onnxruntime session 在内存），一般情况都走这条 warm 路径。service 不可用时 fallback 到 per-call cold spawn，每次多付 20-40s 模型 load，结果一样只是慢。
+
+deck 里要抠 N 张串行调即可。**别并行**：这台机器 1 核，并行只会一起变慢还把内存峰值叠起来。
 
 ### 何时调
 

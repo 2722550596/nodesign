@@ -147,28 +147,27 @@ Use this when:
 - A screenshot or any other workspace image needs the subject isolated
 
 Implementation: long-running Python service (rembg / onnxruntime) accessed via
-Unix socket; cold fallback per-call spawn when service down. BiRefNet ML
-segmentation by default; trimap alpha matting post-process (pymatting) for
-clean edges. Default "balanced" trades ~30-90s for SOTA-tier edges.
+Unix socket; cold fallback per-call spawn when service down. isnet ML
+segmentation + trimap alpha matting post-process (pymatting) for clean edges.
 
 QUALITY OPTIONS (tradeoff: speed vs edge character):
-- fast:     isnet-general-use, no alpha matting (~7s warm). DEFAULT —
-            reliable for batch / cards / collages / high-contrast bg.
-            Crisp, decisive cuts; leaves some semi-transparent haze (halo).
-- balanced: isnet-general-use + alpha matting (~8s warm). Escalate here when
-            fast leaves visible halo, or on hair / fur / soft edges. Cuts
-            semi-transparent stray pixels from ~34% to ~10% and keeps finer
-            wisps, at the cost of a slightly softer overall edge.
+- balanced: isnet-general-use + alpha matting (~8s warm). DEFAULT — cuts
+            semi-transparent stray pixels (halo) from ~34% to ~10% and keeps
+            finer wisps, at the cost of a slightly softer overall edge.
             Alpha matting runs capped at 1024px long edge then the alpha is
-            scaled back, so cost no longer grows with input megapixels.
+            scaled back, so cost does NOT grow with input megapixels.
+- fast:     isnet-general-use, no alpha matting (~7s warm). Step DOWN to this
+            for hard-edged subjects where you want a crisp decisive cut and
+            softness would read as blur: product shots, icons, logos, UI
+            screenshots, flat-color graphics. Also for large batches where
+            the 1s/image difference adds up.
 - best:     birefnet-general-lite + alpha matting. Strongest segmentation, but
             needs ~2.5GB RAM for inference — may be disabled by the machine cap
             (the tool tells you explicitly if so; it never silently downgrades).
 
-Escalation order: start at fast. Go to balanced when you see edge halo / 伪影
-or the subject has hair, fur, smoke, or fabric. Only reach for best when
-balanced still mis-segments the subject shape itself (a model problem, not an
-edge problem) — balanced already fixes edges.
+Which to pick: stay on the default. Step down to fast for hard-edged / graphic
+subjects. Only reach for best when balanced mis-segments the subject SHAPE
+itself (a model problem, not an edge problem) — balanced already fixes edges.
 
 LIMITATIONS:
 - Heuristic ML segmentation — clean cuts when subject has clear visual boundaries
@@ -200,9 +199,13 @@ Returns: text caption with output path + image content block (preview the result
       quality: z
         .enum(['fast', 'balanced', 'best'])
         .optional()
-        .describe('Speed vs edge character. Default "fast" (isnet, no alpha matting, ~7s warm): crisp decisive cuts, some semi-transparent halo — fine for batch / cards / collages. "balanced" (isnet + alpha matting, ~8s warm): escalate here when fast leaves visible halo, or for hair / fur / smoke / fabric; cuts stray semi-transparent pixels ~34%→~10% and keeps finer wisps, slightly softer overall edge. Alpha matting is capped at 1024px long edge, so cost no longer scales with input megapixels — no need to pre-resize. "best" (birefnet-general-lite + alpha matting): strongest segmentation but needs ~2.5GB RAM; may be disabled by the machine cap, in which case the tool says so explicitly rather than silently downgrading. Only reach for best when balanced mis-segments the subject SHAPE — balanced already fixes edges.'),
+        .describe('Speed vs edge character. Default "balanced" (isnet + alpha matting, ~8s warm): cuts stray semi-transparent pixels (halo) ~34%→~10% and keeps finer wisps, slightly softer overall edge; alpha matting is capped at 1024px long edge so cost does NOT scale with input megapixels — never pre-resize for speed. Step DOWN to "fast" (isnet, no alpha matting, ~7s warm) for hard-edged subjects where softness reads as blur: product shots, icons, logos, UI screenshots, flat-color graphics — and for large batches. "best" (birefnet-general-lite + alpha matting): strongest segmentation but needs ~2.5GB RAM; may be disabled by the machine cap, in which case the tool says so explicitly rather than silently downgrading. Only reach for best when balanced mis-segments the subject SHAPE — balanced already fixes edges.'),
     },
-    async ({ inputPath, outputName, overwrite = false, quality = 'fast' }) => {
+    // 默认 balanced（2026-07-31）：AM 加了分辨率上限之后只比 fast 慢 1.7s、多占
+    // 31MB，而 halo 从 34% 降到 10%。默认该给更好的那个，crisp 需求让 agent 显式
+    // 降到 fast —— 反过来（默认 fast，需要好边缘时升档）依赖 agent 先看出有 halo，
+    // 而它多数时候不会回头看抠完的图。
+    async ({ inputPath, outputName, overwrite = false, quality = 'balanced' }) => {
       // 0a. 质量上限（小内存机器禁 birefnet，显式拒绝不静默降档）
       const capErr = qualityCapError(quality);
       if (capErr) {
