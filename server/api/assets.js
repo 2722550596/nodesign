@@ -293,7 +293,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         const task = {
           id: t.name,
           title: t.name,
-          kind,                       // 'deck' | 'site' | null（还没写出产物）
+          kind,                       // 'deck' | 'site' | 'world' | null（还没写出产物）
           sessionId: manifest?.sessionId
             ?? await (async () => {
               try {

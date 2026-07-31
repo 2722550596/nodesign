@@ -25,11 +25,21 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import deck from './deck.js';
 import site from './site.js';
+import world from './world.js';
 
-export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site });
+export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site, [world.id]: world });
 
-/** 判定优先级：canvas.html 在 index.html 之前（一个任务只做一种形态） */
-const KIND_ORDER = [deck.id, site.id];
+/**
+ * 判定优先级：world 最前，然后 canvas.html 在 index.html 之前
+ * （一个任务只做一种形态）。
+ *
+ * world 排最前不是偏好，是必须（2026-08-01）：world 任务里迟早会出现 .html
+ * ——导出的仿书、agent 写的预览页、试作。deck 认任务根顶层任意 .html，site 认
+ * index.html 和 dist/ 之类构建目录，两个都会把一个世界抢走判成自己。world 的
+ * 判定证据（世界.md / marker.kind）比它们强且不会误伤别的形态，所以放最前
+ * 短路掉后面的判定最安全。
+ */
+const KIND_ORDER = [world.id, deck.id, site.id];
 
 export function kindDef(kind) {
   return KINDS[kind] || null;
@@ -86,9 +96,17 @@ async function hasLooseHtml(taskDir) {
 export async function taskManifest(taskDir) {
   const marker = await readTaskMarker(taskDir);
 
-  const siteInsts = await site.discoverInstances(taskDir, marker);
+  // world 先判且**命中即独占**（2026-08-01）：世界是一个整体，`世界/` 里的地点和
+  // 角色是它的内部结构，不是并列产物。不独占的话，世界里任何一个 .html（导出的
+  // 仿书、预览页、试作）都会让 manifest 里凭空多出 deck / site 卡，画布上就是
+  // 世界旁边挂着几张来路不明的卡片。detectTaskKind 是首个命中即返回所以本来就
+  // 安全，这里的多产物循环是并列跑的，得显式短路。
+  const worldInsts = await world.discoverInstances(taskDir, marker);
+  const siteInsts = worldInsts.length ? [] : await site.discoverInstances(taskDir, marker);
   const rootSite = siteInsts.find(i => !i.single && !i.srcRoot);
-  const deckInsts = await deck.discoverInstances(taskDir, marker, { rootSiteExists: !!rootSite });
+  const deckInsts = worldInsts.length
+    ? []
+    : await deck.discoverInstances(taskDir, marker, { rootSiteExists: !!rootSite });
 
   const decorate = (def) => (m) => ({
     ...m,
@@ -97,8 +115,11 @@ export async function taskManifest(taskDir) {
     exportFormats: m.single ? def.exportFormats.filter(f => f !== 'site') : def.exportFormats,
   });
   const artifacts = [];
-  // 顺序 = 无更好信号时的默认偏好：deck（canvas.html 排头，兼容旧判定链
-  // deck 先于 site）→ 目录站点 → 单页
+  // 顺序 = 无更好信号时的默认偏好：world（独占，命中时后两者为空）→ deck
+  // （canvas.html 排头，兼容旧判定链 deck 先于 site）→ 目录站点 → 单页
+  for (const i of worldInsts) {
+    artifacts.push(decorate(world)(await world.instanceManifest(taskDir, marker, i)));
+  }
   for (const i of deckInsts) {
     artifacts.push(decorate(deck)(await deck.instanceManifest(taskDir, marker, i)));
   }
@@ -141,8 +162,11 @@ export function artifactOfPath(manifest, relInTask) {
   const files = manifest.artifacts.filter(a => a.file);
   const hit = files.find(a => a.file === rel);
   if (hit) return hit;
+  // 目录型产物（site 的目录站、world 的世界）。判据用「没有 file 字段」而不是
+  // 写死 kind —— 注册表的意义就是别在寻址层再列一遍形态名（2026-08-01 加 world
+  // 时改的；改前只认 site，world 任务的路径寻址会全部落空）。
   const dirs = manifest.artifacts
-    .filter(a => !a.file && a.kind === 'site')
+    .filter(a => !a.file)
     // 子目录站（srcRoot 非空）优先精确匹配，根站（srcRoot=''）最后兜底
     .sort((a, b) => (b.srcRoot?.length || 0) - (a.srcRoot?.length || 0));
   for (const a of dirs) {

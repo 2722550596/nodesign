@@ -85,6 +85,50 @@ await mk('tasks/t-built/_drafts/alt.html');
   check('无产物无 marker → null', empty === null);
 }
 
+// ── fixture 6：world 形态（2026-08-01 阶段 0）──
+// 重点全在**抢跑**：world 任务里迟早会有 .html（导出的仿书、预览页、试作），
+// deck 认顶层任意 .html、site 认 index.html 和 dist/，两个都会把世界抢走。
+await mk('tasks/t-world/世界.md', '# 雾都\n设定若干');
+await mk('tasks/t-world/世界/王城/地点.md', '# 王城');
+await mk('tasks/t-world/世界/王城/艾琳/角色.md', '# 艾琳');
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-world'));
+  check('world 判定 + 独占', m.kind === 'world' && m.artifacts.length === 1);
+  check('world 入口是世界.md', m.entryRel === '世界.md' && m.artifacts[0].root === '');
+  check('world 不给整站导出', !m.exportFormats.includes('site'));
+  check('world 任务内路径归这个世界', artifactOfPath(m, '世界/王城/艾琳/角色.md')?.kind === 'world');
+}
+
+// 散装 .html + index.html + dist/ 三种抢跑证据同时出现，仍然必须是 world
+await mk('tasks/t-world/预览.html');
+await mk('tasks/t-world/index.html');
+await mk('tasks/t-world/dist/index.html');
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-world'));
+  check('world 不被 deck/site 抢走', m.kind === 'world' && m.artifacts.length === 1,
+    `实得 kind=${m.kind} artifacts=${m.artifacts.map(a => a.kind).join(',')}`);
+  check('world 命中时不派生 deck/site 卡', !m.artifacts.some(a => a.kind !== 'world'));
+}
+
+// marker 兜底：世界书还没写出来的窗口期（agent 刚认领任务），也得判成 world，
+// 否则那个散装 .html 会让它变成 deck
+await mk('tasks/t-world-new/.nd-task.json', JSON.stringify({ kind: 'world' }));
+await mk('tasks/t-world-new/草稿.html');
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-world-new'));
+  check('marker 声明的 world 不被散装 html 抢走', m.kind === 'world' && m.artifacts.length === 1);
+}
+
+// 反向：没有 world 证据的任务不能被 world 误吞（KIND_ORDER 把它放最前的代价）
+{
+  const deckM = await taskManifest(path.join(ws, 'tasks/t-deck'));
+  const siteM = await taskManifest(path.join(ws, 'tasks/t-built'));
+  const mixedM = await taskManifest(path.join(ws, 'tasks/t-mixed'));
+  check('world 前置不误伤 deck', deckM.kind === 'deck');
+  check('world 前置不误伤 site', siteM.kind === 'site');
+  check('world 前置不误伤混合任务', mixedM.kind === 'deck' && mixedM.artifacts.some(a => a.kind === 'site'));
+}
+
 console.log(`\n${pass}/${pass + fail} passed`);
 await fs.rm(ws, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);
