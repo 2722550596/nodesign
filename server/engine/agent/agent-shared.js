@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
+import { noteTaskStarted, noteTaskFinished } from './task-notes.js';
 import { listWorkspaceArtifacts } from '../../lib/artifact-target.js';
 import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
 
@@ -299,6 +300,9 @@ function handleSystemMessage(ctx, msg) {
       ctx.emit(Events.taskStarted(
         msg.task_id, msg.description, msg.task_type, msg.prompt, msg.tool_use_id,
       ));
+      // 持久层：任务落成 tasks/<任务>/notes/子任务.md 的一面（可拖真便签），
+      // 舞台贴只管直播。fire-and-forget，失败不影响 turn
+      noteTaskStarted(ctx, msg).catch(() => { /* 定位不到任务等，静默 */ });
       break;
 
     case 'task_progress':
@@ -319,6 +323,8 @@ function handleSystemMessage(ctx, msg) {
       ctx.emit(Events.taskNotification(
         msg.task_id, msg.status, msg.summary, msg.usage, msg.tool_use_id,
       ));
+      // 持久便签收尾：把「进行中」翻成终态 + 结果摘要
+      noteTaskFinished(ctx, msg).catch(() => { /* 静默 */ });
       break;
 
     case 'notification':

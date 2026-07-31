@@ -1557,6 +1557,7 @@ export default function BoardCanvas({
               positioned={positioned}
               visibleIdSet={visibleIdSet}
               boardSize={stageBounds}
+              scale={scale}
               onDismiss={dismissStageCard}
             />
           </div>

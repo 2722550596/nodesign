@@ -387,7 +387,7 @@ export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZ
 
 // ── 板内坐标系那一面（角标 + 贴物件卡）──
 
-export function StageBoardLayer({ stageBadges, anchoredCards, positioned, visibleIdSet, boardSize, onDismiss }) {
+export function StageBoardLayer({ stageBadges, anchoredCards, positioned, visibleIdSet, boardSize, scale = 1, onDismiss }) {
   return (
     <>
       {Object.entries(stageBadges).map(([oid, ts]) => {
@@ -412,6 +412,7 @@ export function StageBoardLayer({ stageBadges, anchoredCards, positioned, visibl
           slot={slot}
           pos={pos}
           boardSize={boardSize}
+          scale={scale}
           onDismiss={() => onDismiss(card.blockId)}
         />
       ))}
@@ -451,7 +452,7 @@ export function StageDock({ dockPanels, dockChips, onDismiss }) {
 // ── 卡片组件 ──
 
 /** 舞台卡（板内坐标系定位）：贴目标物件摆（右侧优先，放不下换左/下）；shimmer 贴工作区下沿 */
-function StageCard({ card, obj, zoneRect, slot = 0, pos, boardSize, onDismiss }) {
+function StageCard({ card, obj, zoneRect, slot = 0, pos, boardSize, scale = 1, onDismiss }) {
   // 物件还没上墙：贴在工作区右上（标题栏下面），跟着这块区一起动。
   // 同区并发多张时逐张往左下错开，免得后来的把前面那张完全盖住。
   if (!obj && zoneRect && card.kind !== 'image') {
@@ -461,7 +462,7 @@ function StageCard({ card, obj, zoneRect, slot = 0, pos, boardSize, onDismiss })
     const y = zoneRect.y + ZONE.header + ZONE.pad + step;
     return (
       <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60 + slot, pointerEvents: 'auto' }}>
-        <StageCardBody card={card} onDismiss={onDismiss} />
+        <StageCardBody card={card} scale={scale} onDismiss={onDismiss} />
       </div>
     );
   }
@@ -486,15 +487,15 @@ function StageCard({ card, obj, zoneRect, slot = 0, pos, boardSize, onDismiss })
   y = Math.max(12, Math.min(boardSize.h - 400, y));
   return (
     <div style={{ position: 'absolute', left: x, top: y, width: STAGE_CARD_W, zIndex: 60, pointerEvents: 'auto' }}>
-      <StageCardBody card={card} onDismiss={onDismiss} />
+      <StageCardBody card={card} scale={scale} onDismiss={onDismiss} />
     </div>
   );
 }
 
 /** 舞台卡内容体（代码直播 / 终端）—— 板内锚定与 dock 共用 */
-function StageCardBody({ card, onDismiss }) {
+function StageCardBody({ card, scale = 1, onDismiss }) {
   if (card.kind === 'image') return <ShimmerCard card={card} onDismiss={onDismiss} />;
-  if (card.kind === 'subagent') return <SubagentStickyCard card={card} onDismiss={onDismiss} />;
+  if (card.kind === 'subagent') return <SubagentStickyCard card={card} onDismiss={onDismiss} scale={scale} />;
   const running = card.status === 'running';
   const isTerm = card.kind === 'terminal';
   const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : 'rgba(176,140,79,0.65)';
@@ -617,23 +618,58 @@ function ShimmerCard({ card, height, onDismiss }) {
 }
 
 /**
+ * 舞台卡的位移拖拽（2026-07-31）：transform 偏移，不进任何持久层 —— 舞台卡
+ * 是转瞬态，拖只是"别挡着我看"。scale = 桌面缩放（板内坐标系里 pointer 的
+ * 屏幕像素要除掉它才是板内位移；dock 在屏幕坐标系，scale=1）。
+ * 只从带 data-stage-drag 的把手（标题栏）起拖，正文可以照常滚动选字。
+ */
+function useCardDrag(scale = 1) {
+  const [off, setOff] = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+  const offRef = useRef(off);
+  offRef.current = off;
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('button')) return;
+    if (!e.target.closest('[data-stage-drag]')) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: offRef.current.x, oy: offRef.current.y };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const s = scale || 1;
+    setOff({ x: d.ox + (e.clientX - d.sx) / s, y: d.oy + (e.clientY - d.sy) / s });
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+  return { off, handlers: { onPointerDown, onPointerMove, onPointerUp } };
+}
+
+/**
  * 子代理舞台便利贴：运行中 = 当前 30s 摘要直播；完成 = 翻成结果内容
  * （lastAssistantMessage，markdown）。不自动蒸发 —— 结果要留给用户读，
- * × 手动关；值得长留的内容 agent 会按 prelude 约定落成 notes/ 持久贴。
+ * × 手动关。持久层由服务端 task-notes.js 负责（每个 Task 落
+ * tasks/<任务>/notes/子任务.md 一面，桌面上是可拖真便签）；这张舞台贴
+ * 抓标题栏也能拖（transform 位移，不落盘）。
  */
-function SubagentStickyCard({ card, onDismiss }) {
+function SubagentStickyCard({ card, onDismiss, scale = 1 }) {
   const running = card.status === 'running';
+  const { off, handlers } = useCardDrag(scale);
   return (
     <div
       data-stage="card" data-stage-kind="subagent" data-stage-status={card.status}
+      {...handlers}
       style={{
         borderRadius: 10, overflow: 'hidden',
         border: `1.5px solid ${card.status === 'fail' ? '#b0554f' : 'rgba(176,140,79,0.55)'}`,
         background: '#fffbeb', boxShadow: '0 8px 24px rgba(60,48,20,0.22)',
         animation: POP_IN,
+        transform: (off.x || off.y) ? `translate(${off.x}px, ${off.y}px)` : undefined,
+        touchAction: 'none',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid rgba(176,140,79,0.22)' }}>
+      <div data-stage-drag style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid rgba(176,140,79,0.22)', cursor: 'grab', userSelect: 'none' }}>
         <Bot size={11} color="#8a744d" />
         <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: '#6d5c3d', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {card.agentType}{card.description ? ` · ${card.description}` : ''}
