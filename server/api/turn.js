@@ -50,7 +50,7 @@ import {
 } from '../engine/runs/active-runs.js';
 import { applySessionModel } from '../engine/agent/session-model.js';
 import { AsyncQueue } from '../lib/async-queue.js';
-import { checkQuota, checkConcurrency } from '../lib/quota.js';
+import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { getProjectBus } from '../ws/broker.js';
 import { readPendingSummary } from './pending-changes.js';
 import { pendingRewinds } from './sessions.js';
@@ -202,11 +202,16 @@ router.post('/:pid/turn', async (req, res, next) => {
     }
 
     // ── 内测闸门（2026-07-30）：必须在 202 之前同步判 ──
-    // 日配额：所有 turn 都扣（排队的稍后也烧 token）
+    // 日配额：所有 turn 都扣（排队的稍后也烧钱）。口径是金额不是 token，
+    // 原因见 lib/quota.js 文件头 —— 简言之 token 数对缓存命中与否几乎无差别，
+    // 金额能差十倍，拿 token 当闸门等于没量到主项。
+    //
+    // 07-31 起只剩这一道：分模型限额撤了，因为金额天然让 opus 烧得更快，
+    // 不需要第二个数字表达同一个意图。
     const quota = checkQuota(req.user);
     if (!quota.ok) {
       return res.status(429).json({
-        error: `今日额度已用完（${quota.usedToday.toLocaleString()} / ${quota.limit.toLocaleString()} tokens），明天再来`,
+        error: `今日额度已用完（${fmtUsd(quota.usedToday)} / ${fmtUsd(quota.limit)}），明天零点刷新`,
         code: 'QUOTA_EXCEEDED',
         usedToday: quota.usedToday,
         limit: quota.limit,

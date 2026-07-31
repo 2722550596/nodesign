@@ -161,35 +161,51 @@ export default function ComposerMenu({
 }
 
 /**
- * 今日用量 / 日限额。
+ * 今日额度（2026-07-31 口径改成金额）。
  *
- * 限额是每天按 Asia/Shanghai 日界重置的 input+output tokens 总量；admin 无限额，
- * 那种情况只报数字，不画一条永远填不满的条。
+ * 服务端按 Asia/Shanghai 日界滚动现算「今天花了多少钱」。单位就是美元，不换算成
+ * 点数也不只给百分比 —— 换模型的冷启动提醒要报一个具体金额，两处口径必须一致，
+ * 否则用户没法把「多花 $1.80」和「我还剩多少」对上。
+ *
+ * 分模型那几行只报明细不报限额：额度是一个总数，opus 天然烧得更快，
+ * 不需要第二个数字重复表达同一个意图。
  */
 function AccountUsage({ account }) {
-  const { usedToday = 0, limit = null, username, role } = account;
-  const capped = typeof limit === 'number' && limit > 0;
-  const pct = capped ? clamp((usedToday / limit) * 100, 0, 100) : 0;
-  // 80% 起变色：跟顶栏头像那圈描边同一条线，两处对同一件事的判断不能不一样
-  const color = pct >= 100 ? COLOR.error : pct >= 80 ? COLOR.warn : COLOR.text4;
+  const { pct = 0, capped = false, tokensToday = 0, usedToday = 0, limit = null, username, role, models = [] } = account;
+  const p = capped ? clamp(pct, 0, 100) : 0;
+  // 75% 起变色：跟配额横幅的第一档同一条线，两处对同一件事的判断不能不一样
+  const color = p >= 90 ? COLOR.error : p >= 75 ? COLOR.warn : COLOR.text4;
+  const usd = (n) => `$${(n || 0).toFixed(2)}`;
 
   return (
     <div style={{ padding: `2px ${GAP.md}px ${GAP.sm}px` }}>
       {capped && (
         <div style={{
           height: 4, borderRadius: 2, overflow: 'hidden',
-          background: 'rgba(0,0,0,0.06)', marginBottom: 6,
+          background: 'rgba(0,0,0,0.06)', marginBottom: 3,
         }}>
-          <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width 0.3s ease' }} />
+          <div style={{ width: `${p}%`, height: '100%', background: color, transition: 'width 0.3s ease' }} />
         </div>
       )}
       <div style={{
         display: 'flex', justifyContent: 'space-between', gap: GAP.lg,
-        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: 1.9,
-        color: capped && pct >= 80 ? color : COLOR.text2,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: 1.7,
+        color: capped && p >= 75 ? color : COLOR.text2,
       }}>
-        <span style={{ color: COLOR.sub }}>今日</span>
-        <span>{formatK(usedToday)}{capped ? ` / ${formatK(limit)} · ${pct.toFixed(0)}%` : ' · 不限额'}</span>
+        <span style={{ color: COLOR.sub }}>今日额度</span>
+        <span>
+          {capped ? `${usd(usedToday)} / ${usd(limit)} · ${p.toFixed(0)}%` : `${usd(usedToday)} · 不限额`}
+        </span>
+      </div>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', gap: GAP.lg,
+        fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.9, color: COLOR.sub,
+      }}>
+        <span>今日对话</span>
+        <span>
+          {formatK(tokensToday)} tokens
+          {models.length > 0 && ` · ${models.map((m) => `${m.label} ${usd(m.costUsd)}`).join(' + ')}`}
+        </span>
       </div>
       {username && (
         <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>

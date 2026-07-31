@@ -56,23 +56,55 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_runs_status_created ON runs(status, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_runs_skill_created ON runs(skill_id, created_at DESC);
+
+  -- 分模型用量明细（2026-07-31）。数据源 = SDK result.modelUsage 的会话内差分
+  -- （modelUsage 是会话累计值，context.absorbResult 做差分后经 finishTurn 落这里）。
+  -- model 键是 SDK 上报的原始模型串（如 'claude-sonnet-5'）；家族归并（sonnet/opus）
+  -- 在查询侧做（lib/quota.js modelFamily），表里存原始值不丢信息。
+  CREATE TABLE IF NOT EXISTS run_model_usage (
+    run_id              TEXT NOT NULL,
+    model               TEXT NOT NULL,
+    input_tokens        INTEGER NOT NULL DEFAULT 0,
+    output_tokens       INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens   INTEGER NOT NULL DEFAULT 0,
+    cache_create_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd            REAL NOT NULL DEFAULT 0,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (run_id, model)
+  );
 `);
 
 console.log(`[engine/runs] SQLite ready at ${DB_PATH}`);
 
-// 启动清扫：上个进程留下的 pending/running 行（server 重启时 SDK 子进程全死，
-// 这些 run 不可能再推进）标成 failed，否则永久停在 running 成僵尸（丢状态路径 P12）
-try {
-  const swept = db.prepare(`
-    UPDATE runs SET status = 'failed', error = 'server restarted while run in flight',
-      finished_at = datetime('now'), updated_at = datetime('now')
-    WHERE status IN ('pending', 'running')
-  `).run();
-  if (swept.changes > 0) {
-    console.log(`[engine/runs] swept ${swept.changes} orphaned run(s) from previous process`);
+/**
+ * 清扫僵尸 run：上个进程留下的 pending/running 行（server 重启时 SDK 子进程全死，
+ * 这些 run 不可能再推进）标成 failed，否则永久停在 running（丢状态路径 P12）。
+ *
+ * **只能由 server 进程在启动时调一次**（server/index.js）。
+ *
+ * 2026-07-31 之前它是模块加载的副作用，后果是任何 import 到这个模块的东西都会
+ * 把线上正在跑的 run 全部标成 failed —— 不只是调试用的 `node -e`，`invite.mjs`
+ * 这种日常脚本也会（实测误杀了同一个用户的两轮对话，他那两轮的计量也一起丢了）。
+ * 更糟的是 notice.mjs：它存在的意义就是在服务活着的时候发重启预告，一跑就清场。
+ *
+ * 判据很简单：清扫的前提是"上个进程已经死了"，只有 server 自己启动时才知道这件事
+ * 成立。一个连接数据库的脚本对此一无所知，它凭什么替 server 宣布所有 run 都完了。
+ */
+export function sweepOrphanRuns() {
+  try {
+    const swept = db.prepare(`
+      UPDATE runs SET status = 'failed', error = 'server restarted while run in flight',
+        finished_at = datetime('now'), updated_at = datetime('now')
+      WHERE status IN ('pending', 'running')
+    `).run();
+    if (swept.changes > 0) {
+      console.log(`[engine/runs] swept ${swept.changes} orphaned run(s) from previous process`);
+    }
+    return swept.changes;
+  } catch (err) {
+    console.warn(`[engine/runs] orphan sweep failed:`, err.message);
+    return 0;
   }
-} catch (err) {
-  console.warn(`[engine/runs] orphan sweep failed:`, err.message);
 }
 
 // ── ID 生成 ──
@@ -163,6 +195,43 @@ export function setRunMetrics(id, {
     cacheReadTokens ?? 0, cacheCreateTokens ?? 0,
     totalCostUsd ?? 0, id,
   );
+}
+
+/**
+ * 落分模型明细（2026-07-31）。deltasByModel 形如
+ * { 'claude-sonnet-5': { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens, costUsd } }
+ * 值语义是"本 turn 增量"（差分在 context.absorbResult 做完）。用 upsert 覆盖而非
+ * 累加：一个 turn 只有一条 result，防御性重复调用不应把数字翻倍。
+ */
+const upsertModelUsage = db.prepare(`
+  INSERT INTO run_model_usage (run_id, model, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, cost_usd)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(run_id, model) DO UPDATE SET
+    input_tokens = excluded.input_tokens,
+    output_tokens = excluded.output_tokens,
+    cache_read_tokens = excluded.cache_read_tokens,
+    cache_create_tokens = excluded.cache_create_tokens,
+    cost_usd = excluded.cost_usd
+`);
+
+export function setRunModelUsage(runId, deltasByModel) {
+  if (!runId || !deltasByModel || typeof deltasByModel !== 'object') return;
+  for (const [model, d] of Object.entries(deltasByModel)) {
+    if (!model || !d) continue;
+    upsertModelUsage.run(
+      runId, model,
+      d.inputTokens ?? 0, d.outputTokens ?? 0,
+      d.cacheReadTokens ?? 0, d.cacheCreateTokens ?? 0,
+      d.costUsd ?? 0,
+    );
+  }
+}
+
+/** 某 run 的分模型明细（审计 / 前端展示用） */
+export function getRunModelUsage(runId) {
+  return db.prepare(
+    'SELECT model, input_tokens AS inputTokens, output_tokens AS outputTokens, cache_read_tokens AS cacheReadTokens, cache_create_tokens AS cacheCreateTokens, cost_usd AS costUsd FROM run_model_usage WHERE run_id = ?',
+  ).all(runId);
 }
 
 /** 读单条 */

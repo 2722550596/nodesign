@@ -55,6 +55,13 @@ export class AgentContext {
     // SDK 在 message 流里返回 session_id，首次见到时记下
     this.sdkSessionId = null;
 
+    // result.modelUsage 的差分基准（2026-07-31）。modelUsage 是**会话累计值**
+    // （探针实测：turn2 的值 = turn1 + turn2），要拿到本 turn 增量必须对上一条
+    // result 做差。基准跟 ctx 同生命周期 = 跟 SDK query stream 同生命周期
+    // （runSession 每次 new AgentContext + new stream），stream 重启累计值归零、
+    // 基准也归零，差分天然对齐。**不随 turn 边界重置**。
+    this._modelUsageBase = null;
+
     // 可观测计数器（落 run.metadata 用）
     this.counters = {
       turns: 0,                  // SDK num_turns
@@ -69,6 +76,7 @@ export class AgentContext {
       outputTokens: 0,
       cacheReadTokens: 0,
       cacheCreateTokens: 0,
+      modelUsage: null,   // 分模型本 turn 增量（absorbResult 差分产物）
     };
 
     this.startedAt = Date.now();
@@ -161,19 +169,85 @@ export class AgentContext {
     }
   }
 
-  /** SDK SDKResultMessage 含全套统计；一次性吸收 */
+  /**
+   * SDK SDKResultMessage 含全套统计；一次性吸收。
+   *
+   * 计量口径（2026-07-31 起）：权威数据源是 result.modelUsage —— SDK 的分模型
+   * 总账，含子代理消耗，中断的 turn 也不丢（累计值持续增长，下一条 result 的
+   * 差分会捞回来）。差分出的本 turn 增量：
+   *   - 按模型汇总进 counters.inputTokens 等主字段（配额真列的来源）
+   *   - 分模型明细留在 counters.modelUsage，finishTurn 落 run_model_usage 表
+   *   - totalCostUsd 同样取差分（result.total_cost_usd 是会话累计值，以前
+   *     原样落库导致 cost 列不能 sum —— 那是虚价，但至少语义要对）
+   * result.usage 只做 modelUsage 缺失时的兜底（usage 是本轮真增量，探针实测）。
+   */
   absorbResult(result) {
     if (!result) return;
     this.counters.turns = result.num_turns ?? this.counters.turns;
     this.counters.durationMs = result.duration_ms ?? this.counters.durationMs;
     this.counters.durationApiMs = result.duration_api_ms ?? this.counters.durationApiMs;
-    this.counters.totalCostUsd = result.total_cost_usd ?? this.counters.totalCostUsd;
-    if (result.usage) {
+
+    const deltas = this._diffModelUsage(result.modelUsage);
+    if (deltas) {
+      let inp = 0; let out = 0; let cr = 0; let cc = 0; let cost = 0;
+      for (const d of Object.values(deltas)) {
+        inp += d.inputTokens; out += d.outputTokens;
+        cr += d.cacheReadTokens; cc += d.cacheCreateTokens;
+        cost += d.costUsd;
+      }
+      this.counters.inputTokens = inp;
+      this.counters.outputTokens = out;
+      this.counters.cacheReadTokens = cr;
+      this.counters.cacheCreateTokens = cc;
+      this.counters.totalCostUsd = cost;
+      this.counters.modelUsage = deltas;
+    } else if (result.usage) {
       this.counters.inputTokens = result.usage.input_tokens || 0;
       this.counters.outputTokens = result.usage.output_tokens || 0;
       this.counters.cacheReadTokens = result.usage.cache_read_input_tokens || 0;
       this.counters.cacheCreateTokens = result.usage.cache_creation_input_tokens || 0;
+      this.counters.totalCostUsd = result.total_cost_usd ?? this.counters.totalCostUsd;
     }
+  }
+
+  /**
+   * 会话累计的 modelUsage → 本 turn 增量。返回 null 表示"没有可用的 modelUsage"
+   * （调用方退回 usage 兜底）；返回 {}（空对象）表示"有 modelUsage 但本 turn
+   * 没有任何新消耗"，此时主字段照常清零是正确语义。
+   * Math.max(0, ...) 防浮点 / 上游异常出负数；基准无论如何都更新成最新快照。
+   */
+  _diffModelUsage(modelUsage) {
+    if (!modelUsage || typeof modelUsage !== 'object') return null;
+    const models = Object.keys(modelUsage);
+    if (models.length === 0) return null;
+    const base = this._modelUsageBase || {};
+    const deltas = {};
+    const snapshot = {};
+    for (const model of models) {
+      const u = modelUsage[model] || {};
+      const b = base[model] || {};
+      snapshot[model] = {
+        inputTokens: u.inputTokens || 0,
+        outputTokens: u.outputTokens || 0,
+        cacheReadInputTokens: u.cacheReadInputTokens || 0,
+        cacheCreationInputTokens: u.cacheCreationInputTokens || 0,
+        costUSD: u.costUSD || 0,
+      };
+      const d = {
+        inputTokens: Math.max(0, snapshot[model].inputTokens - (b.inputTokens || 0)),
+        outputTokens: Math.max(0, snapshot[model].outputTokens - (b.outputTokens || 0)),
+        cacheReadTokens: Math.max(0, snapshot[model].cacheReadInputTokens - (b.cacheReadInputTokens || 0)),
+        cacheCreateTokens: Math.max(0, snapshot[model].cacheCreationInputTokens - (b.cacheCreationInputTokens || 0)),
+        costUsd: Math.max(0, snapshot[model].costUSD - (b.costUSD || 0)),
+      };
+      if (d.inputTokens || d.outputTokens || d.cacheReadTokens || d.cacheCreateTokens || d.costUsd) {
+        deltas[model] = d;
+      }
+    }
+    // 基准里已有但本次 modelUsage 没出现的模型：保留旧值（SDK 不应该丢 key，
+    // 防御性合并，免得它真丢时差分把历史消耗又算一遍）
+    this._modelUsageBase = { ...base, ...snapshot };
+    return deltas;
   }
 
   incrementTool(failed = false) {
@@ -183,9 +257,11 @@ export class AgentContext {
 
   /**
    * 子代理收尾用量（SDK task_notification.usage）累积（2026-07-30）。
-   * **单独记账，不加进主 inputTokens/outputTokens** —— SDK result message 的
-   * usage 大概率已包含 sidechain 消耗，直接相加会双重计数；这两个字段进
-   * metadata 做可观测（"这轮子代理烧了多少"），配额扣的是主 usage。
+   * **单独记账，不加进主 inputTokens/outputTokens** —— 主字段现在来自
+   * modelUsage 差分（SDK 的分模型总账，已含 sidechain），相加必然双重计数。
+   * 这两个字段只进 metadata 做可观测（"这轮子代理烧了多少"），也是交叉验证
+   * 钩子：某轮 subagent 用量明显大于 modelUsage 差分总和 = 总账没含 sidechain
+   * 的信号（目前判断是含的，出现反例再查）。
    */
   absorbSubagentUsage(usage) {
     if (!usage || typeof usage !== 'object') return;

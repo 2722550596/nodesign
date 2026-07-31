@@ -6,6 +6,7 @@ import Showcase from './routes/Showcase.jsx';
 import Issues from './routes/Issues.jsx';
 import ToastContainer from './components/ui/ToastContainer.jsx';
 import GlobalDialogs from './components/ui/GlobalDialogs.jsx';
+import QuotaBanner from './components/layout/QuotaBanner.jsx';
 
 const router = createBrowserRouter([
   { path: '/', element: <Home /> },
@@ -32,6 +33,7 @@ export default function App() {
       <RouterProvider router={router} />
       <ToastContainer />
       <GlobalDialogs />
+      <QuotaBanner />
     </>
   );
 }

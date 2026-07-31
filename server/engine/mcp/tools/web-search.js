@@ -29,7 +29,6 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { translateToEnglish } from '../../../lib/llm-translate.js';
 
 const PROVIDERS = {
   tavily: { keyEnv: 'NODESIGN_TAVILY_KEY' },
@@ -347,12 +346,8 @@ async function downloadReferenceImages(images, { workspaceRoot, sharedRoot }) {
     .map(r => r.value);
 }
 
-function formatMarkdown(query, provider, hits, { images = [], translatedQuery = null } = {}) {
-  const lines = [`## Search results (${provider}, ${hits.length} hits)`, '', `> Query: ${query}`];
-  if (translatedQuery && translatedQuery !== query) {
-    lines.push(`> Translated (en, used for image search): ${translatedQuery}`);
-  }
-  lines.push('');
+function formatMarkdown(query, provider, hits, { images = [] } = {}) {
+  const lines = [`## Search results (${provider}, ${hits.length} hits)`, '', `> Query: ${query}`, ''];
   if (hits.length === 0) {
     lines.push('No text results found.');
   } else {
@@ -542,17 +537,14 @@ Suggested flow for image-led pages:
 
         const key = getKey(providerId);
 
-        // 2) include_images + CJK + 走 tavily/exa（英文友好）→ 翻英文（fail-soft）
-        //    走 baidu 时不翻：baidu 母语就是 CJK，翻英文反倒跑题。
-        let effectiveQuery = query;
-        let translatedQuery = null;
-        if (include_images && looksChinese(query) && providerId !== 'baidu') {
-          const en = await translateToEnglish(query);
-          if (en) {
-            effectiveQuery = en;
-            translatedQuery = en;
-          }
-        }
+        // 2) CJK query 翻英文再搜图这一步已移除（2026-07-31）。
+        //    它唯一的实现走 NoDesk 网关，网关 07-27 永久退役后函数直接 return null，
+        //    于是这段代码一直在跑但从来没生效过 —— 中文 query 搜图拿到的
+        //    images[].description 约一半是 null，而日志里什么都看不出来。
+        //    静默失效比不存在更坏：读代码的人会以为这个能力还在。
+        //    要恢复的话得先给它一个活着的 provider（见 lib/openai 那套 key），
+        //    不是把这几行搬回来就完事。
+        const effectiveQuery = query;
 
         // 3) Provider call —— tavily/exa/baidu 都接 includeImages opts；zhipu 不传
         const adapter = ADAPTERS[providerId];
@@ -589,7 +581,6 @@ Suggested flow for image-led pages:
             type: 'run.web_search',
             provider: providerId,
             query: effectiveQuery,
-            originalQuery: translatedQuery ? query : undefined,
             hits: hits.length,
             referenceImages: downloadedImages.length,
           });
@@ -601,10 +592,7 @@ Suggested flow for image-led pages:
         // count 张 + base64 体积。已在上一步通过 count 截断控量。
         const out = [{
           type: 'text',
-          text: formatMarkdown(query, providerId, hits, {
-            images: downloadedImages,
-            translatedQuery,
-          }),
+          text: formatMarkdown(query, providerId, hits, { images: downloadedImages }),
         }];
         for (const img of downloadedImages) {
           if (img.base64) {

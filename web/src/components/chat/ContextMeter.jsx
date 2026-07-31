@@ -228,5 +228,6 @@ export function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 export function formatK(n) {
   if (n == null) return '0';
   if (n < 1000) return String(n);
-  return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;   // 3,000,000 显示成 3000.0k 是事故现场
 }

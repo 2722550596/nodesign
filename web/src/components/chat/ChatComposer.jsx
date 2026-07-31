@@ -208,7 +208,12 @@ export default function ChatComposer({
           />
           {/* 模型 picker：切换从下一条消息生效（服务端空闲时重启 query），
               正在跑时禁用 —— 不给"点了立刻切"的错觉 */}
-          <ModelPicker disabled={disabled || isRunning} projectId={projectId} sessionId={sessionId} />
+          <ModelPicker
+            disabled={disabled || isRunning}
+            projectId={projectId}
+            sessionId={sessionId}
+            contextTokens={contextUsage?.totalTokens || 0}
+          />
 
           <div style={{ flex: 1 }} />
 

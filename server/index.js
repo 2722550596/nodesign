@@ -35,6 +35,7 @@ import { userPluginsRouter, projectPluginsRouter } from './api/plugins.js';
 import { authRouter, authGuard } from './auth/middleware.js';
 import { authEnabled } from './auth/session.js';
 import { bootstrapAuth } from './auth/users-store.js';
+import { sweepOrphanRuns } from './engine/runs/store.js';
 import adminRouter from './api/admin.js';
 import meRouter from './api/me.js';
 import { platform } from './runtime/platform.js';
@@ -63,6 +64,12 @@ app.get('/api/health', (_req, res) => {
 // ── 登录墙（health 之后、业务路由之前）──
 // 多用户 bootstrap（幂等）：users 空时用 NODESIGN_AUTH_PASSWORD 建 admin +
 // 回填存量项目归属。必须在 authEnabled() 判断之前跑
+// 僵尸 run 清扫：只有 server 启动时才知道"上个进程已经死了"这个前提成立。
+// 2026-07-31 从 store.js 的模块加载副作用挪到这里 —— 挂在 import 上时，任何
+// 碰到 store 的脚本（invite.mjs / notice.mjs / 临时排查）都会把线上正在跑的
+// run 全标成 failed，实测误杀过真实用户的对话。
+sweepOrphanRuns();
+
 bootstrapAuth();
 if (!authEnabled()) {
   console.warn('[auth] ⚠️ 无用户且未设 NODESIGN_AUTH_PASSWORD — 登录墙关闭，切勿公网暴露！');

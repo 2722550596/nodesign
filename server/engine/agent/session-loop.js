@@ -29,7 +29,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { AgentContext } from './context.js';
 import { Events } from './events.js';
-import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata, setRunMetrics } from '../runs/store.js';
+import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata, setRunMetrics, setRunModelUsage } from '../runs/store.js';
 import { getProject } from '../../projects/store.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -728,6 +728,7 @@ export async function runSession({
       inputTokens: 0, outputTokens: 0,
       cacheReadTokens: 0, cacheCreateTokens: 0,
       subagentInputTokens: 0, subagentOutputTokens: 0,
+      modelUsage: null,   // absorbResult 差分后填 { model: 本turn增量 }
     };
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
@@ -777,6 +778,7 @@ export async function runSession({
       const artifactPath = await detectArtifact(sharedCtx);
       mergeRunMetadata(runId, { sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters });
       setRunMetrics(runId, sharedCtx.counters);
+      setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
       sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
       // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
@@ -793,6 +795,7 @@ export async function runSession({
         sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters,
       });
       setRunMetrics(runId, sharedCtx.counters);
+      setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunFailed(runId, `cancelled: ${info?.reason || 'user_cancel'}`); } catch { /* */ }
       sharedCtx.emit({ type: 'run.cancelled', reason: info?.reason || 'user_cancel' });
     } else if (status === 'error') {
@@ -801,6 +804,7 @@ export async function runSession({
         errorCode: info?.code, errorMessage: info?.message,
       });
       setRunMetrics(runId, sharedCtx.counters);
+      setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunFailed(runId, info?.message || 'unknown'); } catch { /* */ }
       sharedCtx.emit(Events.error(info?.message || 'unknown', info?.code, info?.stack));
     }

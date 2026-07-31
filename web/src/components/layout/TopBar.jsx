@@ -44,8 +44,10 @@ function UserBadge() {
   }, [open]);
 
   if (!authUser) return null;
-  const fmt = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-  const nearCap = usage?.limit != null && usage.usedToday >= usage.limit * 0.8;
+  // 警戒线 75%：跟配额横幅第一档对齐。07-31 起额度是一个总数且单位是钱，
+  // 服务端直接给 pct（金额不下发给普通用户，见 api/me.js）
+  const pct = usage?.capped ? (usage.pct || 0) : 0;
+  const nearCap = pct >= 75;
   const initial = (authUser.username || '?').trim().slice(0, 1).toUpperCase();
 
   return (
@@ -82,8 +84,13 @@ function UserBadge() {
           }}>
             {authUser.username}
             {usage && (
-              <div style={{ marginTop: 3, color: nearCap ? COLOR.warn : COLOR.sub, fontSize: 10 }}>
-                今日 {fmt(usage.usedToday)}{usage.limit != null ? ` / ${fmt(usage.limit)}` : ''}
+              <div style={{
+                marginTop: 3, fontSize: 10,
+                color: pct >= 90 ? COLOR.error : nearCap ? COLOR.warn : COLOR.sub,
+              }}>
+                {usage.capped
+                  ? `今日 $${(usage.usedToday || 0).toFixed(2)} / $${(usage.limit || 0).toFixed(2)} · ${Math.round(pct)}%`
+                  : `今日 $${(usage.usedToday || 0).toFixed(2)} · 不限额`}
               </div>
             )}
           </div>

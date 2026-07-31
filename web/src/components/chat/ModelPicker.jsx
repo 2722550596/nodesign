@@ -39,7 +39,20 @@ function shortLabel(id, options) {
   return id;
 }
 
-export default function ModelPicker({ disabled = false, projectId = null, sessionId = null }) {
+/**
+ * 换模型的隐性代价：**提示词缓存是按模型绑定的**，换一个就等于整段上下文缓存作废。
+ * 下一轮那些 token 不再按 $0.30/M 的缓存命中价读，而是按 $3/M 的 input 重读一遍，
+ * 外加 $6.00/M 再写一次缓存 —— 同样一轮对话，切换前后 token 数几乎没变，钱差三十倍。
+ *
+ * 这是用量口径从 token 换成金额之后才看得见的东西，所以以前没法提醒。
+ * 估算按 sonnet 标准价（$3/M input + $6.00/M 1 小时缓存写 = $9/M）：opus 更贵，
+ * 报低不报高 —— 提醒的作用是让人知道"这一下不便宜"，不是给报价。
+ */
+const COLD_START_USD_PER_TOKEN = 9 / 1_000_000;
+/** 低于这个上下文就不提醒：新会话切模型几乎免费，弹窗只会变成噪音 */
+const WARN_FROM_TOKENS = 30_000;
+
+export default function ModelPicker({ disabled = false, projectId = null, sessionId = null, contextTokens = 0 }) {
   const modelPref = useGlobalStore(s => s.modelPref);
   const setModelPref = useGlobalStore(s => s.setModelPref);
   const showToast = useGlobalStore(s => s.showToast);
@@ -82,6 +95,17 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
     setOpen(false);
     if (!hasSession) { setModelPref(id); return; }
     if (id === chosen) return;
+    // 大上下文切模型要重新过一遍缓存，先把代价说清楚再让他按
+    if (contextTokens >= WARN_FROM_TOKENS) {
+      const est = contextTokens * COLD_START_USD_PER_TOKEN;
+      const okToSwitch = window.confirm(
+        `切换模型会让这个会话的缓存失效。\n\n`
+        + `当前上下文 ${(contextTokens / 1000).toFixed(0)}k tokens，下一轮要重新读一遍，`
+        + `大约多花 $${est.toFixed(2)}（之后恢复正常）。\n\n`
+        + `对话和画布都不会丢。要切吗？`,
+      );
+      if (!okToSwitch) return;
+    }
     const prev = remote;
     setSaving(true);
     // 乐观更新：点完立刻变，失败再退回去
@@ -97,7 +121,7 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
     } finally {
       setSaving(false);
     }
-  }, [hasSession, chosen, remote, projectId, sessionId, setModelPref, showToast]);
+  }, [hasSession, chosen, remote, projectId, sessionId, setModelPref, showToast, contextTokens]);
 
   const label = shortLabel(effective, options);
   const busy = disabled || saving;
@@ -166,7 +190,9 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
             marginTop: 2, fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
           }}>
             {hasSession
-              ? '从下一条消息生效，对话与画布不丢'
+              ? (contextTokens >= WARN_FROM_TOKENS
+                ? `从下一条消息生效，对话与画布不丢。当前上下文 ${(contextTokens / 1000).toFixed(0)}k，换模型要重读一遍缓存，额外花约 $${(contextTokens * COLD_START_USD_PER_TOKEN).toFixed(2)}`
+                : '从下一条消息生效，对话与画布不丢')
               : '这条只影响接下来新建的会话'}
           </div>
         </div>

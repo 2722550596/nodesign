@@ -40,6 +40,15 @@ db.exec(`
   );
 `);
 
+// 老 DB 补列（幂等，同 projects/store.js 范式）：07-31 限额口径从 token 换成
+// 金额，per-user 覆盖也跟着换单位。daily_token_limit 保留不删 —— 它是老口径的
+// 存量数据，删了就没法回溯当时给谁开过什么口子。
+const userCols = new Set(db.prepare('PRAGMA table_info(users)').all().map(c => c.name));
+if (!userCols.has('daily_cost_limit_usd')) {
+  db.exec('ALTER TABLE users ADD COLUMN daily_cost_limit_usd REAL');
+  console.log('[users-store] users.daily_cost_limit_usd column added');
+}
+
 // ── 密码 ──
 
 const SCRYPT_N = 16384;
@@ -80,7 +89,8 @@ function rowToUser(row) {
     id: row.id,
     username: row.username,
     role: row.role,
-    dailyTokenLimit: row.daily_token_limit ?? null,
+    dailyCostLimitUsd: row.daily_cost_limit_usd ?? null,
+    dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
     createdAt: row.created_at,
@@ -126,10 +136,11 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, role } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, role } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
+  if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
   if (dailyTokenLimit !== undefined) { sets.push('daily_token_limit = ?'); args.push(dailyTokenLimit ?? null); }
   if (role !== undefined) { sets.push('role = ?'); args.push(role); }
   if (!sets.length) return getUserById(id);

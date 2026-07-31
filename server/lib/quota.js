@@ -1,13 +1,40 @@
 /**
- * server/lib/quota.js — 每用户日用量限额（2026-07-30 内测）
+ * server/lib/quota.js — 每用户日用量限额（2026-07-30 内测；07-31 口径改成金额）
  *
- * 计量口径：runs 表真列 sum(input_tokens + output_tokens)，按 Asia/Shanghai
- * 日界聚合（created_at 是 SQLite datetime('now') 的 UTC 串，查询时把当天
- * +08:00 的起点换算回 UTC 比较）。cache 命中不计入 —— 订阅模式下真实成本
- * 主要看非缓存 token，且 cache_read 数字巨大会让限额失去直觉意义。
+ * # 为什么闸门数的是钱不是 token
  *
- * 限额来源：users.daily_token_limit 优先，NULL 走 env NODESIGN_USER_DAILY_TOKENS
- * （默认 3,000,000）。admin 不限。
+ * 原口径是 sum(input_tokens + output_tokens)，缓存不计。实测这个口径量错了主项：
+ * 07-31 当天全站 input+output 是 317k，cache_read 是 83M，差 260 倍。也就是说
+ * 配额条显示"才用了 4%"的人，实际推给账号的负载可能已经是一整天的大头。
+ *
+ * 更要命的是**缓存过期**。同一轮对话，缓存全命中和全过期的 token 计数几乎一样，
+ * 但过期后那批 token 从 $0.30/M 的 cache_read 变成 $3/M 的 input，还要再花
+ * $6.00/M 重写一次缓存，金额能差十倍。token 口径对这件事完全瞎。
+ *
+ * SDK 的 `ModelUsage.costUSD` 是原生字段，CLI 内部按分模型价目表算好给出来的。
+ * 逆推验证精确到小数点后 7 位：
+ *   9703×$3/M + 39032×$15/M + 6032461×$0.30/M + 414101×$6.00/M = $4.9089333
+ *   （SDK 报 4.908933300000001；haiku 行 532×$1/M + 17×$5/M 也精确命中）
+ * 缓存过期的代价自动体现在里面 —— 失效后 API 逐请求如实上报 input/cache_read
+ * 的实际拆分，costUSD 照单算，不需要我们建模 TTL 或命中率。
+ *
+ * # 数据源必须是 run_model_usage.cost_usd，不能是 runs.total_cost_usd
+ *
+ * runs 那列有历史污染：07-31 计量重做之前，写进去的是 SDK 的**会话累计**
+ * total_cost_usd（同一会话每轮都存一次当时的累计值），admin 的存量行因此虚高
+ * 三倍（$165 vs 实际 $53.6）。run_model_usage 是重做后新建的表，只由差分路径
+ * 写入，两个真人用户的行都跟公式精确对齐。
+ *
+ * # 口径覆盖范围
+ *
+ * 包含：该会话所有模型的 input / output / cache_read / cache_create，含子代理
+ * sidechain（Miel 从没手选过 haiku，她的 haiku 行是子代理自己用的，照样进账）。
+ * 不含：生图（codex 骑订阅）、web_search（Tavily/百度/Exa/智谱各自的账单）、
+ * 机器本身。所以这个数字的准确定义是「该用户对 Anthropic 账号造成的负载」，
+ * 恰好就是我们要配给的东西。
+ *
+ * 限额来源：users.daily_cost_limit_usd 优先，NULL 走 env NODESIGN_USER_DAILY_USD
+ * （默认 $5）。admin 不限。按 Asia/Shanghai 日界滚动现算，没有定时任务。
  */
 
 import db, { getRun } from '../engine/runs/store.js';
@@ -22,6 +49,20 @@ export function dayStartUtcSql(now = Date.now()) {
   return new Date(startLocal).toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/** 当天已花的美元（闸门真口径）。数据源见文件头：run_model_usage.cost_usd */
+export function usedCostToday(userId, now = Date.now()) {
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(m.cost_usd), 0) AS used
+     FROM run_model_usage m JOIN runs r ON r.id = m.run_id
+     WHERE r.user_id = ? AND r.created_at >= ?`,
+  ).get(userId, dayStartUtcSql(now));
+  return row.used;
+}
+
+/**
+ * 当天 input+output token 数。**不再是闸门口径**，只留给 admin 视图和
+ * 前端的参考行 —— 用户看得懂 token，看不懂 $0.87 意味着多少对话。
+ */
 export function usedTokensToday(userId, now = Date.now()) {
   const row = db.prepare(
     `SELECT COALESCE(SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)), 0) AS used
@@ -30,22 +71,90 @@ export function usedTokensToday(userId, now = Date.now()) {
   return row.used;
 }
 
+/**
+ * 默认日额度（美元）。
+ *
+ * $15 的依据是 07-31 晚上第一个真用户的实际曲线：Miel 一小时零四分跑了 32 轮，
+ * 烧掉 $6.60，约 $6/小时（速率随会话变长而涨 —— 上下文越长每轮读的缓存越多）。
+ * 一晚上三小时的热情使用就是 $18 量级。
+ *
+ * 先按 $5 配过，实测下来那个数会在她玩到一半时把人挡在外面 —— 而她正是唯一
+ * 越过冷启动的人。日限额的职责是拦住失控，不是给正常使用配给；卡到最活跃的
+ * 那个人身上，说明数字定错了，不是人用多了。
+ *
+ * 参照：admin 重度开发日 $1.03/轮 × 52 轮 = $53.6（自己不限额）。
+ */
 export function defaultDailyLimit() {
-  const v = Number(process.env.NODESIGN_USER_DAILY_TOKENS);
-  return Number.isFinite(v) && v > 0 ? v : 3_000_000;
+  const v = Number(process.env.NODESIGN_USER_DAILY_USD);
+  return Number.isFinite(v) && v > 0 ? v : 15;
 }
 
-/** @returns {number|null} null = 不限（admin） */
+/** @returns {number|null} 美元；null = 不限（admin） */
 export function limitFor(user) {
   if (!user || user.role === 'admin') return null;
-  return user.dailyTokenLimit ?? defaultDailyLimit();
+  return user.dailyCostLimitUsd ?? defaultDailyLimit();
 }
 
-/** @returns {{ ok: boolean, usedToday: number, limit: number|null }} */
+/** 金额展示：$1.36。小额也留两位小数，别把 $0.06 显示成 $0 让人以为没扣 */
+export function fmtUsd(n) {
+  return `$${(Number(n) || 0).toFixed(2)}`;
+}
+
+/** @returns {{ ok: boolean, usedToday: number, limit: number|null }} 单位美元 */
 export function checkQuota(user, now = Date.now()) {
   const limit = limitFor(user);
-  const usedToday = usedTokensToday(user.id, now);
+  const usedToday = usedCostToday(user.id, now);
   return { ok: limit === null || usedToday < limit, usedToday, limit };
+}
+
+// ── 分模型明细（2026-07-31）──
+//
+// **只用于展示，不再是独立闸门。** 改成金额口径之后，分模型限额失去了理由：
+// 原来配 sonnet 300k / opus 100k 是为了让 opus 更难挥霍，而金额天然做到这件事
+// —— 同样一轮对话 opus 就是烧掉五倍预算，不需要第二个数字去表达同一个意图。
+// 代价是没了"这个模型满了可以换那个继续"的退路，撞线就是撞线；换来的是用户
+// 只需要理解一个数字，以及不会出现"opus 额度还剩很多但钱其实早花光了"的错位。
+//
+// 家族归并按模型串关键字：表里存的是 SDK 上报的原始模型名（'claude-sonnet-5'），
+// 用户视角只有 Sonnet / Opus 两个选项，版本号是实现细节。
+// 注意：如果哪天重开 kimi gateway，SDK 上报的是 spoof 后的 opus 名，
+// 这里会把 kimi 记成 opus —— 见 model-context.js APP_TO_SDK_MODEL。
+
+export function modelFamily(model) {
+  const s = String(model || '').toLowerCase();
+  if (s.includes('sonnet')) return 'sonnet';
+  if (s.includes('opus')) return 'opus';
+  if (s.includes('haiku')) return 'haiku';
+  return 'other';
+}
+
+/** 家族显示名（429 文案 / 前端徽标共用） */
+export function familyLabel(family) {
+  return { sonnet: 'Sonnet', opus: 'Opus', haiku: 'Haiku' }[family] || family;
+}
+
+/**
+ * 当天该用户按家族聚合的花费与 token，如
+ * `{ sonnet: { costUsd: 1.36, tokens: 18831 }, haiku: { costUsd: 0, tokens: 549 } }`
+ * 只有真出现过的家族才有键（没用过 opus 就没有 opus 键）。
+ */
+export function usedTodayByFamily(userId, now = Date.now()) {
+  const rows = db.prepare(
+    `SELECT m.model AS model,
+            SUM(m.cost_usd) AS cost,
+            SUM(m.input_tokens + m.output_tokens) AS tokens
+     FROM run_model_usage m JOIN runs r ON r.id = m.run_id
+     WHERE r.user_id = ? AND r.created_at >= ?
+     GROUP BY m.model`,
+  ).all(userId, dayStartUtcSql(now));
+  const byFamily = {};
+  for (const row of rows) {
+    const f = modelFamily(row.model);
+    const acc = byFamily[f] || (byFamily[f] = { costUsd: 0, tokens: 0 });
+    acc.costUsd += row.cost || 0;
+    acc.tokens += row.tokens || 0;
+  }
+  return byFamily;
 }
 
 // ── 并发闸门 ──

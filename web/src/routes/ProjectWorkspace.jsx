@@ -734,6 +734,9 @@ export default function ProjectWorkspace() {
         // **清单**。不再无条件 bump 所有 iframe —— 没有文件变过就不该重载，
         // 那正是"每次动作完都刷一次"的来源。
         bumpListSoon();
+        // 配额横幅（QuotaBanner）监听这个事件补拉用量 —— 撞限额大多发生在一轮
+        // 大活刚跑完，等 60s 轮询会晚一拍
+        window.dispatchEvent(new Event('nd-usage-refresh'));
         // Phase B 批次 5：SDK 用 haiku helper incrementally 更新 session summary
         // 落 JSONL，run.done 后 refetch 让 chat 头部 / 面包屑 title 反映最新总结。
         // 已有 sid 的场景立即刷；新建场景 handleSend 已即时 navigate 到 /sessions/<sid>。
