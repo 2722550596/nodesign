@@ -1932,7 +1932,9 @@ function BoardObject({
           <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
             {(() => {
               const n = o.nodes || [];
-              const p = n.filter(x => x.type !== 'character').length;
+              // 容器不算地点（它是收纳态，设计上明确不是地点），口径与
+              // server 端 describe() 的计数一致，两处对不上会像 bug
+              const p = n.filter(x => x.type === 'place').length;
               const c = n.filter(x => x.type === 'character').length;
               return n.length ? `世界 · ${p} 个地点 / ${c} 个角色 · 双击铺开` : '世界 · 地图还是空的 · 双击查看';
             })()}

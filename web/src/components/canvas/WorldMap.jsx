@@ -118,8 +118,20 @@ function PlaceBox({ projectId, base, node, childrenOf }) {
 
 export default function WorldMap({ projectId, base, nodes, style }) {
   const list = nodes || [];
-  const childrenOf = (p) => list.filter(n => n.parent === p);
-  const roots = list.filter(n => n.parent === null);
+  // 按 parent 一次分好组。每个 PlaceBox 各自 filter 一遍全表是 O(n²)，
+  // 节点几百个之后每次画布重渲都在白算
+  const byParent = new Map();
+  for (const n of list) {
+    const key = n.parent ?? '';
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(n);
+  }
+  const childrenOf = (p) => byParent.get(p ?? '') || [];
+  const roots = childrenOf(null);
+  // 还没建任何地点就先建了人：角色直接放在 世界/ 根下。合法的起步状态，
+  // 不能塞进 PlaceBox（那是地点/容器的画法，角色进去只剩一个空框）
+  const rootChars = roots.filter(n => n.type === 'character');
+  const rootPlaces = roots.filter(n => n.type !== 'character');
 
   if (!roots.length) {
     return (
@@ -134,7 +146,14 @@ export default function WorldMap({ projectId, base, nodes, style }) {
 
   return (
     <div style={{ ...style, padding: GAP.md, display: 'flex', flexDirection: 'column', gap: GAP.sm }}>
-      {roots.map(r => (
+      {rootChars.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm }}>
+          {rootChars.map(c => (
+            <Portrait key={c.path} projectId={projectId} base={base} node={c} size={styleAt(0).portrait} />
+          ))}
+        </div>
+      )}
+      {rootPlaces.map(r => (
         <PlaceBox key={r.path} projectId={projectId} base={base} node={r} childrenOf={childrenOf} />
       ))}
     </div>

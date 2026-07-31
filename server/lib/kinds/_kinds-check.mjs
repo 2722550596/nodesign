@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { taskManifest, artifactOfPath } from './index.js';
+import world from './world.js';
 import { resolveArtifactTarget } from '../artifact-target.js';
 
 let pass = 0; let fail = 0;
@@ -117,6 +118,58 @@ await mk('tasks/t-world-new/草稿.html');
 {
   const m = await taskManifest(path.join(ws, 'tasks/t-world-new'));
   check('marker 声明的 world 不被散装 html 抢走', m.kind === 'world' && m.artifacts.length === 1);
+}
+
+// 根下角色：还没建任何地点就先建了人（世界/<角色>/角色.md，parent=null）。
+// 合法的起步状态，describe 必须扛得住 —— 曾因 parent.split 不判空在这里抛异常，
+// hooks 把它兜成「读不到」，世界的每轮注入清单整个静默丢失
+await mk('tasks/t-world-rootchar/世界.md', '# 荒原');
+await mk('tasks/t-world-rootchar/世界/流浪者/角色.md', '# 流浪者');
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-world-rootchar'));
+  const art = m.artifacts[0];
+  check('根下角色成节点且 parent=null',
+    art.nodes.length === 1 && art.nodes[0].type === 'character' && art.nodes[0].parent === null);
+  let desc = null;
+  let threw = null;
+  try { desc = await world.describe(path.join(ws, 'tasks/t-world-rootchar'), art); } catch (e) { threw = e; }
+  check('根下角色 describe 不抛异常', !threw, threw?.message);
+  check('根下角色算在场', !!desc && desc.includes('流浪者'));
+}
+
+// 已声明为别的形态的任务，光多出一份 世界.md 不能翻案（2026-08-01 复查加）：
+// 写小说设定的 deck 任务 agent 顺手写份「世界.md」很自然，翻成 world 会让
+// 画布上的 deck 卡静默消失，且 marker 被回填成 world 加深粘性
+await mk('tasks/t-deck-with-世界/canvas.html', '<section data-page="1"></section>');
+await mk('tasks/t-deck-with-世界/世界.md', '# 这只是设定稿');
+await mk('tasks/t-deck-with-世界/.nd-task.json', JSON.stringify({ kind: 'deck' }));
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-deck-with-世界'));
+  check('已声明 deck + 一份世界.md + 无地图 → 仍是 deck', m.kind === 'deck', `实得 ${m.kind}`);
+}
+// 但建出 `世界/` 就是最明确的文件证据，改造得认
+await mk('tasks/t-deck-with-世界/世界/王城/地点.md', '# 王城');
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-deck-with-世界'));
+  check('建出 世界/ 后翻成 world（改造路径没被堵死）', m.kind === 'world', `实得 ${m.kind}`);
+}
+// 没有 marker 的新任务不受这条影响
+await mk('tasks/t-world-fresh/世界.md', '# 新世界');
+{
+  const m = await taskManifest(path.join(ws, 'tasks/t-world-fresh'));
+  check('无 marker 的新任务光靠 世界.md 就认', m.kind === 'world');
+}
+
+// 深度截断要报出来，不能静默少一块世界
+{
+  const deep = 'tasks/t-world-deep/世界/' + Array.from({ length: 10 }, (_, i) => `L${i}`).join('/');
+  await mk('tasks/t-world-deep/世界.md', '# 深');
+  await mk(`${deep}/角色.md`, '# 深处的人');
+  const m = await taskManifest(path.join(ws, 'tasks/t-world-deep'));
+  const art = m.artifacts[0];
+  check('超深嵌套被截断且记了下来', art.truncated.length > 0, JSON.stringify(art.truncated));
+  const d = await world.describe(path.join(ws, 'tasks/t-world-deep'), art);
+  check('describe 点名截断', d.includes('截断'), d);
 }
 
 // 反向：没有 world 证据的任务不能被 world 误吞（KIND_ORDER 把它放最前的代价）

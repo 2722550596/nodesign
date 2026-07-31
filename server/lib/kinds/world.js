@@ -16,10 +16,16 @@
  * 装着 `容器.md` 的是收纳容器（不是地点，存不在场的人）。于是重命名永远不会
  * 弄坏东西，显示名可以随便起。
  *
- * ── 阶段 0 边界 ──
- * 本文件当前只实现到「注册表挂得上、判定不误伤」：discoverInstances 只吐世界
- * 根一条，不递归扫 `世界/`。嵌套节点发现是阶段 1。这样做是为了让「KIND_ORDER
- * 把 world 放最前」这个**动了所有任务判定次序**的改动能单独回归、单独验收。
+ * ── 当前进度（阶段 1 完）──
+ * 判定与独占（阶段 0）、`世界/` 的嵌套节点发现（阶段 1）已就位，只读。
+ * 还没有的：per-task git、world-craft skill 与每轮注入接线（阶段 2）、
+ * 角色移动与章末结算（阶段 3）、立绘管线（阶段 4）。路线见
+ * docs/world-kind-plan.md。
+ *
+ * 阶段 3 会用到但现在**故意没做**的一件事：角色的稳定 id。现在一切按 path
+ * 寻址，而 mv 会让 path 变。之所以敢先不做，是因为目前没有任何一层持久化过
+ * 节点路径（board.json 只存任务级的 `world:task/<t>`）。真开始做 mv 之前，
+ * 别让评论锚点 / 托盘 / 布局任何一层开始按节点路径存引用。
  */
 
 import path from 'node:path';
@@ -88,12 +94,21 @@ async function findPortrait(taskDir, charRel) {
  * 想叫什么叫什么，重命名不会弄坏东西。没有证据文件的文件夹（比如角色文件夹
  * 底下的 `立绘/`）不是节点，跳过且不再往下递归。
  *
+ * 软链目录不算节点（`dirent.isDirectory()` 对软链是 false，不跟随）。因此没有
+ * 环的风险，代价是软链指向的地方在地图上不可见 —— 世界状态就该是实打实的
+ * 文件树，一个角色同时出现在两处正是「一个事实多份算法」，不给这个口子。
+ *
+ * @returns {{nodes: Array, truncated: string[]}} truncated = 撞到深度上限被
+ *   截断的目录。**必须往外报**：静默截断跟静默丢子树是同一类错误，世界少了
+ *   一块而没有任何地方吭声。
+ *
  * 阶段 1 只读不写：不读任何 .md 的内容（20 个角色就是 20 次文件读，而这个
  * 扫描每次列任务清单都要跑一遍），只 stat 和 readdir。角色的稳定 id 要等到
  * 阶段 3 真做 mv 时再读 frontmatter，那时才有人依赖它。
  */
 async function scanWorld(taskDir) {
   const nodes = [];
+  const truncated = [];
 
   const evidenceOf = async (rel) => {
     for (const c of NODE_EVIDENCE) {
@@ -104,7 +119,7 @@ async function scanWorld(taskDir) {
 
   /** @returns {boolean} 这个目录之下（不含自身）有没有扫出节点 */
   const walk = async (relDir, parentRel, depth) => {
-    if (depth > MAX_DEPTH) return false;
+    if (depth > MAX_DEPTH) { truncated.push(relDir); return false; }
     let entries = [];
     try {
       entries = (await fs.readdir(path.join(taskDir, relDir), { withFileTypes: true }))
@@ -154,7 +169,8 @@ async function scanWorld(taskDir) {
 
   await walk(WORLD_DIR, null, 0);
   // 隐式节点是后序补的，排一遍让平列表读起来仍是树的顺序
-  return nodes.sort((a, b) => a.path.localeCompare(b.path));
+  nodes.sort((a, b) => a.path.localeCompare(b.path));
+  return { nodes, truncated };
 }
 
 export default {
@@ -168,13 +184,28 @@ export default {
   /**
    * 判定：任务根有世界书，或 marker 声明。
    *
-   * marker 也认，是为了挡住 detectTaskKind 里 deck 的 `hasLooseHtml` 兜底
+   * marker 声明也认，是为了挡住 detectTaskKind 里 deck 的 `hasLooseHtml` 兜底
    * ——world 任务里出现散装 .html（导出预览、agent 随手写的试作）不该把整个
    * 任务判成 deck。world 在 KIND_ORDER 最前 + 这里认 marker，两个一起才挡得住。
+   *
+   * 反向的保险（2026-08-01 复查加的）：**已经声明是别的形态、且还没有地图的
+   * 任务，光有一份 世界.md 不足以翻案。** 场景很具体：一个写小说设定的 deck
+   * 任务，agent 顺手写了份「世界.md」当设定稿，整个任务就会翻成 world，画布上
+   * 那些 deck 卡**静默消失**，而且 bindTaskToSession 还会把 marker 回填成
+   * world 加深粘性，用户只能靠删文件恢复。
+   *
+   * 这不违背「文件优先、marker 兜底」：那条规矩讲的是文件证据与 marker 打架时
+   * 信文件，而这里是**两份文件证据互相打架**（canvas.html 对 世界.md），
+   * marker 只是被拿来当裁判。真要把一个 deck 改造成 world 也不会被卡住 ——
+   * 建出 `世界/` 就是最明确的文件证据，立刻认。
    */
   async detect(taskDir, marker) {
     if (marker?.kind === 'world') return true;
-    return exists(path.join(taskDir, ENTRY));
+    if (!(await exists(path.join(taskDir, ENTRY)))) return false;
+    if (marker?.kind && marker.kind !== 'world') {
+      return exists(path.join(taskDir, WORLD_DIR));
+    }
+    return true;
   },
 
   // 源即状态，产物根 = 任务根
@@ -193,6 +224,8 @@ export default {
   },
 
   async instanceManifest(taskDir) {
+    // `世界/` 递归扫出来的嵌套节点（平列表带 parent）。这就是地图。
+    const { nodes, truncated } = await scanWorld(taskDir);
     return {
       kind: 'world',
       root: '',
@@ -203,8 +236,8 @@ export default {
       pages: [],
       single: false,
       title: null,       // 前端用任务名
-      // `世界/` 递归扫出来的嵌套节点（平列表带 parent）。这就是地图。
-      nodes: await scanWorld(taskDir),
+      nodes,
+      truncated,
     };
   },
 
@@ -225,8 +258,13 @@ export default {
     }
 
     const nodes = artifact?.nodes || [];
+    const truncated = artifact?.truncated || [];
     if (!nodes.length) {
-      parts.push(`地图还没铺（在 ${WORLD_DIR}/ 下建文件夹，放 地点.md 或 角色.md）`);
+      // 一个节点都没有但有截断记录 = 整张地图都埋在深度上限之下。这时候说
+      // 「地图还没铺」是错的，会让人去建一个已经存在的东西
+      parts.push(truncated.length
+        ? `地图全部埋在 ${MAX_DEPTH} 层之下被截断（${truncated.slice(0, 2).join('、')}），把层级摊平才看得见`
+        : `地图还没铺（在 ${WORLD_DIR}/ 下建文件夹，放 地点.md 或 角色.md）`);
       return parts.join(' · ');
     }
     const places = nodes.filter(n => n.type === 'place');
@@ -237,9 +275,16 @@ export default {
     const containerPaths = nodes.filter(n => n.type === 'container').map(n => n.path);
     const stowed = (n) => containerPaths.some(c => n.parent === c || n.parent?.startsWith(`${c}/`));
     const onStage = chars.filter(n => !stowed(n));
+    // parent 为 null 的角色是直接放在 `世界/` 根下的（还没建任何地点就先建了人），
+    // 合法状态，不带括号即可 —— 这里以前 .split 不判空，一个根下角色就让整行
+    // describe 抛异常，hooks 兜底成「读不到」，世界的每轮注入清单整个静默丢失
     parts.push(onStage.length
-      ? `在场：${onStage.slice(0, 8).map(n => `${n.name}(${n.parent.split('/').pop()})`).join('、')}${onStage.length > 8 ? ' …' : ''}`
+      ? `在场：${onStage.slice(0, 8).map(n => (n.parent ? `${n.name}(${n.parent.split('/').pop()})` : n.name)).join('、')}${onStage.length > 8 ? ' …' : ''}`
       : '当前没有角色在场');
+
+    if (truncated.length) {
+      parts.push(`${truncated.length} 处嵌套超过 ${MAX_DEPTH} 层被截断（${truncated.slice(0, 2).join('、')}），这些地方的角色不在地图上，把层级摊平`);
+    }
 
     const implicit = nodes.filter(n => n.implicit);
     if (implicit.length) {
