@@ -16,6 +16,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Send, X } from 'lucide-react';
 import { serializeAnchor } from '../../lib/html-utils.js';
+import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
+
+const PANEL_WIDTH = 260;
+// 面板高度随文本框内容变，钳位用一个够用的估值即可（宁可略高：估高只会让它
+// 早一点上移，估低才会真的溢出容器底）
+const PANEL_HEIGHT_EST = 180;
 
 export default function PostDragNotePanel({
   active,                 // 拖完后 + sourceEl 存在时 true
@@ -77,16 +83,21 @@ export default function PostDragNotePanel({
 
   if (!active || !sourceEl || !sourceEl.isConnected || !iframeRef?.current) return null;
 
-  const iframe = iframeRef.current;
-  const iframeRect = iframe.getBoundingClientRect();
-  const offsetParent = iframe.offsetParent;
-  if (!offsetParent) return null;
-  const containerRect = offsetParent.getBoundingClientRect();
+  const base = overlayBase(iframeRef.current);
+  if (!base) return null;
   const r = sourceEl.getBoundingClientRect();
 
-  // 浮窗定位：source 右上角偏移 10px 浮出
-  const top = (iframeRect.top + r.top * zoom) - containerRect.top - 10;
-  const left = (iframeRect.left + r.right * zoom) - containerRect.left + 10;
+  // 浮窗定位：贴 source 右侧浮出，钳在 iframe 视觉盒内。
+  //
+  // 2026-07-31 一并迁到 overlay-rect：老代码自己算 iframeRect - containerRect，
+  // 少了容器的 scrollLeft/scrollTop（absolute 的包含块是容器 padding box，会跟着
+  // 内容滚，视觉差里已经扣过一次滚动量，浏览器渲染时又扣一次）。这正是 07-30
+  // 收敛掉的那个缺陷，当时漏了这个文件和 InspectFloatingCard 两个。
+  const { left, top } = placeFloatingCard(base, r, zoom, {
+    cardWidth: PANEL_WIDTH,
+    cardHeight: PANEL_HEIGHT_EST,
+    offset: 10,
+  });
 
   const handleSubmit = async () => {
     if (!text.trim() || submitting) return;
@@ -114,7 +125,7 @@ export default function PostDragNotePanel({
       style={{
         position: 'absolute',
         top, left,
-        width: 260,
+        width: PANEL_WIDTH,
         background: 'rgba(255,255,255,0.99)',
         border: '1px solid rgba(0,0,0,0.12)',
         borderRadius: 8,

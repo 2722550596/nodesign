@@ -83,7 +83,9 @@ export default function PendingMoveMarkers({ edits = [], iframeRef, zoom = 1 }) 
           ? `${edit.aiContext.targetContainerTag}`
           : '目标容器';
         return (
-          <div key={i} style={{ position: 'absolute', pointerEvents: 'none' }}>
+          // top/left: 0 不能省，理由同 CommentMarkers（absolute 不写偏移会落在
+          // flex 容器的居中静态位置，整组标记右移半个容器宽）
+          <div key={i} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}>
             <div style={{
               position: 'absolute',
               pointerEvents: 'none',

@@ -108,7 +108,13 @@ export default function CommentMarkers({
         const previewText = firstText.length > 28 ? firstText.slice(0, 28) + '…' : firstText;
 
         return (
-          <div key={idx} style={{ position: 'absolute', pointerEvents: 'none' }}>
+          // ⚠️ top/left: 0 不能省（2026-07-31）。这层 wrapper 一旦 position:absolute
+          // 却不写偏移，用的就是「静态位置」——而它的父容器是 display:flex +
+          // justify-content:center，按规范绝对定位子元素的静态位置由对齐方式决定，
+          // 于是 wrapper 落在**容器水平中心**。里面两个子元素的包含块又是这层
+          // wrapper，整组标记就整体右移半个容器宽（实测 ~730px）。
+          // 垂直方向静态位置是内容盒顶部、偏移为 0，所以症状是"y 对、x 错"。
+          <div key={idx} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}>
             {/* 橙色边框 */}
             <div
               style={{

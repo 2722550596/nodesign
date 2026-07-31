@@ -3,6 +3,7 @@ import { X, MapPin, MessageCircle, Trash2, Check } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { getElementRole, describePage, serializeForAI } from '../../lib/element-semantics.js';
+import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
 
 /**
  * InspectFloatingCard — 选中元素的 contextual 浮卡（2026-05-07 瘦身版）
@@ -14,7 +15,9 @@ import { getElementRole, describePage, serializeForAI } from '../../lib/element-
  *   - ESC / 切元素 / 点空白 = 自动收（在 CanvasFrame 顶层挂 ESC handler）
  *   - 评论列表 + inline textarea（Enter 提交）
  *
- * 位置算法保持不变（EditOverlay 同款 zoom 适配）。
+ * 定位走 lib/overlay-rect.js 的 overlayBase + placeFloatingCard，跟其余五个浮层
+ * 同一份换算。（2026-07-31 前这里是自己一套只乘 zoom 不加位移的算法，就是那个
+ * "评论卡飘到别处"。）
  */
 
 const CARD_WIDTH = 340;
@@ -127,23 +130,24 @@ export default function InspectFloatingCard({
   const offScreen =
     elRect.bottom <= 0 || elRect.top >= innerH || elRect.right <= 0 || elRect.left >= innerW;
 
-  // 元素视觉 bbox（在外层 iframe 容器坐标系）
-  const visLeft = elRect.left * zoom;
-  const visTop = elRect.top * zoom;
-  const visWidth = elRect.width * zoom;
-
-  // 默认贴元素右上角；溢出右边 → 改贴左边；溢出下面 → 上移
-  let cardLeft = visLeft + visWidth + CARD_OFFSET;
-  if (cardLeft + CARD_WIDTH > iframeRect.width - CARD_OFFSET) {
-    cardLeft = visLeft - CARD_WIDTH - CARD_OFFSET;
-  }
-  if (cardLeft < CARD_OFFSET) cardLeft = CARD_OFFSET;
-  let cardTop = visTop;
-  const effHeight = cardHeight || CARD_MAX_HEIGHT;
-  if (cardTop + effHeight > iframeRect.height - CARD_OFFSET) {
-    cardTop = Math.max(CARD_OFFSET, iframeRect.height - CARD_OFFSET - effHeight);
-  }
-  if (cardTop < CARD_OFFSET) cardTop = CARD_OFFSET;
+  // 定位统一走 overlay-rect（2026-07-31）。
+  //
+  // 老代码是 `elRect.left * zoom` 直接当 overlay 坐标用，少了 iframe 在容器里的
+  // 位移。而 iframe 在 deck 和站点窗里都是**居中**的（HtmlIframe 用
+  // align/justify-content: center，contain 语义缩放），只要窗口宽高比不等于画幅
+  // 比例就必有一个轴存在居中留白，卡就整体偏那么多 —— 窗口越不方正偏得越狠，
+  // 拉到接近 16:9 又自己好了，所以这个 bug 一直显得时有时无。
+  //
+  // 六个浮层 2026-07-30 统一收进 overlay-rect 时**漏了这一个**（和
+  // PostDragNotePanel），文件头当时那句"位置算法保持不变"就是漏的证据。
+  const base = overlayBase(iframeRef?.current)
+    // 拿不到 offsetParent 时退回老行为（零位移），不至于整张卡不显示
+    || { x: 0, y: 0, iframeRect };
+  const { left: cardLeft, top: cardTop } = placeFloatingCard(base, elRect, zoom, {
+    cardWidth: CARD_WIDTH,
+    cardHeight: cardHeight || CARD_MAX_HEIGHT,
+    offset: CARD_OFFSET,
+  });
 
   const role = getElementRole(el);
   const page = describePage(el);
