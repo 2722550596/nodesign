@@ -308,3 +308,38 @@ B(每轮注入清单):支持材料建议的清单(当前地点 + 背景 + 在场
 - `server/engine/mcp/tools/remove-background.js`:rembg 服务、内存峰值、质量档上限
 - `server/lib/image-variant.js`:缩略图管线
 - `web/src/components/canvas/BoardCanvas.jsx` / `SiteWindow.jsx` / `StageLayer.jsx`:画布派生分支、窗组件形状
+
+---
+
+## 四、阶段 0 / 1 落地后的遗留（2026-08-01 复查）
+
+阶段 0 和 1 已实现并部署（commit `b4d2295` / `e255d7e` / `67a6a58`）。复查挖出的
+问题里，三条「静默丢东西」当场修了（见 `67a6a58` 的 commit body）。剩下这些没修，
+按该在哪个阶段解决排：
+
+**阶段 2 要接的两处（都是 hook 侧）：**
+- reference 注入 hook 只在写 `.html` 时触发（`hooks.js` 的 `/\.html?$/i` 判断），
+  写 `世界.md` 永远不会注入 world-reference。接 hooks 时要给 world 分支。
+- 走 `resolveCanvasTarget` 的工具（`list_pages` 之类）对 world 会把 `世界.md`
+  当 html 喂给 playwright，1 核机器上白烧一次 chromium。
+
+**阶段 4 之前必须修的一条：`?w=` 对 `.webp` 原图失效。**
+实测：2.4MB png 加 `?w=480` 出 27KB webp，真缩略；但 541KB 的 webp 原图加
+`?w=480` 原样发出 541KB。根因是 `image-variant.js` 的 `TRANSCODABLE` 不含
+`.webp`（防二次有损转码），但这同时把缩宽也禁了。generate_image 在 provider
+返回 image/webp 时就会落 `.webp`。所以漏洞第 7 条目前只对 png / jpg 解决了，
+立绘一旦是 webp，满板立绘照样打爆带宽。修法是允许 webp 源在**明确要求缩宽且
+原图更大**时做 webp→webp resize；这是 deck / site 共用的管线，改动要单独回归。
+
+**阶段 4 顺带：** WorldMap 的立绘 URL 不带 `?v=` 版本号，无版本标记的图缓存
+5 分钟，agent 重画立绘后画布最多陈旧 5 分钟。deck / site 卡都走 fileVersions，
+world 还没接。
+
+**阶段 5 顺带：** world 任务的项目封面现在是 chromium 生截 `世界.md` 的纯文本
+（白底两行小字）。该用第一个地点的 背景.png，或者做个样式化占位。
+
+**判据的诚实说明：** 阶段 1 的「deck 与 site 任务显示无变化」，playwright 只跑了
+site 项目的真浏览器对照，deck 项目只由 manifest diff 为零 + deck 渲染分支代码
+未动间接覆盖。另外契约表写的是「discoverInstances 吐嵌套节点」，实现改成了单
+实例 + 节点挂在 `instanceManifest.nodes` 上 —— 与「world 命中即独占」的语义一致，
+是合理的判据置换。
