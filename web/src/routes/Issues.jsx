@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { AlertTriangle, Bot, Wrench, Check, EyeOff, Trash2, RotateCcw } from 'lucide-react';
+import { AlertTriangle, Bot, Wrench, Check, EyeOff, Trash2, RotateCcw, Bug, Lightbulb } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { Admin } from '../lib/api.js';
@@ -20,6 +20,13 @@ import { timeAgo } from '../lib/helpers.js';
 const SOURCE_META = {
   auto: { label: '自动', icon: Wrench, color: COLOR.sub },
   agent: { label: 'agent 上报', icon: Bot, color: COLOR.brown },
+};
+
+// kind 轴（08-02 上报扩容）：bug=行为错了 / friction=能用但绕路 / idea=改进想法
+const KIND_META = {
+  bug: { label: '故障', icon: Bug, color: COLOR.error },
+  friction: { label: '摩擦', icon: Wrench, color: COLOR.warn },
+  idea: { label: '想法', icon: Lightbulb, color: COLOR.gold },
 };
 
 export default function Issues() {
@@ -53,14 +60,19 @@ export function IssuesPanel() {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState('open');
   const [source, setSource] = useState('all');
+  const [kind, setKind] = useState('all');
   const showToast = useGlobalStore(s => s.showToast);
 
   const load = () => {
-    Admin.issues({ status: status === 'all' ? undefined : status, source: source === 'all' ? undefined : source })
+    Admin.issues({
+      status: status === 'all' ? undefined : status,
+      source: source === 'all' ? undefined : source,
+      kind: kind === 'all' ? undefined : kind,
+    })
       .then(setData)
       .catch(err => { showToast(`拉取失败：${err.message}`, 'error'); setData({ issues: [], stats: [] }); });
   };
-  useEffect(load, [status, source]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [status, source, kind]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const act = async (id, next) => {
     try {
@@ -100,6 +112,9 @@ export function IssuesPanel() {
           <Segmented value={source} onChange={setSource} options={[
             ['all', '全部来源'], ['auto', '自动'], ['agent', 'agent 上报'],
           ]} />
+          <Segmented value={kind} onChange={setKind} options={[
+            ['all', '全部类型'], ['bug', '故障'], ['friction', '摩擦'], ['idea', '想法'],
+          ]} />
         </div>
 
         {!data ? (
@@ -125,14 +140,17 @@ function shortTool(name) {
 function IssueRow({ issue, onAct }) {
   const [open, setOpen] = useState(false);
   const meta = SOURCE_META[issue.source] || SOURCE_META.auto;
+  const kindMeta = KIND_META[issue.kind] || KIND_META.friction;
+  const KindIcon = kindMeta.icon;
   const Icon = meta.icon;
   const hot = issue.count >= 5;
+  const isIdea = issue.kind === 'idea';
 
   return (
     <div style={{
       background: '#fff',
       border: `1px solid ${COLOR.border}`,
-      borderLeft: `3px solid ${hot ? COLOR.warn : COLOR.border}`,
+      borderLeft: `3px solid ${isIdea ? COLOR.gold : hot ? COLOR.warn : COLOR.border}`,
       borderRadius: 10,
       padding: `${GAP.md}px ${GAP.lg}px`,
     }}>
@@ -153,6 +171,9 @@ function IssueRow({ issue, onAct }) {
             marginTop: 4, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           }}>
             <span style={{ color: hot ? COLOR.warn : COLOR.text2, fontWeight: 600 }}>×{issue.count}</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: kindMeta.color }}>
+              <KindIcon size={10} />{kindMeta.label}
+            </span>
             <span>{shortTool(issue.toolName)}</span>
             <span>{meta.label}</span>
             <span>最近 {timeAgo(issue.lastSeen)}</span>

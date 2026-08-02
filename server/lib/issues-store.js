@@ -41,6 +41,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_issues_count ON issues(status, count DESC);
 `);
 
+// kind 轴（2026-08-02，上报工具扩容）：bug=行为错了 / friction=能用但绕路 /
+// idea=改进想法（没坏也值得说）。老行回填：auto 全是工具失败事件 → bug；
+// agent 存量按原语义 → friction。回填只在加列那一次跑，之后 kind 归写入方管。
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(issues)').all().map(c => c.name));
+  if (!cols.has('kind')) {
+    db.exec("ALTER TABLE issues ADD COLUMN kind TEXT NOT NULL DEFAULT 'friction'");
+    db.exec("UPDATE issues SET kind = 'bug' WHERE source = 'auto'");
+    console.log('[issues] kind column added (auto 存量回填为 bug)');
+  }
+}
+
 /**
  * 错误指纹：把可变部分抹掉，留下问题的"类"。
  * 不归一化的话同一个毛病会因为路径/行号/时间戳不同散成几十条，聚合就没意义了。
@@ -65,12 +77,15 @@ function newId() {
  * 新的故障源，所以这里吞掉一切异常。
  * @returns {{ id: string, count: number } | null}
  */
+const KINDS = new Set(['bug', 'friction', 'idea']);
+
 export function recordIssue({
   source, toolName, summary, detail, expectation,
-  projectId, sessionId, runId, userId, signature,
+  projectId, sessionId, runId, userId, signature, kind,
 }) {
   try {
     if (!summary) return null;
+    const k = KINDS.has(kind) ? kind : (source === 'auto' ? 'bug' : 'friction');
     const sig = signature || signatureOf(`${toolName || ''}|${detail || summary}`);
     const key = { source, toolName: toolName || null, sig };
     const existing = db.prepare(
@@ -91,10 +106,10 @@ export function recordIssue({
 
     const id = newId();
     db.prepare(`INSERT INTO issues
-        (id, source, tool_name, signature, summary, detail, expectation,
+        (id, source, kind, tool_name, signature, summary, detail, expectation,
          project_id, session_id, run_id, user_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, source, key.toolName, key.sig,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, source, k, key.toolName, key.sig,
         String(summary).slice(0, 300),
         detail ? String(detail).slice(0, 4000) : null,
         expectation ? String(expectation).slice(0, 2000) : null,
@@ -111,6 +126,7 @@ function rowToIssue(r) {
   return {
     id: r.id,
     source: r.source,
+    kind: r.kind || 'friction',
     toolName: r.tool_name,
     signature: r.signature,
     summary: r.summary,
@@ -133,11 +149,12 @@ function rowToIssue(r) {
  * `status:'all'` 匹配不到任何行却返空数组，读起来像"库里是干净的"（体检脚本
  * 就这么漏过一条残留）。宁可在这里认掉这个词，不让空结果继续说谎。
  */
-export function listIssues({ status, source, limit = 200 } = {}) {
+export function listIssues({ status, source, kind, limit = 200 } = {}) {
   const where = [];
   const args = [];
   if (status && status !== 'all') { where.push('status = ?'); args.push(status); }
   if (source && source !== 'all') { where.push('source = ?'); args.push(source); }
+  if (kind && kind !== 'all') { where.push('kind = ?'); args.push(kind); }
   const sql = `SELECT * FROM issues${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
                ORDER BY count DESC, last_seen DESC LIMIT ?`;
   return db.prepare(sql).all(...args, limit).map(rowToIssue);

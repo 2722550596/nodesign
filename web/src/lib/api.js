@@ -75,10 +75,11 @@ export const Me = {
 // ── Admin（仅 admin 可见；后端 adminGuard 兜底）──
 export const Admin = {
   /** harness 问题库：auto=工具失败自动记录，agent=report_friction 主动报 */
-  issues: ({ status, source } = {}) => {
+  issues: ({ status, source, kind } = {}) => {
     const qs = new URLSearchParams();
     if (status) qs.set('status', status);
     if (source) qs.set('source', source);
+    if (kind) qs.set('kind', kind);
     const q = qs.toString();
     return jsonRequest('GET', `/api/admin/issues${q ? `?${q}` : ''}`);
   },

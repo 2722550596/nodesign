@@ -50,7 +50,7 @@ import { makePinToBoardTool } from './tools/pin-to-board.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 import { makePublishSiteTool } from './tools/publish-site.js';
-import { makeReportFrictionTool } from './tools/report-friction.js';
+import { makeReportIssueTool } from './tools/report-issue.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -110,10 +110,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 才调（发公网是外发动作）；额度按项目 owner 算，与站点窗按钮共用一套闸门。
       makePublishSiteTool({ projectId }),
 
-      // report_friction — agent 报 harness 层的摩擦（缺参数 / 返回不合用 / 反复绕路）。
-      // 跟 PostToolUseFailure 的自动记录写同一张 issues 表：自动层记"发生了什么"，
-      // 这层补"为什么难受、期望怎样"。deferred 加载，不占常驻 schema。
-      makeReportFrictionTool({ projectId, sessionId, ctx }),
+      // report_issue — agent 给维护者写信（08-02 由 report_friction 扩容改名）：
+      // bug / friction / idea 三类走同一张 issues 表。跟 PostToolUseFailure 的
+      // 自动记录分工：自动层记"发生了什么"，这层补"为什么难受、期望怎样"。
+      makeReportIssueTool({ projectId, sessionId, ctx }),
 
       // web_search — 4 provider 联网搜索（baidu/tavily/exa/zhipu，CJK auto route to baidu）
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。

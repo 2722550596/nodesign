@@ -115,12 +115,13 @@ router.delete('/notices/:id', (req, res) => {
 // agent = report_friction 主动报的摩擦。默认按次数降序 —— 一眼看到最该修的。
 
 router.get('/issues', (req, res) => {
-  const { status, source } = req.query;
+  const { status, source, kind } = req.query;
   const limit = Math.min(500, Number(req.query.limit) || 200);
   res.json({
     issues: listIssues({
       status: typeof status === 'string' && status !== 'all' ? status : undefined,
       source: typeof source === 'string' && source !== 'all' ? source : undefined,
+      kind: typeof kind === 'string' && kind !== 'all' ? kind : undefined,
       limit,
     }),
     stats: issueStats(),
