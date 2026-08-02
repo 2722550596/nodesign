@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  LayoutDashboard, Users, Ticket, Megaphone, AlertTriangle,
-  Copy, Pencil, Ban, RotateCcw, Send, X,
+  LayoutDashboard, Users, Ticket, Megaphone, AlertTriangle, ShieldAlert,
+  Copy, Pencil, Ban, RotateCcw, Send, X, Trash2,
 } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
@@ -87,6 +87,7 @@ export default function AdminConsole() {
             ['users', '用户', Users],
             ['invites', '邀请码', Ticket],
             ['notices', '公告', Megaphone],
+            ['moderation', '审核', ShieldAlert],
             ['issues', '问题库', AlertTriangle],
           ].map(([key, label, Icon]) => (
             <button
@@ -108,6 +109,7 @@ export default function AdminConsole() {
         {tab === 'users' && <UsersTab users={users} reload={reload} />}
         {tab === 'invites' && <InvitesTab invites={invites} users={users} reload={reload} copy={copy} />}
         {tab === 'notices' && <NoticesTab />}
+        {tab === 'moderation' && <ModerationTab users={users} />}
         {tab === 'issues' && <IssuesPanel />}
       </div>
     </AppShell>
@@ -204,6 +206,8 @@ function UserRow({ u, reload }) {
             {isAdmin && <Chip color={COLOR.gold}>admin</Chip>}
             {trial && <Chip color={COLOR.blue}>试用 {usd(u.lifetimeCostLimitUsd)}</Chip>}
             {u.disabled && <Chip color={COLOR.error}>已停用</Chip>}
+            {u.flagsCount > 0 && <Chip color={COLOR.error}>违规 ×{u.flagsCount}</Chip>}
+            <ModLevelChip u={u} />
           </div>
           <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 3 }}>
             {u.inviteCode || '创始'} · 注册于 {timeAgo(u.createdAt) || u.createdAt}
@@ -231,9 +235,10 @@ function UserRow({ u, reload }) {
         </div>
 
         <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+          {/* admin 也要能开合外审档，所以铅笔对所有人显示（编辑器内部再按角色裁字段） */}
+          <IconBtn title={isAdmin ? '外审设置' : '限额与外审'} onClick={() => setEditing(v => !v)}><Pencil size={13} /></IconBtn>
           {!isAdmin && (
             <>
-              <IconBtn title="调整限额" onClick={() => setEditing(v => !v)}><Pencil size={13} /></IconBtn>
               {confirmStop ? (
                 <button
                   onClick={toggleDisabled}
@@ -259,11 +264,32 @@ function UserRow({ u, reload }) {
   );
 }
 
+// 外审档章：显示实际生效档，显式设过的加个点（区分"我设的"和"跟着默认走"）
+const MOD_LEVEL_META = {
+  off: { label: '外审关', color: COLOR.sub },
+  loose: { label: '外审宽松', color: COLOR.text3 },
+  strict: { label: '外审严格', color: COLOR.brown },
+};
+
+function ModLevelChip({ u }) {
+  const eff = u.effectiveModerationLevel || 'loose';
+  const meta = MOD_LEVEL_META[eff] || MOD_LEVEL_META.loose;
+  const pinned = !!u.moderationLevel;
+  return (
+    <span title={pinned ? '按账号单独设置' : '跟随默认档'}>
+      <Chip color={meta.color}>{meta.label}{pinned ? ' ·' : ''}</Chip>
+    </span>
+  );
+}
+
 function LimitEditor({ u, onDone, onCancel }) {
   const showToast = useGlobalStore(s => s.showToast);
   const [daily, setDaily] = useState(u.dailyCostLimitUsd ?? '');
   const [lifetime, setLifetime] = useState(u.lifetimeCostLimitUsd ?? '');
+  // '' = 跟随默认档（存 null）；其余三档是显式覆盖
+  const [level, setLevel] = useState(u.moderationLevel ?? '');
   const [saving, setSaving] = useState(false);
+  const isAdmin = u.role === 'admin';
 
   const save = async () => {
     const num = (v) => (v === '' || v === null ? null : Number(v));
@@ -273,8 +299,10 @@ function LimitEditor({ u, onDone, onCancel }) {
     }
     setSaving(true);
     try {
-      await Admin.patchUser(u.id, { dailyCostLimitUsd: num(daily), lifetimeCostLimitUsd: num(lifetime) });
-      showToast(`已更新 ${u.username} 的限额`, 'success');
+      const patch = { moderationLevel: level === '' ? null : level };
+      if (!isAdmin) { patch.dailyCostLimitUsd = num(daily); patch.lifetimeCostLimitUsd = num(lifetime); }
+      await Admin.patchUser(u.id, patch);
+      showToast(`已更新 ${u.username}`, 'success');
       onDone();
     } catch (err) {
       showToast(`保存失败：${err.message}`, 'error');
@@ -287,14 +315,26 @@ function LimitEditor({ u, onDone, onCancel }) {
       marginTop: GAP.lg, paddingTop: GAP.lg, borderTop: `1px solid ${COLOR.borderLt}`,
       display: 'flex', alignItems: 'flex-end', gap: GAP.xl, flexWrap: 'wrap',
     }}>
-      <Field label="日限额 $（留空 = 默认 $15）">
-        <NumInput value={daily} onChange={setDaily} placeholder="15" />
+      {!isAdmin && (
+        <>
+          <Field label="日限额 $（留空 = 默认 $50）">
+            <NumInput value={daily} onChange={setDaily} placeholder="50" />
+          </Field>
+          <Field label="终身额度 $（留空 = 无，走日限）">
+            <NumInput value={lifetime} onChange={setLifetime} placeholder="—" />
+          </Field>
+        </>
+      )}
+      <Field label="内容外审">
+        <Segmented value={level} onChange={setLevel} options={[
+          ['', '跟随默认'], ['off', '关闭'], ['loose', '宽松'], ['strict', '严格'],
+        ]} />
       </Field>
-      <Field label="终身额度 $（留空 = 无，走日限）">
-        <NumInput value={lifetime} onChange={setLifetime} placeholder="—" />
-      </Field>
-      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, flex: 1, minWidth: 200, lineHeight: 1.5 }}>
-        终身额度非空即生效且取代日限：对全史花费封顶、不刷新（试用口径）。
+      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, flex: 1, minWidth: 220, lineHeight: 1.5 }}>
+        {!isAdmin && <>终身额度非空即生效且取代日限：对全史花费封顶、不刷新（试用口径）。<br /></>}
+        外审默认档：试用号严格 / 正式号宽松 / admin 关闭。宽松只拦硬违规
+        （未成年人色情、恐怖主义、武器毒品、犯罪教程、恶意软件、教唆自残、人肉），
+        虚构里的暴力与成人向情节放行；严格再加色情、美化暴力、群体仇恨。
       </div>
       <div style={{ display: 'flex', gap: GAP.sm }}>
         <PrimaryBtn onClick={save} disabled={saving}>{saving ? '保存中…' : '保存'}</PrimaryBtn>
@@ -603,6 +643,80 @@ function NoticesTab() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── 内容外审 ──────────────────────────────────────────────────────────
+
+// 类别中文（与 server/lib/moderation.js 的 category 对齐）
+const FLAG_CATEGORY = {
+  sexual_minors: '未成年人色情', sexual_explicit: '色情', violence: '暴力',
+  terrorism: '恐怖主义', weapons: '武器制作', drugs: '毒品', crime: '犯罪教程',
+  self_harm: '自残自杀', hate: '仇恨歧视', harassment: '骚扰人肉',
+  malware: '恶意软件', other: '其他违规',
+};
+
+function ModerationTab({ users }) {
+  const [flags, setFlags] = useState(null);
+  const showToast = useGlobalStore(s => s.showToast);
+  const nameOf = useMemo(() => {
+    const m = new Map((users || []).map(u => [u.id, u.username]));
+    return (id) => m.get(id) || id;
+  }, [users]);
+
+  const load = useCallback(() => {
+    Admin.moderation().then(d => setFlags(d.flags))
+      .catch(err => { showToast(`拉取失败：${err.message}`, 'error'); setFlags([]); });
+  }, [showToast]);
+  useEffect(load, [load]);
+
+  const remove = async (id) => {
+    try { await Admin.removeFlag(id); load(); }
+    catch (err) { showToast(`删除失败：${err.message}`, 'error'); }
+  };
+
+  if (!flags) return <div style={emptyStyle}>加载中…</div>;
+  if (flags.length === 0) return <div style={emptyStyle}>没有拦截记录。</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.md }}>
+      {flags.map(f => (
+        <div key={f.id} style={{
+          background: '#fff', border: `1px solid ${COLOR.border}`,
+          borderLeft: `3px solid ${f.severity === 'critical' ? COLOR.error : COLOR.warn}`,
+          borderRadius: 10, padding: `${GAP.md}px ${GAP.lg}px`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.md, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text }}>
+              {nameOf(f.userId)}
+            </span>
+            <Chip color={f.severity === 'critical' ? COLOR.error : COLOR.warn}>
+              {FLAG_CATEGORY[f.category] || f.category}
+            </Chip>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.dim }}>
+              {f.level === 'loose' ? '宽松档拦下' : '严格档拦下'}
+            </span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
+              {timeAgo(f.createdAt) || f.createdAt}
+            </span>
+            <span style={{ flex: 1 }} />
+            <IconBtn title="删除这条记录" onClick={() => remove(f.id)} danger><Trash2 size={13} /></IconBtn>
+          </div>
+          {f.reason && (
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, marginTop: GAP.sm, lineHeight: 1.6 }}>
+              {f.reason}
+            </div>
+          )}
+          <div style={{
+            marginTop: GAP.sm, padding: `${GAP.sm}px ${GAP.md}px`,
+            background: 'rgba(0,0,0,0.025)', borderRadius: 8,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+            lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          }}>
+            {f.excerpt || '（无摘录）'}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

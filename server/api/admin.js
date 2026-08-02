@@ -20,6 +20,7 @@ import { createInvite, listInvites, getInvite, updateInvite, listUsers, getUserB
 import { usedCostToday, usedCostTotal, usedTokensToday, limitFor } from '../lib/quota.js';
 import { listIssues, setIssueStatus, removeIssue, issueStats } from '../lib/issues-store.js';
 import { createNotice, listNotices, getActiveNotice, retireNotice, retireAllNotices } from '../lib/notice-store.js';
+import { flagCounts, listFlags, removeFlag, levelFor, LEVELS } from '../lib/moderation.js';
 
 const router = express.Router();
 router.use(adminGuard);
@@ -56,12 +57,15 @@ router.patch('/invites/:code', (req, res) => {
 });
 
 router.get('/users', (_req, res) => {
+  const flags = flagCounts();                 // 内容外审标记（lib/moderation.js）
   const users = listUsers().map(u => ({
     ...u,
     costToday: usedCostToday(u.id),           // 美元，闸门真口径
     costTotal: usedCostTotal(u.id),           // 全史；试用号（lifetimeCostLimitUsd 非空）拿它对限额
     tokensToday: usedTokensToday(u.id),       // 参考
     effectiveDailyLimitUsd: limitFor(u),
+    flagsCount: flags.get(u.id) || 0,
+    effectiveModerationLevel: levelFor(u),     // 默认档算完的实际生效值
   }));
   res.json({ users });
 });
@@ -71,6 +75,14 @@ router.patch('/users/:id', (req, res) => {
   if (!user) return res.status(404).json({ error: 'user not found' });
   const patch = {};
   if (typeof req.body?.disabled === 'boolean') patch.disabled = req.body.disabled;
+  // 外审强度：null = 跟随默认档（试用 strict / 正式 loose / admin off）
+  if ('moderationLevel' in (req.body || {})) {
+    const lv = req.body.moderationLevel;
+    if (lv !== null && !LEVELS.includes(lv)) {
+      return res.status(400).json({ error: `moderationLevel 需为 ${LEVELS.join('/')} 或 null` });
+    }
+    patch.moderationLevel = lv;
+  }
   // 07-31 起限额单位是美元。老字段 dailyTokenLimit 仍收（存量数据能改回去），
   // 但它已经不参与闸门判断了 —— 真正生效的是 dailyCostLimitUsd。
   for (const [key, label] of [['dailyCostLimitUsd', '美元'], ['lifetimeCostLimitUsd', '美元'], ['dailyTokenLimit', 'token']]) {
@@ -107,6 +119,21 @@ router.post('/notices', (req, res) => {
 router.delete('/notices/:id', (req, res) => {
   if (req.params.id === 'all') return res.json({ retired: retireAllNotices() });
   if (!retireNotice(req.params.id)) return res.status(404).json({ error: 'notice not found' });
+  res.status(204).end();
+});
+
+// ── 内容外审留证（2026-08-02）──
+// 拦截发生在 turn.js 闸门；这里只读账。连坐封禁自动发生（lib/moderation.js），
+// 解封走既有 PATCH /users/:id {disabled:false}。
+
+router.get('/moderation', (req, res) => {
+  const userId = typeof req.query.userId === 'string' && req.query.userId ? req.query.userId : null;
+  const limit = Math.min(500, Number(req.query.limit) || 100);
+  res.json({ flags: listFlags({ userId, limit }) });
+});
+
+router.delete('/moderation/:id', (req, res) => {
+  if (!removeFlag(req.params.id)) return res.status(404).json({ error: 'flag not found' });
   res.status(204).end();
 });
 

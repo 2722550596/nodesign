@@ -51,6 +51,7 @@ import {
 import { applySessionModel } from '../engine/agent/session-model.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
+import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
 import { getProjectBus } from '../ws/broker.js';
 import { readPendingSummary } from './pending-changes.js';
 import { pendingRewinds } from './sessions.js';
@@ -228,6 +229,33 @@ router.post('/:pid/turn', async (req, res, next) => {
       const gate = checkConcurrency(req.user);
       if (!gate.ok) {
         return res.status(429).json({ error: gate.message, code: gate.code });
+      }
+    }
+
+    // ── 内容外审（2026-08-02）：消息先过分类器再进 agent。拦下 = 零成本，run 都不建。
+    // 强度按账号（users.moderation_level，站主在控制台调），判定 / 留证 / 连坐封禁的
+    // 口径全在 lib/moderation.js。
+    if (shouldModerate(req.user)) {
+      const verdict = await moderateText(chat, levelFor(req.user));
+      if (!verdict.ok) {
+        const rec = recordViolation({
+          userId: req.user.id, projectId: project.id,
+          category: verdict.category, severity: verdict.severity,
+          reason: verdict.reason, excerpt: chat, level: verdict.level,
+        });
+        // 上面两道闸的 429 是同步返回，弱网重发撞 in-flight 的窗口可以忽略；
+        // 这里 await 了 ~1s，窗口是真的 —— reject 让正在 await 的同 requestId
+        // POST fallthrough 自己重跑（然后再被拦一次），不能让它挂死。
+        if (typeof requestId === 'string' && requestId) {
+          try { if (typeof inflightReject === 'function') inflightReject(new Error('moderation blocked')); } catch { /* */ }
+          inflightTurns.delete(requestId);
+        }
+        return res.status(451).json({
+          error: rec?.disabled
+            ? '消息涉及违规内容，账号已停用。如有疑问请联系站主'
+            : '这条消息涉及违规内容，没有发给 agent。请调整后重发',
+          code: 'MODERATION_BLOCKED',
+        });
       }
     }
 

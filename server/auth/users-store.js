@@ -56,6 +56,15 @@ if (!userCols.has('lifetime_cost_limit_usd')) {
   db.exec('ALTER TABLE users ADD COLUMN lifetime_cost_limit_usd REAL');
   console.log('[users-store] users.lifetime_cost_limit_usd column added');
 }
+// 08-02 内容外审强度（见 lib/moderation.js）：'off' | 'loose' | 'strict'。
+// NULL = 跟随该账号的默认档（试用号 strict / 正式号 loose / admin off），
+// 站主可 per-user 覆盖。列存的是覆盖值，不是最终值 —— 默认档改了，
+// 没设过的号跟着走。
+if (!userCols.has('moderation_level')) {
+  db.exec('ALTER TABLE users ADD COLUMN moderation_level TEXT');
+  console.log('[users-store] users.moderation_level column added');
+}
+
 const inviteCols = new Set(db.prepare('PRAGMA table_info(invites)').all().map(c => c.name));
 if (!inviteCols.has('grant_lifetime_usd')) {
   db.exec('ALTER TABLE invites ADD COLUMN grant_lifetime_usd REAL');
@@ -105,6 +114,7 @@ function rowToUser(row) {
     dailyCostLimitUsd: row.daily_cost_limit_usd ?? null,
     lifetimeCostLimitUsd: row.lifetime_cost_limit_usd ?? null,
     dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
+    moderationLevel: row.moderation_level ?? null,    // null = 跟随默认档
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
     createdAt: row.created_at,
@@ -145,10 +155,11 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
+  if (moderationLevel !== undefined) { sets.push('moderation_level = ?'); args.push(moderationLevel ?? null); }
   if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
   if (lifetimeCostLimitUsd !== undefined) { sets.push('lifetime_cost_limit_usd = ?'); args.push(lifetimeCostLimitUsd ?? null); }
   if (dailyTokenLimit !== undefined) { sets.push('daily_token_limit = ?'); args.push(dailyTokenLimit ?? null); }

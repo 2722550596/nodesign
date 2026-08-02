@@ -94,6 +94,15 @@ export const Admin = {
   notices: () => jsonRequest('GET', '/api/admin/notices'),
   createNotice: (body) => jsonRequest('POST', '/api/admin/notices', body),
   retireNotice: (id) => jsonRequest('DELETE', `/api/admin/notices/${id}`),
+  // 内容外审留证（2026-08-02）：拦截在 turn 闸门，这里只读账
+  moderation: ({ userId, limit } = {}) => {
+    const qs = new URLSearchParams();
+    if (userId) qs.set('userId', userId);
+    if (limit) qs.set('limit', String(limit));
+    const q = qs.toString();
+    return jsonRequest('GET', `/api/admin/moderation${q ? `?${q}` : ''}`);
+  },
+  removeFlag: (id) => jsonRequest('DELETE', `/api/admin/moderation/${id}`),
 };
 
 // ── Publish（站点一键上线 Cloudflare Pages，task 级）──

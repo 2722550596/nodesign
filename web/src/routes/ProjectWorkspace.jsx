@@ -1351,8 +1351,9 @@ export default function ProjectWorkspace() {
         navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
       }
     } catch (err) {
-      // 429（额度用完 / 并发已满）不是故障，服务端的话术已经很白话，别再包一层"失败"
-      const politeLimit = err.code === 'QUOTA_EXCEEDED' || err.code === 'BUSY';
+      // 429（额度用完 / 并发已满）和 451（内容外审拦截）不是故障，
+      // 服务端的话术已经很白话，别再包一层"失败"
+      const politeLimit = err.code === 'QUOTA_EXCEEDED' || err.code === 'BUSY' || err.code === 'MODERATION_BLOCKED';
       setMessages(ms => [...ms, {
         id: newId('msg'),
         role: 'assistant',
