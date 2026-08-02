@@ -18,7 +18,7 @@ Endpoints:
 
   POST /remove
     Headers:
-      X-Model: <rembg model name>             default 'birefnet-general-lite'
+      X-Model: <rembg model name>             default 'isnet-general-use'（安全档）
       X-Alpha-Matting: 0|1                    default 0
     Body: raw image bytes (PNG/JPEG/WEBP/...)
     Returns: RGBA PNG bytes (200) or JSON error (4xx/5xx)
@@ -274,7 +274,11 @@ def _remove_with_am_cap(image_bytes, session, alpha_matting):
 @app.post('/remove')
 async def remove_endpoint(request: Request):
     global _inflight
-    model = request.headers.get('x-model', 'birefnet-general-lite')
+    # 缺省换成 isnet（2026-08-02）：原来的 birefnet-general-lite 是个陷阱 ——
+    # 不带 X-Model 的直连调用会加载 2.4GB 峰值的模型，在这台机器上直接 OOM
+    # 连坐整个 service（当天真踩过）。工具层永远显式传 model，缺省只服务于
+    # 手工调试，就该是安全档。
+    model = request.headers.get('x-model', 'isnet-general-use')
     alpha_matting = request.headers.get('x-alpha-matting', '0') == '1'
     image_bytes = await request.body()
     if not image_bytes:

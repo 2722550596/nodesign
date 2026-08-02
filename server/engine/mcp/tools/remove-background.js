@@ -66,6 +66,18 @@ const QUALITY_MAP = {
   best:     { model: 'birefnet-general-lite', alphaMatting: true  },
 };
 
+// style 轴（2026-08-02）：与 quality 正交。二次元/插画/生成立绘 → isnet-anime
+// （动漫线稿专训，与 isnet-general-use 同量级 ~900MB 峰值，这台机器承载得起）。
+// 只换 fast/balanced 的底模；best 是通用分割且被 QUALITY_CAP 禁着，不参与。
+const ANIME_MODEL = 'isnet-anime';
+function resolveModelCfg(quality, style) {
+  const base = QUALITY_MAP[quality];
+  if (style === 'anime' && base.model === 'isnet-general-use') {
+    return { ...base, model: ANIME_MODEL };
+  }
+  return base;
+}
+
 // 质量上限（env NODESIGN_REMBG_QUALITY_CAP）。birefnet 系模型一次推理峰值 2.4GB+，
 // 在小内存机器上会被 OOM killer 直接杀掉 —— 而且杀的是常驻 service 进程，连带
 // fast 档一起死。
@@ -200,12 +212,16 @@ Returns: text caption with output path + image content block (preview the result
         .enum(['fast', 'balanced', 'best'])
         .optional()
         .describe('Speed vs edge character. Default "balanced" (isnet + alpha matting, ~8s warm): cuts stray semi-transparent pixels (halo) ~34%→~10% and keeps finer wisps, slightly softer overall edge; alpha matting is capped at 1024px long edge so cost does NOT scale with input megapixels — never pre-resize for speed. Step DOWN to "fast" (isnet, no alpha matting, ~7s warm) for hard-edged subjects where softness reads as blur: product shots, icons, logos, UI screenshots, flat-color graphics — and for large batches. "best" (birefnet-general-lite + alpha matting): strongest segmentation but needs ~2.5GB RAM; may be disabled by the machine cap, in which case the tool says so explicitly rather than silently downgrading. Only reach for best when balanced mis-segments the subject SHAPE — balanced already fixes edges.'),
+      style: z
+        .enum(['general', 'anime'])
+        .optional()
+        .describe('Model family, orthogonal to quality. "anime" switches fast/balanced to isnet-anime — trained on anime/illustration linework. Use it for generated character art (立绘), stickers, and any 2D illustration; flat-color fills and clean line edges segment noticeably better than the photo-trained default. Keep "general" (default) for photos, product shots, screenshots. Same speed/memory class; "best" ignores style.'),
     },
     // 默认 balanced（2026-07-31）：AM 加了分辨率上限之后只比 fast 慢 1.7s、多占
     // 31MB，而 halo 从 34% 降到 10%。默认该给更好的那个，crisp 需求让 agent 显式
     // 降到 fast —— 反过来（默认 fast，需要好边缘时升档）依赖 agent 先看出有 halo，
     // 而它多数时候不会回头看抠完的图。
-    async ({ inputPath, outputName, overwrite = false, quality = 'balanced' }) => {
+    async ({ inputPath, outputName, overwrite = false, quality = 'balanced', style = 'general' }) => {
       // 0a. 质量上限（小内存机器禁 birefnet，显式拒绝不静默降档）
       const capErr = qualityCapError(quality);
       if (capErr) {
@@ -272,7 +288,7 @@ Returns: text caption with output path + image content block (preview the result
       // 或导出截图在跑的时候，同一个调用能慢好几倍。宁可等也别误杀一次成功的抠图。
       // AM 加了 1024 分辨率上限之后不再随输入 MP 增长，所以 balanced 不用再留
       // 原来那种"1-2MP 容易 100s+"的巨量余量。
-      const qualityCfg = QUALITY_MAP[quality];
+      const qualityCfg = resolveModelCfg(quality, style);
       const timeoutByQuality = {
         fast: 60_000,       // 1min（无 AM，cold load 也够）
         balanced: 120_000,  // 2min（warm 8.4s，留 14 倍余量给 CPU 争抢）
