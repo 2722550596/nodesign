@@ -211,8 +211,13 @@ router.post('/:pid/turn', async (req, res, next) => {
     const quota = checkQuota(req.user);
     if (!quota.ok) {
       return res.status(429).json({
-        error: `今日额度已用完（${fmtUsd(quota.usedToday)} / ${fmtUsd(quota.limit)}），明天零点刷新`,
+        // 试用号（终身口径）没有"明天刷新"可许诺，文案不能骗人
+        error: quota.kind === 'lifetime'
+          ? `试用额度已用完（${fmtUsd(quota.used)} / ${fmtUsd(quota.limit)}），感谢体验！想继续用可以联系站主`
+          : `今日额度已用完（${fmtUsd(quota.usedToday)} / ${fmtUsd(quota.limit)}），明天零点刷新`,
         code: 'QUOTA_EXCEEDED',
+        kind: quota.kind,
+        used: quota.used,
         usedToday: quota.usedToday,
         limit: quota.limit,
       });
@@ -270,7 +275,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 创建 run（pending）— per-turn record，displayText 落 brief 字段做审计
     const run = createRun({
       skillId: finalSkillId, brief: displayText, projectId: project.id,
-      userId: req.user?.id ?? null,
+      userId: req.user?.id ?? null, sessionId: sid,
     });
 
     // Phase A.6：写 LRU 让后续重试同 requestId 拿到一致 (runId, sid)

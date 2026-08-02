@@ -17,6 +17,7 @@ import DragOverlay, { pickDragSource } from './DragOverlay.jsx';
 import GrabHandle from './GrabHandle.jsx';
 import PostDragNotePanel from './PostDragNotePanel.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
+import SitePublishControl from './SitePublishControl.jsx';
 
 /**
  * SiteWindow —— 站点的最大化窗口（2026-07-28，跟 DeckWindow 并列的第二种产物窗）
@@ -612,6 +613,7 @@ export default function SiteWindow({
           {tabBtn('code', '源码', FileCode)}
         </div>
         <div style={{ flex: 1 }} />
+        <SitePublishControl projectId={projectId} task={task} />
         {tab !== 'code' && <div style={{ display: 'flex', gap: 2 }}>{SITE_VIEWPORTS.map(vpBtn)}</div>}
         <button onClick={() => { commitAllPending(); setReloadKey(k => k + 1); }} title="刷新" style={iconBtn}>
           <RotateCw size={13} />

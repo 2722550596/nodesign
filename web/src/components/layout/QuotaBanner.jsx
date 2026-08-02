@@ -81,8 +81,9 @@ export default function QuotaBanner() {
           });
         }
 
-        // 额度档
+        // 额度档。试用号（kind=lifetime）不许诺"明天刷新"——没有那回事
         if (!u.capped) return;
+        const trial = u.kind === 'lifetime';
         const tier = tierFor(u.pct || 0);
         if (tier == null || seen(quotaSeenKey(tier))) return;
         markSeen(quotaSeenKey(tier));
@@ -91,8 +92,8 @@ export default function QuotaBanner() {
           kind: 'quota',
           bg: tier >= 90 ? LEVEL_BG.alert : LEVEL_BG.warn,
           text: tier >= 100
-            ? '今日额度已用完，明天零点自动刷新'
-            : `今日额度已用 ${Math.min(100, Math.round(u.pct))}%`,
+            ? (trial ? '试用额度已用完，感谢体验！想继续用可以联系站主' : '今日额度已用完，明天零点自动刷新')
+            : `${trial ? '试用' : '今日'}额度已用 ${Math.min(100, Math.round(u.pct))}%`,
           sticky: tier >= 100,
         });
       })

@@ -49,6 +49,7 @@ import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
+import { makePublishSiteTool } from './tools/publish-site.js';
 import { makeReportFrictionTool } from './tools/report-friction.js';
 
 /**
@@ -104,6 +105,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // crystallize_skill — 把探索出来的方法论固化成用户自己的 skill + 作品进橱窗
       // （2026-07-30）。用户明确要求才调；写的是判断依据不是成品 HTML。
       makeCrystallizeSkillTool({ projectId, sessionId, ctx }),
+
+      // publish_site — 站点一键上线 Cloudflare Pages（2026-08-02）。用户明确要求
+      // 才调（发公网是外发动作）；额度按项目 owner 算，与站点窗按钮共用一套闸门。
+      makePublishSiteTool({ projectId }),
 
       // report_friction — agent 报 harness 层的摩擦（缺参数 / 返回不合用 / 反复绕路）。
       // 跟 PostToolUseFailure 的自动记录写同一张 issues 表：自动层记"发生了什么"，

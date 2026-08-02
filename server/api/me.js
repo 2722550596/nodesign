@@ -29,7 +29,7 @@ const router = express.Router();
  * 这些对话背后有真实成本 —— 这本身就是内测该传达的信息。
  */
 router.get('/usage', (req, res) => {
-  const { usedToday, limit } = checkQuota(req.user);
+  const { usedToday, limit, kind, used } = checkQuota(req.user);
   const byFamily = usedTodayByFamily(req.user.id);
   // 分模型只报明细不报限额 —— 07-31 起限额是一个总数，模型之间不再分账
   const models = Object.entries(byFamily)
@@ -43,9 +43,11 @@ router.get('/usage', (req, res) => {
     }));
   res.json({
     unit: 'usd',
+    kind,                                    // 'unlimited' | 'daily' | 'lifetime'（试用号）
+    used,                                    // 与 limit 同口径：daily=今天，lifetime=全史
     usedToday,
     limit,                                   // admin 是 null（不限额）
-    pct: limit ? Math.min(100, (usedToday / limit) * 100) : 0,
+    pct: limit ? Math.min(100, (used / limit) * 100) : 0,
     capped: limit !== null,
     tokensToday: usedTokensToday(req.user.id),
     models,

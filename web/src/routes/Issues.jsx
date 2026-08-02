@@ -23,6 +23,33 @@ const SOURCE_META = {
 };
 
 export default function Issues() {
+  return (
+    <AppShell breadcrumb={[{ label: 'Harness 问题库' }]}>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: `${GAP.page}px ${GAP.page}px` }}>
+        <header style={{ marginBottom: GAP.xl }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.sm }}>
+            <AlertTriangle size={18} color={COLOR.warn} />
+            <h1 style={{
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
+              color: COLOR.text, letterSpacing: '-0.01em', margin: 0,
+            }}>Harness 问题库</h1>
+          </div>
+          <p style={{
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
+            lineHeight: 1.65, margin: 0, maxWidth: 680,
+          }}>
+            工具失败自动进这里（不依赖 agent 说），agent 也能主动报绕路和期望。
+            同类累加计数，按次数排序——排在前面的是最值得修的。
+          </p>
+        </header>
+        <IssuesPanel />
+      </div>
+    </AppShell>
+  );
+}
+
+/** 问题库主体（筛选 + 工具聚合 + 列表）。控制台页嵌成一个 tab，独立路由也用它 */
+export function IssuesPanel() {
   const [data, setData] = useState(null);
   const [status, setStatus] = useState('open');
   const [source, setSource] = useState('all');
@@ -48,26 +75,8 @@ export default function Issues() {
   const topTools = useMemo(() => (data?.stats || []).slice(0, 6), [data]);
 
   return (
-    <AppShell breadcrumb={[{ label: 'Harness 问题库' }]}>
-      <div style={{ maxWidth: 1100, margin: '0 auto', padding: `${GAP.page}px ${GAP.page}px` }}>
-        <header style={{ marginBottom: GAP.xl }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.sm }}>
-            <AlertTriangle size={18} color={COLOR.warn} />
-            <h1 style={{
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
-              color: COLOR.text, letterSpacing: '-0.01em', margin: 0,
-            }}>Harness 问题库</h1>
-          </div>
-          <p style={{
-            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
-            lineHeight: 1.65, margin: 0, maxWidth: 680,
-          }}>
-            工具失败自动进这里（不依赖 agent 说），agent 也能主动报绕路和期望。
-            同类累加计数，按次数排序——排在前面的是最值得修的。
-          </p>
-        </header>
-
-        {topTools.length > 0 && (
+    <>
+      {topTools.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm, marginBottom: GAP.xl }}>
             {topTools.map((s, i) => (
               <span key={i} style={{
@@ -104,8 +113,7 @@ export default function Issues() {
             ))}
           </div>
         )}
-      </div>
-    </AppShell>
+    </>
   );
 }
 
@@ -203,7 +211,7 @@ function IconBtn({ children, title, onClick, danger }) {
   );
 }
 
-function Segmented({ value, onChange, options }) {
+export function Segmented({ value, onChange, options }) {
   return (
     <div style={{ display: 'inline-flex', gap: 2, padding: 2, background: 'rgba(0,0,0,0.04)', borderRadius: 8 }}>
       {options.map(([v, label]) => (

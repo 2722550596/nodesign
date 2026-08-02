@@ -84,6 +84,22 @@ export const Admin = {
   },
   setIssueStatus: (id, status) => jsonRequest('PATCH', `/api/admin/issues/${id}`, { status }),
   removeIssue: (id) => jsonRequest('DELETE', `/api/admin/issues/${id}`),
+  // 控制台（2026-08-02）：用户 / 邀请码 / 公告，后端早齐了，这里只是接线
+  users: () => jsonRequest('GET', '/api/admin/users'),
+  patchUser: (id, patch) => jsonRequest('PATCH', `/api/admin/users/${id}`, patch),
+  invites: () => jsonRequest('GET', '/api/admin/invites'),
+  createInvite: (body) => jsonRequest('POST', '/api/admin/invites', body),
+  patchInvite: (code, body) => jsonRequest('PATCH', `/api/admin/invites/${encodeURIComponent(code)}`, body),
+  notices: () => jsonRequest('GET', '/api/admin/notices'),
+  createNotice: (body) => jsonRequest('POST', '/api/admin/notices', body),
+  retireNotice: (id) => jsonRequest('DELETE', `/api/admin/notices/${id}`),
+};
+
+// ── Publish（站点一键上线 Cloudflare Pages，task 级）──
+export const Publish = {
+  get: (pid, task) => jsonRequest('GET', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  publish: (pid, task) => jsonRequest('POST', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  unpublish: (pid, task) => jsonRequest('DELETE', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
 };
 
 // ── Canvas（H3：session-scoped）──

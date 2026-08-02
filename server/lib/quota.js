@@ -59,6 +59,16 @@ export function usedCostToday(userId, now = Date.now()) {
   return row.used;
 }
 
+/** 全史花费（终身额度口径）。同一数据源同一公式，只是不设日界 */
+export function usedCostTotal(userId) {
+  const row = db.prepare(
+    `SELECT COALESCE(SUM(m.cost_usd), 0) AS used
+     FROM run_model_usage m JOIN runs r ON r.id = m.run_id
+     WHERE r.user_id = ?`,
+  ).get(userId);
+  return row.used;
+}
+
 /**
  * 当天 input+output token 数。**不再是闸门口径**，只留给 admin 视图和
  * 前端的参考行 —— 用户看得懂 token，看不懂 $0.87 意味着多少对话。
@@ -100,11 +110,31 @@ export function fmtUsd(n) {
   return `$${(Number(n) || 0).toFixed(2)}`;
 }
 
-/** @returns {{ ok: boolean, usedToday: number, limit: number|null }} 单位美元 */
+/**
+ * 额度检查。两种口径（08-02 起）：
+ *   daily    — 默认。+08:00 日界滚动，隔天刷新（内测熟人号）。
+ *   lifetime — users.lifetime_cost_limit_usd 非空即生效：全史花费封顶，
+ *              永不刷新。给简历上的通用邀请码用（注册时从
+ *              invites.grant_lifetime_usd 复制到用户身上，与码解耦）。
+ *              终身口径**取代**日限不叠加 —— HR 试用要的是当晚完整体验，
+ *              细水长流反而是坏体验；单号封顶 $15 本身就是敞口上限。
+ *
+ * `used` 是与 limit 同口径的比较数（终身号 = 全史）；`usedToday` 恒为当日数，
+ * 展示层要"今天花了多少"时不用管口径。
+ *
+ * @returns {{ ok, kind: 'unlimited'|'daily'|'lifetime', used, limit, usedToday }} 单位美元
+ */
 export function checkQuota(user, now = Date.now()) {
-  const limit = limitFor(user);
-  const usedToday = usedCostToday(user.id, now);
-  return { ok: limit === null || usedToday < limit, usedToday, limit };
+  const usedToday = usedCostToday(user?.id, now);
+  if (!user || user.role === 'admin') {
+    return { ok: true, kind: 'unlimited', used: usedToday, limit: null, usedToday };
+  }
+  if (user.lifetimeCostLimitUsd != null) {
+    const used = usedCostTotal(user.id);
+    return { ok: used < user.lifetimeCostLimitUsd, kind: 'lifetime', used, limit: user.lifetimeCostLimitUsd, usedToday };
+  }
+  const limit = user.dailyCostLimitUsd ?? defaultDailyLimit();
+  return { ok: usedToday < limit, kind: 'daily', used: usedToday, limit, usedToday };
 }
 
 // ── 分模型明细（2026-07-31）──

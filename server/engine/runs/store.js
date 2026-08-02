@@ -135,6 +135,7 @@ function rowToRun(row) {
     // 归属 + 计量真列（2026-07-30 多用户；列由 projects/store.js 幂等 ALTER 加）
     projectId: row.project_id ?? null,
     userId: row.user_id ?? null,
+    sessionId: row.session_id ?? null,
     inputTokens: row.input_tokens ?? null,
     outputTokens: row.output_tokens ?? null,
     cacheReadTokens: row.cache_read_tokens ?? null,
@@ -163,15 +164,15 @@ function safeParseJson(text, fallback) {
  * @param {object} [input.metadata={}]     - 初始元信息（如 client / requestId）
  * @returns {object} 完整 run 对象
  */
-export function createRun({ skillId, brief, projectId = null, userId = null, metadata = {} }) {
+export function createRun({ skillId, brief, projectId = null, userId = null, sessionId = null, metadata = {} }) {
   if (!skillId || typeof skillId !== 'string') throw new Error('createRun: skillId 必填');
   if (!brief || typeof brief !== 'string') throw new Error('createRun: brief 必填');
 
   const id = newRunId();
   db.prepare(`
-    INSERT INTO runs (id, skill_id, brief, project_id, user_id, status, metadata)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(id, skillId, brief, projectId, userId, JSON.stringify(metadata));
+    INSERT INTO runs (id, skill_id, brief, project_id, user_id, session_id, status, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(id, skillId, brief, projectId, userId, sessionId, JSON.stringify(metadata));
 
   return getRun(id);
 }

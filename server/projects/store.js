@@ -114,6 +114,17 @@ const RUN_METRIC_COLS = [
   }
 }
 
+// 07-31 定案的欠账：runs 记会话归属 —— 回答"哪个会话最烧钱/最长"不用去数
+// sessions/ 目录。存量行 NULL 不回填（目录里还能对出来，不值得写迁移）。
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(runs)').all().map(c => c.name));
+  if (!cols.has('session_id')) {
+    db.exec('ALTER TABLE runs ADD COLUMN session_id TEXT');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_runs_session ON runs(session_id)');
+    console.log('[projects/store] runs.session_id added');
+  }
+}
+
 // ── ID ──
 
 export function newProjectId() {

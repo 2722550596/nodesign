@@ -49,6 +49,19 @@ if (!userCols.has('daily_cost_limit_usd')) {
   console.log('[users-store] users.daily_cost_limit_usd column added');
 }
 
+// 08-02 试用账号（简历上的通用邀请码）：终身额度，烧满不刷新。非空即生效，
+// 且**取代**日限而不是叠加 —— 试用要的是完整体验一晚，不是细水长流。
+// 注册时从 invites.grant_lifetime_usd 复制过来，之后改码删码不影响已注册的号。
+if (!userCols.has('lifetime_cost_limit_usd')) {
+  db.exec('ALTER TABLE users ADD COLUMN lifetime_cost_limit_usd REAL');
+  console.log('[users-store] users.lifetime_cost_limit_usd column added');
+}
+const inviteCols = new Set(db.prepare('PRAGMA table_info(invites)').all().map(c => c.name));
+if (!inviteCols.has('grant_lifetime_usd')) {
+  db.exec('ALTER TABLE invites ADD COLUMN grant_lifetime_usd REAL');
+  console.log('[users-store] invites.grant_lifetime_usd column added');
+}
+
 // ── 密码 ──
 
 const SCRYPT_N = 16384;
@@ -90,6 +103,7 @@ function rowToUser(row) {
     username: row.username,
     role: row.role,
     dailyCostLimitUsd: row.daily_cost_limit_usd ?? null,
+    lifetimeCostLimitUsd: row.lifetime_cost_limit_usd ?? null,
     dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
@@ -120,27 +134,23 @@ export function getCredential(username) {
   return row ? { id: row.id, passwordHash: row.password_hash, disabled: !!row.disabled } : null;
 }
 
-export function createUser({ username, password, role = 'user', inviteCode = null }) {
-  const user = {
-    id: newUserId(),
-    username,
-    role,
-    inviteCode,
-  };
-  db.prepare(`INSERT INTO users (id, username, password_hash, role, invite_code) VALUES (?, ?, ?, ?, ?)`)
-    .run(user.id, username, hashPassword(password), role, inviteCode);
-  return getUserById(user.id);
+export function createUser({ username, password, role = 'user', inviteCode = null, lifetimeCostLimitUsd = null }) {
+  const id = newUserId();
+  db.prepare(`INSERT INTO users (id, username, password_hash, role, invite_code, lifetime_cost_limit_usd) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(id, username, hashPassword(password), role, inviteCode, lifetimeCostLimitUsd);
+  return getUserById(id);
 }
 
 export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, role } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
   if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
+  if (lifetimeCostLimitUsd !== undefined) { sets.push('lifetime_cost_limit_usd = ?'); args.push(lifetimeCostLimitUsd ?? null); }
   if (dailyTokenLimit !== undefined) { sets.push('daily_token_limit = ?'); args.push(dailyTokenLimit ?? null); }
   if (role !== undefined) { sets.push('role = ?'); args.push(role); }
   if (!sets.length) return getUserById(id);
@@ -155,18 +165,29 @@ export function countUsers() {
 
 // ── 邀请码 ──
 
-export function createInvite({ createdBy = null, maxUses = 1, expiresAt = null } = {}) {
+export function createInvite({ createdBy = null, maxUses = 1, expiresAt = null, grantLifetimeUsd = null } = {}) {
   // 可读形态：nd-xxxxxxxx（发群里手输不痛苦；去掉易混字符）
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
   let code = 'nd-';
   for (const b of crypto.randomBytes(8)) code += alphabet[b % alphabet.length];
-  db.prepare('INSERT INTO invites (code, created_by, max_uses, expires_at) VALUES (?, ?, ?, ?)')
-    .run(code, createdBy, maxUses, expiresAt);
+  db.prepare('INSERT INTO invites (code, created_by, max_uses, expires_at, grant_lifetime_usd) VALUES (?, ?, ?, ?, ?)')
+    .run(code, createdBy, maxUses, expiresAt, grantLifetimeUsd);
   return getInvite(code);
 }
 
 export function getInvite(code) {
   return db.prepare('SELECT * FROM invites WHERE code = ?').get(code) || null;
+}
+
+/**
+ * 改邀请码的可用次数（控制台用）。语义是**总次数**不是剩余次数 ——
+ * 改到 ≤ used_count 等于立即封死这个码（简历码泄漏时的一键止血）。
+ */
+export function updateInvite(code, { maxUses } = {}) {
+  if (maxUses !== undefined) {
+    db.prepare('UPDATE invites SET max_uses = ? WHERE code = ?').run(maxUses, code);
+  }
+  return getInvite(code);
 }
 
 export function listInvites() {
@@ -196,7 +217,10 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
     throw Object.assign(new Error('邀请码已用完'), { code: 'INVITE_EXHAUSTED' });
   }
   db.prepare('UPDATE invites SET used_count = used_count + 1 WHERE code = ?').run(inv.code);
-  return createUser({ username, password, role: 'user', inviteCode: inv.code });
+  return createUser({
+    username, password, role: 'user', inviteCode: inv.code,
+    lifetimeCostLimitUsd: inv.grant_lifetime_usd ?? null,
+  });
 });
 
 // ── 启动 bootstrap（index.js 调，幂等）──

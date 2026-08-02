@@ -171,7 +171,10 @@ export default function ComposerMenu({
  * 不需要第二个数字重复表达同一个意图。
  */
 function AccountUsage({ account }) {
-  const { pct = 0, capped = false, tokensToday = 0, usedToday = 0, limit = null, username, role, models = [] } = account;
+  const { pct = 0, capped = false, kind = 'daily', tokensToday = 0, usedToday = 0, used = null, limit = null, username, role, models = [] } = account;
+  // 试用号（简历码注册）走终身口径：额度行显示全史花费对终身上限，不写"今日"
+  const trial = kind === 'lifetime';
+  const gateUsed = used ?? usedToday;
   const p = capped ? clamp(pct, 0, 100) : 0;
   // 75% 起变色：跟配额横幅的第一档同一条线，两处对同一件事的判断不能不一样
   const color = p >= 90 ? COLOR.error : p >= 75 ? COLOR.warn : COLOR.text4;
@@ -192,9 +195,9 @@ function AccountUsage({ account }) {
         fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: 1.7,
         color: capped && p >= 75 ? color : COLOR.text2,
       }}>
-        <span style={{ color: COLOR.sub }}>今日额度</span>
+        <span style={{ color: COLOR.sub }}>{trial ? '试用额度' : '今日额度'}</span>
         <span>
-          {capped ? `${usd(usedToday)} / ${usd(limit)} · ${p.toFixed(0)}%` : `${usd(usedToday)} · 不限额`}
+          {capped ? `${usd(gateUsed)} / ${usd(limit)} · ${p.toFixed(0)}%` : `${usd(usedToday)} · 不限额`}
         </span>
       </div>
       <div style={{

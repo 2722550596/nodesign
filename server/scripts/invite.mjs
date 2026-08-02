@@ -6,6 +6,8 @@
  *   node server/scripts/invite.mjs                 生成 1 个单次邀请码
  *   node server/scripts/invite.mjs --uses 5        可用 5 次
  *   node server/scripts/invite.mjs --days 7        7 天后过期
+ *   node server/scripts/invite.mjs --uses 100 --grant-usd 15
+ *       通用试用码（放简历/公开场合）：该码注册的号终身 $15 不刷新
  *   node server/scripts/invite.mjs --list          列出全部邀请码与用量
  */
 
@@ -21,7 +23,8 @@ if (args.includes('--list')) {
   for (const inv of listInvites()) {
     const state = inv.expires_at && new Date(inv.expires_at) < new Date() ? '已过期'
       : inv.used_count >= inv.max_uses ? '已用完' : '可用';
-    console.log(`${inv.code}  ${inv.used_count}/${inv.max_uses}  ${state}${inv.expires_at ? `  过期 ${inv.expires_at}` : ''}`);
+    const grant = inv.grant_lifetime_usd ? `  试用终身$${inv.grant_lifetime_usd}` : '';
+    console.log(`${inv.code}  ${inv.used_count}/${inv.max_uses}  ${state}${grant}${inv.expires_at ? `  过期 ${inv.expires_at}` : ''}`);
   }
   process.exit(0);
 }
@@ -30,5 +33,9 @@ const maxUses = Number(flag('uses')) || 1;
 const days = Number(flag('days'));
 const expiresAt = Number.isFinite(days) && days > 0
   ? new Date(Date.now() + days * 86400_000).toISOString() : null;
-const invite = createInvite({ createdBy: 'cli', maxUses, expiresAt });
+const grantUsd = Number(flag('grant-usd'));
+const invite = createInvite({
+  createdBy: 'cli', maxUses, expiresAt,
+  grantLifetimeUsd: Number.isFinite(grantUsd) && grantUsd > 0 ? grantUsd : null,
+});
 console.log(invite.code);

@@ -6,8 +6,9 @@
  *
  *   POST   /api/admin/invites          {maxUses?, expiresInDays?} → 生成邀请码
  *   GET    /api/admin/invites          邀请码列表（含用量）
+ *   PATCH  /api/admin/invites/:code    {maxUses} 改总次数（0 = 封死）
  *   GET    /api/admin/users            用户列表 + 今日用量
- *   PATCH  /api/admin/users/:id        {disabled?, dailyTokenLimit?} 封禁/调限额
+ *   PATCH  /api/admin/users/:id        {disabled?, dailyCostLimitUsd?, lifetimeCostLimitUsd?} 封禁/调限额
  *   GET    /api/admin/issues           harness 问题库（按次数降序）+ 按工具聚合
  *   PATCH  /api/admin/issues/:id       {status} open|ack|ignored|closed
  *   DELETE /api/admin/issues/:id       删掉一条
@@ -15,8 +16,8 @@
 
 import express from 'express';
 import { adminGuard } from '../auth/middleware.js';
-import { createInvite, listInvites, listUsers, getUserById, updateUser } from '../auth/users-store.js';
-import { usedCostToday, usedTokensToday, limitFor } from '../lib/quota.js';
+import { createInvite, listInvites, getInvite, updateInvite, listUsers, getUserById, updateUser } from '../auth/users-store.js';
+import { usedCostToday, usedCostTotal, usedTokensToday, limitFor } from '../lib/quota.js';
 import { listIssues, setIssueStatus, removeIssue, issueStats } from '../lib/issues-store.js';
 import { createNotice, listNotices, getActiveNotice, retireNotice, retireAllNotices } from '../lib/notice-store.js';
 
@@ -28,10 +29,13 @@ router.post('/invites', (req, res) => {
   const days = Number(req.body?.expiresInDays);
   const expiresAt = Number.isFinite(days) && days > 0
     ? new Date(Date.now() + days * 86400_000).toISOString() : null;
+  // grantLifetimeUsd：该码注册的号走终身额度（试用口径，不刷新）
+  const grant = Number(req.body?.grantLifetimeUsd);
   const invite = createInvite({
     createdBy: req.user.id,
     maxUses: Math.max(1, Math.min(100, maxUses)),
     expiresAt,
+    grantLifetimeUsd: Number.isFinite(grant) && grant > 0 ? grant : null,
   });
   res.status(201).json({ invite });
 });
@@ -40,10 +44,22 @@ router.get('/invites', (_req, res) => {
   res.json({ invites: listInvites() });
 });
 
+// 改可用次数（总次数口径）。0 或 ≤ 已用数 = 封死该码 —— 泄漏时的止血阀，
+// 所以这里不设下限 1，也不 clamp 到 100（长期公开码就是要给大数的）
+router.patch('/invites/:code', (req, res) => {
+  if (!getInvite(req.params.code)) return res.status(404).json({ error: 'invite not found' });
+  const maxUses = Number(req.body?.maxUses);
+  if (!Number.isInteger(maxUses) || maxUses < 0 || maxUses > 100000) {
+    return res.status(400).json({ error: 'maxUses 需为 0-100000 的整数（0 = 封死）' });
+  }
+  res.json({ invite: updateInvite(req.params.code, { maxUses }) });
+});
+
 router.get('/users', (_req, res) => {
   const users = listUsers().map(u => ({
     ...u,
     costToday: usedCostToday(u.id),           // 美元，闸门真口径
+    costTotal: usedCostTotal(u.id),           // 全史；试用号（lifetimeCostLimitUsd 非空）拿它对限额
     tokensToday: usedTokensToday(u.id),       // 参考
     effectiveDailyLimitUsd: limitFor(u),
   }));
@@ -57,7 +73,7 @@ router.patch('/users/:id', (req, res) => {
   if (typeof req.body?.disabled === 'boolean') patch.disabled = req.body.disabled;
   // 07-31 起限额单位是美元。老字段 dailyTokenLimit 仍收（存量数据能改回去），
   // 但它已经不参与闸门判断了 —— 真正生效的是 dailyCostLimitUsd。
-  for (const [key, label] of [['dailyCostLimitUsd', '美元'], ['dailyTokenLimit', 'token']]) {
+  for (const [key, label] of [['dailyCostLimitUsd', '美元'], ['lifetimeCostLimitUsd', '美元'], ['dailyTokenLimit', 'token']]) {
     if (!(key in (req.body || {}))) continue;
     const v = req.body[key];
     if (v !== null && (!Number.isFinite(Number(v)) || Number(v) < 0)) {

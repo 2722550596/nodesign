@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { LogOut, AlertTriangle } from 'lucide-react';
+import { LogOut, LayoutDashboard } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -89,15 +89,15 @@ function UserBadge() {
                 color: pct >= 90 ? COLOR.error : nearCap ? COLOR.warn : COLOR.sub,
               }}>
                 {usage.capped
-                  ? `今日 $${(usage.usedToday || 0).toFixed(2)} / $${(usage.limit || 0).toFixed(2)} · ${Math.round(pct)}%`
+                  ? `${usage.kind === 'lifetime' ? '试用' : '今日'} $${(usage.used ?? usage.usedToday ?? 0).toFixed(2)} / $${(usage.limit || 0).toFixed(2)} · ${Math.round(pct)}%`
                   : `今日 $${(usage.usedToday || 0).toFixed(2)} · 不限额`}
               </div>
             )}
           </div>
           <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px 0` }} />
           {authUser.role === 'admin' && (
-            <Link to="/admin/issues" onClick={() => setOpen(false)} style={menuItem}>
-              <AlertTriangle size={12} /> Harness 问题库
+            <Link to="/admin" onClick={() => setOpen(false)} style={menuItem}>
+              <LayoutDashboard size={12} /> 控制台
             </Link>
           )}
           <button
