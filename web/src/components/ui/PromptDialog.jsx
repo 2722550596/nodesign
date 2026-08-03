@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Modal, { ModalFooter } from './Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 
 /**
  * 站内输入对话框（替代 window.prompt）
@@ -74,7 +74,7 @@ export default function PromptDialog({
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.base, color: COLOR.text,
               background: 'rgba(0,0,0,0.02)',
               border: `1px solid ${error ? COLOR.error : COLOR.borderMd}`,
-              borderRadius: 8, outline: 'none', resize: 'vertical',
+              borderRadius: RADIUS.lg, outline: 'none', resize: 'vertical',
               boxSizing: 'border-box',
             }}
           />
@@ -90,7 +90,7 @@ export default function PromptDialog({
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text,
               background: 'rgba(0,0,0,0.02)',
               border: `1px solid ${error ? COLOR.error : COLOR.borderMd}`,
-              borderRadius: 8, outline: 'none',
+              borderRadius: RADIUS.lg, outline: 'none',
               boxSizing: 'border-box',
             }}
           />

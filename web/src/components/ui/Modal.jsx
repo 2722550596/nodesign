@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * 通用 Modal 容器（DeskSkill 风格 mounted+visible 双状态 + rAF 双帧入场）
@@ -56,7 +56,7 @@ export default function Modal({ show, onClose, title, width = 480, children, clo
           width,
           maxWidth: 'calc(100vw - 48px)',
           maxHeight: 'calc(100vh - 48px)',
-          background: 'linear-gradient(180deg, #fdfcfa 0%, #fff 30%)',
+          background: COLOR.gradModal,
           border: `1px solid ${COLOR.borderLt}`,
           borderRadius: 16,
           boxShadow: '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)',
@@ -81,7 +81,7 @@ export default function Modal({ show, onClose, title, width = 480, children, clo
               <button
                 onClick={onClose}
                 style={{
-                  width: 28, height: 28, borderRadius: 6,
+                  width: 28, height: 28, borderRadius: RADIUS.md,
                   color: COLOR.text4,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -118,7 +118,7 @@ export function ModalFooter({ onCancel, onConfirm, confirmLabel = '确认', canc
           color: COLOR.text2,
           background: 'rgba(0,0,0,0.04)',
           border: `1px solid ${COLOR.borderLt}`,
-          borderRadius: 8,
+          borderRadius: RADIUS.lg,
           cursor: 'pointer',
         }}
       >
@@ -130,10 +130,10 @@ export function ModalFooter({ onCancel, onConfirm, confirmLabel = '确认', canc
         style={{
           padding: `${GAP.sm}px ${GAP.xl}px`,
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
-          color: '#fff',
+          color: COLOR.bgWhite,
           background: confirmDisabled ? 'rgba(0,0,0,0.2)' : (danger ? COLOR.error : COLOR.btn),
           border: `1px solid ${confirmDisabled ? 'rgba(0,0,0,0.2)' : (danger ? COLOR.error : COLOR.btn)}`,
-          borderRadius: 8,
+          borderRadius: RADIUS.lg,
           cursor: confirmDisabled ? 'not-allowed' : 'pointer',
           transition: 'background 0.15s',
         }}

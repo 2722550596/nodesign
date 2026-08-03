@@ -1,4 +1,12 @@
 // ─── 基础 Token ───────────────────────────────────
+//
+// 2026-08-03 立法（设计语言收敛第一步）：
+//   - 值一律不动（这一轮是制度改革，不是换肤）——迁移后全站像素必须和迁移前一致。
+//   - 新增 RADIUS / SHADOW / TERM / CANVAS / EDITOR / BANNER 和 alpha()，
+//     把过去散落在组件里的字面量收编成单一数据源。
+//   - 删掉的死 token（CARD/DESK/PANEL/BROWSE、COLOR.bgSide/plan/gradDesk/
+//     bgSkeleton/bgSkBar）宿主组件已随本轮清理下线。
+//   - 换肤（第二步审美改革）到来时只改这个文件。
 
 /** 颜色体系 */
 export const COLOR = {
@@ -13,16 +21,12 @@ export const COLOR = {
 
   // 背景
   bg:         "#F9F8F6",   // App 根背景
-  bgSide:     "#F3F2EE",   // 侧边栏
   bgModal:    "#FDFCFA",   // 弹窗/表单
   bgCard:     "#f6f1ea",   // 卡片
-  bgSkeleton: "#f2efe9",   // 骨架屏底
-  bgSkBar:    "#e8e4de",   // 骨架屏条
   bgWhite:    "#fff",
 
   // 渐变
   gradModal: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
-  gradDesk:  "linear-gradient(180deg, #ede8e0, #e8e2d8)",
 
   // 交互
   btn:      "#2d2418",
@@ -39,7 +43,6 @@ export const COLOR = {
   error:   "#b83a2a",
   success: "#4a8a4a",
   warn:    "#b85c1a",
-  plan:    "#3a6a3a",
 
   // 强调
   blue:  "#5a7a9a",
@@ -47,14 +50,40 @@ export const COLOR = {
   gold:  "#c4a870",
 };
 
+/**
+ * alpha('#b08c4f', 0.3) → 'rgba(176,140,79,0.3)'
+ * 半透明变体一律从实色 token 派生，别再手写第二份 rgba。
+ */
+export function alpha(hex, a) {
+  const h = hex.replace('#', '');
+  const f = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const n = parseInt(f, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 /** 间距体系（px） */
 export const GAP = {
-  xs: 4, sm: 6, md: 8, base: 10, lg: 12, xl: 16, xxl: 20, page: 40,
+  xxs: 2, xs: 4, sm: 6, md: 8, base: 10, lg: 12, xl: 16, xxl: 20, page: 40,
 };
 
-/** 字号体系（px） */
+/** 圆角体系（px）。pill 是胶囊（历史上 999 和 100 两种写法，收敛为 999） */
+export const RADIUS = {
+  xs: 3, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12,
+  pill: 999,
+  round: '50%',
+};
+
+/** 阴影体系 —— 只收编出现 ≥2 次的写法，孤例先留在原地 */
+export const SHADOW = {
+  crispSm: "0 1px 2px rgba(0,0,0,0.2)",                              // 小徽章/浮点
+  crisp:   "0 1px 3px rgba(0,0,0,0.2)",                              // 小浮层
+  pop:     "0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)",   // 弹出卡
+  menu:    "0 12px 32px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)",  // 下拉菜单
+};
+
+/** 字号体系（px）。xxs=9 是实际存在的第 10 号字级（此前 29 处硬写） */
 export const FONT_SIZE = {
-  xs: 10, sm: 11, md: 12, base: 13, lg: 14, xl: 15, xxl: 16, h2: 17, h1: 20,
+  xxs: 9, xs: 10, sm: 11, md: 12, base: 13, lg: 14, xl: 15, xxl: 16, h2: 17, h1: 20,
 };
 
 // ─── Font Families ────────────────────────────────
@@ -63,24 +92,43 @@ export const FONT_SIZE = {
 export const FONT_MONO = "'SF Mono', 'Cascadia Code', 'Menlo', monospace";
 export const FONT_SANS = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif";
 
-// ─── 组件级 Token ─────────────────────────────────
+// ─── 领域 Token ───────────────────────────────────
 
-// Card shell — 锚定 SkillCard
-export const CARD = {
-  w: 126,
-  h: 164,
-  radius: GAP.lg,
-  bg: COLOR.bgCard,
-  bgHover: "#faf7f2",
-  border: `1px solid ${COLOR.border}`,
-  borderHover: `1px solid ${COLOR.borderHv}`,
-  shadow: "0 1px 4px rgba(0,0,0,0.1), 0 0 0 0.5px rgba(0,0,0,0.04)",
-  shadowHover: "0 12px 32px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08)",
-  transition: "all 0.35s cubic-bezier(0.25, 1, 0.5, 1)",
-  hoverY: -10,
-  hoverScale: 1.04,
-  padding: `${GAP.base}px ${GAP.base}px ${GAP.md}px`,
+/** 终端/工具执行深色区（StageLayer 工具卡与 admin 日志同源） */
+export const TERM = {
+  bg:  "#211e17",
+  ink: "#e8e2d2",
+  ok:  "#8fc79a",
+  err: "#e09a94",
 };
+
+/** 画布工作面专属（暖纸方言；换肤时整组处置） */
+export const CANVAS = {
+  paper: "#f6f4ef",   // 画布底
+  note:  "#fffbeb",   // 便签黄
+  brass: "#b08c4f",   // 暖棕描边/运行态（半透明用 alpha(CANVAS.brass, x)）
+};
+
+/** 画布交互层（拖拽/评论/对齐等 Figma 式高饱和工具色）。
+ *  名字按色相取——语义映射（哪个功能用哪色）留给换肤阶段重整。 */
+export const EDITOR = {
+  blue:    "#3a7afe",   // 光标/手柄
+  magenta: "#e91e63",   // 对齐参考线
+  orange:  "#e67e22",   // 评论锚点
+  purple:  "#9c4dcc",   // 待定移动
+  teal:    "#14b8a6",   // 测量/工具条高亮
+  green:   "#16a34a",   // 成功闪现
+  violet:  "#8b5cf6",   // 聚焦环
+};
+
+/** 顶部横幅三态（QuotaBanner 与 AdminConsole 公告预览共用） */
+export const BANNER = {
+  info:  "rgba(42, 88, 133, 0.96)",
+  warn:  "rgba(184, 92, 26, 0.96)",
+  alert: "rgba(184, 58, 42, 0.96)",
+};
+
+// ─── 组件级 Token ─────────────────────────────────
 
 // Detail modal — 锚定 SkillDetail
 export const MODAL = {
@@ -95,32 +143,6 @@ export const MODAL = {
   transition: "transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)",
 };
 
-// DeskRow — 锚定 Dashboard DeskRow
-export const DESK = {
-  height: 200,
-  radius: 14,
-  bg: COLOR.gradDesk,
-  borderClosed: "1px solid rgba(0,0,0,0.05)",
-  borderOpen: `1px solid ${COLOR.border}`,
-  shadowClosed: "0 1px 4px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.4)",
-  shadowOpen: "0 4px 16px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.5)",
-  infoLeft: "1px dashed rgba(0,0,0,0.05)",
-  lines: [40, 85, 130, 170],
-  maxHand: 7,
-  cardW: 126,
-  stackY: 18,
-};
-
-// FullPanel — Container Transform 动画壳（第三层）
-export const PANEL = {
-  zIndex: 700,
-  bg: COLOR.bgWhite,
-  radius: 20,
-  shadow: "0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)",
-  overlay: "rgba(0,0,0,0.3)",
-  transition: "all 0.5s cubic-bezier(0.4, 0, 0.2, 1)",
-};
-
 // Stage — Canvas 焕新升级 S2（2026-05-02）：把 iframe 从"贴边平铺"变成
 // "浮在暖底上的卡片"。CanvasFrame 用 STAGE.shadow + STAGE.radius，
 // ThreeColumnLayout 中间 main 用 STAGE.bg + padding 形成呼吸空间。
@@ -130,17 +152,4 @@ export const STAGE = {
   borderWarm: "rgba(190, 160, 130, 0.15)",        // 暖棕极淡边
   radius: 12,
   pad: 12,                                        // stage 周围呼吸（main padding）
-};
-
-// Browse page — 锚定 CardBrowse
-export const BROWSE = {
-  backRadius: 10,
-  backPadding: "7px 14px",
-  backFontSize: 13,
-  backFontWeight: 500,
-  backColor: COLOR.text5,
-  searchBg: "#fff",
-  searchRadius: 12,
-  searchFontSize: 14,
-  gridMin: 128,
 };

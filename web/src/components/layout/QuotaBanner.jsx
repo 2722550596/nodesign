@@ -21,17 +21,13 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { X } from 'lucide-react';
-import { FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, BANNER } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 const TIERS = [100, 90, 75];
 const AUTO_HIDE_MS = 12_000;
 
-const LEVEL_BG = {
-  info: 'rgba(42, 88, 133, 0.96)',
-  warn: 'rgba(184, 92, 26, 0.96)',
-  alert: 'rgba(184, 58, 42, 0.96)',
-};
+const LEVEL_BG = BANNER;
 
 /** 服务端日界是 +08:00，横幅"每天一次"的日期必须用同一时区算 */
 function dayKeyShanghai() {
@@ -133,7 +129,7 @@ export default function QuotaBanner() {
     <div style={{
       position: 'fixed', top: 8, left: '50%', transform: 'translateX(-50%)',
       zIndex: 90,
-      display: 'flex', flexDirection: 'column', gap: 6,
+      display: 'flex', flexDirection: 'column', gap: GAP.sm,
       maxWidth: 'min(560px, calc(100vw - 32px))',
     }}>
       {/* 一次性下滑入场。不循环 —— 持续动效换不来注意力，只换来烦躁 */}
@@ -142,12 +138,12 @@ export default function QuotaBanner() {
         <div
           key={b.key}
           style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '8px 12px',
-            borderRadius: 8,
+            display: 'flex', alignItems: 'center', gap: GAP.base,
+            padding: `${GAP.md}px ${GAP.lg}px`,
+            borderRadius: RADIUS.lg,
             background: b.bg,
-            color: '#fff',
-            fontFamily: FONT_MONO, fontSize: 12, lineHeight: 1.5,
+            color: COLOR.bgWhite,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, lineHeight: 1.5,
             boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
             animation: 'nd-banner-in 0.22s ease-out',
             whiteSpace: 'pre-wrap',
@@ -160,8 +156,8 @@ export default function QuotaBanner() {
             style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
               width: 18, height: 18, padding: 0, flexShrink: 0,
-              background: 'rgba(255,255,255,0.16)', color: '#fff',
-              border: 'none', borderRadius: 4, cursor: 'pointer',
+              background: 'rgba(255,255,255,0.16)', color: COLOR.bgWhite,
+              border: 'none', borderRadius: RADIUS.sm, cursor: 'pointer',
             }}
           ><X size={12} /></button>
         </div>

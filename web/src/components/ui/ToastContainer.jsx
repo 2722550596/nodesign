@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * ToastContainer — 全局 toast 渲染（右下角 stack）
@@ -12,7 +12,7 @@ import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 const KIND_CONFIG = {
   success: { icon: CheckCircle2, color: COLOR.success, bg: 'rgba(74,138,74,0.08)' },
   error:   { icon: AlertCircle,  color: COLOR.error,   bg: 'rgba(184,58,42,0.08)' },
-  info:    { icon: Info,         color: COLOR.text4,   bg: '#fff' },
+  info:    { icon: Info,         color: COLOR.text4,   bg: COLOR.bgWhite },
 };
 
 export default function ToastContainer() {
@@ -50,12 +50,12 @@ function Toast({ toast, onDismiss }) {
       padding: `${GAP.md}px ${GAP.lg}px`,
       background: cfg.bg,
       border: `1px solid ${COLOR.borderMd}`,
-      borderRadius: 8,
+      borderRadius: RADIUS.lg,
       boxShadow: '0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.05)',
       display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
       animation: 'toastIn 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
     }}>
-      <Icon size={14} color={cfg.color} style={{ flexShrink: 0, marginTop: 2 }} />
+      <Icon size={14} color={cfg.color} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
       <span style={{
         flex: 1,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
@@ -65,7 +65,7 @@ function Toast({ toast, onDismiss }) {
       <button
         onClick={onDismiss}
         style={{
-          width: 18, height: 18, borderRadius: 3,
+          width: 18, height: 18, borderRadius: RADIUS.xs,
           color: COLOR.sub, opacity: 0.6,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,

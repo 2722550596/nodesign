@@ -12,6 +12,7 @@
  */
 
 import { serializeAnchor } from './html-utils.js';
+import { COLOR } from './theme.js';
 
 // ─── Role 词典（标签 → 人话角色）─────────────────────────────
 
@@ -235,26 +236,27 @@ export function serializeForAI(el) {
 
 // ─── helper：rgb/hex/family/weight 翻译 ───────────────────
 
+// 中文名查表直接引用 theme token（消费端 toLowerCase 比对，大小写无关），
+// 别再手抄第二份色板 —— token 值一变这里自动跟着走
 const COLOR_NAMES = [
-  // DeskSkill palette 已知色 → 中文名
-  ['#3a2a18', '深棕'],
-  ['#4a4540', '正文棕'],
-  ['#5a5550', '中棕灰'],
-  ['#7a6a55', '浅棕灰'],
-  ['#8a7a62', '辅助色'],
-  ['#a09888', '次要灰'],
-  ['#c4bfb5', '禁用灰'],
-  ['#f9f8f6', '页面底'],
-  ['#fdfcfa', '弹窗底'],
-  ['#f6f1ea', '卡片底'],
-  ['#2d2418', '亮黑'],
-  ['#3d3428', '亮黑悬停'],
-  ['#f5f0e8', '反白文字'],
-  ['#b83a2a', '错误红'],
-  ['#4a8a4a', '成功绿'],
-  ['#b85c1a', '警告橙'],
-  ['#5a7a9a', '蓝灰'],
-  ['#8a6a3a', '金棕'],
+  [COLOR.text, '深棕'],
+  [COLOR.text2, '正文棕'],
+  [COLOR.text3, '中棕灰'],
+  [COLOR.text4, '浅棕灰'],
+  [COLOR.text5, '辅助色'],
+  [COLOR.sub, '次要灰'],
+  [COLOR.dim, '禁用灰'],
+  [COLOR.bg, '页面底'],
+  [COLOR.bgModal, '弹窗底'],
+  [COLOR.bgCard, '卡片底'],
+  [COLOR.btn, '亮黑'],
+  [COLOR.btnHover, '亮黑悬停'],
+  [COLOR.btnText, '反白文字'],
+  [COLOR.error, '错误红'],
+  [COLOR.success, '成功绿'],
+  [COLOR.warn, '警告橙'],
+  [COLOR.blue, '蓝灰'],
+  [COLOR.brown, '金棕'],
 ];
 
 function rgbToHex(rgb) {

@@ -4,7 +4,7 @@ import {
   Copy, Pencil, Ban, RotateCcw, Send, X, Trash2,
 } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, BANNER } from '../lib/theme.js';
 import { Admin } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
@@ -82,7 +82,7 @@ export default function AdminConsole() {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 2, padding: 3, background: 'rgba(0,0,0,0.045)', borderRadius: 10, marginBottom: GAP.xl, width: 'fit-content' }}>
+        <div style={{ display: 'flex', gap: GAP.xxs, padding: 3, background: 'rgba(0,0,0,0.045)', borderRadius: RADIUS.xl, marginBottom: GAP.xl, width: 'fit-content' }}>
           {[
             ['users', '用户', Users],
             ['invites', '邀请码', Ticket],
@@ -94,12 +94,12 @@ export default function AdminConsole() {
               key={key}
               onClick={() => setTab(key)}
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
+                display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
                 padding: `${GAP.sm}px ${GAP.xl}px`,
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: tab === key ? 600 : 400,
                 color: tab === key ? COLOR.text : COLOR.sub,
-                background: tab === key ? '#fff' : 'transparent',
-                border: 0, borderRadius: 8, cursor: 'pointer',
+                background: tab === key ? COLOR.bgWhite : 'transparent',
+                border: 0, borderRadius: RADIUS.lg, cursor: 'pointer',
                 boxShadow: tab === key ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               }}
             ><Icon size={13} /> {label}</button>
@@ -120,13 +120,13 @@ function StatCard({ label, value, sub, accent }) {
   return (
     <div style={{
       minWidth: 148, padding: `${GAP.lg}px ${GAP.xl}px`,
-      background: '#fff', border: `1px solid ${COLOR.border}`, borderRadius: 12,
+      background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xxl,
     }}>
-      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: GAP.xs }}>{label}</div>
       <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600, color: accent ? COLOR.warn : COLOR.text }}>
         {value}
       </div>
-      {sub && <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 2 }}>{sub}</div>}
+      {sub && <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: GAP.xxs }}>{sub}</div>}
     </div>
   );
 }
@@ -187,12 +187,12 @@ function UserRow({ u, reload }) {
 
   return (
     <div style={{
-      background: '#fff', border: `1px solid ${COLOR.border}`, borderRadius: 12,
+      background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xxl,
       padding: `${GAP.lg}px ${GAP.xl}px`, opacity: u.disabled ? 0.55 : 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' }}>
         <div style={{
-          width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
+          width: 34, height: 34, borderRadius: RADIUS.round, flexShrink: 0,
           background: avatarBg(u.username), color: COLOR.text2,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 600,
@@ -217,7 +217,7 @@ function UserRow({ u, reload }) {
         <div style={{ width: 210, flexShrink: 0 }}>
           {gateLimit ? (
             <>
-              <div style={{ height: 4, borderRadius: 2, background: 'rgba(0,0,0,0.06)', overflow: 'hidden', marginBottom: 4 }}>
+              <div style={{ height: 4, borderRadius: 2, background: 'rgba(0,0,0,0.06)', overflow: 'hidden', marginBottom: GAP.xs }}>
                 <div style={{ width: `${pct}%`, height: '100%', background: barColor }} />
               </div>
               <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: pct >= 75 ? barColor : COLOR.text2 }}>
@@ -229,12 +229,12 @@ function UserRow({ u, reload }) {
               今日 {usd(u.costToday)} · 不限额
             </div>
           )}
-          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 2 }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: GAP.xxs }}>
             累计 {usd(u.costTotal)}
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: GAP.xxs, flexShrink: 0 }}>
           {/* admin 也要能开合外审档，所以铅笔对所有人显示（编辑器内部再按角色裁字段） */}
           <IconBtn title={isAdmin ? '外审设置' : '限额与外审'} onClick={() => setEditing(v => !v)}><Pencil size={13} /></IconBtn>
           {!isAdmin && (
@@ -243,8 +243,8 @@ function UserRow({ u, reload }) {
                 <button
                   onClick={toggleDisabled}
                   style={{
-                    padding: `0 ${GAP.md}px`, height: 26, borderRadius: 6, border: 0, cursor: 'pointer',
-                    background: COLOR.error, color: '#fff', fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+                    padding: `0 ${GAP.md}px`, height: 26, borderRadius: RADIUS.md, border: 0, cursor: 'pointer',
+                    background: COLOR.error, color: COLOR.bgWhite, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
                   }}
                 >确认停用？</button>
               ) : (
@@ -401,7 +401,7 @@ function InvitesTab({ invites, users, reload, copy }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xl }}>
       <div style={{
-        background: COLOR.bgCard, border: `1px solid ${COLOR.border}`, borderRadius: 12,
+        background: COLOR.bgCard, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xxl,
         padding: `${GAP.xl}px ${GAP.xl}px`,
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: GAP.xl, flexWrap: 'wrap' }}>
@@ -422,7 +422,7 @@ function InvitesTab({ invites, users, reload, copy }) {
         {fresh && (
           <div style={{
             marginTop: GAP.lg, padding: `${GAP.md}px ${GAP.lg}px`,
-            background: '#fff', border: `1px dashed ${COLOR.borderHv}`, borderRadius: 10,
+            background: COLOR.bgWhite, border: `1px dashed ${COLOR.borderHv}`, borderRadius: RADIUS.xl,
             display: 'flex', alignItems: 'center', gap: GAP.lg,
           }}>
             <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.h2, fontWeight: 600, color: COLOR.text, letterSpacing: '0.02em' }}>
@@ -448,7 +448,7 @@ function InvitesTab({ invites, users, reload, copy }) {
             const names = usedBy.get(inv.code) || [];
             return (
               <div key={inv.code} style={{
-                background: '#fff', border: `1px solid ${COLOR.border}`, borderRadius: 10,
+                background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xl,
                 padding: `${GAP.md}px ${GAP.lg}px`,
                 display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap',
                 opacity: open ? 1 : 0.6,
@@ -468,9 +468,9 @@ function InvitesTab({ invites, users, reload, copy }) {
                       onChange={e => setEditUses(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') saveUses(inv); if (e.key === 'Escape') setEditCode(null); }}
                       style={{
-                        width: 64, padding: `2px ${GAP.sm}px`,
+                        width: 64, padding: `${GAP.xxs}px ${GAP.sm}px`,
                         fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text,
-                        background: '#fff', border: `1px solid ${COLOR.borderHv}`, borderRadius: 6, outline: 'none',
+                        background: COLOR.bgWhite, border: `1px solid ${COLOR.borderHv}`, borderRadius: RADIUS.md, outline: 'none',
                       }}
                     />
                     <PrimaryBtn onClick={() => saveUses(inv)}>改</PrimaryBtn>
@@ -482,8 +482,8 @@ function InvitesTab({ invites, users, reload, copy }) {
                     onClick={() => { setEditCode(inv.code); setEditUses(String(inv.max_uses)); }}
                     style={{
                       fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-                      background: 'transparent', border: 0, cursor: 'pointer', padding: '2px 4px',
-                      borderRadius: 4, textDecoration: 'underline dotted', textUnderlineOffset: 3,
+                      background: 'transparent', border: 0, cursor: 'pointer', padding: `${GAP.xxs}px ${GAP.xs}px`,
+                      borderRadius: RADIUS.sm, textDecoration: 'underline dotted', textUnderlineOffset: 3,
                     }}
                   >{inv.used_count}/{inv.max_uses}</button>
                 )}
@@ -507,12 +507,8 @@ function InvitesTab({ invites, users, reload, copy }) {
 
 // ── 公告 ──────────────────────────────────────────────────────────────
 
-// 与 QuotaBanner 的横幅底色同款 —— 预览必须长得和用户实际看到的一样
-const NOTICE_BG = {
-  info: 'rgba(42, 88, 133, 0.96)',
-  warn: 'rgba(184, 92, 26, 0.96)',
-  alert: 'rgba(184, 58, 42, 0.96)',
-};
+// 与 QuotaBanner 的横幅底色同源（BANNER token）—— 预览必须长得和用户实际看到的一样
+const NOTICE_BG = BANNER;
 
 function NoticesTab() {
   const showToast = useGlobalStore(s => s.showToast);
@@ -556,7 +552,7 @@ function NoticesTab() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xl }}>
       <div style={{
-        background: COLOR.bgCard, border: `1px solid ${COLOR.border}`, borderRadius: 12,
+        background: COLOR.bgCard, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xxl,
         padding: `${GAP.xl}px ${GAP.xl}px`,
       }}>
         <textarea
@@ -568,7 +564,7 @@ function NoticesTab() {
             width: '100%', boxSizing: 'border-box', resize: 'vertical',
             padding: `${GAP.md}px ${GAP.lg}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, lineHeight: 1.6,
-            background: '#fff', border: `1px solid ${COLOR.borderMd}`, borderRadius: 10, outline: 'none',
+            background: COLOR.bgWhite, border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.xl, outline: 'none',
           }}
         />
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: GAP.xl, flexWrap: 'wrap', marginTop: GAP.md }}>
@@ -596,10 +592,10 @@ function NoticesTab() {
             当前挂着的（用户视角）：
           </div>
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 10,
-            padding: '8px 12px', borderRadius: 8, maxWidth: 560,
+            display: 'flex', alignItems: 'center', gap: GAP.base,
+            padding: `${GAP.md}px ${GAP.lg}px`, borderRadius: RADIUS.lg, maxWidth: 560,
             background: NOTICE_BG[data.active.level] || NOTICE_BG.info,
-            color: '#fff', fontFamily: FONT_MONO, fontSize: 12, lineHeight: 1.5,
+            color: COLOR.bgWhite, fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, lineHeight: 1.5,
           }}>
             <span style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{data.active.body}</span>
             <button
@@ -608,8 +604,8 @@ function NoticesTab() {
               style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 width: 18, height: 18, padding: 0, flexShrink: 0,
-                background: 'rgba(255,255,255,0.16)', color: '#fff',
-                border: 'none', borderRadius: 4, cursor: 'pointer',
+                background: 'rgba(255,255,255,0.16)', color: COLOR.bgWhite,
+                border: 'none', borderRadius: RADIUS.sm, cursor: 'pointer',
               }}
             ><X size={12} /></button>
           </div>
@@ -620,13 +616,13 @@ function NoticesTab() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.sm }}>
           {data.notices.map(n => (
             <div key={n.id} style={{
-              background: '#fff', border: `1px solid ${COLOR.border}`, borderRadius: 10,
+              background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xl,
               padding: `${GAP.md}px ${GAP.lg}px`,
               display: 'flex', alignItems: 'center', gap: GAP.lg,
               opacity: n.active ? 1 : 0.55,
             }}>
               <span style={{
-                width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                width: 8, height: 8, borderRadius: RADIUS.round, flexShrink: 0,
                 background: NOTICE_BG[n.level] || NOTICE_BG.info,
               }} />
               <span style={{
@@ -682,9 +678,9 @@ function ModerationTab({ users }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.md }}>
       {flags.map(f => (
         <div key={f.id} style={{
-          background: '#fff', border: `1px solid ${COLOR.border}`,
+          background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`,
           borderLeft: `3px solid ${f.severity === 'critical' ? COLOR.error : COLOR.warn}`,
-          borderRadius: 10, padding: `${GAP.md}px ${GAP.lg}px`,
+          borderRadius: RADIUS.xl, padding: `${GAP.md}px ${GAP.lg}px`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.md, flexWrap: 'wrap' }}>
             <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text }}>
@@ -709,7 +705,7 @@ function ModerationTab({ users }) {
           )}
           <div style={{
             marginTop: GAP.sm, padding: `${GAP.sm}px ${GAP.md}px`,
-            background: 'rgba(0,0,0,0.025)', borderRadius: 8,
+            background: 'rgba(0,0,0,0.025)', borderRadius: RADIUS.lg,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           }}>
@@ -727,8 +723,8 @@ function Chip({ children, color }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center',
-      padding: '1px 8px', borderRadius: 100,
-      fontFamily: FONT_SANS, fontSize: 10, fontWeight: 600,
+      padding: `1px ${GAP.md}px`, borderRadius: RADIUS.pill,
+      fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600,
       color, background: `color-mix(in srgb, ${color} 12%, transparent)`,
     }}>{children}</span>
   );
@@ -754,7 +750,7 @@ function NumInput({ value, onChange, placeholder }) {
       style={{
         width: 110, padding: `${GAP.sm}px ${GAP.md}px`,
         fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text,
-        background: '#fff', border: `1px solid ${COLOR.borderMd}`, borderRadius: 8, outline: 'none',
+        background: COLOR.bgWhite, border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.lg, outline: 'none',
       }}
     />
   );
@@ -769,7 +765,7 @@ function PrimaryBtn({ children, onClick, disabled }) {
         padding: `${GAP.sm}px ${GAP.xl}px`,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600,
         color: COLOR.btnText, background: disabled ? COLOR.dim : COLOR.btn,
-        border: 0, borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
+        border: 0, borderRadius: RADIUS.lg, cursor: disabled ? 'default' : 'pointer',
       }}
     >{children}</button>
   );
@@ -783,7 +779,7 @@ function GhostBtn({ children, onClick }) {
         padding: `${GAP.sm}px ${GAP.lg}px`,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
         color: COLOR.text3, background: 'transparent',
-        border: `1px solid ${COLOR.borderMd}`, borderRadius: 8, cursor: 'pointer',
+        border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.lg, cursor: 'pointer',
       }}
     >{children}</button>
   );
@@ -795,7 +791,7 @@ function IconBtn({ children, title, onClick, danger }) {
       title={title}
       onClick={onClick}
       style={{
-        width: 26, height: 26, borderRadius: 6,
+        width: 26, height: 26, borderRadius: RADIUS.md,
         background: 'transparent', border: 0, cursor: 'pointer',
         color: danger ? COLOR.error : COLOR.sub,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
