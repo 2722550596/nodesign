@@ -27,7 +27,7 @@ import ExportsListModal from '../components/project/ExportsListModal.jsx';
 import PickExportModal from '../components/project/PickExportModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
 import ElicitationModal from '../components/run/ElicitationModal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO, STAGE } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO, STAGE } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { newId } from '../lib/helpers.js';
@@ -1845,7 +1845,7 @@ export default function ProjectWorkspace() {
         <aside style={{
           width: 360, flexShrink: 0,
           display: 'flex', flexDirection: 'column',
-          background: '#fff',
+          background: COLOR.bgWhite,
           boxShadow: '2px 0 10px rgba(45,36,24,0.05)',
           zIndex: 1,
           minHeight: 0,
@@ -1888,7 +1888,7 @@ export default function ProjectWorkspace() {
           flex: 1, minWidth: 0,
           position: 'relative',
           display: 'flex', flexDirection: 'column',
-          background: '#fff',
+          background: COLOR.bgWhite,
         }}>
           <CanvasFrame
             htmlSrc={currentSessionId ? Canvas.artifactUrl(id, currentSessionId, versionOfFile(fileVersions, 'canvas.html')) : null}
@@ -2056,7 +2056,7 @@ function NotFound({ id, error }) {
           padding: `${GAP.md}px ${GAP.xl}px`,
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
           color: COLOR.btnText, background: COLOR.btn,
-          borderRadius: 8,
+          borderRadius: RADIUS.lg,
         }}>返回首页</Link>
       </div>
     </AppShell>
@@ -2068,7 +2068,7 @@ const iconBtnStyle = {
   padding: `${GAP.xs + 1}px ${GAP.lg}px`,
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
   background: 'rgba(0,0,0,0.04)',
-  borderRadius: 6,
+  borderRadius: RADIUS.md,
   border: 'none',
   cursor: 'pointer',
 };
@@ -2079,7 +2079,7 @@ const primaryBtnStyle = {
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
   color: COLOR.btnText, background: COLOR.btn,
   border: `1px solid ${COLOR.btn}`,
-  borderRadius: 6,
+  borderRadius: RADIUS.md,
   cursor: 'pointer',
 };
 

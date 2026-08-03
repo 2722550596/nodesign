@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useProjectStore } from '../../stores/projectStore.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -108,9 +108,9 @@ const inputStyle = {
   padding: `${GAP.md}px ${GAP.lg}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.base,
   color: COLOR.text,
-  background: '#fff',
+  background: COLOR.bgWhite,
   border: `1px solid ${COLOR.borderMd}`,
-  borderRadius: 8,
+  borderRadius: RADIUS.lg,
   outline: 'none',
   boxSizing: 'border-box',
 };

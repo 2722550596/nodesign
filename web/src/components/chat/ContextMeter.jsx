@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Cpu, Wrench, Plug, Users, Box, BookOpen, FoldVertical } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * ContextMeter —— 上下文用量指示（composer 上沿）
@@ -77,12 +77,12 @@ export default function ContextMeter({ usage, info, onCompact, isStreaming }) {
       {urgent && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: GAP.sm,
-          padding: `2px ${GAP.lg}px 0`,
+          padding: `${GAP.xxs}px ${GAP.lg}px 0`,
         }}>
           <button
             onClick={() => setOpen(v => !v)}
             style={{
-              fontFamily: FONT_MONO, fontSize: 10, color,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color,
               background: 'transparent', border: 0, padding: 0, cursor: 'pointer',
             }}
           >{pct.toFixed(0)}%</button>
@@ -92,7 +92,7 @@ export default function ContextMeter({ usage, info, onCompact, isStreaming }) {
               title="把历史换成摘要，给这次对话腾出空间"
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,
-                fontFamily: FONT_SANS, fontSize: 10, color: COLOR.text2,
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
                 background: 'transparent', border: 0, padding: 0, cursor: 'pointer',
               }}
             ><FoldVertical size={11} strokeWidth={1.75} /> 压缩</button>
@@ -109,11 +109,11 @@ function DetailPopover({ usage, info, pct }) {
   return (
     <div style={{
       position: 'absolute', bottom: '100%', left: GAP.lg, right: GAP.lg,
-      marginBottom: 6,
-      background: '#fff',
+      marginBottom: GAP.sm,
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.borderMd}`,
-      borderRadius: 10,
-      boxShadow: '0 12px 32px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
+      borderRadius: RADIUS.xl,
+      boxShadow: SHADOW.menu,
       padding: `${GAP.md}px ${GAP.lg}px`,
       zIndex: 40,
       maxHeight: 320, overflow: 'auto',
@@ -164,7 +164,7 @@ export function ContextDetail({ usage, info, pct }) {
       {chips.length > 0 && (
         <>
           <Divider />
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm, marginTop: 2 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm, marginTop: GAP.xxs }}>
             {chips.map((c, i) => (
               <span key={i} title={c.title} style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,

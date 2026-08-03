@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FormModal, FInput, FBtn } from '../ui/Form.jsx';
-import { COLOR, GAP, FONT_SANS, FONT_SIZE } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SANS, FONT_SIZE } from '../../lib/theme.js';
 import { Elicit } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -63,7 +63,7 @@ export default function ElicitationModal({ projectId, request, onClose }) {
         marginBottom: GAP.lg,
         padding: GAP.md,
         background: 'rgba(0,0,0,0.03)',
-        borderRadius: 6,
+        borderRadius: RADIUS.md,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text,
         lineHeight: 1.5,
       }}>

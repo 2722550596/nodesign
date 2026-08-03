@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Cpu, Check, Loader2 } from 'lucide-react';
-import { COLOR, GAP, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions } from '../../lib/api.js';
 
@@ -139,13 +139,13 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
               : `新会话将用 ${label}${isDefault ? '（跟随服务端默认）' : ''}`
         }
         style={{
-          display: 'inline-flex', alignItems: 'center', gap: 4,
-          padding: `4px ${GAP.sm}px`,
-          fontFamily: FONT_SANS, fontSize: 11, fontWeight: 500,
+          display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+          padding: `${GAP.xs}px ${GAP.sm}px`,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
           color: isDefault ? COLOR.text2 : COLOR.btnText,
           background: isDefault ? 'transparent' : COLOR.btn,
           border: `1px solid ${isDefault ? COLOR.borderMd : COLOR.btn}`,
-          borderRadius: 6,
+          borderRadius: RADIUS.md,
           cursor: busy ? 'not-allowed' : 'pointer',
           opacity: busy ? 0.5 : 1,
           transition: 'all 0.15s',
@@ -161,11 +161,11 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
         <div style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', left: 0,
           minWidth: 240,
-          background: '#fff',
+          background: COLOR.bgWhite,
           border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: 8,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
-          padding: 4,
+          borderRadius: RADIUS.lg,
+          boxShadow: SHADOW.pop,
+          padding: GAP.xs,
           zIndex: 60,
         }}>
           <Option
@@ -186,8 +186,8 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
             />
           ))}
           <div style={{
-            padding: `4px ${GAP.md}px ${GAP.xs}px`, borderTop: `1px solid ${COLOR.borderLt}`,
-            marginTop: 2, fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
+            padding: `${GAP.xs}px ${GAP.md}px ${GAP.xs}px`, borderTop: `1px solid ${COLOR.borderLt}`,
+            marginTop: GAP.xxs, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           }}>
             {hasSession
               ? (contextTokens >= WARN_FROM_TOKENS
@@ -209,20 +209,20 @@ function Option({ active, label, desc, onClick }) {
         width: '100%',
         display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
         padding: `${GAP.sm}px ${GAP.md}px`,
-        background: 'transparent', border: 'none', borderRadius: 4,
+        background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
         cursor: 'pointer', textAlign: 'left',
       }}
       onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >
-      <span style={{ width: 13, flexShrink: 0, marginTop: 2 }}>
+      <span style={{ width: 13, flexShrink: 0, marginTop: GAP.xxs }}>
         {active && <Check size={12} color={COLOR.text} />}
       </span>
       <span style={{ flex: 1 }}>
         <span style={{ display: 'block', fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>
           {label}
         </span>
-        <span style={{ display: 'block', fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, marginTop: 1 }}>
+        <span style={{ display: 'block', fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>
           {desc}
         </span>
       </span>

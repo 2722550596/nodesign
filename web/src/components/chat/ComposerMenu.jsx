@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Plus, Paperclip, FoldVertical } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { ContextDetail, usageColor, formatK, clamp } from './ContextMeter.jsx';
 import { Me } from '../../lib/api.js';
 
@@ -63,7 +63,7 @@ export default function ComposerMenu({
         title="附件 / 上下文 / 压缩"
         style={{
           width: 28, height: 28,
-          borderRadius: 6,
+          borderRadius: RADIUS.md,
           color: open ? COLOR.text2 : COLOR.text4,
           background: open ? 'rgba(0,0,0,0.05)' : 'transparent',
           border: 0,
@@ -84,11 +84,11 @@ export default function ComposerMenu({
         <div style={{
           position: 'absolute', bottom: 'calc(100% + 6px)', left: 0,
           width: 292,
-          background: '#fff',
+          background: COLOR.bgWhite,
           border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: 10,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
-          padding: 4,
+          borderRadius: RADIUS.xl,
+          boxShadow: SHADOW.menu,
+          padding: GAP.xs,
           zIndex: 40,
           // 三段全展开（上下文明细 + 工具排行 + 账号）大约 480；给到 70vh 让它
           // 在常见窗口高度下一次看完，再高才滚
@@ -106,11 +106,11 @@ export default function ComposerMenu({
           <SectionLabel>上下文</SectionLabel>
 
           {usage ? (
-            <div style={{ padding: `2px ${GAP.md}px ${GAP.sm}px` }}>
+            <div style={{ padding: `${GAP.xxs}px ${GAP.md}px ${GAP.sm}px` }}>
               {/* 进度条：菜单里不设门槛，任何用量都画。颜色仍按三档，一眼分辨要不要动手 */}
               <div style={{
                 height: 4, borderRadius: 2, overflow: 'hidden',
-                background: 'rgba(0,0,0,0.06)', marginBottom: 6,
+                background: 'rgba(0,0,0,0.06)', marginBottom: GAP.sm,
               }}>
                 <div style={{
                   width: `${pct}%`, height: '100%',
@@ -121,8 +121,8 @@ export default function ComposerMenu({
               <ContextDetail usage={usage} info={info} pct={pct} />
               {usage.live === false && (
                 <div style={{
-                  marginTop: 4,
-                  fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+                  marginTop: GAP.xs,
+                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
                 }}>
                   当前没有活跃会话 · 这是最后一轮的数字
                 </div>
@@ -181,7 +181,7 @@ function AccountUsage({ account }) {
   const usd = (n) => `$${(n || 0).toFixed(2)}`;
 
   return (
-    <div style={{ padding: `2px ${GAP.md}px ${GAP.sm}px` }}>
+    <div style={{ padding: `${GAP.xxs}px ${GAP.md}px ${GAP.sm}px` }}>
       {capped && (
         <div style={{
           height: 4, borderRadius: 2, overflow: 'hidden',
@@ -202,7 +202,7 @@ function AccountUsage({ account }) {
       </div>
       <div style={{
         display: 'flex', justifyContent: 'space-between', gap: GAP.lg,
-        fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.9, color: COLOR.sub,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: 1.9, color: COLOR.sub,
       }}>
         <span>今日对话</span>
         <span>
@@ -211,7 +211,7 @@ function AccountUsage({ account }) {
         </span>
       </div>
       {username && (
-        <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
           {username}{role === 'admin' && username !== 'admin' ? ' · admin' : ''}
         </div>
       )}
@@ -222,8 +222,8 @@ function AccountUsage({ account }) {
 function SectionLabel({ children }) {
   return (
     <div style={{
-      padding: `${GAP.xs}px ${GAP.md}px 2px`,
-      fontFamily: FONT_MONO, fontSize: 10, letterSpacing: '0.06em',
+      padding: `${GAP.xs}px ${GAP.md}px ${GAP.xxs}px`,
+      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, letterSpacing: '0.06em',
       color: COLOR.sub,
     }}>{children}</div>
   );
@@ -241,7 +241,7 @@ function MenuItem({ icon, label, hint, onClick, disabled = false }) {
         padding: `${GAP.sm}px ${GAP.md}px`,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
         color: disabled ? COLOR.text4 : COLOR.text,
-        background: 'transparent', border: 0, borderRadius: 6,
+        background: 'transparent', border: 0, borderRadius: RADIUS.md,
         textAlign: 'left',
         cursor: disabled ? 'not-allowed' : 'pointer',
         transition: 'background 0.12s',
@@ -254,7 +254,7 @@ function MenuItem({ icon, label, hint, onClick, disabled = false }) {
       {hint && (
         <span style={{
           marginLeft: 'auto',
-          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{hint}</span>
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Bookmark, History, RefreshCw } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Spec } from '../../lib/api.js';
 
 /**
@@ -57,7 +57,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           color: COLOR.text,
         }}>
           DECISIONS
-          <span style={{ color: COLOR.sub, fontWeight: 400, marginLeft: 6 }}>
+          <span style={{ color: COLOR.sub, fontWeight: 400, marginLeft: GAP.sm }}>
             ({decisions.length})
           </span>
         </div>
@@ -66,13 +66,13 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           disabled={loading}
           title="刷新（agent 调用 record_decision 后会自动刷新；手动按这个也行）"
           style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
+            display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             padding: `${GAP.xs}px ${GAP.sm}px`,
             background: 'rgba(0,0,0,0.04)',
             border: 'none',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
             cursor: loading ? 'wait' : 'pointer',
-            fontFamily: FONT_SANS, fontSize: 11,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
             color: COLOR.sub,
           }}
         >
@@ -88,7 +88,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           padding: GAP.md,
           background: 'rgba(220, 53, 69, 0.06)',
           border: `1px solid ${COLOR.error}33`,
-          borderRadius: 6,
+          borderRadius: RADIUS.md,
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
           color: COLOR.error,
           marginBottom: GAP.md,
@@ -107,7 +107,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           lineHeight: 1.6,
         }}>
           设计决策现在记在画布的任务便利贴上<br />
-          （<code style={{ background: 'rgba(0,0,0,0.06)', padding: '1px 4px', borderRadius: 3 }}>notes/决策.md</code>，
+          （<code style={{ background: 'rgba(0,0,0,0.06)', padding: `1px ${GAP.xs}px`, borderRadius: RADIUS.xs }}>notes/决策.md</code>，
           任务区里那张黄贴纸）。<br />
           这里只显示旧会话的存量决策和压缩历史。
         </div>
@@ -125,7 +125,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
             marginBottom: GAP.sm,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
             color: COLOR.sub,
-            display: 'flex', alignItems: 'center', gap: 4,
+            display: 'flex', alignItems: 'center', gap: GAP.xs,
             letterSpacing: '0.04em',
           }}>
             <History size={11} /> COMPACT HISTORY ({history.length})
@@ -152,12 +152,12 @@ function DecisionCard({ decision }) {
       padding: GAP.md,
       marginBottom: GAP.sm,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 8,
-      background: '#fff',
+      borderRadius: RADIUS.lg,
+      background: COLOR.bgWhite,
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: GAP.xs,
-        marginBottom: 4,
+        marginBottom: GAP.xs,
       }}>
         <Bookmark size={11} color={COLOR.text4} />
         <div style={{
@@ -171,14 +171,14 @@ function DecisionCard({ decision }) {
       </div>
       <div style={{
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text4,
-        lineHeight: 1.5, marginBottom: 4,
+        lineHeight: 1.5, marginBottom: GAP.xs,
         whiteSpace: 'pre-wrap', wordBreak: 'break-word',
       }}>
         {decision.rationale}
       </div>
       <div style={{
         display: 'flex', alignItems: 'center', gap: GAP.sm,
-        fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
       }}>
         {decision.scope && <span>scope: {decision.scope}</span>}
         <span>{formatTs(decision.ts)}</span>
@@ -186,14 +186,14 @@ function DecisionCard({ decision }) {
       {Array.isArray(decision.alternatives) && decision.alternatives.length > 0 && (
         <details style={{ marginTop: GAP.xs }}>
           <summary style={{
-            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             cursor: 'pointer',
           }}>
             考虑过的替代 ({decision.alternatives.length})
           </summary>
           <ul style={{
-            margin: '4px 0 0 0',
-            paddingLeft: 16,
+            margin: `${GAP.xs}px 0 0 0`,
+            paddingLeft: GAP.xl,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text4,
             lineHeight: 1.5,
           }}>
@@ -214,8 +214,8 @@ function HistoryCard({ entry }) {
       paddingLeft: GAP.md,
     }}>
       <div style={{
-        fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
-        marginBottom: 4, letterSpacing: '0.04em',
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+        marginBottom: GAP.xs, letterSpacing: '0.04em',
       }}>
         {entry.source?.toUpperCase() || 'COMPACT'} · {formatTs(entry.ts)}
         {entry.trigger && entry.trigger !== 'auto' && ` · ${entry.trigger}`}

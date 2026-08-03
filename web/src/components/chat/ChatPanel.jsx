@@ -4,7 +4,7 @@ import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ContextMeter from './ContextMeter.jsx';
 import TodoPanel from './TodoPanel.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, CANVAS } from '../../lib/theme.js';
 
 /**
  * Chat Panel — 左栏整体壳
@@ -15,10 +15,10 @@ import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
  * customTitle / firstPrompt），点击触发 SessionListModal 切换/fork/rename/tag/delete。
  */
 const headerBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: 4,
-  padding: '3px 6px',
-  fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
-  background: 'transparent', border: 'none', borderRadius: 4,
+  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+  padding: `3px ${GAP.sm}px`,
+  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+  background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
   cursor: 'pointer', letterSpacing: '0.04em',
   transition: 'background 0.15s, color 0.15s',
 };
@@ -104,7 +104,7 @@ export default function ChatPanel({
             color: COLOR.text,
             background: 'transparent',
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             cursor: onOpenSessionList ? 'pointer' : 'default',
             flex: 1,
             minWidth: 0,
@@ -157,10 +157,10 @@ export default function ChatPanel({
             onClick={onCloseSession}
             title="结束当前会话（终结 agent，历史保留，可从会话列表找回）"
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
               padding: `${GAP.xs}px ${GAP.sm}px`,
-              fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
-              background: 'transparent', border: 'none', borderRadius: 4,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+              background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
               cursor: 'pointer',
               letterSpacing: '0.04em',
               transition: 'background 0.15s, color 0.15s',
@@ -182,8 +182,8 @@ export default function ChatPanel({
       {/* 子代理时间轴 tabs：有子代理跑过才出现 */}
       {Object.keys(subagents).length > 0 && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
-          padding: `4px ${GAP.lg}px`,
+          display: 'flex', alignItems: 'center', gap: GAP.xs, flexWrap: 'wrap',
+          padding: `${GAP.xs}px ${GAP.lg}px`,
           borderBottom: `1px solid ${COLOR.borderLt}`,
           background: 'rgba(0,0,0,0.02)',
         }}>
@@ -191,8 +191,8 @@ export default function ChatPanel({
           {Object.entries(subagents).map(([tid, sa]) => (
             <button key={tid} onClick={() => setChatTab(tid)} style={timelineTab(chatTab === tid)} title={sa.description}>
               <span style={{
-                width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
-                background: sa.status === 'running' ? '#b08c4f' : sa.status === 'completed' ? '#4f8f5b' : '#b0554f',
+                width: 6, height: 6, borderRadius: RADIUS.round, flexShrink: 0,
+                background: sa.status === 'running' ? CANVAS.brass : sa.status === 'completed' ? '#4f8f5b' : '#b0554f',
                 animation: sa.status === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none',
               }} />
               {(sa.description || sa.taskType || '子代理').slice(0, 14)}
@@ -218,15 +218,15 @@ export default function ChatPanel({
         <div style={{
           padding: `${GAP.xs}px ${GAP.lg}px`,
           fontFamily: FONT_MONO,
-          fontSize: 10,
+          fontSize: FONT_SIZE.xs,
           color: wsStatus === 'closed' ? COLOR.error : COLOR.sub,
           letterSpacing: '0.04em',
           background: wsStatus === 'closed' ? 'rgba(220, 53, 69, 0.06)' : 'rgba(255, 193, 7, 0.06)',
           borderTop: `1px dashed ${COLOR.borderLt}`,
-          display: 'flex', alignItems: 'center', gap: 6,
+          display: 'flex', alignItems: 'center', gap: GAP.sm,
         }}>
           <span style={{
-            width: 6, height: 6, borderRadius: '50%',
+            width: 6, height: 6, borderRadius: RADIUS.round,
             background: wsStatus === 'closed' ? COLOR.error : COLOR.warn,
             animation: wsStatus === 'reconnecting' ? 'pulse 1.5s ease-in-out infinite' : 'none',
           }} />
@@ -242,15 +242,15 @@ export default function ChatPanel({
         <div style={{
           padding: `${GAP.xs}px ${GAP.lg}px`,
           fontFamily: FONT_MONO,
-          fontSize: 10,
+          fontSize: FONT_SIZE.xs,
           color: COLOR.sub,
           letterSpacing: '0.04em',
           background: 'rgba(45, 36, 24, 0.04)',
           borderTop: `1px dashed ${COLOR.borderLt}`,
-          display: 'flex', alignItems: 'center', gap: 6,
+          display: 'flex', alignItems: 'center', gap: GAP.sm,
         }}>
           <span style={{
-            width: 6, height: 6, borderRadius: '50%',
+            width: 6, height: 6, borderRadius: RADIUS.round,
             background: COLOR.warn,
           }} />
           已排队 {queueDepth} 条 · agent 跑完当前会自动处理
@@ -289,8 +289,8 @@ export default function ChatPanel({
 function timelineTab(active) {
   return {
     display: 'inline-flex', alignItems: 'center', gap: 5,
-    padding: '3px 10px', borderRadius: 999, border: 0,
-    fontFamily: FONT_MONO, fontSize: 10, fontWeight: 500,
+    padding: `3px ${GAP.base}px`, borderRadius: RADIUS.pill, border: 0,
+    fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
     color: active ? COLOR.bg : COLOR.text,
     background: active ? COLOR.text : 'rgba(0,0,0,0.05)',
     cursor: 'pointer', transition: 'all 0.15s',

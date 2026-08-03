@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Image as ImageIcon, PencilLine, Terminal, X, Bot } from 'lucide-react';
-import { COLOR, GAP, FONT_MONO, FONT_SANS, FONT_SIZE } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SANS, FONT_SIZE, TERM, CANVAS, alpha } from '../../lib/theme.js';
 import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
 import { ZONE, STAGE_CARD_W, POP_IN, sizeOf } from '../../lib/board-geometry.js';
 import { AskUserQuestionView } from '../chat/Message.jsx';
@@ -398,8 +398,8 @@ export function StageBoardLayer({ stageBadges, anchoredCards, positioned, visibl
           <div key={`${oid}:${ts}`} data-stage="badge" style={{
             position: 'absolute', left: o.pos.x + sz.w - 40, top: o.pos.y - 13,
             zIndex: 55, pointerEvents: 'none', animation: POP_IN,
-            background: '#b08c4f', color: '#fff', borderRadius: 6,
-            fontFamily: FONT_MONO, fontSize: 9, padding: '2px 6px',
+            background: CANVAS.brass, color: COLOR.bgWhite, borderRadius: RADIUS.md,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, padding: `${GAP.xxs}px ${GAP.sm}px`,
           }}>已更新</div>
         );
       })}
@@ -427,7 +427,7 @@ export function StageDock({ dockPanels, dockChips, onDismiss }) {
   return (
     <div data-stage="dock" style={{
       position: 'absolute', left: '50%', bottom: 14, transform: 'translateX(-50%)',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.sm,
       zIndex: 80, pointerEvents: 'none', maxWidth: '74%',
     }}>
       {[...dockPanels.filter(c => c.kind !== 'question'), ...dockPanels.filter(c => c.kind === 'question')]
@@ -439,7 +439,7 @@ export function StageDock({ dockPanels, dockChips, onDismiss }) {
           </div>
         ))}
       {dockChips.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
+        <div style={{ display: 'flex', gap: GAP.sm, flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
           {dockChips.map((card) => (
             <StageChip key={card.blockId} card={card} onDismiss={() => onDismiss(card.blockId)} />
           ))}
@@ -498,40 +498,40 @@ function StageCardBody({ card, scale = 1, onDismiss }) {
   if (card.kind === 'subagent') return <SubagentStickyCard card={card} onDismiss={onDismiss} scale={scale} />;
   const running = card.status === 'running';
   const isTerm = card.kind === 'terminal';
-  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : 'rgba(176,140,79,0.65)';
+  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : alpha(CANVAS.brass, 0.65);
   const label = card.tool === 'Edit' ? '修改' : card.tool === 'Write' ? '写入' : toolLabelOf(card.tool);
   return (
     <div
       data-stage="card" data-stage-kind={card.kind} data-stage-status={card.status}
       style={{
-        borderRadius: 12, overflow: 'hidden', border: `1.5px solid ${border}`,
-        background: '#211e17', boxShadow: '0 10px 30px rgba(40,32,16,0.35)',
+        borderRadius: RADIUS.xxl, overflow: 'hidden', border: `1.5px solid ${border}`,
+        background: TERM.bg, boxShadow: '0 10px 30px rgba(40,32,16,0.35)',
         animation: card.status === 'ok'
           ? `${POP_IN}, ndPulse 700ms ease-out, ndStageOut 380ms ease 1150ms forwards`
           : POP_IN,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: 'rgba(255,255,255,0.06)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.base}px`, background: 'rgba(255,255,255,0.06)' }}>
         {isTerm ? <Terminal size={11} color="#c8b98c" /> : <PencilLine size={11} color="#c8b98c" />}
-        <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: '#e8e2d2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: TERM.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {isTerm ? (card.command || 'bash') : `${label} · ${fileNameOf(card.filePath) || '…'}`}
         </span>
         {running ? (
-          <span style={{ width: 10, height: 10, border: '1.5px solid rgba(232,226,210,0.35)', borderTopColor: '#e8e2d2', borderRadius: '50%', animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
+          <span style={{ width: 10, height: 10, border: '1.5px solid rgba(232,226,210,0.35)', borderTopColor: TERM.ink, borderRadius: RADIUS.round, animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
         ) : (
-          <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: card.status === 'ok' ? '#8fc79a' : '#e09a94', flexShrink: 0 }}>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: card.status === 'ok' ? TERM.ok : TERM.err, flexShrink: 0 }}>
             {card.status === 'ok' ? '✓' : '✗'}
           </span>
         )}
         {card.status === 'fail' && (
-          <button onClick={onDismiss} style={{ border: 0, background: 'transparent', color: '#e8e2d2', cursor: 'pointer', display: 'flex', padding: 2 }}>
+          <button onClick={onDismiss} style={{ border: 0, background: 'transparent', color: TERM.ink, cursor: 'pointer', display: 'flex', padding: GAP.xxs }}>
             <X size={10} />
           </button>
         )}
       </div>
       {card.kind === 'code' && card.oldString && (
         <div style={{
-          padding: '4px 10px', background: 'rgba(176,85,79,0.16)', color: '#dba49f',
+          padding: `${GAP.xs}px ${GAP.base}px`, background: 'rgba(176,85,79,0.16)', color: '#dba49f',
           fontFamily: FONT_MONO, fontSize: 9.5, lineHeight: 1.5,
           whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 64, overflow: 'hidden',
           borderBottom: '1px solid rgba(255,255,255,0.05)',
@@ -546,7 +546,7 @@ function StageCardBody({ card, scale = 1, onDismiss }) {
         placeholder={running ? (isTerm ? '运行中…' : '正在生成…') : ''}
       />
       {card.status === 'fail' && card.error && (
-        <div style={{ padding: '5px 10px', fontFamily: FONT_MONO, fontSize: 9.5, color: '#e09a94', whiteSpace: 'pre-wrap', wordBreak: 'break-all', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ padding: `5px ${GAP.base}px`, fontFamily: FONT_MONO, fontSize: 9.5, color: TERM.err, whiteSpace: 'pre-wrap', wordBreak: 'break-all', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           {card.error}
         </div>
       )}
@@ -563,11 +563,11 @@ function AutoScrollPre({ text, running, color, placeholder }) {
   }, [text]);
   if (!text && !running) return null;
   return (
-    <div ref={ref} style={{ maxHeight: 280, overflowY: 'auto', padding: '8px 10px' }}>
-      <pre style={{ margin: 0, fontFamily: FONT_MONO, fontSize: 10, lineHeight: 1.55, color, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+    <div ref={ref} style={{ maxHeight: 280, overflowY: 'auto', padding: `${GAP.md}px ${GAP.base}px` }}>
+      <pre style={{ margin: 0, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: 1.55, color, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
         {text || placeholder}
         {running && (
-          <span style={{ display: 'inline-block', width: 6, height: 11, marginLeft: 2, verticalAlign: '-2px', background: '#e8e2d2', animation: 'ndCaret 900ms step-end infinite' }} />
+          <span style={{ display: 'inline-block', width: 6, height: 11, marginLeft: GAP.xxs, verticalAlign: '-2px', background: TERM.ink, animation: 'ndCaret 900ms step-end infinite' }} />
         )}
       </pre>
     </div>
@@ -583,8 +583,8 @@ function ShimmerCard({ card, height, onDismiss }) {
     <div
       data-stage="card" data-stage-kind="image" data-stage-status={card.status}
       style={{
-        width: SHIMMER_W, borderRadius: 10, overflow: 'hidden',
-        border: `1px solid ${card.status === 'fail' ? '#b0554f' : 'rgba(176,140,79,0.5)'}`,
+        width: SHIMMER_W, borderRadius: RADIUS.xl, overflow: 'hidden',
+        border: `1px solid ${card.status === 'fail' ? '#b0554f' : alpha(CANVAS.brass, 0.5)}`,
         background: COLOR.bgCard, boxShadow: '0 6px 18px rgba(60,48,20,0.18)',
         animation: card.status === 'ok' ? `${POP_IN}, ndStageOut 380ms ease 1150ms forwards` : POP_IN,
       }}
@@ -602,13 +602,13 @@ function ShimmerCard({ card, height, onDismiss }) {
       }}>
         <ImageIcon size={22} color="#b3a58a" />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}>
-        <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, padding: `${GAP.xs}px ${GAP.md}px` }}>
+        <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {running ? '生成图片中…' : card.status === 'ok' ? '已生成' : '生成失败'}
           {card.prompt ? ` · ${card.prompt}` : ''}
         </span>
         {card.status === 'fail' && (
-          <button onClick={onDismiss} style={{ border: 0, background: 'transparent', color: COLOR.sub, cursor: 'pointer', display: 'flex', padding: 2 }}>
+          <button onClick={onDismiss} style={{ border: 0, background: 'transparent', color: COLOR.sub, cursor: 'pointer', display: 'flex', padding: GAP.xxs }}>
             <X size={10} />
           </button>
         )}
@@ -661,32 +661,32 @@ function SubagentStickyCard({ card, onDismiss, scale = 1 }) {
       data-stage="card" data-stage-kind="subagent" data-stage-status={card.status}
       {...handlers}
       style={{
-        borderRadius: 10, overflow: 'hidden',
-        border: `1.5px solid ${card.status === 'fail' ? '#b0554f' : 'rgba(176,140,79,0.55)'}`,
-        background: '#fffbeb', boxShadow: '0 8px 24px rgba(60,48,20,0.22)',
+        borderRadius: RADIUS.xl, overflow: 'hidden',
+        border: `1.5px solid ${card.status === 'fail' ? '#b0554f' : alpha(CANVAS.brass, 0.55)}`,
+        background: CANVAS.note, boxShadow: '0 8px 24px rgba(60,48,20,0.22)',
         animation: POP_IN,
         transform: (off.x || off.y) ? `translate(${off.x}px, ${off.y}px)` : undefined,
         touchAction: 'none',
       }}
     >
-      <div data-stage-drag style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid rgba(176,140,79,0.22)', cursor: 'grab', userSelect: 'none' }}>
+      <div data-stage-drag style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.base}px`, borderBottom: `1px solid ${alpha(CANVAS.brass, 0.22)}`, cursor: 'grab', userSelect: 'none' }}>
         <Bot size={11} color="#8a744d" />
-        <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: '#6d5c3d', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: '#6d5c3d', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {card.agentType}{card.description ? ` · ${card.description}` : ''}
         </span>
         {running ? (
-          <span style={{ width: 10, height: 10, border: '1.5px solid rgba(138,116,77,0.35)', borderTopColor: '#8a744d', borderRadius: '50%', animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
+          <span style={{ width: 10, height: 10, border: '1.5px solid rgba(138,116,77,0.35)', borderTopColor: '#8a744d', borderRadius: RADIUS.round, animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
         ) : (
-          <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: card.status === 'ok' ? '#4f8f5b' : '#b0554f', flexShrink: 0 }}>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: card.status === 'ok' ? '#4f8f5b' : '#b0554f', flexShrink: 0 }}>
             {card.status === 'ok' ? '✓' : '✗'}
           </span>
         )}
         <button onClick={onDismiss} title="关闭"
-          style={{ border: 0, background: 'transparent', color: '#8a744d', cursor: 'pointer', display: 'flex', padding: 2 }}>
+          style={{ border: 0, background: 'transparent', color: '#8a744d', cursor: 'pointer', display: 'flex', padding: GAP.xxs }}>
           <X size={10} />
         </button>
       </div>
-      <div style={{ padding: '8px 12px', maxHeight: 280, overflowY: 'auto' }}>
+      <div style={{ padding: `${GAP.md}px ${GAP.lg}px`, maxHeight: 280, overflowY: 'auto' }}>
         {running ? (
           <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontStyle: 'italic', color: '#6d5c3d', lineHeight: 1.6 }}>
             {card.summary || '子代理工作中…'}
@@ -713,7 +713,7 @@ function QuestionStageCard({ card, onDismiss }) {
     <div
       data-stage="card" data-stage-kind="question" data-stage-status={card.status}
       style={{
-        borderRadius: 12, border: '1.5px solid rgba(176,140,79,0.65)', background: COLOR.bg,
+        borderRadius: RADIUS.xxl, border: `1.5px solid ${alpha(CANVAS.brass, 0.65)}`, background: COLOR.bg,
         boxShadow: '0 12px 34px rgba(40,32,16,0.28)', padding: GAP.md,
         maxHeight: '52vh', overflowY: 'auto',
         animation: card.status === 'ok' ? `${POP_IN}, ndStageOut 380ms ease 1150ms forwards` : POP_IN,
@@ -727,18 +727,18 @@ function QuestionStageCard({ card, onDismiss }) {
           toolUseId={card.blockId}
         />
       ) : (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
-          <span style={{ width: 9, height: 9, border: `1.5px solid ${COLOR.borderLt}`, borderTopColor: COLOR.text, borderRadius: '50%', animation: 'ndSpin 800ms linear infinite' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
+          <span style={{ width: 9, height: 9, border: `1.5px solid ${COLOR.borderLt}`, borderTopColor: COLOR.text, borderRadius: RADIUS.round, animation: 'ndSpin 800ms linear infinite' }} />
           agent 正在整理问题…
         </div>
       )}
       {card.status === 'fail' && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: GAP.sm }}>
           <button onClick={onDismiss} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4,
-            border: `1px solid ${COLOR.borderLt}`, borderRadius: 6,
+            display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+            border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.md,
             background: COLOR.bgCard, color: COLOR.text, cursor: 'pointer',
-            padding: `${GAP.xs}px ${GAP.sm + 2}px`, fontFamily: FONT_MONO, fontSize: 10,
+            padding: `${GAP.xs}px ${GAP.sm + 2}px`, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
           }}><X size={10} /> 关闭</button>
         </div>
       )}
@@ -755,16 +755,16 @@ function StageChip({ card, onDismiss }) {
       onClick={card.status === 'fail' ? onDismiss : undefined}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px',
-        borderRadius: 999, background: 'rgba(33,30,23,0.88)', color: '#e8e2d2',
+        borderRadius: RADIUS.pill, background: 'rgba(33,30,23,0.88)', color: TERM.ink,
         fontFamily: FONT_MONO, fontSize: 9.5, animation: POP_IN,
         border: `1px solid ${card.status === 'fail' ? '#b0554f' : 'transparent'}`,
         cursor: card.status === 'fail' ? 'pointer' : 'default',
       }}
     >
       {running ? (
-        <span style={{ width: 8, height: 8, border: '1.5px solid rgba(232,226,210,0.3)', borderTopColor: '#e8e2d2', borderRadius: '50%', animation: 'ndSpin 800ms linear infinite' }} />
+        <span style={{ width: 8, height: 8, border: '1.5px solid rgba(232,226,210,0.3)', borderTopColor: TERM.ink, borderRadius: RADIUS.round, animation: 'ndSpin 800ms linear infinite' }} />
       ) : (
-        <span style={{ color: card.status === 'ok' ? '#8fc79a' : '#e09a94' }}>{card.status === 'ok' ? '✓' : '✗'}</span>
+        <span style={{ color: card.status === 'ok' ? TERM.ok : TERM.err }}>{card.status === 'ok' ? '✓' : '✗'}</span>
       )}
       {toolLabelOf(card.tool)}{card.hint ? ` ${card.hint}` : ''}
     </span>

@@ -20,7 +20,7 @@ import { useEffect } from 'react';
 import { Lightbulb, Check, X } from 'lucide-react';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plan } from '../../lib/api.js';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 
 const TASK_LABEL = {
   deck: '幻灯片',
@@ -117,7 +117,7 @@ export default function PlanRequestBanner() {
       zIndex: 50,
       background: 'linear-gradient(135deg, #FFF8E1 0%, #FFF3D6 100%)',
       border: `1px solid ${COLOR.warn}55`,
-      borderRadius: 10,
+      borderRadius: RADIUS.xl,
       boxShadow: '0 6px 24px rgba(0,0,0,0.08)',
       padding: `${GAP.md}px ${GAP.lg}px`,
       display: 'flex',
@@ -135,8 +135,8 @@ export default function PlanRequestBanner() {
       <div style={{
         flexShrink: 0,
         width: 32, height: 32,
-        borderRadius: 8,
-        background: '#fff',
+        borderRadius: RADIUS.lg,
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.warn}55`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
@@ -145,57 +145,57 @@ export default function PlanRequestBanner() {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.warn,
-          letterSpacing: '0.06em', marginBottom: 4,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.warn,
+          letterSpacing: '0.06em', marginBottom: GAP.xs,
         }}>
           AGENT 请求进入 PLAN 模式
         </div>
         <div style={{
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 600,
-          color: COLOR.text, marginBottom: 4,
+          color: COLOR.text, marginBottom: GAP.xs,
         }}>
           {`这看起来是个有点复杂的${taskLabel}`}
           {estimatedPages != null && (
             <span style={{
-              marginLeft: 8,
-              fontSize: 11, fontFamily: FONT_MONO, fontWeight: 400,
+              marginLeft: GAP.md,
+              fontSize: FONT_SIZE.sm, fontFamily: FONT_MONO, fontWeight: 400,
               color: COLOR.text3,
-              padding: '2px 6px',
+              padding: `${GAP.xxs}px ${GAP.sm}px`,
               border: `1px solid ${COLOR.borderMd}`,
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
             }}>
               ~{estimatedPages} 页
             </span>
           )}
         </div>
         <div style={{
-          fontFamily: FONT_SANS, fontSize: 12, color: COLOR.text2,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.text2,
           lineHeight: 1.55,
         }}>
           {reason}
         </div>
         <div style={{
-          marginTop: 4,
-          fontFamily: FONT_SANS, fontSize: 11, color: COLOR.sub,
+          marginTop: GAP.xs,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
         }}>
           进 plan 后 agent 会先写一份 markdown 计划给你 review；不进就照原节奏继续做。
         </div>
       </div>
 
       <div style={{
-        display: 'flex', flexDirection: 'column', gap: 6,
+        display: 'flex', flexDirection: 'column', gap: GAP.sm,
         flexShrink: 0,
       }}>
         <button
           onClick={handleApprove}
           style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px',
-            fontFamily: FONT_SANS, fontSize: 12, fontWeight: 600,
+            display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
+            padding: `${GAP.sm}px 14px`,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600,
             color: COLOR.btnText,
             background: COLOR.btn,
             border: 'none',
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
           }}
@@ -205,13 +205,13 @@ export default function PlanRequestBanner() {
         <button
           onClick={handleDismiss}
           style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px',
-            fontFamily: FONT_SANS, fontSize: 12,
+            display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
+            padding: `${GAP.sm}px 14px`,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.md,
             color: COLOR.text2,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             cursor: 'pointer',
             whiteSpace: 'nowrap',
           }}

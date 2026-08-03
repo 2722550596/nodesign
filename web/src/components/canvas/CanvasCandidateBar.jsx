@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, X, GitBranch } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -25,7 +25,7 @@ export default function CanvasCandidateBar({ candidates, activeId, onSelect, onA
       flexShrink: 0,
       height: 36,
       borderBottom: `1px solid ${COLOR.border}`,
-      background: '#fff',
+      background: COLOR.bgWhite,
       padding: `0 ${GAP.lg}px`,
       display: 'flex',
       alignItems: 'center',
@@ -58,7 +58,7 @@ export default function CanvasCandidateBar({ candidates, activeId, onSelect, onA
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           background: 'transparent',
           border: `1px dashed ${COLOR.borderMd}`,
-          borderRadius: 4,
+          borderRadius: RADIUS.sm,
           cursor: 'pointer',
         }}
         onMouseEnter={e => { e.currentTarget.style.color = COLOR.text2; e.currentTarget.style.background = 'rgba(0,0,0,0.03)'; }}
@@ -70,7 +70,7 @@ export default function CanvasCandidateBar({ candidates, activeId, onSelect, onA
       <div style={{ flex: 1 }} />
 
       <span style={{
-        fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
         opacity: single ? 0 : 0.7,
         flexShrink: 0,
       }}>
@@ -110,7 +110,7 @@ function CandidateTab({ candidate, active, onSelect, onRemove, onRename }) {
         position: 'relative',
         display: 'inline-flex', alignItems: 'center',
         background: active ? 'rgba(45,36,24,0.06)' : 'transparent',
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         transition: 'background 0.15s',
       }}
     >
@@ -124,7 +124,7 @@ function CandidateTab({ candidate, active, onSelect, onRemove, onRename }) {
           fontWeight: active ? 500 : 400,
           color: active ? COLOR.text : COLOR.text4,
           background: 'transparent',
-          borderRadius: 4,
+          borderRadius: RADIUS.sm,
           cursor: 'pointer',
           transition: 'all 0.15s',
         }}
@@ -136,7 +136,7 @@ function CandidateTab({ candidate, active, onSelect, onRemove, onRename }) {
           onClick={handleRemove}
           style={{
             position: 'absolute', right: 2, top: '50%', transform: 'translateY(-50%)',
-            width: 14, height: 14, borderRadius: 3,
+            width: 14, height: 14, borderRadius: RADIUS.xs,
             background: 'rgba(0,0,0,0.06)',
             color: COLOR.sub,
             display: 'flex', alignItems: 'center', justifyContent: 'center',

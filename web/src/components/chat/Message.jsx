@@ -14,7 +14,7 @@ import {
 import { diffLines } from 'diff';
 import ReactMarkdown from 'react-markdown';
 import { Undo2 } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Turn, Sessions } from '../../lib/api.js';
 import TimelineNode from './TimelineNode.jsx';
@@ -111,12 +111,12 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
         <ReactMarkdown>{content || ''}</ReactMarkdown>
       </div>
       <style>{`
-        .md-content p { margin: 0 0 8px 0; }
+        .md-content p { margin: 0 0 ${GAP.md}px 0; }
         .md-content p:last-child { margin-bottom: 0; }
-        .md-content code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-family: ${FONT_MONO}; font-size: 12px; }
-        .md-content pre { background: ${COLOR.bgCard}; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
-        .md-content ul, .md-content ol { margin: 0 0 8px 0; padding-left: 20px; }
-        .md-content li { margin: 2px 0; }
+        .md-content code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: ${RADIUS.xs}px; font-family: ${FONT_MONO}; font-size: ${FONT_SIZE.md}px; }
+        .md-content pre { background: ${COLOR.bgCard}; padding: ${GAP.lg}px; border-radius: ${RADIUS.lg}px; overflow-x: auto; font-size: ${FONT_SIZE.md}px; }
+        .md-content ul, .md-content ol { margin: 0 0 ${GAP.md}px 0; padding-left: ${GAP.xxl}px; }
+        .md-content li { margin: ${GAP.xxs}px 0; }
         .md-content a { color: ${COLOR.btn}; text-decoration: underline; }
       `}</style>
     </>
@@ -234,12 +234,12 @@ function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
             position: 'absolute',
             top: 4,
             right: GAP.lg,
-            display: 'flex', alignItems: 'center', gap: 4,
-            padding: '4px 8px',
+            display: 'flex', alignItems: 'center', gap: GAP.xs,
+            padding: `${GAP.xs}px ${GAP.md}px`,
             background: COLOR.bgCard,
             color: COLOR.text2,
             border: `1px solid ${COLOR.border}`,
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             fontSize: FONT_SIZE.xs || 11,
             fontFamily: FONT_SANS,
             cursor: busy ? 'wait' : 'pointer',
@@ -302,7 +302,7 @@ function renderQuestionPreview(preview, label) {
         marginTop: GAP.xs + 2,
         width: '100%',
         aspectRatio: '4 / 3',
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         overflow: 'hidden',
         border: `1px solid ${COLOR.borderLt}`,
         background: '#fafafa',
@@ -330,7 +330,7 @@ function renderQuestionPreview(preview, label) {
       <div style={{
         marginTop: GAP.xs + 2,
         width: '100%',
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         overflow: 'hidden',
         border: `1px solid ${COLOR.borderLt}`,
         background: '#fafafa',
@@ -344,7 +344,7 @@ function renderQuestionPreview(preview, label) {
             width: '100%',
             height: 140,
             border: 'none',
-            background: '#fff',
+            background: COLOR.bgWhite,
             pointerEvents: 'none',
           }}
         />
@@ -357,12 +357,12 @@ function renderQuestionPreview(preview, label) {
     <div style={{
       marginTop: GAP.xs + 2,
       padding: GAP.xs,
-      fontSize: 11,
+      fontSize: FONT_SIZE.sm,
       color: COLOR.text3,
       fontFamily: FONT_MONO,
       background: COLOR.bgCard,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 4,
+      borderRadius: RADIUS.sm,
     }}>
       {s.length > 200 ? s.slice(0, 200) + '…' : s}
     </div>
@@ -464,13 +464,13 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
       <div style={{
         padding: `${GAP.sm}px ${GAP.md}px`,
         border: `1px solid ${answered ? COLOR.borderLt : COLOR.borderMd}`,
-        borderRadius: 8,
-        background: '#fff',
+        borderRadius: RADIUS.lg,
+        background: COLOR.bgWhite,
         opacity: answered ? 0.7 : 1,
       }}>
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub, letterSpacing: '0.04em',
+          display: 'flex', alignItems: 'center', gap: GAP.sm,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, letterSpacing: '0.04em',
         }}>
           <span style={{ color: COLOR.text2 }}>AGENT 问</span>
           <span>·</span>
@@ -492,7 +492,7 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
                 }}>{q.header ? `${q.header}：` : ''}{q.question}</span>
                 {a && (
                   <span style={{
-                    display: 'block', color: COLOR.sub, fontSize: 11,
+                    display: 'block', color: COLOR.sub, fontSize: FONT_SIZE.sm,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>→ {a}</span>
                 )}
@@ -501,7 +501,7 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
           })}
           {flatEcho && (
             <span style={{
-              color: COLOR.sub, fontFamily: FONT_SANS, fontSize: 11,
+              color: COLOR.sub, fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>→ {flatEcho}</span>
           )}
@@ -511,9 +511,9 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
           <button
             onClick={() => setExpanded(true)}
             style={{
-              marginTop: GAP.sm, border: `1px solid ${COLOR.borderMd}`, borderRadius: 6,
-              background: '#fff', color: COLOR.text2, cursor: 'pointer',
-              padding: `3px ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: 10,
+              marginTop: GAP.sm, border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.md,
+              background: COLOR.bgWhite, color: COLOR.text2, cursor: 'pointer',
+              padding: `3px ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
             }}
           >在这里答</button>
         )}
@@ -668,8 +668,8 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
   // 进度点（小圆点 + 当前数字）
   const progress = (
     <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+      display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
       letterSpacing: '0.04em',
     }}>
       {questions.map((q, i) => {
@@ -680,7 +680,7 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
             key={i}
             title={q.header || `Q${i + 1}`}
             style={{
-              width: 6, height: 6, borderRadius: '50%',
+              width: 6, height: 6, borderRadius: RADIUS.round,
               background: filled
                 ? COLOR.btn
                 : (isCurrent ? COLOR.borderHv : COLOR.borderMd),
@@ -690,7 +690,7 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
           />
         );
       })}
-      <span style={{ marginLeft: 6 }}>{Math.min(stepIdx + 1, total)} / {total}</span>
+      <span style={{ marginLeft: GAP.sm }}>{Math.min(stepIdx + 1, total)} / {total}</span>
     </div>
   );
 
@@ -715,8 +715,8 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
         style={{
           padding: GAP.md,
           border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: 10,
-          background: '#fff',
+          borderRadius: RADIUS.xl,
+          background: COLOR.bgWhite,
           opacity: isAnswered ? 0.6 : 1,
         }}
       >
@@ -730,12 +730,12 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
-            padding: `2px ${GAP.sm}px`,
+            gap: GAP.xs,
+            padding: `${GAP.xxs}px ${GAP.sm}px`,
             background: 'rgba(45, 36, 24, 0.06)',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
             fontFamily: FONT_MONO,
-            fontSize: 10,
+            fontSize: FONT_SIZE.xs,
             color: COLOR.text2,
             letterSpacing: '0.04em',
           }}>
@@ -772,8 +772,8 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
                   textAlign: 'left',
                   padding: `${GAP.sm}px ${GAP.md}px`,
                   border: `1px solid ${isPicked ? COLOR.btn : COLOR.borderLt}`,
-                  borderRadius: 6,
-                  background: isPicked ? 'rgba(45, 36, 24, 0.06)' : '#fff',
+                  borderRadius: RADIUS.md,
+                  background: isPicked ? 'rgba(45, 36, 24, 0.06)' : COLOR.bgWhite,
                   cursor: disabled ? 'not-allowed' : 'pointer',
                   fontFamily: FONT_SANS,
                   fontSize: FONT_SIZE.sm,
@@ -787,17 +787,17 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
                   e.currentTarget.style.borderColor = COLOR.borderHv;
                 }}
                 onMouseLeave={e => {
-                  e.currentTarget.style.background = isPicked ? 'rgba(45, 36, 24, 0.06)' : '#fff';
+                  e.currentTarget.style.background = isPicked ? 'rgba(45, 36, 24, 0.06)' : COLOR.bgWhite;
                   e.currentTarget.style.borderColor = isPicked ? COLOR.btn : COLOR.borderLt;
                 }}
               >
                 {/* checkbox / radio dot indicator */}
                 <span style={{
                   width: 14, height: 14,
-                  marginTop: 2,
+                  marginTop: GAP.xxs,
                   flexShrink: 0,
                   border: `1.5px solid ${isPicked ? COLOR.btn : COLOR.borderHv}`,
-                  borderRadius: currentQ.multiSelect ? 3 : '50%',
+                  borderRadius: currentQ.multiSelect ? RADIUS.xs : RADIUS.round,
                   background: isPicked ? COLOR.btn : 'transparent',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}>
@@ -807,8 +807,8 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
                   <div style={{ fontWeight: 500 }}>{opt.label}</div>
                   {opt.description && (
                     <div style={{
-                      marginTop: 2,
-                      fontSize: 11,
+                      marginTop: GAP.xxs,
+                      fontSize: FONT_SIZE.sm,
                       color: COLOR.sub,
                       lineHeight: 1.4,
                     }}>
@@ -832,7 +832,7 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
         {currentQ.multiSelect && !isAnswered && (
           <div style={{
             marginTop: GAP.xs,
-            fontSize: 10,
+            fontSize: FONT_SIZE.xs,
             color: COLOR.sub,
             fontStyle: 'italic',
           }}>
@@ -844,9 +844,9 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
         {!isAnswered && (
           <div style={{ marginTop: GAP.sm }}>
             <div style={{
-              fontSize: 10,
+              fontSize: FONT_SIZE.xs,
               color: COLOR.sub,
-              marginBottom: 4,
+              marginBottom: GAP.xs,
               fontFamily: FONT_MONO,
               letterSpacing: '0.04em',
               textTransform: 'uppercase',
@@ -874,11 +874,11 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
                 width: '100%',
                 padding: `${GAP.sm}px ${GAP.md}px`,
                 border: `1px solid ${currentCustom.trim() ? COLOR.btn : COLOR.borderLt}`,
-                borderRadius: 6,
+                borderRadius: RADIUS.md,
                 fontFamily: FONT_SANS,
                 fontSize: FONT_SIZE.sm,
                 color: COLOR.text,
-                background: currentCustom.trim() ? 'rgba(45, 36, 24, 0.04)' : '#fff',
+                background: currentCustom.trim() ? 'rgba(45, 36, 24, 0.04)' : COLOR.bgWhite,
                 resize: 'vertical',
                 outline: 'none',
                 boxSizing: 'border-box',
@@ -943,7 +943,7 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
         {submitting && (
           <div style={{
             marginTop: GAP.xs + 2,
-            fontSize: 10,
+            fontSize: FONT_SIZE.xs,
             color: COLOR.sub,
             fontStyle: 'italic',
           }}>
@@ -956,7 +956,7 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
             marginTop: GAP.sm,
             paddingTop: GAP.sm,
             borderTop: `1px dashed ${COLOR.borderLt}`,
-            fontSize: 10,
+            fontSize: FONT_SIZE.xs,
             color: COLOR.sub,
           }}>
             已完成
@@ -969,7 +969,7 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
 
 function NavBtn({ onClick, disabled, icon: Icon, label, variant = 'default', iconRight = false }) {
   const styles = {
-    default: { bg: '#fff', color: COLOR.text2, border: COLOR.borderMd },
+    default: { bg: COLOR.bgWhite, color: COLOR.text2, border: COLOR.borderMd },
     ghost:   { bg: 'transparent', color: COLOR.sub, border: 'transparent' },
     primary: { bg: COLOR.btn, color: COLOR.btnText, border: COLOR.btn },
   }[variant];
@@ -981,13 +981,13 @@ function NavBtn({ onClick, disabled, icon: Icon, label, variant = 'default', ico
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 4,
-        padding: `4px ${GAP.sm}px`,
+        gap: GAP.xs,
+        padding: `${GAP.xs}px ${GAP.sm}px`,
         background: styles.bg,
         border: `1px solid ${styles.border}`,
         borderRadius: 5,
         fontFamily: FONT_SANS,
-        fontSize: 11,
+        fontSize: FONT_SIZE.sm,
         color: styles.color,
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.4 : 1,
@@ -1028,7 +1028,7 @@ function SystemMessage({ variant = 'warn', content, pending = false }) {
         padding: `${GAP.sm}px ${GAP.md}px`,
         background: config.bgRgba,
         border: `1px solid ${config.border}`,
-        borderRadius: 8,
+        borderRadius: RADIUS.lg,
         fontFamily: FONT_SANS,
         fontSize: FONT_SIZE.sm,
         color: COLOR.text2,
@@ -1039,7 +1039,7 @@ function SystemMessage({ variant = 'warn', content, pending = false }) {
             <>
             <style>{'@keyframes ndSpin{to{transform:rotate(360deg)}}'}</style>
             <span style={{
-              width: 12, height: 12, flexShrink: 0, marginTop: 2, borderRadius: '50%',
+              width: 12, height: 12, flexShrink: 0, marginTop: GAP.xxs, borderRadius: RADIUS.round,
               border: `1.5px solid ${COLOR.borderLt}`, borderTopColor: config.color,
               animation: 'ndSpin 800ms linear infinite',
             }} />
@@ -1103,7 +1103,7 @@ function ThinkingMessage({ content, isStreaming }) {
         )}
         {veryLongStreaming && (
           <div style={{
-            marginTop: 6,
+            marginTop: GAP.sm,
             fontSize: FONT_SIZE.xs,
             color: COLOR.dim,
             fontStyle: 'italic',
@@ -1112,7 +1112,7 @@ function ThinkingMessage({ content, isStreaming }) {
           </div>
         )}
         {longEnough && (
-          <div style={{ marginTop: 6 }}>
+          <div style={{ marginTop: GAP.sm }}>
             <button
               onClick={() => setExpanded(e => !e)}
               style={{
@@ -1351,13 +1351,13 @@ function VisionCheckerCard({ text }) {
         marginTop: GAP.sm,
         padding: GAP.md,
         background: COLOR.bgCard,
-        borderRadius: 8,
+        borderRadius: RADIUS.lg,
         fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
         color: COLOR.text4, lineHeight: 1.5,
         whiteSpace: 'pre-wrap',
         maxHeight: 280, overflow: 'auto',
       }}>
-        <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em' }}>
+        <div style={{ fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginBottom: GAP.xs, letterSpacing: '0.04em' }}>
           评审原文（解析未命中 schema）
         </div>
         {raw}
@@ -1373,7 +1373,7 @@ function VisionCheckerCard({ text }) {
       marginTop: GAP.sm,
       border: `1px solid ${verdictColor}33`,
       borderLeft: `3px solid ${verdictColor}`,
-      borderRadius: 8,
+      borderRadius: RADIUS.lg,
       background: COLOR.bgCard,
       overflow: 'hidden',
     }}>
@@ -1422,16 +1422,16 @@ function VisionCheckerCard({ text }) {
               lineHeight: 1.5,
             }}>
               {issues.map((iss, i) => (
-                <li key={i} style={{ paddingLeft: 4 }}>
+                <li key={i} style={{ paddingLeft: GAP.xs }}>
                   {iss.severity && (
                     <span style={{
                       display: 'inline-block',
-                      padding: '0 6px',
-                      marginRight: 6,
+                      padding: `0 ${GAP.sm}px`,
+                      marginRight: GAP.sm,
                       background: `${SEVERITY_COLOR[iss.severity]}22`,
                       color: SEVERITY_COLOR[iss.severity],
-                      borderRadius: 4,
-                      fontSize: 10,
+                      borderRadius: RADIUS.sm,
+                      fontSize: FONT_SIZE.xs,
                       fontWeight: 600,
                       textTransform: 'uppercase',
                       letterSpacing: '0.04em',
@@ -1443,10 +1443,10 @@ function VisionCheckerCard({ text }) {
                     <span style={{ color: COLOR.text2, fontWeight: 500 }}>{iss.where}</span>
                   )}
                   {iss.problem && (
-                    <div style={{ marginTop: 2 }}>{iss.problem}</div>
+                    <div style={{ marginTop: GAP.xxs }}>{iss.problem}</div>
                   )}
                   {iss.fix && (
-                    <div style={{ marginTop: 2, color: COLOR.sub, fontStyle: 'italic' }}>
+                    <div style={{ marginTop: GAP.xxs, color: COLOR.sub, fontStyle: 'italic' }}>
                       → {iss.fix}
                     </div>
                   )}
@@ -1526,20 +1526,20 @@ function ToolMessage({
             {filename || toolName}
           </span>
           {fileDiff.adds > 0 && (
-            <span style={{ color: COLOR.success, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ color: COLOR.success, fontSize: FONT_SIZE.sm, fontVariantNumeric: 'tabular-nums' }}>
               +{fileDiff.adds}
             </span>
           )}
           {fileDiff.dels > 0 && (
-            <span style={{ color: COLOR.error, fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+            <span style={{ color: COLOR.error, fontSize: FONT_SIZE.sm, fontVariantNumeric: 'tabular-nums' }}>
               −{fileDiff.dels}
             </span>
           )}
           {isRunning && elapsed != null && elapsed >= 1 && (
-            <span style={{ color: COLOR.warn, fontSize: 10 }}>· {formatElapsed(elapsed)}</span>
+            <span style={{ color: COLOR.warn, fontSize: FONT_SIZE.xs }}>· {formatElapsed(elapsed)}</span>
           )}
           {isError && (
-            <span style={{ color: COLOR.error, fontSize: 11 }}>失败</span>
+            <span style={{ color: COLOR.error, fontSize: FONT_SIZE.sm }}>失败</span>
           )}
           {canExpand && (
             <ChevronRight
@@ -1607,14 +1607,14 @@ function ToolMessage({
             <span style={{
               color: taskStatus === 'failed' || taskStatus === 'stopped' ? COLOR.error
                 : taskStatus === 'completed' ? COLOR.success : COLOR.warn,
-              fontSize: 10, flexShrink: 0, fontStyle: isRunning ? 'italic' : 'normal',
+              fontSize: FONT_SIZE.xs, flexShrink: 0, fontStyle: isRunning ? 'italic' : 'normal',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
             }}>
               · {statusLabel}
             </span>
           )}
           {isRunning && elapsed != null && elapsed >= 1 && (
-            <span style={{ color: COLOR.warn, fontSize: 10, flexShrink: 0 }}>· {formatElapsed(elapsed)}</span>
+            <span style={{ color: COLOR.warn, fontSize: FONT_SIZE.xs, flexShrink: 0 }}>· {formatElapsed(elapsed)}</span>
           )}
           <ChevronRight
             size={10} strokeWidth={1.75} color={COLOR.dim}
@@ -1631,11 +1631,11 @@ function ToolMessage({
             {/* 派活的 brief */}
             {toolInput?.prompt && (
               <div style={{
-                padding: GAP.md, background: COLOR.bgCard, borderRadius: 8,
+                padding: GAP.md, background: COLOR.bgCard, borderRadius: RADIUS.lg,
                 fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
                 lineHeight: 1.5, whiteSpace: 'pre-wrap', maxHeight: 140, overflow: 'auto',
               }}>
-                <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em' }}>BRIEF</div>
+                <div style={{ fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginBottom: GAP.xs, letterSpacing: '0.04em' }}>BRIEF</div>
                 {String(toolInput.prompt)}
               </div>
             )}
@@ -1644,7 +1644,7 @@ function ToolMessage({
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {drawerRows.map((s, i) => (
                   <div key={i} style={{
-                    display: 'flex', gap: 6, alignItems: 'baseline',
+                    display: 'flex', gap: GAP.sm, alignItems: 'baseline',
                     fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
                   }}>
                     <span style={{ color: COLOR.dim, flexShrink: 0 }}>·</span>
@@ -1658,11 +1658,11 @@ function ToolMessage({
               <VisionCheckerCard text={resultText} />
             ) : resultText ? (
               <div style={{
-                padding: GAP.md, background: COLOR.bgCard, borderRadius: 8,
+                padding: GAP.md, background: COLOR.bgCard, borderRadius: RADIUS.lg,
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
                 lineHeight: 1.6, whiteSpace: 'pre-wrap', maxHeight: 320, overflow: 'auto',
               }}>
-                <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em', fontFamily: FONT_MONO }}>结果</div>
+                <div style={{ fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginBottom: GAP.xs, letterSpacing: '0.04em', fontFamily: FONT_MONO }}>结果</div>
                 {resultText}
               </div>
             ) : null}
@@ -1708,7 +1708,7 @@ function ToolMessage({
           </span>
         )}
         {isRunning && elapsed != null && elapsed >= 1 && (
-          <span style={{ color: COLOR.warn, fontSize: 10, flexShrink: 0 }}>
+          <span style={{ color: COLOR.warn, fontSize: FONT_SIZE.xs, flexShrink: 0 }}>
             · {formatElapsed(elapsed)}
           </span>
         )}
@@ -1731,13 +1731,13 @@ function ToolMessage({
             <div style={{
               padding: GAP.lg,
               background: COLOR.bgCard,
-              borderRadius: 8,
+              borderRadius: RADIUS.lg,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
               color: COLOR.text4, lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
               maxHeight: 200, overflow: 'auto',
             }}>
-              <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em' }}>INPUT</div>
+              <div style={{ fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginBottom: GAP.xs, letterSpacing: '0.04em' }}>INPUT</div>
               {typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput, null, 2)}
             </div>
           )}
@@ -1745,7 +1745,7 @@ function ToolMessage({
           {/* 图片 output（C24 screenshot 等返回图片）*/}
           {Array.isArray(toolImages) && toolImages.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xs }}>
-              <div style={{ fontSize: 9, color: COLOR.sub, letterSpacing: '0.04em' }}>OUTPUT (image)</div>
+              <div style={{ fontSize: FONT_SIZE.xxs, color: COLOR.sub, letterSpacing: '0.04em' }}>OUTPUT (image)</div>
               {toolImages.map((img, i) => (
                 <img
                   key={i}
@@ -1754,7 +1754,7 @@ function ToolMessage({
                   style={{
                     maxWidth: '100%',
                     border: `1px solid ${COLOR.borderLt}`,
-                    borderRadius: 6,
+                    borderRadius: RADIUS.md,
                   }}
                 />
               ))}
@@ -1766,13 +1766,13 @@ function ToolMessage({
             <div style={{
               padding: GAP.lg,
               background: COLOR.bgCard,
-              borderRadius: 8,
+              borderRadius: RADIUS.lg,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
               color: COLOR.text4, lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
               maxHeight: 280, overflow: 'auto',
             }}>
-              <div style={{ fontSize: 9, color: COLOR.sub, marginBottom: 4, letterSpacing: '0.04em' }}>OUTPUT</div>
+              <div style={{ fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginBottom: GAP.xs, letterSpacing: '0.04em' }}>OUTPUT</div>
               {typeof toolOutput === 'string' ? toolOutput : JSON.stringify(toolOutput, null, 2)}
             </div>
           )}
@@ -1783,12 +1783,12 @@ function ToolMessage({
               padding: GAP.lg,
               background: 'rgba(220, 53, 69, 0.06)',
               border: `1px solid ${COLOR.error}33`,
-              borderRadius: 8,
+              borderRadius: RADIUS.lg,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
               color: COLOR.error, lineHeight: 1.5,
               whiteSpace: 'pre-wrap',
             }}>
-              <div style={{ fontSize: 9, opacity: 0.8, marginBottom: 4, letterSpacing: '0.04em' }}>ERROR</div>
+              <div style={{ fontSize: FONT_SIZE.xxs, opacity: 0.8, marginBottom: GAP.xs, letterSpacing: '0.04em' }}>ERROR</div>
               {typeof toolError === 'string' ? toolError : JSON.stringify(toolError, null, 2)}
             </div>
           )}
@@ -1830,8 +1830,8 @@ function DiffView({ oldStr, newStr }) {
       marginTop: GAP.sm,
       background: COLOR.bgCard,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 6,
-      fontFamily: FONT_MONO, fontSize: 11,
+      borderRadius: RADIUS.md,
+      fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
       lineHeight: 1.5,
       maxHeight: 320,
       overflow: 'auto',
@@ -1853,7 +1853,7 @@ function DiffView({ oldStr, newStr }) {
             display: 'flex',
             background: bg,
             color: textColor,
-            padding: '0 8px',
+            padding: `0 ${GAP.md}px`,
             whiteSpace: 'pre',
           }}>
             <span style={{

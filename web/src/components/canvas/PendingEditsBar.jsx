@@ -10,7 +10,7 @@
  */
 
 import { Send, Undo2, X } from 'lucide-react';
-import { COLOR, FONT_MONO, FONT_SIZE, GAP } from '../../lib/theme.js';
+import { COLOR, FONT_MONO, FONT_SIZE, GAP, RADIUS } from '../../lib/theme.js';
 
 export default function PendingEditsBar({
   edits = [],
@@ -32,8 +32,8 @@ export default function PendingEditsBar({
       left: '50%',
       transform: 'translateX(-50%)',
       background: 'rgba(45, 36, 24, 0.94)',
-      color: '#f5f0e8',
-      borderRadius: 8,
+      color: COLOR.btnText,
+      borderRadius: RADIUS.lg,
       padding: `${GAP.sm}px ${GAP.lg}px`,
       display: 'flex',
       alignItems: 'center',
@@ -46,9 +46,9 @@ export default function PendingEditsBar({
       WebkitBackdropFilter: 'blur(8px)',
     }}>
       <span style={{
-        padding: '2px 8px',
+        padding: `${GAP.xxs}px ${GAP.md}px`,
         background: 'rgba(245, 240, 232, 0.15)',
-        borderRadius: 10,
+        borderRadius: RADIUS.xl,
         fontWeight: 600,
         minWidth: 22,
         textAlign: 'center',
@@ -113,25 +113,26 @@ function summarize(edits) {
 }
 
 const btnStyleGhost = {
-  display: 'inline-flex', alignItems: 'center', gap: 4,
-  padding: '4px 10px',
+  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+  padding: `${GAP.xs}px ${GAP.base}px`,
   fontFamily: 'inherit',
   fontSize: FONT_SIZE.xs,
-  color: '#f5f0e8',
+  color: COLOR.btnText,
   background: 'transparent',
   border: '1px solid rgba(245,240,232,0.25)',
-  borderRadius: 4,
+  borderRadius: RADIUS.sm,
 };
 
+// 反相按钮：条本身是深底，所以"主"按钮把主按钮的墨/纸对调 —— btn 当文字、btnText 当底
 const btnStylePrimary = {
-  display: 'inline-flex', alignItems: 'center', gap: 4,
+  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   padding: '5px 14px',
   fontFamily: 'inherit',
   fontSize: FONT_SIZE.xs,
   fontWeight: 600,
-  color: '#2d2418',
-  background: '#f5f0e8',
+  color: COLOR.btn,
+  background: COLOR.btnText,
   border: 'none',
-  borderRadius: 4,
+  borderRadius: RADIUS.sm,
   boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
 };

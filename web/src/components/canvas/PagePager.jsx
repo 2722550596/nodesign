@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { FONT_MONO } from '../../lib/theme.js';
+import { FONT_MONO, FONT_SIZE, GAP, RADIUS, TERM } from '../../lib/theme.js';
 
 /**
  * PagePager — 预览态的左右翻页（2026-07-28）
@@ -80,15 +80,15 @@ export default function PagePager({ iframeDoc, active }) {
   return (
     <div style={{
       position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
-      display: 'flex', alignItems: 'center', gap: 2,
-      background: 'rgba(28,24,18,0.86)', borderRadius: 999, padding: 4,
+      display: 'flex', alignItems: 'center', gap: GAP.xxs,
+      background: 'rgba(28,24,18,0.86)', borderRadius: RADIUS.pill, padding: GAP.xs,
       boxShadow: '0 6px 22px rgba(0,0,0,0.22)', zIndex: 30,
       backdropFilter: 'blur(6px)',
     }}>
       <PagerBtn onClick={() => go(-1)} disabled={idx === 0} icon={ChevronLeft} title="上一页（←）" />
       <span style={{
-        fontFamily: FONT_MONO, fontSize: 11, color: '#e8e2d2',
-        padding: '0 8px', minWidth: 52, textAlign: 'center', userSelect: 'none',
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: TERM.ink,
+        padding: `0 ${GAP.md}px`, minWidth: 52, textAlign: 'center', userSelect: 'none',
       }}>{idx + 1} / {pages.length}</span>
       <PagerBtn onClick={() => go(1)} disabled={idx === pages.length - 1} icon={ChevronRight} title="下一页（→）" />
     </div>
@@ -103,9 +103,9 @@ function PagerBtn({ onClick, disabled, icon: Icon, title }) {
       title={title}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        width: 26, height: 26, borderRadius: '50%',
+        width: 26, height: 26, borderRadius: RADIUS.round,
         border: 'none', background: 'transparent',
-        color: disabled ? 'rgba(232,226,210,0.3)' : '#e8e2d2',
+        color: disabled ? 'rgba(232,226,210,0.3)' : TERM.ink,
         cursor: disabled ? 'default' : 'pointer',
         transition: 'background 0.15s',
       }}

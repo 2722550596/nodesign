@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import SystemTab from '../context-panel/SystemTab.jsx';
 import DecisionsTab from '../context-panel/DecisionsTab.jsx';
 
@@ -48,9 +48,9 @@ export default function SystemPopover({
         position: 'absolute', top: 78, right: 16,
         width: 360,
         maxHeight: 'calc(100% - 100px)',
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: 10,
+        borderRadius: RADIUS.xl,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 60,
@@ -141,7 +141,7 @@ export default function SystemPopover({
             background: 'rgba(0,0,0,0.015)',
             margin: `0 ${GAP.lg}px ${GAP.md}px`,
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
           }}>
             <DecisionsTab
               projectId={projectId}
@@ -157,7 +157,7 @@ export default function SystemPopover({
         padding: `${GAP.sm}px ${GAP.lg}px`,
         background: COLOR.bgCard,
         borderTop: `1px solid ${COLOR.borderLt}`,
-        fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
         flexShrink: 0,
       }}>
         spec 不可在此编辑 — 改 spec 跟 agent 说，触发新 run。
@@ -171,7 +171,7 @@ const popoverToolBtn = {
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
   background: 'rgba(0,0,0,0.04)',
   border: 'none',
-  borderRadius: 4,
+  borderRadius: RADIUS.sm,
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   cursor: 'pointer',
 };

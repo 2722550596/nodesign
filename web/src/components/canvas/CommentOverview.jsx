@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { MessageSquare, MapPin, Check, Trash2, X } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { describePage } from '../../lib/element-semantics.js';
 
@@ -82,9 +82,9 @@ export default function CommentOverview({
         position: 'absolute', top: 78, right: 16,
         width: 380,
         maxHeight: 'calc(100% - 100px)',
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: 10,
+        borderRadius: RADIUS.xl,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 60,
@@ -110,7 +110,7 @@ export default function CommentOverview({
           onClick={onClose}
           title="关闭"
           style={{
-            padding: 4, color: COLOR.text5, borderRadius: 3,
+            padding: GAP.xs, color: COLOR.text5, borderRadius: RADIUS.xs,
             background: 'transparent', border: 'none', cursor: 'pointer',
           }}
         >
@@ -166,7 +166,7 @@ export default function CommentOverview({
         padding: `${GAP.sm}px ${GAP.lg}px`,
         background: COLOR.bgCard,
         borderTop: `1px solid ${COLOR.borderLt}`,
-        fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
         flexShrink: 0,
       }}>
         点击评论 → 跳到对应元素；evaluator 切到 edit 模式后可在浮卡续写。
@@ -180,10 +180,10 @@ function CommentCard({ comment, available, onClick, onResolve, onDelete }) {
   return (
     <div style={{
       padding: `${GAP.sm}px ${GAP.md}px`,
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 6,
-      display: 'flex', flexDirection: 'column', gap: 4,
+      borderRadius: RADIUS.md,
+      display: 'flex', flexDirection: 'column', gap: GAP.xs,
       opacity: resolved ? 0.5 : 1,
       cursor: available ? 'pointer' : 'default',
       transition: 'background 0.1s',
@@ -193,7 +193,7 @@ function CommentCard({ comment, available, onClick, onResolve, onDelete }) {
       if (available) e.currentTarget.style.background = 'rgba(0,0,0,0.02)';
     }}
     onMouseLeave={(e) => {
-      e.currentTarget.style.background = '#fff';
+      e.currentTarget.style.background = COLOR.bgWhite;
     }}
     >
       <div style={{
@@ -206,8 +206,8 @@ function CommentCard({ comment, available, onClick, onResolve, onDelete }) {
         {comment.text}
       </div>
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 4,
-        fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+        display: 'flex', alignItems: 'center', gap: GAP.xs,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
       }}>
         {available ? (
           <>
@@ -221,14 +221,14 @@ function CommentCard({ comment, available, onClick, onResolve, onDelete }) {
         <button
           onClick={(e) => { e.stopPropagation(); onResolve(); }}
           title={resolved ? '取消解决' : '标记解决'}
-          style={{ padding: 2, color: COLOR.sub, borderRadius: 3, background: 'transparent', border: 'none', cursor: 'pointer' }}
+          style={{ padding: GAP.xxs, color: COLOR.sub, borderRadius: RADIUS.xs, background: 'transparent', border: 'none', cursor: 'pointer' }}
         >
           <Check size={11} />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="删除"
-          style={{ padding: 2, color: COLOR.sub, borderRadius: 3, background: 'transparent', border: 'none', cursor: 'pointer' }}
+          style={{ padding: GAP.xxs, color: COLOR.sub, borderRadius: RADIUS.xs, background: 'transparent', border: 'none', cursor: 'pointer' }}
         >
           <Trash2 size={11} />
         </button>

@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Send, X } from 'lucide-react';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, EDITOR } from '../../lib/theme.js';
 import { serializeAnchor } from '../../lib/html-utils.js';
 import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
 
@@ -127,22 +128,22 @@ export default function PostDragNotePanel({
         top, left,
         width: PANEL_WIDTH,
         background: 'rgba(255,255,255,0.99)',
-        border: '1px solid rgba(0,0,0,0.12)',
-        borderRadius: 8,
+        border: `1px solid ${COLOR.borderHv}`,
+        borderRadius: RADIUS.lg,
         boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-        padding: 8,
+        padding: GAP.md,
         zIndex: 45,
-        fontFamily: '"SF Mono", monospace',
+        fontFamily: FONT_MONO,
         pointerEvents: 'auto',
       }}
     >
       {/* header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 6,
+        marginBottom: GAP.sm,
       }}>
         <span style={{
-          fontSize: 9, color: 'rgba(45,36,24,0.6)',
+          fontSize: FONT_SIZE.xxs, color: 'rgba(45,36,24,0.6)',
           textTransform: 'uppercase', letterSpacing: 0.5,
         }}>
           可选备注 · 默认最小改动
@@ -157,7 +158,7 @@ export default function PostDragNotePanel({
             border: 'none',
             color: 'rgba(45,36,24,0.4)',
             cursor: 'pointer',
-            borderRadius: 3,
+            borderRadius: RADIUS.xs,
           }}
         >
           <X size={11} />
@@ -175,21 +176,21 @@ export default function PostDragNotePanel({
         rows={3}
         style={{
           width: '100%',
-          padding: 6,
+          padding: GAP.sm,
           fontFamily: 'inherit',
-          fontSize: 11,
+          fontSize: FONT_SIZE.sm,
           lineHeight: '15px',
           color: 'rgba(45,36,24,0.9)',
           background: 'rgba(0,0,0,0.02)',
-          border: '1px solid rgba(0,0,0,0.08)',
-          borderRadius: 4,
+          border: `1px solid ${COLOR.borderMd}`,
+          borderRadius: RADIUS.sm,
           resize: 'vertical',
           outline: 'none',
           boxSizing: 'border-box',
         }}
       />
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6, gap: 4 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: GAP.sm, gap: GAP.xs }}>
         <button
           onClick={handleSubmit}
           disabled={!text.trim() || submitting || !hasPendingEditId}
@@ -202,12 +203,12 @@ export default function PostDragNotePanel({
           }
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 3,
-            padding: '4px 10px',
-            fontFamily: 'inherit', fontSize: 10, fontWeight: 600,
-            color: '#fff',
-            background: '#3a7afe',
+            padding: `${GAP.xs}px ${GAP.base}px`,
+            fontFamily: 'inherit', fontSize: FONT_SIZE.xs, fontWeight: 600,
+            color: COLOR.bgWhite,
+            background: EDITOR.blue,
             border: 'none',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
             cursor: (!text.trim() || submitting || !hasPendingEditId) ? 'not-allowed' : 'pointer',
             opacity: (!text.trim() || submitting || !hasPendingEditId) ? 0.4 : 1,
             boxShadow: '0 1px 3px rgba(58,122,254,0.25)',

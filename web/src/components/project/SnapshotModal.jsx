@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Camera, RotateCcw, Trash2, Edit2, Plus } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { timeAgo } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -31,7 +31,7 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
           padding: GAP.lg,
           background: COLOR.bgCard,
           border: `1px solid ${COLOR.borderLt}`,
-          borderRadius: 10,
+          borderRadius: RADIUS.xl,
           marginBottom: GAP.xl,
         }}>
           <div style={{
@@ -52,9 +52,9 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
                 padding: `${GAP.sm}px ${GAP.md}px`,
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
                 color: COLOR.text,
-                background: '#fff',
+                background: COLOR.bgWhite,
                 border: `1px solid ${COLOR.borderMd}`,
-                borderRadius: 6,
+                borderRadius: RADIUS.md,
                 outline: 'none',
               }}
             />
@@ -65,7 +65,7 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
                 color: COLOR.btnText, background: COLOR.btn,
                 border: `1px solid ${COLOR.btn}`,
-                borderRadius: 6,
+                borderRadius: RADIUS.md,
                 cursor: 'pointer',
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
               }}
@@ -88,7 +88,7 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
           <div style={{
             padding: GAP.xl, textAlign: 'center',
             border: `1px dashed ${COLOR.borderMd}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
           }}>
             还没有快照。试试在尝试新方向前保存一个。
@@ -145,12 +145,12 @@ function SnapshotRow({ snapshot, onRestore, onDelete, onRename }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: GAP.md,
       padding: `${GAP.md}px ${GAP.lg}px`,
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 8,
+      borderRadius: RADIUS.lg,
     }}>
       <div style={{
-        width: 28, height: 28, borderRadius: 6,
+        width: 28, height: 28, borderRadius: RADIUS.md,
         background: COLOR.bgCard,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         flexShrink: 0,
@@ -180,7 +180,7 @@ function SnapshotRow({ snapshot, onRestore, onDelete, onRename }) {
 }
 
 const iconBtn = {
-  width: 26, height: 26, borderRadius: 4,
+  width: 26, height: 26, borderRadius: RADIUS.sm,
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   color: COLOR.sub,
   background: 'transparent',

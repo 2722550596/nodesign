@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, EDITOR } from '../../lib/theme.js';
 
 /**
  * CommentMarkers — 已评论元素的视觉标记（橙色框 + 右上角"已评论"标签）
@@ -125,7 +126,7 @@ export default function CommentMarkers({
                 width: width + 6,
                 height: height + 6,
                 border: `2px solid ${ORANGE}`,
-                borderRadius: 4,
+                borderRadius: RADIUS.sm,
                 boxShadow: `0 0 0 3px ${ORANGE_GLOW}`,
                 zIndex: 9,
               }}
@@ -140,16 +141,16 @@ export default function CommentMarkers({
                 top: top - 12,
                 left: left + width - 8,
                 transform: 'translateX(-100%)',
-                padding: '2px 6px',
-                fontFamily: '"SF Mono", monospace',
-                fontSize: 10, lineHeight: '14px', fontWeight: 500,
-                color: '#fff',
+                padding: `${GAP.xxs}px ${GAP.sm}px`,
+                fontFamily: FONT_MONO,
+                fontSize: FONT_SIZE.xs, lineHeight: '14px', fontWeight: 500,
+                color: COLOR.bgWhite,
                 background: ORANGE,
                 border: 'none',
-                borderRadius: 3,
+                borderRadius: RADIUS.xs,
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                boxShadow: SHADOW.crisp,
                 zIndex: 11,
                 maxWidth: Math.max(60, width),
                 overflow: 'hidden',
@@ -165,5 +166,5 @@ export default function CommentMarkers({
   );
 }
 
-const ORANGE = '#e67e22';
+const ORANGE = EDITOR.orange;
 const ORANGE_GLOW = 'rgba(230, 126, 34, 0.18)';

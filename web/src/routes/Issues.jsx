@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AlertTriangle, Bot, Wrench, Check, EyeOff, Trash2, RotateCcw, Bug, Lightbulb } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { Admin } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
@@ -92,10 +92,10 @@ export function IssuesPanel() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm, marginBottom: GAP.xl }}>
             {topTools.map((s, i) => (
               <span key={i} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
+                display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
                 fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text2,
                 padding: `${GAP.xs}px ${GAP.md}px`,
-                background: 'rgba(0,0,0,0.035)', borderRadius: 100,
+                background: 'rgba(0,0,0,0.035)', borderRadius: RADIUS.pill,
               }}>
                 {shortTool(s.toolName)}
                 <b style={{ color: COLOR.text }}>{s.total}</b>
@@ -148,10 +148,10 @@ function IssueRow({ issue, onAct }) {
 
   return (
     <div style={{
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.border}`,
       borderLeft: `3px solid ${isIdea ? COLOR.gold : hot ? COLOR.warn : COLOR.border}`,
-      borderRadius: 10,
+      borderRadius: RADIUS.xl,
       padding: `${GAP.md}px ${GAP.lg}px`,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: GAP.md }}>
@@ -168,7 +168,7 @@ function IssueRow({ issue, onAct }) {
 
           <div style={{
             display: 'flex', alignItems: 'center', gap: GAP.md, flexWrap: 'wrap',
-            marginTop: 4, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+            marginTop: GAP.xs, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           }}>
             <span style={{ color: hot ? COLOR.warn : COLOR.text2, fontWeight: 600 }}>×{issue.count}</span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: kindMeta.color }}>
@@ -184,7 +184,7 @@ function IssueRow({ issue, onAct }) {
             <div style={{
               marginTop: GAP.md,
               padding: `${GAP.md}px ${GAP.lg}px`,
-              background: 'rgba(0,0,0,0.025)', borderRadius: 8,
+              background: 'rgba(0,0,0,0.025)', borderRadius: RADIUS.lg,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text2,
               lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
@@ -201,7 +201,7 @@ function IssueRow({ issue, onAct }) {
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: GAP.xxs, flexShrink: 0 }}>
           {issue.status !== 'closed'
             ? <IconBtn title="标记已修" onClick={() => onAct(issue.id, 'closed')}><Check size={13} /></IconBtn>
             : <IconBtn title="重新打开" onClick={() => onAct(issue.id, 'open')}><RotateCcw size={13} /></IconBtn>}
@@ -221,7 +221,7 @@ function IconBtn({ children, title, onClick, danger }) {
       title={title}
       onClick={onClick}
       style={{
-        width: 26, height: 26, borderRadius: 6,
+        width: 26, height: 26, borderRadius: RADIUS.md,
         background: 'transparent', border: 0, cursor: 'pointer',
         color: danger ? COLOR.error : COLOR.sub,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -234,7 +234,7 @@ function IconBtn({ children, title, onClick, danger }) {
 
 export function Segmented({ value, onChange, options }) {
   return (
-    <div style={{ display: 'inline-flex', gap: 2, padding: 2, background: 'rgba(0,0,0,0.04)', borderRadius: 8 }}>
+    <div style={{ display: 'inline-flex', gap: GAP.xxs, padding: GAP.xxs, background: 'rgba(0,0,0,0.04)', borderRadius: RADIUS.lg }}>
       {options.map(([v, label]) => (
         <button
           key={v}
@@ -243,8 +243,8 @@ export function Segmented({ value, onChange, options }) {
             padding: `${GAP.xs}px ${GAP.md}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
             color: value === v ? COLOR.text : COLOR.sub,
-            background: value === v ? '#fff' : 'transparent',
-            border: 0, borderRadius: 6, cursor: 'pointer',
+            background: value === v ? COLOR.bgWhite : 'transparent',
+            border: 0, borderRadius: RADIUS.md, cursor: 'pointer',
             boxShadow: value === v ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
           }}
         >{label}</button>

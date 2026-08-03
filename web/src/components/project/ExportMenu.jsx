@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare, Globe, Share2 } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * 格式 id → 展示元数据。**哪些格式可用由服务端 kinds/ 注册表定**（/artifacts 的
@@ -73,11 +73,11 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
       style={{
         position: 'absolute', top: 'calc(100% + 6px)', right: 0,
         minWidth: 240,
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: 8,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
-        padding: 4,
+        borderRadius: RADIUS.lg,
+        boxShadow: SHADOW.pop,
+        padding: GAP.xs,
         zIndex: 50,
       }}
     >
@@ -90,7 +90,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
             style={{
               display: 'flex', alignItems: 'center', gap: GAP.sm, width: '100%',
               padding: `${GAP.sm}px ${GAP.md}px`,
-              background: 'transparent', border: 0, borderRadius: 6, cursor: 'pointer',
+              background: 'transparent', border: 0, borderRadius: RADIUS.md, cursor: 'pointer',
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, textAlign: 'left',
             }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
@@ -118,7 +118,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
               padding: `${GAP.sm + 1}px ${GAP.md + 2}px`,
               background: 'transparent',
               border: 'none',
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               cursor: item.disabled ? 'not-allowed' : 'pointer',
               textAlign: 'left',
               opacity: item.disabled ? 0.45 : 1,
@@ -126,10 +126,10 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
             onMouseEnter={e => { if (!item.disabled) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
-            <Icon size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: 2 }} />
+            <Icon size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>{item.label}</div>
-              <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, marginTop: 1 }}>{item.desc}</div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>{item.desc}</div>
             </div>
           </button>
         );
@@ -138,23 +138,23 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
       {/* 挑着导出：整包之外，用户经常只要"那三张图"/"就这份 deck"（2026-07-28）*/}
       {onPick && (
         <>
-          <div style={{ height: 1, background: COLOR.borderLt, margin: `4px ${GAP.sm}px` }} />
+          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
           <button
             onClick={() => { onPick(); onClose?.(); }}
             style={{
               width: '100%',
               display: 'flex', alignItems: 'flex-start', gap: GAP.md,
               padding: `${GAP.sm + 1}px ${GAP.md + 2}px`,
-              background: 'transparent', border: 'none', borderRadius: 4,
+              background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
               cursor: 'pointer', textAlign: 'left',
             }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
-            <CheckSquare size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: 2 }} />
+            <CheckSquare size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>挑着导出…</div>
-              <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, marginTop: 1 }}>当前任务的产物，勾哪个下哪个</div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>当前任务的产物，勾哪个下哪个</div>
             </div>
           </button>
         </>
@@ -163,7 +163,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
       {/* C31：分隔线 + 已生成的交付文件入口（agent export_handoff 写到 workspace/exports/）*/}
       {onOpenList && (
         <>
-          <div style={{ height: 1, background: COLOR.borderLt, margin: `4px ${GAP.sm}px` }} />
+          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
           <button
             onClick={() => { onOpenList(); onClose?.(); }}
             style={{
@@ -172,7 +172,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
               padding: `${GAP.sm + 1}px ${GAP.md + 2}px`,
               background: 'transparent',
               border: 'none',
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               cursor: 'pointer',
               textAlign: 'left',
             }}
@@ -182,7 +182,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
             <FolderOpen size={14} color={COLOR.text4} style={{ flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>agent 打过的包</div>
-              <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, marginTop: 1 }}>agent 主动 export_handoff 后产出</div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>agent 主动 export_handoff 后产出</div>
             </div>
           </button>
         </>

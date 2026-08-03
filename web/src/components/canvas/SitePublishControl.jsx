@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Rocket, ExternalLink, Copy, RefreshCw, CloudOff, Loader2 } from 'lucide-react';
-import { COLOR, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Publish } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -96,7 +96,7 @@ export default function SitePublishControl({ projectId, task }) {
   }
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.xxs }}>
       <a
         href={site.url} target="_blank" rel="noreferrer"
         title={site.url}
@@ -105,7 +105,7 @@ export default function SitePublishControl({ projectId, task }) {
           background: 'rgba(74,138,74,0.08)', maxWidth: 190,
         }}
       >
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: COLOR.success, flexShrink: 0 }} />
+        <span style={{ width: 6, height: 6, borderRadius: RADIUS.round, background: COLOR.success, flexShrink: 0 }} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: FONT_MONO }}>
           {site.url.replace(/^https:\/\//, '')}
         </span>
@@ -114,7 +114,7 @@ export default function SitePublishControl({ projectId, task }) {
       <MiniBtn title="复制地址" onClick={copyUrl}><Copy size={11} /></MiniBtn>
       <MiniBtn title="把当前版本重新发布（地址不变）" onClick={doPublish}><RefreshCw size={11} /></MiniBtn>
       {confirm === 'unpublish' ? (
-        <button onClick={doUnpublish} style={{ ...pill, background: COLOR.error, color: '#fff', border: 0, cursor: 'pointer' }}>
+        <button onClick={doUnpublish} style={{ ...pill, background: COLOR.error, color: COLOR.bgWhite, border: 0, cursor: 'pointer' }}>
           确认下线？
         </button>
       ) : (
@@ -126,7 +126,7 @@ export default function SitePublishControl({ projectId, task }) {
 
 const pill = {
   display: 'inline-flex', alignItems: 'center', gap: 5,
-  padding: '3px 9px', borderRadius: 100,
+  padding: '3px 9px', borderRadius: RADIUS.pill,
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
 };
 
@@ -136,7 +136,7 @@ function MiniBtn({ children, title, onClick, danger }) {
       title={title}
       onClick={onClick}
       style={{
-        width: 22, height: 22, borderRadius: 6,
+        width: 22, height: 22, borderRadius: RADIUS.md,
         background: 'transparent', border: 0, cursor: 'pointer',
         color: danger ? COLOR.error : COLOR.sub,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',

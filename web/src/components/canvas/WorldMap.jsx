@@ -14,7 +14,7 @@
  * 背景，直出原图首屏就是上百 MB，1 核 Spot 机和用户的浏览器都受不了。
  */
 
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { Assets } from '../../lib/api.js';
 
 /** 地点框按深度收敛：外层大、内层小，层级一眼可辨 */
@@ -33,7 +33,7 @@ function Portrait({ projectId, base, node, size }) {
   return (
     <div title={node.name} style={{ width: size, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
       <div style={{
-        width: size, height: size, borderRadius: 6, overflow: 'hidden',
+        width: size, height: size, borderRadius: RADIUS.md, overflow: 'hidden',
         background: COLOR.bgCard, border: `1px solid ${COLOR.borderLt}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
@@ -46,7 +46,7 @@ function Portrait({ projectId, base, node, size }) {
             </span>}
       </div>
       <span style={{
-        fontFamily: FONT_SANS, fontSize: 10, color: COLOR.text, maxWidth: size,
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text, maxWidth: size,
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       }}>{node.name}</span>
     </div>
@@ -80,24 +80,24 @@ function PlaceBox({ projectId, base, node, childrenOf }) {
         }} />
       )}
       <div style={{ position: 'relative' }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: chars.length || subs.length ? 6 : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.sm, marginBottom: chars.length || subs.length ? GAP.sm : 0 }}>
           <span style={{ fontFamily: FONT_SANS, fontWeight: 600, fontSize: s.title, color: COLOR.text }}>
             {node.name}
           </span>
           {isContainer && (
-            <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub }}>收纳 · 不在场</span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>收纳 · 不在场</span>
           )}
           {/* 没写 地点.md 的层。不标出来的话，用户只会觉得这一层「莫名其妙不一样」 */}
           {node.implicit && (
             <span title="这一层还没写 地点.md，补上才算正式声明"
-              style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub, opacity: 0.8 }}>
+              style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub, opacity: 0.8 }}>
               未声明
             </span>
           )}
         </div>
 
         {chars.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm, marginBottom: subs.length ? 8 : 0 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.sm, marginBottom: subs.length ? GAP.md : 0 }}>
             {chars.map(c => (
               <Portrait key={c.path} projectId={projectId} base={base} node={c} size={s.portrait} />
             ))}
@@ -105,7 +105,7 @@ function PlaceBox({ projectId, base, node, childrenOf }) {
         )}
 
         {subs.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.sm }}>
             {subs.map(sn => (
               <PlaceBox key={sn.path} projectId={projectId} base={base} node={sn} childrenOf={childrenOf} />
             ))}

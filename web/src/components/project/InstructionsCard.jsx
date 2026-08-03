@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Pencil, Save, Loader2 } from 'lucide-react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Instruction } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -118,7 +118,7 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
         }}>
           agent 每次开工都会先读这份（想要的风格、不能碰的东西、给谁看、别做什么）。
           保存后下一轮对话生效。
-          <span style={{ color: COLOR.dim, marginLeft: GAP.sm, fontFamily: FONT_MONO, fontSize: 10 }}>
+          <span style={{ color: COLOR.dim, marginLeft: GAP.sm, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs }}>
             shared/.claude/CLAUDE.md
           </span>
         </div>
@@ -132,9 +132,9 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
             padding: GAP.md,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             color: COLOR.text, lineHeight: 1.55,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             outline: 'none',
             resize: 'vertical',
             boxSizing: 'border-box',
@@ -148,10 +148,10 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
         confirmDisabled={!dirty || saving}
         confirmLabel={
           saving
-            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.xs }}>
                 <Loader2 size={12} style={{ animation: 'i-edit-spin 1s linear infinite' }} /> 保存中…
               </span>
-            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.xs }}>
                 <Save size={12} /> 保存
               </span>
         }
@@ -162,9 +162,9 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
 }
 
 const cardStyle = {
-  background: '#fff',
+  background: COLOR.bgWhite,
   border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: 12,
+  borderRadius: RADIUS.xxl,
   padding: GAP.lg,
 };
 const cardHeader = {
@@ -177,7 +177,7 @@ const cardTitle = {
   color: COLOR.text,
 };
 const iconBtnStyle = {
-  width: 26, height: 26, borderRadius: 4,
+  width: 26, height: 26, borderRadius: RADIUS.sm,
   background: 'transparent',
   border: 'none',
   color: COLOR.text2,

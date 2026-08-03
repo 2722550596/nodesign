@@ -1,5 +1,5 @@
 import { X, FileText, Image as ImageIcon, AlertCircle, Paperclip } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { formatSize } from '../../lib/helpers.js';
 
 /**
@@ -40,9 +40,9 @@ function TrayChip({ item, onRemove }) {
       style={{
         display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
         padding: `${GAP.xs - 1}px ${GAP.xs + 2}px`,
-        background: failed ? 'rgba(184,58,42,0.06)' : '#fff',
+        background: failed ? 'rgba(184,58,42,0.06)' : COLOR.bgWhite,
         border: `1px solid ${failed ? COLOR.error : COLOR.borderLt}`,
-        borderRadius: 6,
+        borderRadius: RADIUS.md,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
         color: failed ? COLOR.error : COLOR.text2,
         opacity: uploading ? 0.6 : 1,
@@ -60,7 +60,7 @@ function TrayChip({ item, onRemove }) {
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200,
       }}>{label}</span>
       {item.size != null && !failed && (
-        <span style={{ fontFamily: FONT_MONO, color: COLOR.sub, fontSize: 10 }}>
+        <span style={{ fontFamily: FONT_MONO, color: COLOR.sub, fontSize: FONT_SIZE.xs }}>
           {formatSize(item.size)}
         </span>
       )}
@@ -68,7 +68,7 @@ function TrayChip({ item, onRemove }) {
         onClick={() => onRemove?.(item.id)}
         title="移除"
         style={{
-          width: 14, height: 14, borderRadius: 3,
+          width: 14, height: 14, borderRadius: RADIUS.xs,
           background: 'transparent', color: COLOR.sub,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,

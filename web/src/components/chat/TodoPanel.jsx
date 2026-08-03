@@ -38,17 +38,17 @@ export default function TodoPanel({ todos = [] }) {
         marginBottom: GAP.xs + 1,
       }}>
         <span style={{
-          fontFamily: FONT_MONO, fontSize: 10, fontWeight: 500,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
           color: COLOR.text2, letterSpacing: '0.04em',
           textTransform: 'uppercase',
         }}>计划</span>
         <span style={{
-          fontFamily: FONT_MONO, fontSize: 10,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
           color: allDone ? COLOR.success : COLOR.sub,
         }}>{completed}/{total}</span>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xxs }}>
         {todos.map((t, i) => <TodoRow key={i} todo={t} />)}
       </div>
 

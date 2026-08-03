@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO } from '../../lib/theme.js';
 
 const LAYOUT_LABEL = {
   cover: 'Cover',
@@ -153,7 +153,7 @@ export default function SlideNavigator({ iframeDoc }) {
       }}
     >
       <span style={{
-        fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
         textTransform: 'uppercase', letterSpacing: '0.06em',
         flexShrink: 0, marginRight: GAP.sm,
       }}>
@@ -173,9 +173,9 @@ export default function SlideNavigator({ iframeDoc }) {
               padding: `${GAP.xs}px ${GAP.md}px`,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
               color: active ? COLOR.text : COLOR.text4,
-              background: active ? '#fff' : 'rgba(0,0,0,0.03)',
+              background: active ? COLOR.bgWhite : 'rgba(0,0,0,0.03)',
               border: `1px solid ${active ? COLOR.borderMd : 'transparent'}`,
-              borderRadius: 6,
+              borderRadius: RADIUS.md,
               boxShadow: active ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
               textAlign: 'left',
               cursor: 'pointer',
@@ -189,7 +189,7 @@ export default function SlideNavigator({ iframeDoc }) {
             </span>
             {p.title && (
               <span style={{
-                fontSize: 9, color: COLOR.sub,
+                fontSize: FONT_SIZE.xxs, color: COLOR.sub,
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 lineHeight: 1.2,
               }}>{p.title}</span>

@@ -4,7 +4,7 @@ import { Plus, Sparkles, Wrench, LayoutTemplate, MoreHorizontal, Copy, Trash2, E
 import AppShell from '../components/layout/AppShell.jsx';
 import CreateProjectModal from '../components/project/CreateProjectModal.jsx';
 import ComposerTray from '../components/chat/ComposerTray.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { Sessions, Assets } from '../lib/api.js';
@@ -31,6 +31,8 @@ export default function Home() {
   const error = useProjectStore(s => s.error);
   const hydrate = useProjectStore(s => s.hydrate);
   const [createOpen, setCreateOpen] = useState(false);
+  // 空状态示例 chip → 预填顶部输入框（不直接发 turn：让用户看到内容、可改可删）
+  const [prefill, setPrefill] = useState(null);   // { text, ts }
 
   useEffect(() => {
     if (!hydrated && !hydrating) {
@@ -56,7 +58,7 @@ export default function Home() {
 
         {/* 闪聊入口 */}
         <section style={{ marginBottom: GAP.xxl }}>
-          <QuickEntry />
+          <QuickEntry prefill={prefill} />
         </section>
 
         {/* 最近闪聊（无内容时不显示）*/}
@@ -79,7 +81,13 @@ export default function Home() {
           ) : error ? (
             <ErrorState message={error} onRetry={() => hydrate({ kind: 'project' }).catch(() => {})} />
           ) : projects.length === 0 ? (
-            <EmptyState onCreate={openCreate} />
+            <EmptyState
+              onCreate={openCreate}
+              onPick={(text) => {
+                setPrefill({ text, ts: Date.now() });
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
           ) : (
             <div style={{
               display: 'grid',
@@ -151,7 +159,7 @@ function pickPlaceholder() {
   return PLACEHOLDER_EXAMPLES[Math.floor(Math.random() * PLACEHOLDER_EXAMPLES.length)];
 }
 
-function QuickEntry() {
+function QuickEntry({ prefill }) {
   const navigate = useNavigate();
   const createProject = useProjectStore(s => s.createProject);
   const showToast = useGlobalStore(s => s.showToast);
@@ -172,6 +180,13 @@ function QuickEntry() {
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 280) + 'px';
   }, [text]);
+
+  // 空状态示例 chip 点击 → 填入并聚焦（ts 变化允许重复点同一条）
+  useEffect(() => {
+    if (!prefill?.text) return;
+    setText(prefill.text);
+    ref.current?.focus();
+  }, [prefill]);
 
   const handlePickFile = (file) => {
     const tempId = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -238,7 +253,7 @@ function QuickEntry() {
         textAlign: 'center',
       }}>{greeting}</h1>
       <div style={{
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.borderMd}`,
       borderRadius: 16,
       padding: `${GAP.lg}px ${GAP.lg}px ${GAP.md}px`,
@@ -315,7 +330,7 @@ function QuickEntry() {
             color: COLOR.btnText,
             background: empty ? COLOR.dim : COLOR.btn,
             border: `1px solid ${empty ? COLOR.dim : COLOR.btn}`,
-            borderRadius: 10,
+            borderRadius: RADIUS.xl,
             cursor: empty ? 'not-allowed' : 'pointer',
             transition: 'background 0.15s',
             opacity: submitting ? 0.6 : 1,
@@ -380,14 +395,11 @@ function RecentQuickSection() {
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 600,
           color: COLOR.text2, letterSpacing: '-0.01em', margin: 0,
         }}>最近对话</h2>
-        <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-          早期的临时对话（现在从上面输入框开始 = 直接建项目）
-        </span>
       </div>
       <div style={{
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderLt}`,
-        borderRadius: 10,
+        borderRadius: RADIUS.xl,
         overflow: 'hidden',
       }}>
         {sessions.map((s, i) => (
@@ -431,7 +443,7 @@ function RecentQuickRow({ session: s, isFirst, onDelete }) {
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
             color: COLOR.text,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            marginBottom: 2,
+            marginBottom: GAP.xxs,
           }}>
             {s.customTitle || s.summary || s.firstPrompt || s.projectName || '未命名对话'}
           </div>
@@ -442,7 +454,7 @@ function RecentQuickRow({ session: s, isFirst, onDelete }) {
           </div>
         </div>
         <span style={{
-          color: COLOR.dim, fontSize: 12,
+          color: COLOR.dim, fontSize: FONT_SIZE.md,
           opacity: hover ? 0 : 1,
           transition: 'opacity 0.15s',
           width: 28, textAlign: 'right',
@@ -456,7 +468,7 @@ function RecentQuickRow({ session: s, isFirst, onDelete }) {
             position: 'absolute',
             top: '50%', right: GAP.md,
             transform: 'translateY(-50%)',
-            width: 26, height: 26, borderRadius: 4,
+            width: 26, height: 26, borderRadius: RADIUS.sm,
             background: 'rgba(255,255,255,0.95)',
             border: `1px solid ${COLOR.borderMd}`,
             color: COLOR.text2,
@@ -542,9 +554,9 @@ function ProjectCard({ project }) {
       <Link to={`/projects/${project.id}/work`} style={{
         display: 'block',
         padding: GAP.lg,
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.border}`,
-        borderRadius: 12,
+        borderRadius: RADIUS.xxl,
         boxShadow: hover ? '0 6px 18px rgba(0,0,0,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
         borderColor: hover ? COLOR.borderMd : COLOR.border,
         transform: hover ? 'translateY(-2px)' : 'none',
@@ -557,7 +569,7 @@ function ProjectCard({ project }) {
           <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 500, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
             {project.name}
           </div>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: dot, flexShrink: 0, marginLeft: GAP.md }} />
+          <span style={{ width: 6, height: 6, borderRadius: RADIUS.xs, background: dot, flexShrink: 0, marginLeft: GAP.md }} />
         </div>
         {project.description && (
           <div style={{
@@ -586,7 +598,7 @@ function ProjectCard({ project }) {
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(v => !v); }}
           style={{
             position: 'absolute', top: 8, right: 8,
-            width: 28, height: 28, borderRadius: 6,
+            width: 28, height: 28, borderRadius: RADIUS.md,
             background: 'rgba(255,255,255,0.95)',
             border: `1px solid ${COLOR.borderMd}`,
             color: COLOR.text2,
@@ -605,11 +617,11 @@ function ProjectCard({ project }) {
           style={{
             position: 'absolute', top: 40, right: 8,
             minWidth: 140,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 8,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
-            padding: 4,
+            borderRadius: RADIUS.lg,
+            boxShadow: SHADOW.pop,
+            padding: GAP.xs,
             zIndex: 5,
           }}>
           <MenuItem icon={<Edit2 size={12} />} label="重命名" onClick={handleRename} />
@@ -646,7 +658,7 @@ function ThumbnailBox({ project, hasCover }) {
   const wrap = {
     width: '100%',
     aspectRatio: String(ratio),
-    borderRadius: 8,
+    borderRadius: RADIUS.lg,
     marginBottom: GAP.lg,
     overflow: 'hidden',
     background: COLOR.bgCard,
@@ -700,7 +712,7 @@ function MenuItem({ icon, label, onClick, danger }) {
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
         color: danger ? COLOR.error : COLOR.text2,
         background: 'transparent',
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         cursor: 'pointer',
         textAlign: 'left',
       }}
@@ -729,9 +741,9 @@ function ErrorState({ message, onRetry }) {
     <div style={{
       padding: `${GAP.page}px ${GAP.page}px`,
       textAlign: 'center',
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px dashed ${COLOR.borderMd}`,
-      borderRadius: 12,
+      borderRadius: RADIUS.xxl,
     }}>
       <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.h2, color: COLOR.error, marginBottom: GAP.sm }}>
         加载失败
@@ -742,9 +754,9 @@ function ErrorState({ message, onRetry }) {
       <button onClick={onRetry} style={{
         padding: `${GAP.md}px ${GAP.xxl}px`,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
-        color: '#fff', background: COLOR.btn,
+        color: COLOR.bgWhite, background: COLOR.btn,
         border: `1px solid ${COLOR.btn}`,
-        borderRadius: 8,
+        borderRadius: RADIUS.lg,
       }}>
         重试
       </button>
@@ -752,31 +764,62 @@ function ErrorState({ message, onRetry }) {
   );
 }
 
-function EmptyState({ onCreate }) {
+/**
+ * 空状态（新号第一眼）：光说「还没有项目」新人不知道这东西能做什么。
+ * 给几个可点的示例 prompt —— 点了只预填顶部输入框（可改可删），不直接开跑。
+ */
+const EMPTY_EXAMPLES = [
+  '给我喜欢的歌做一个歌词视觉页',
+  '做一个收集我笔下角色设定的档案站',
+  '春节活动海报，暖色调',
+  '把这半年做的东西整理成一份介绍 deck',
+];
+
+function EmptyState({ onCreate, onPick }) {
   return (
     <div style={{
       padding: `${GAP.page * 1.2}px ${GAP.page}px`,
       textAlign: 'center',
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px dashed ${COLOR.borderMd}`,
-      borderRadius: 12,
+      borderRadius: RADIUS.xxl,
     }}>
       <Sparkles size={32} color={COLOR.dim} style={{ marginBottom: GAP.md }} />
       <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, color: COLOR.text2, marginBottom: GAP.sm }}>
-        还没有项目
+        还没有作品
       </div>
-      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginBottom: GAP.lg, lineHeight: 1.6 }}>
-        一件要做很久、想让风格连贯的东西 → 点「+ 新建项目」<br />
-        只是临时试一下 → 用上方的输入框
+      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginBottom: GAP.xl, lineHeight: 1.6 }}>
+        在上面的输入框说一句话就能开工。没想好的话，点一个试试：
+      </div>
+      <div style={{
+        display: 'flex', flexWrap: 'wrap', gap: GAP.md,
+        justifyContent: 'center', marginBottom: GAP.xl,
+      }}>
+        {EMPTY_EXAMPLES.map((text) => (
+          <button
+            key={text}
+            onClick={() => onPick?.(text)}
+            style={{
+              padding: `${GAP.sm + 1}px ${GAP.xl}px`,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+              color: COLOR.text2, background: COLOR.bgWhite,
+              border: `1px solid ${COLOR.borderHv}`,
+              borderRadius: RADIUS.pill,
+              transition: 'border-color 0.15s, color 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = COLOR.text2; e.currentTarget.style.color = COLOR.text; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = COLOR.borderHv; e.currentTarget.style.color = COLOR.text2; }}
+          >
+            {text}
+          </button>
+        ))}
       </div>
       <button onClick={onCreate} style={{
-        padding: `${GAP.md}px ${GAP.xxl}px`,
-        fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
-        color: '#fff', background: COLOR.btn,
-        border: `1px solid ${COLOR.btn}`,
-        borderRadius: 8,
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+        color: COLOR.sub, background: 'transparent',
+        textDecoration: 'underline', textUnderlineOffset: 3,
       }}>
-        + 新建项目
+        或者从「+ 新建项目」开始一件长期的事
       </button>
     </div>
   );
@@ -786,7 +829,7 @@ const iconBtnStyle = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
   padding: `${GAP.sm}px ${GAP.lg}px`,
-  borderRadius: 8,
+  borderRadius: RADIUS.lg,
   background: 'transparent',
 };
 
@@ -796,5 +839,5 @@ const primaryBtnStyle = {
   color: COLOR.btnText, background: COLOR.btn,
   padding: `${GAP.sm + 1}px ${GAP.xl}px`,
   border: `1px solid ${COLOR.btn}`,
-  borderRadius: 8,
+  borderRadius: RADIUS.lg,
 };

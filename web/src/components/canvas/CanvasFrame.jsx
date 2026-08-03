@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { Assets } from '../../lib/api.js';
 import { versionOfFile, versionOfTask } from '../../lib/file-versions.js';
+import { COLOR } from '../../lib/theme.js';
 import BoardCanvas from './BoardCanvas.jsx';
 
 // 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
@@ -119,7 +120,7 @@ export default function CanvasFrame({
     <div style={{
       flex: 1, minHeight: 0,
       display: 'flex', flexDirection: 'column',
-      background: '#fff',
+      background: COLOR.bgWhite,
       overflow: 'hidden',
     }}>
       <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>

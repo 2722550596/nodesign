@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Rnd } from 'react-rnd';
 import { X } from 'lucide-react';
-import { COLOR, FONT_MONO, FONT_SIZE, GAP, STAGE } from '../../lib/theme.js';
+import { COLOR, FONT_MONO, FONT_SIZE, GAP, RADIUS, STAGE, alpha } from '../../lib/theme.js';
 import { usePanelState } from './PanelManager.jsx';
 
 /**
@@ -160,7 +160,7 @@ export default function FloatingPanel({
             top: snap.zone.y,
             width: snap.zone.w,
             height: snap.zone.h,
-            background: 'rgba(90, 122, 154, 0.18)',     // COLOR.blue 半透明
+            background: alpha(COLOR.blue, 0.18),
             border: '2px solid rgba(90, 122, 154, 0.55)',
             borderRadius: STAGE.radius,
             pointerEvents: 'none',
@@ -191,7 +191,7 @@ export default function FloatingPanel({
         onMouseDown={handleMouseDown}
         style={{
           zIndex,
-          background: '#fff',
+          background: COLOR.bgWhite,
           borderRadius: STAGE.radius,
           boxShadow: interacting
             ? '0 16px 48px rgba(0,0,0,0.18), 0 4px 12px rgba(0,0,0,0.08)'
@@ -234,7 +234,7 @@ export default function FloatingPanel({
                 width: 20, height: 20,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 border: 'none', background: 'transparent',
-                borderRadius: 4,
+                borderRadius: RADIUS.sm,
                 color: COLOR.text5,
                 cursor: 'pointer',
                 transition: 'background 0.15s, color 0.15s',

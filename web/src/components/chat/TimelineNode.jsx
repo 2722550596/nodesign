@@ -73,7 +73,7 @@ export default function TimelineNode({
         top: ICON_TOP,
         width: ICON_SIZE,
         height: ICON_SIZE,
-        background: '#fff',
+        background: COLOR.bgWhite,
         zIndex: 1,
         display: 'flex',
         alignItems: 'center',

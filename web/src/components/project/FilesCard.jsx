@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, FileText, Image as ImageIcon, X, Upload } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Assets } from '../../lib/api.js';
 import { formatSize } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -95,7 +95,7 @@ export default function FilesCard({ projectId }) {
         <div style={{
           position: 'absolute', inset: 0,
           background: 'rgba(45,36,24,0.06)',
-          borderRadius: 12,
+          borderRadius: RADIUS.xxl,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           gap: GAP.sm,
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
@@ -131,7 +131,7 @@ export default function FilesCard({ projectId }) {
         <div style={{
           padding: `${GAP.md}px 0`,
           background: 'rgba(45,36,24,0.025)',
-          borderRadius: 8,
+          borderRadius: RADIUS.lg,
           display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.sm,
         }}>
           <FilesIllustration />
@@ -164,7 +164,7 @@ function FileRow({ file, onDelete }) {
       style={{
         display: 'flex', alignItems: 'center', gap: GAP.sm,
         padding: `${GAP.xs + 1}px ${GAP.sm}px`,
-        borderRadius: 6,
+        borderRadius: RADIUS.md,
         background: hover ? 'rgba(0,0,0,0.025)' : 'transparent',
         transition: 'background 0.15s',
       }}
@@ -176,7 +176,7 @@ function FileRow({ file, onDelete }) {
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }} title={file.name}>{file.name}</div>
         <div style={{
-          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
         }}>{formatSize(file.size)}</div>
       </div>
       {hover && (
@@ -184,7 +184,7 @@ function FileRow({ file, onDelete }) {
           onClick={onDelete}
           title="删除"
           style={{
-            width: 20, height: 20, borderRadius: 3,
+            width: 20, height: 20, borderRadius: RADIUS.xs,
             background: 'transparent', border: 'none',
             color: COLOR.sub,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -208,8 +208,8 @@ function isImageFile(name) {
 function FilesIllustration() {
   return (
     <div style={{ display: 'flex', alignItems: 'flex-end', padding: `${GAP.xs}px 0` }}>
-      <div style={tile(-6, '#fff', COLOR.borderMd)}><FileText size={20} color={COLOR.dim} /></div>
-      <div style={tile(0, '#fff', COLOR.borderMd)}><FileText size={22} color={COLOR.dim} /></div>
+      <div style={tile(-6, COLOR.bgWhite, COLOR.borderMd)}><FileText size={20} color={COLOR.dim} /></div>
+      <div style={tile(0, COLOR.bgWhite, COLOR.borderMd)}><FileText size={22} color={COLOR.dim} /></div>
       <div style={tile(6, '#faf8f4', COLOR.borderLt, true)}><Plus size={18} color={COLOR.dim} /></div>
     </div>
   );
@@ -218,7 +218,7 @@ function FilesIllustration() {
 function tile(rotate, bg, border, dashed) {
   return {
     width: 44, height: 56,
-    borderRadius: 6,
+    borderRadius: RADIUS.md,
     background: bg,
     border: `${dashed ? '1px dashed' : '1px solid'} ${border}`,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -228,9 +228,9 @@ function tile(rotate, bg, border, dashed) {
 }
 
 const cardStyle = {
-  background: '#fff',
+  background: COLOR.bgWhite,
   border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: 12,
+  borderRadius: RADIUS.xxl,
   padding: GAP.lg,
 };
 const cardHeader = {
@@ -243,7 +243,7 @@ const cardTitle = {
   color: COLOR.text,
 };
 const iconBtnStyle = {
-  width: 26, height: 26, borderRadius: 4,
+  width: 26, height: 26, borderRadius: RADIUS.sm,
   background: 'transparent', border: 'none', color: COLOR.text2,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   cursor: 'pointer',

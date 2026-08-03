@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { COLOR } from '../../lib/theme.js';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 
 /**
@@ -89,7 +90,7 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
       flex: 1,
       minHeight: 0,
       overflow: 'hidden',
-      background: '#fff',
+      background: COLOR.bgWhite,
       position: 'relative',
       // letterbox：iframe 1920×1080 缩放后居中放置；外侧空隙是白底 letterbox
       display: 'flex',
@@ -109,7 +110,7 @@ export default function HtmlIframe({ src, srcDoc, mode = 'edit', onSelect, onTex
           height: `${deckH}px`,
           flexShrink: 0,
           border: 0,
-          background: '#fff',
+          background: COLOR.bgWhite,
           transform: zoom === 1 ? 'none' : `scale(${zoom})`,
           transformOrigin: 'center center',
           // P3 #2 乐观更新：reload 期间 opacity 0.5 + transition，掩盖白屏闪烁

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, Upload, Trash2, Store, ArrowRight } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { Me } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
@@ -105,7 +105,7 @@ function EmptyState() {
       padding: `${GAP.page}px ${GAP.xl}px`,
       background: COLOR.bgCard,
       border: `1px dashed ${COLOR.borderMd}`,
-      borderRadius: 12,
+      borderRadius: RADIUS.xxl,
       fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
       lineHeight: 1.75, maxWidth: 680,
     }}>
@@ -155,7 +155,7 @@ function ShowcaseCard({ entry, onRemove }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${hover ? COLOR.borderMd : COLOR.border}`,
         borderRadius: 14,
         overflow: 'hidden',
@@ -188,12 +188,12 @@ function ShowcaseCard({ entry, onRemove }) {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: GAP.sm, marginTop: GAP.sm }}>
           {entry.skillName ? (
             <span title="这件作品沉淀出来的 skill" style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              fontFamily: FONT_MONO, fontSize: 10, color: COLOR.brown,
-              padding: '2px 7px', background: 'rgba(0,0,0,0.03)', borderRadius: 100,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.brown,
+              padding: `${GAP.xxs}px 7px`, background: 'rgba(0,0,0,0.03)', borderRadius: RADIUS.pill,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%',
             }}>
-              <span style={{ width: 5, height: 5, borderRadius: 3, background: COLOR.brown, flexShrink: 0 }} />
+              <span style={{ width: 5, height: 5, borderRadius: RADIUS.xs, background: COLOR.brown, flexShrink: 0 }} />
               {entry.skillName}
             </span>
           ) : <span />}
@@ -229,20 +229,20 @@ function MarketPlaceholder() {
       padding: `${GAP.xl}px`,
       background: COLOR.bgCard,
       border: `1px dashed ${COLOR.borderMd}`,
-      borderRadius: 12,
+      borderRadius: RADIUS.xxl,
       display: 'flex', alignItems: 'flex-start', gap: GAP.lg,
     }}>
-      <Store size={18} color={COLOR.sub} style={{ flexShrink: 0, marginTop: 2 }} />
+      <Store size={18} color={COLOR.sub} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.base, fontWeight: 600,
-          color: COLOR.text2, marginBottom: 4,
+          color: COLOR.text2, marginBottom: GAP.xs,
           display: 'flex', alignItems: 'center', gap: GAP.sm,
         }}>
           Skill 市场
           <span style={{
-            fontFamily: FONT_SANS, fontSize: 10, fontWeight: 400, color: COLOR.sub,
-            padding: '1px 7px', background: 'rgba(0,0,0,0.04)', borderRadius: 100,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 400, color: COLOR.sub,
+            padding: '1px 7px', background: 'rgba(0,0,0,0.04)', borderRadius: RADIUS.pill,
           }}>还没开</span>
         </div>
         <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, lineHeight: 1.65 }}>
@@ -251,7 +251,7 @@ function MarketPlaceholder() {
           现在要给朋友，先用 <Link to="/skills" style={{ color: COLOR.text2, textDecoration: 'underline' }}>Skill 管理</Link> 页导出/上传文件互传。
         </div>
       </div>
-      <ArrowRight size={14} color={COLOR.dim} style={{ flexShrink: 0, marginTop: 4 }} />
+      <ArrowRight size={14} color={COLOR.dim} style={{ flexShrink: 0, marginTop: GAP.xs }} />
     </div>
   );
 }
@@ -266,7 +266,7 @@ const iconBtnStyle = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
   padding: `${GAP.sm}px ${GAP.lg}px`,
-  borderRadius: 8,
+  borderRadius: RADIUS.lg,
   background: 'transparent',
   textDecoration: 'none',
 };

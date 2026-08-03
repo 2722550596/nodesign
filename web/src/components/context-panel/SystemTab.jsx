@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Upload, Trash2, BookOpen, Box } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useProjectStore } from '../../stores/projectStore.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plugins } from '../../lib/api.js';
@@ -168,9 +168,9 @@ export default function SystemTab({ project, deckSpec, projectId }) {
             padding: `${GAP.xs + 1}px ${GAP.md}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
             color: COLOR.text2,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             cursor: uploading ? 'not-allowed' : 'pointer',
             opacity: uploading ? 0.6 : 1,
           }}
@@ -179,7 +179,7 @@ export default function SystemTab({ project, deckSpec, projectId }) {
         </button>
         <div style={{
           marginTop: GAP.xs,
-          fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
         }}>
           支持单 .md / skill zip / 完整 plugin zip。仅装到本 project；全局可见的走右上角 Skill 页面。新会话生效。
         </div>
@@ -201,7 +201,7 @@ export default function SystemTab({ project, deckSpec, projectId }) {
               padding: GAP.md,
               background: COLOR.bgCard,
               border: `1px solid ${COLOR.borderLt}`,
-              borderRadius: 6,
+              borderRadius: RADIUS.md,
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
               color: COLOR.text2, lineHeight: 1.6,
             }}>
@@ -224,11 +224,11 @@ export default function SystemTab({ project, deckSpec, projectId }) {
                     padding: `${GAP.xs + 1}px ${GAP.md}px`,
                     fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
                     background: 'rgba(0,0,0,0.025)',
-                    borderRadius: 4,
+                    borderRadius: RADIUS.sm,
                     display: 'flex', gap: GAP.sm, alignItems: 'baseline',
                   }}>
                     <span style={{ fontFamily: FONT_MONO, color: COLOR.sub, minWidth: 24 }}>{String(p.index).padStart(2, '0')}</span>
-                    <span style={{ color: COLOR.text3, minWidth: 64, fontFamily: FONT_MONO, fontSize: 10, textTransform: 'uppercase' }}>{p.layout}</span>
+                    <span style={{ color: COLOR.text3, minWidth: 64, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, textTransform: 'uppercase' }}>{p.layout}</span>
                     <span style={{ color: COLOR.text2, flex: 1, lineHeight: 1.4 }}>{p.intent}</span>
                   </div>
                 ))}
@@ -247,7 +247,7 @@ function ProjectPluginRow({ plugin, onUninstall }) {
       display: 'flex', alignItems: 'center', gap: GAP.sm,
       padding: `${GAP.xs + 1}px ${GAP.sm}px`,
       background: 'rgba(0,0,0,0.025)',
-      borderRadius: 4,
+      borderRadius: RADIUS.sm,
     }}>
       <Box size={11} color={COLOR.text4} />
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -255,17 +255,17 @@ function ProjectPluginRow({ plugin, onUninstall }) {
           <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2 }}>
             {plugin.name}
           </span>
-          <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
             {plugin.version}
           </span>
-          <span style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub }}>
+          <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
             · {plugin.skills?.length || 0} skill
           </span>
         </div>
         {plugin.description && (
           <div style={{
-            fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, lineHeight: 1.4,
-            marginTop: 2,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.4,
+            marginTop: GAP.xxs,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }} title={plugin.description}>
             {plugin.description}
@@ -278,7 +278,7 @@ function ProjectPluginRow({ plugin, onUninstall }) {
         style={{
           background: 'transparent', border: 'none',
           color: COLOR.sub, cursor: 'pointer',
-          padding: 2,
+          padding: GAP.xxs,
         }}
       >
         <Trash2 size={11} />
@@ -290,12 +290,12 @@ function ProjectPluginRow({ plugin, onUninstall }) {
 function Chip({ icon: Icon, label }) {
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      padding: `2px ${GAP.sm}px`,
+      display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+      padding: `${GAP.xxs}px ${GAP.sm}px`,
       fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
       color: COLOR.text2,
       background: 'rgba(0,0,0,0.04)',
-      borderRadius: 100,
+      borderRadius: RADIUS.pill,
     }}>
       <Icon size={10} color={COLOR.text4} />
       {label}

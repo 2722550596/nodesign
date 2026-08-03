@@ -7,7 +7,7 @@ import {
   Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import WorldMap from './WorldMap.jsx';
 import {
   DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H, SIZES,
@@ -1303,7 +1303,7 @@ export default function BoardCanvas({
 
   // ── 渲染 ──
   return (
-    <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: '#f6f4ef' }}>
+    <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: CANVAS.paper }}>
       <style>{[
         '@keyframes ndPopIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}',
         '@keyframes ndStageOut{to{opacity:0;transform:scale(.97)}}',
@@ -1343,7 +1343,7 @@ export default function BoardCanvas({
             width: DESKTOP_W, height: stageBounds.h,
             transform: `scale(${scale}) translateY(${-viewOffsetY}px)`,
             transformOrigin: '0 0',
-            background: '#f6f4ef',
+            background: CANVAS.paper,
             backgroundImage: 'radial-gradient(circle, rgba(0,0,0,0.07) 1px, transparent 1px)',
             backgroundSize: '24px 24px',
           }}
@@ -1367,10 +1367,10 @@ export default function BoardCanvas({
               style={{
                 position: 'absolute', left: z.x, top: z.y, width: z.w, height: FOLDER_CARD_H - 16,
                 zIndex: 1, borderRadius: 14,
-                display: 'flex', alignItems: 'center', gap: 12,
+                display: 'flex', alignItems: 'center', gap: GAP.lg,
                 padding: `0 ${GAP.lg}px`,
                 background: dropHint?.kind === 'folder' && dropHint.id === z.id ? '#fff8e8' : 'rgba(255,255,255,0.55)',
-                border: `1px ${dropHint?.kind === 'folder' && dropHint.id === z.id ? 'solid #b08c4f' : `dashed ${COLOR.borderLt}`}`,
+                border: `1px ${dropHint?.kind === 'folder' && dropHint.id === z.id ? `solid ${CANVAS.brass}` : `dashed ${COLOR.borderLt}`}`,
                 boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
                   ? '0 0 0 3px rgba(176,140,79,0.18), 0 8px 20px rgba(0,0,0,0.14)'
                   : 'none',
@@ -1390,16 +1390,16 @@ export default function BoardCanvas({
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '52%',
               }}>{z.title}</span>
-              <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLOR.sub, flexShrink: 0 }}>
+              <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub, flexShrink: 0 }}>
                 {z.memberCount} 项
               </span>
               {(zoneSession.get(z.id) || z.id) === currentSessionId && (
                 <span style={{
-                  fontFamily: FONT_MONO, fontSize: 10,
-                  color: COLOR.bg, background: COLOR.text, borderRadius: 5, padding: '2px 7px', flexShrink: 0,
+                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+                  color: COLOR.bg, background: COLOR.text, borderRadius: 5, padding: `${GAP.xxs}px 7px`, flexShrink: 0,
                 }}>当前会话</span>
               )}
-              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: GAP.xxs, flexShrink: 0 }}>
                 <button
                   data-zone-action title="展开"
                   onClick={() => !wasDrag() && patchZone(z.id, { collapsed: false })}
@@ -1435,14 +1435,14 @@ export default function BoardCanvas({
                 borderRadius: 14, zIndex: 0, pointerEvents: 'none',
                 animation: POP_IN,
                 border: dropHint?.kind === 'zone' && dropHint.id === z.id
-                  ? '1.5px solid #b08c4f'
+                  ? `1.5px solid ${CANVAS.brass}`
                   : `1.5px dashed ${z.id === currentSessionId ? 'rgba(60,50,30,0.35)' : 'rgba(0,0,0,0.13)'}`,
                 background: dropHint?.kind === 'zone' && dropHint.id === z.id
                   ? 'rgba(255,246,220,0.75)'
                   : (z.id === currentSessionId ? 'rgba(255,252,242,0.6)' : 'rgba(255,255,255,0.35)'),
-                boxShadow: dropHint?.kind === 'zone' && dropHint.id === z.id ? '0 0 0 4px rgba(176,140,79,0.12)' : 'none',
+                boxShadow: dropHint?.kind === 'zone' && dropHint.id === z.id ? `0 0 0 4px ${alpha(CANVAS.brass, 0.12)}` : 'none',
                 // agent 正在这块区里动手 → 外圈橙色呼吸光圈（目标物件还没上墙时套区）
-                ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite', borderColor: 'rgba(176,140,79,0.75)' } : null),
+                ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite', borderColor: alpha(CANVAS.brass, 0.75) } : null),
                 transition: `border-color 150ms, background 150ms, box-shadow 150ms${dragActive ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}, width 380ms ${EASE}, height 380ms ${EASE}`}`,
               }}
             >
@@ -1458,9 +1458,9 @@ export default function BoardCanvas({
                 title={focusZone === z.id ? '退出任务（同时退出这个会话，ESC 同效）' : '进入任务（切到它的会话）'}
                 style={{
                   pointerEvents: 'auto', cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  margin: 8, height: ZONE.header - 16, padding: '0 14px',
-                  borderRadius: 10, background: 'rgba(0,0,0,0.045)',
+                  display: 'flex', alignItems: 'center', gap: GAP.md,
+                  margin: GAP.md, height: ZONE.header - 16, padding: '0 14px',
+                  borderRadius: RADIUS.xl, background: 'rgba(0,0,0,0.045)',
                   userSelect: 'none', touchAction: 'none',
                   transition: 'background 0.15s',
                 }}
@@ -1474,14 +1474,14 @@ export default function BoardCanvas({
                   fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>{z.title}</span>
-                <span style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLOR.sub }}>{z.memberCount} 项</span>
+                <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>{z.memberCount} 项</span>
                 {(zoneSession.get(z.id) || z.id) === currentSessionId && (
                   <span style={{
-                    fontFamily: FONT_MONO, fontSize: 10,
-                    color: COLOR.bg, background: COLOR.text, borderRadius: 5, padding: '2px 7px',
+                    fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+                    color: COLOR.bg, background: COLOR.text, borderRadius: 5, padding: `${GAP.xxs}px 7px`,
                   }}>当前会话</span>
                 )}
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.xxs }}>
                   {focusZone === z.id && z.memberCount > 0 && (
                     <button
                       data-zone-action title="把工作区内容全部加入上下文"
@@ -1534,7 +1534,7 @@ export default function BoardCanvas({
               position: 'absolute',
               left: dropHint.ghost.x, top: dropHint.ghost.y,
               width: dropHint.ghost.w, height: dropHint.ghost.h,
-              border: '1.5px dashed rgba(150,115,60,0.55)', borderRadius: 10,
+              border: '1.5px dashed rgba(150,115,60,0.55)', borderRadius: RADIUS.xl,
               background: 'rgba(255,255,255,0.45)',
               zIndex: 0, pointerEvents: 'none',
             }} />
@@ -1594,7 +1594,7 @@ export default function BoardCanvas({
         <Overlay onClose={() => setProjectPanel(null)}>
           <div style={{
             width: 'min(560px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'auto',
-            background: COLOR.bg, borderRadius: 12, padding: GAP.lg,
+            background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
           }}>
             {projectPanel === 'memory' && <MemoryCard projectId={projectId} />}
             {projectPanel === 'guide' && <InstructionsCard projectId={projectId} />}
@@ -1611,20 +1611,20 @@ export default function BoardCanvas({
       {viewer && (
         <Overlay onClose={() => { setViewer(null); setViewerEdit(null); }}>
           <div style={{
-            background: COLOR.bg, borderRadius: 12, padding: GAP.lg,
+            background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
             width: 'min(720px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'auto',
             display: 'flex', flexDirection: 'column',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: GAP.sm, flexShrink: 0 }}>
               <BookOpen size={14} color={COLOR.sub} />
-              <span style={{ marginLeft: 6, fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.md, color: COLOR.text }}>{viewer.title}</span>
+              <span style={{ marginLeft: GAP.sm, fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.md, color: COLOR.text }}>{viewer.title}</span>
               {viewer.note && viewerEdit === null && (
                 <button title="编辑" onClick={() => setViewerEdit(viewer.content)} style={{ ...toolBtn, marginLeft: 'auto' }}>
                   <PencilLine size={12} />
                 </button>
               )}
               {viewer.note && viewerEdit !== null && (
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: GAP.xs }}>
                   <button onClick={async () => {
                     const o = viewer.note;
                     try {
@@ -1638,7 +1638,7 @@ export default function BoardCanvas({
                 </div>
               )}
               <button onClick={() => { setViewer(null); setViewerEdit(null); }}
-                style={{ ...toolBtn, ...(viewer.note ? { marginLeft: 4 } : { marginLeft: 'auto' }) }}><X size={12} /></button>
+                style={{ ...toolBtn, ...(viewer.note ? { marginLeft: GAP.xs } : { marginLeft: 'auto' }) }}><X size={12} /></button>
             </div>
             {viewerEdit === null ? (
               <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7 }}>
@@ -1652,8 +1652,8 @@ export default function BoardCanvas({
                 style={{
                   fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7,
                   minHeight: 320, resize: 'vertical', width: '100%', boxSizing: 'border-box',
-                  border: `1px solid ${COLOR.borderLt}`, borderRadius: 8, padding: GAP.md,
-                  background: '#fffbeb', outline: 'none',
+                  border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.lg, padding: GAP.md,
+                  background: CANVAS.note, outline: 'none',
                 }}
               />
             )}
@@ -1665,7 +1665,7 @@ export default function BoardCanvas({
       {detail && (
         <Overlay onClose={() => setDetail(null)}>
           <div style={{
-            background: COLOR.bg, borderRadius: 12, padding: GAP.lg,
+            background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
             maxWidth: 'min(920px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'hidden',
             display: 'flex', flexDirection: 'column', gap: GAP.md,
           }}>
@@ -1677,16 +1677,16 @@ export default function BoardCanvas({
             <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img
                 src={Assets.artifactFileUrl(projectId, detail.path)} alt={detail.name}
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8, border: `1px solid ${COLOR.borderLt}` }}
+                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: RADIUS.lg, border: `1px solid ${COLOR.borderLt}` }}
               />
             </div>
             {detail.meta?.prompt && (
               <div style={{
-                padding: GAP.md, borderRadius: 8, background: COLOR.bgCard, border: `1px solid ${COLOR.borderLt}`,
+                padding: GAP.md, borderRadius: RADIUS.lg, background: COLOR.bgCard, border: `1px solid ${COLOR.borderLt}`,
                 fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.6, whiteSpace: 'pre-wrap',
                 flexShrink: 0, maxHeight: 150, overflow: 'auto',
               }}>
-                <div style={{ letterSpacing: '0.06em', marginBottom: 4, color: COLOR.text }}>PROMPT</div>
+                <div style={{ letterSpacing: '0.06em', marginBottom: GAP.xs, color: COLOR.text }}>PROMPT</div>
                 {detail.meta.prompt}
                 <div style={{ marginTop: GAP.xs }}>
                   {detail.meta.aspectRatio} · {detail.meta.model || detail.meta.provider}
@@ -1719,7 +1719,7 @@ function BoardObject({
   const base = {
     position: 'absolute', left: o.pos.x, top: o.pos.y, width: sz.w,
     zIndex: o.pos.z || 1,
-    borderRadius: 10, background: COLOR.bgCard,
+    borderRadius: RADIUS.xl, background: COLOR.bgCard,
     border: `1px solid ${added ? COLOR.text : COLOR.borderLt}`,
     boxShadow: hover ? '0 4px 14px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.05)',
     cursor: 'grab', userSelect: 'none',
@@ -1728,7 +1728,7 @@ function BoardObject({
     // agent 此刻正在动这个物件 → 外圈橙色呼吸光圈（放在 animation 之后才盖得住）
     ...(agentActive ? {
       animation: 'ndAgentRing 1600ms ease-in-out infinite',
-      borderColor: 'rgba(176,140,79,0.85)',
+      borderColor: alpha(CANVAS.brass, 0.85),
     } : null),
     // agent 改布局（pin / board.updated 重拉 / 自动入座）时位置变化以滑动呈现；
     // 用户拖拽期间关掉（要逐帧跟手）—— dragActive 经 animateLayout 传进来
@@ -1746,9 +1746,9 @@ function BoardObject({
 
   const Actions = hover && actions.length > 0 && (
     <div data-board-action style={{
-      position: 'absolute', top: -26, right: 0, display: 'flex', gap: 2,
+      position: 'absolute', top: -26, right: 0, display: 'flex', gap: GAP.xxs,
       background: 'rgba(255,255,255,0.95)', border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 6, padding: 2, zIndex: 5,
+      borderRadius: RADIUS.md, padding: GAP.xxs, zIndex: 5,
     }}>
       {actions.map((a, i) => {
         const Icon = a.icon;
@@ -1780,12 +1780,12 @@ function BoardObject({
 
       {o.type === 'doc' && (
         <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
             <BookOpen size={13} color="#7c6f5a" />
             <span style={{ fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text }}>{o.title}</span>
           </div>
           <div style={{
-            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
             display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
           }}>
             {o.preview || o.sub}
@@ -1795,7 +1795,7 @@ function BoardObject({
 
       {o.type === 'deck' && !o.pos.expanded && (
         <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
             <Presentation size={13} color={o.sid === currentSessionId ? COLOR.text : COLOR.sub} />
             <span style={{
               fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
@@ -1809,7 +1809,7 @@ function BoardObject({
               <ChevronsUpDown size={11} />
             </button>
           </div>
-          <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
             {o.task ? `任务 deck · 双击内嵌渲染`
               : o.sid === currentSessionId ? '当前会话 · 双击内嵌渲染'
               : `${formatTime(o.mtime)} · 双击内嵌渲染`}
@@ -1820,7 +1820,7 @@ function BoardObject({
       {o.type === 'deck' && o.pos.expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
           <div style={{
-            height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: `0 ${GAP.sm}px`,
+            height: 28, display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `0 ${GAP.sm}px`,
             borderBottom: `1px solid ${COLOR.borderLt}`,
           }}>
             <Presentation size={12} color={COLOR.sub} />
@@ -1836,7 +1836,7 @@ function BoardObject({
             </button>
           </div>
           <div
-            style={{ width: DECK_EMBED_W, height: 360, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px', position: 'relative' }}
+            style={{ width: DECK_EMBED_W, height: 360, overflow: 'hidden', background: COLOR.bgWhite, borderRadius: '0 0 10px 10px', position: 'relative' }}
           >
             {/* 内嵌渲染：live iframe 缩到 1/3，pointer-events 关闭 —— deck 元素级
                 工具（DirectEdit / Drag / Comment）只在聚焦（✏️）后的编辑视图开放。
@@ -1858,7 +1858,7 @@ function BoardObject({
 
       {o.type === 'site' && !o.pos.expanded && (
         <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
             <Globe size={13} color={COLOR.sub} />
             <span style={{
               fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
@@ -1871,7 +1871,7 @@ function BoardObject({
               <ChevronsUpDown size={11} />
             </button>
           </div>
-          <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
             {o.single ? '单页 · 双击预览' : `站点 · ${o.pages?.length || 1} 个页面 · 双击预览`}
           </div>
         </div>
@@ -1880,7 +1880,7 @@ function BoardObject({
       {o.type === 'site' && o.pos.expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
           <div style={{
-            height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: `0 ${GAP.sm}px`,
+            height: 28, display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `0 ${GAP.sm}px`,
             borderBottom: `1px solid ${COLOR.borderLt}`,
           }}>
             <Globe size={12} color={COLOR.sub} />
@@ -1894,7 +1894,7 @@ function BoardObject({
               <ChevronsUpDown size={11} />
             </button>
           </div>
-          <div style={{ width: DECK_EMBED_W, height: 400, overflow: 'hidden', background: '#fff', borderRadius: '0 0 10px 10px', position: 'relative' }}>
+          <div style={{ width: DECK_EMBED_W, height: 400, overflow: 'hidden', background: COLOR.bgWhite, borderRadius: '0 0 10px 10px', position: 'relative' }}>
             {/* 站点缩略：按桌面宽度渲染再等比缩。**不套 1920×1080 固定画框** ——
                 站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿"。
                 版本按**入口页**取（entry html + 非 html 资产）：agent 改别的子页
@@ -1916,7 +1916,7 @@ function BoardObject({
 
       {o.type === 'world' && !o.pos.expanded && (
         <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
             <Globe size={13} color={COLOR.sub} />
             <span style={{
               fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
@@ -1929,7 +1929,7 @@ function BoardObject({
               <ChevronsUpDown size={11} />
             </button>
           </div>
-          <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
             {(() => {
               const n = o.nodes || [];
               // 容器不算地点（它是收纳态，设计上明确不是地点），口径与
@@ -1945,7 +1945,7 @@ function BoardObject({
       {o.type === 'world' && o.pos.expanded && (
         <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
           <div style={{
-            height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: `0 ${GAP.sm}px`,
+            height: 28, display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `0 ${GAP.sm}px`,
             borderBottom: `1px solid ${COLOR.borderLt}`,
           }}>
             <Globe size={12} color={COLOR.sub} />
@@ -1981,9 +1981,9 @@ function BoardObject({
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: `${GAP.xs}px ${GAP.sm}px` }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, padding: `${GAP.xs}px ${GAP.sm}px` }}>
             <ImageIcon size={10} color={COLOR.sub} />
-            <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {o.meta?.assetRole ? `[${o.meta.assetRole}] ` : ''}{o.name}
             </span>
           </div>
@@ -1994,21 +1994,21 @@ function BoardObject({
 
       {o.type === 'file' && (
         <div
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: `${GAP.sm}px ${GAP.md}px` }}
+          style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.md}px` }}
         >
           <FileText size={12} color={COLOR.sub} />
           <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
             {o.name}
           </span>
-          <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub }}>{formatSize(o.size)}</span>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{formatSize(o.size)}</span>
         </div>
       )}
 
       {added && (
         <div style={{
           position: 'absolute', bottom: -8, right: -6,
-          background: COLOR.text, color: COLOR.bg, borderRadius: 6,
-          fontFamily: FONT_MONO, fontSize: 9, padding: '1px 5px',
+          background: COLOR.text, color: COLOR.bg, borderRadius: RADIUS.md,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, padding: '1px 5px',
         }}>
           托盘✓
         </div>
@@ -2029,15 +2029,15 @@ function NoteFaces({ o }) {
   const { title, body } = faceParts(faces[idx]);
   const faceBtn = {
     border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.sub,
-    fontFamily: FONT_MONO, fontSize: 12, lineHeight: 1, padding: '2px 6px',
+    fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, lineHeight: 1, padding: `${GAP.xxs}px ${GAP.sm}px`,
   };
   return (
     <div style={{
-      padding: GAP.md, background: '#fffbeb', borderRadius: 10, minHeight: SIZES.note.h - 2,
+      padding: GAP.md, background: CANVAS.note, borderRadius: RADIUS.xl, minHeight: SIZES.note.h - 2,
       display: 'flex', flexDirection: 'column',
     }}>
       {(o.noteTask || title) && (
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.sm, marginBottom: GAP.xs, minWidth: 0 }}>
           {title && (
             <span style={{
               fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
@@ -2045,7 +2045,7 @@ function NoteFaces({ o }) {
             }}>{title}</span>
           )}
           {o.noteTask && (
-            <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub, marginLeft: 'auto', flexShrink: 0 }}>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginLeft: 'auto', flexShrink: 0 }}>
               {o.name.replace(/\.md$/i, '')}
             </span>
           )}
@@ -2059,10 +2059,10 @@ function NoteFaces({ o }) {
         {body || o.name}
       </div>
       {faces.length > 1 && (
-        <div data-board-action style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 4 }}>
+        <div data-board-action style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: GAP.sm, marginTop: GAP.xs }}>
           <button data-board-action style={faceBtn} title="上一面"
             onClick={(e) => { e.stopPropagation(); setFace((idx - 1 + faces.length) % faces.length); }}>‹</button>
-          <span style={{ fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub }}>{idx + 1}/{faces.length}</span>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{idx + 1}/{faces.length}</span>
           <button data-board-action style={faceBtn} title="下一面"
             onClick={(e) => { e.stopPropagation(); setFace((idx + 1) % faces.length); }}>›</button>
         </div>
@@ -2108,21 +2108,21 @@ function thumbSrcOf(projectId, item) {
 }
 
 const toolBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: 4,
-  border: `1px solid ${COLOR.borderLt}`, borderRadius: 6,
+  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+  border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.md,
   background: COLOR.bgCard, color: COLOR.text, cursor: 'pointer',
   padding: `${GAP.xs}px ${GAP.sm + 2}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
 };
 
 const winBtn = {
-  border: 0, background: 'rgba(0,0,0,0.05)', borderRadius: 4,
+  border: 0, background: 'rgba(0,0,0,0.05)', borderRadius: RADIUS.sm,
   cursor: 'pointer', color: COLOR.text, display: 'inline-flex', padding: 3, flexShrink: 0,
 };
 
 const zoneHeaderBtn = {
   border: 0, background: 'transparent', cursor: 'pointer',
-  color: COLOR.text, display: 'flex', padding: 2,
+  color: COLOR.text, display: 'flex', padding: GAP.xxs,
 };
 
 function formatTime(iso) {

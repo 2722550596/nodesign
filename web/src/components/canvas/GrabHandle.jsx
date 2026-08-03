@@ -15,9 +15,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { isInsideReactMount } from './DirectEditBridge.js';
 import { overlayBase } from '../../lib/overlay-rect.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, EDITOR } from '../../lib/theme.js';
 
-const HANDLE_COLOR = '#3a7afe';
-const HANDLE_COLOR_REACT = '#b85c1a';
+const HANDLE_COLOR = EDITOR.blue;
+const HANDLE_COLOR_REACT = COLOR.warn;
 
 export default function GrabHandle({
   active,           // drag mode 是否激活
@@ -137,7 +138,7 @@ export default function GrabHandle({
         width: previewW,
         height: previewH,
         border: `2px dashed ${color}`,
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         background: hover.reactMount ? 'rgba(184,92,26,0.04)' : 'rgba(58,122,254,0.04)',
         boxShadow: `0 0 0 1px ${hover.reactMount ? 'rgba(184,92,26,0.15)' : 'rgba(58,122,254,0.15)'}`,
         zIndex: 8,
@@ -148,14 +149,14 @@ export default function GrabHandle({
         pointerEvents: 'none',
         top: previewTop - 18,
         left: previewLeft,
-        padding: '1px 6px',
-        fontFamily: '"SF Mono", monospace',
-        fontSize: 9,
+        padding: `1px ${GAP.sm}px`,
+        fontFamily: FONT_MONO,
+        fontSize: FONT_SIZE.xxs,
         lineHeight: '14px',
         fontWeight: 500,
-        color: '#fff',
+        color: COLOR.bgWhite,
         background: color,
-        borderRadius: 3,
+        borderRadius: RADIUS.xs,
         whiteSpace: 'nowrap',
         boxShadow: `0 1px 3px ${hover.reactMount ? 'rgba(184,92,26,0.3)' : 'rgba(58,122,254,0.3)'}`,
         zIndex: 9,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Lock, Pencil, Trash2, Paperclip, ChevronDown, ChevronRight } from 'lucide-react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Memory } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -94,10 +94,10 @@ export default function MemoryCard({ projectId }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 3,
-              padding: '1px 6px',
+              padding: `1px ${GAP.sm}px`,
               background: 'rgba(45,36,24,0.05)',
-              borderRadius: 4,
-              fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
+              borderRadius: RADIUS.sm,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             }}>
               <Lock size={10} /> 仅你可见
             </span>
@@ -147,24 +147,24 @@ export default function MemoryCard({ projectId }) {
             <button
               onClick={() => setHistoryOpen(o => !o)}
               style={{
-                display: 'flex', alignItems: 'center', gap: 4,
+                display: 'flex', alignItems: 'center', gap: GAP.xs,
                 padding: 0,
                 background: 'transparent', border: 'none', cursor: 'pointer',
-                fontFamily: FONT_SANS, fontSize: 11, color: COLOR.sub,
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
               }}
             >
               {historyOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
               最近自动召回 · {recallHistory.length}
             </button>
             {historyOpen && (
-              <div style={{ marginTop: GAP.xs, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ marginTop: GAP.xs, display: 'flex', flexDirection: 'column', gap: GAP.xs }}>
                 {recallHistory.slice(0, 10).map((h, i) => (
                   <div key={i} style={{
-                    fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
+                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
                     lineHeight: 1.5,
-                    padding: '2px 6px',
+                    padding: `${GAP.xxs}px ${GAP.sm}px`,
                     background: 'rgba(0,0,0,0.02)',
-                    borderRadius: 4,
+                    borderRadius: RADIUS.sm,
                   }}>
                     <span style={{ fontFamily: FONT_MONO, fontWeight: 500 }}>
                       {h.mode || 'recall'}
@@ -175,7 +175,7 @@ export default function MemoryCard({ projectId }) {
                   </div>
                 ))}
                 {recallHistory.length > 10 && (
-                  <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub }}>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
                     …还有 {recallHistory.length - 10} 条
                   </div>
                 )}
@@ -207,14 +207,14 @@ function MemoryRow({ entry, onEdit, onDelete, onAttach }) {
       onMouseLeave={() => setHover(false)}
       style={{
         padding: `${GAP.xs + 1}px ${GAP.sm}px`,
-        borderRadius: 6,
+        borderRadius: RADIUS.md,
         background: hover ? 'rgba(0,0,0,0.025)' : 'transparent',
         transition: 'background 0.15s',
       }}
     >
       <div style={{
         display: 'flex', alignItems: 'center', gap: GAP.sm,
-        marginBottom: 2,
+        marginBottom: GAP.xxs,
       }}>
         <span style={{
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
@@ -225,7 +225,7 @@ function MemoryRow({ entry, onEdit, onDelete, onAttach }) {
           {label}
         </span>
         <span style={{
-          fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
         }}>
           {formatSize(entry.size)}
         </span>
@@ -247,7 +247,7 @@ function MemoryRow({ entry, onEdit, onDelete, onAttach }) {
       </div>
       {entry.preview && (
         <div style={{
-          fontFamily: FONT_SANS, fontSize: 11, color: COLOR.sub,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
           lineHeight: 1.5,
           overflow: 'hidden', textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -317,9 +317,9 @@ function MemoryEditModal({ show, onClose, projectId, agentType, onSaved }) {
             padding: GAP.md,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             color: COLOR.text, lineHeight: 1.55,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             outline: 'none',
             resize: 'vertical',
             boxSizing: 'border-box',
@@ -344,9 +344,9 @@ function formatSize(bytes) {
 }
 
 const cardStyle = {
-  background: '#fff',
+  background: COLOR.bgWhite,
   border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: 12,
+  borderRadius: RADIUS.xxl,
   padding: GAP.lg,
 };
 const cardHeader = {
@@ -359,14 +359,14 @@ const cardTitle = {
   color: COLOR.text,
 };
 const iconBtnStyle = {
-  width: 24, height: 24, borderRadius: 4,
+  width: 24, height: 24, borderRadius: RADIUS.sm,
   background: 'transparent', border: 'none',
   color: COLOR.text2,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   cursor: 'pointer',
 };
 const miniBtn = {
-  width: 18, height: 18, borderRadius: 3,
+  width: 18, height: 18, borderRadius: RADIUS.xs,
   background: 'transparent', border: 'none', color: COLOR.sub,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   cursor: 'pointer',

@@ -3,7 +3,7 @@ import { ChevronDown, CheckCircle2 } from 'lucide-react';
 import Message from './Message.jsx';
 import TimelineNode from './TimelineNode.jsx';
 import { TimelinePositionProvider } from './TimelineGroupContext.js';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { toolLabelOf, fileNameOf } from '../../lib/stage.js';
 
 /**
@@ -117,19 +117,19 @@ function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanv
           gap: GAP.sm,
           width: '100%',
           padding: `${GAP.xs + 2}px ${GAP.lg}px`,
-          fontFamily: FONT_SANS, fontSize: 13,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.base,
           fontWeight: 500,
           color: isActive ? COLOR.warn : COLOR.text2,
           background: 'transparent',
           border: 'none',
-          borderRadius: 4,
+          borderRadius: RADIUS.sm,
           cursor: 'pointer',
           textAlign: 'left',
           transition: 'background 0.15s, color 0.15s',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = 'rgba(0,0,0,0.025)';
-          e.currentTarget.style.color = isActive ? COLOR.warn : COLOR.text1;
+          e.currentTarget.style.color = isActive ? COLOR.warn : COLOR.text;
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = 'transparent';

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Square, Upload } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { useDropzone } from '../../lib/useDropzone.js';
 import ComposerTray from './ComposerTray.jsx';
@@ -101,7 +101,7 @@ export default function ChatComposer({
     <div style={{
       padding: GAP.lg,
       borderTop: `1px solid ${COLOR.border}`,
-      background: '#fff',
+      background: COLOR.bgWhite,
     }}>
       <div
         {...dropProps}
@@ -228,10 +228,10 @@ export default function ChatComposer({
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs + 1,
                 padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
-                color: '#fff',
+                color: COLOR.bgWhite,
                 background: COLOR.error,
                 border: `1px solid ${COLOR.error}`,
-                borderRadius: 8,
+                borderRadius: RADIUS.lg,
                 cursor: 'pointer',
                 transition: 'all 0.15s',
               }}
@@ -253,7 +253,7 @@ export default function ChatComposer({
                 color: COLOR.btnText,
                 background: disabled || empty ? 'rgba(45,36,24,0.35)' : COLOR.btn,
                 border: `1px solid ${disabled || empty ? 'rgba(45,36,24,0.35)' : COLOR.btn}`,
-                borderRadius: 8,
+                borderRadius: RADIUS.lg,
                 cursor: disabled || empty ? 'not-allowed' : 'pointer',
                 transition: 'all 0.15s',
               }}

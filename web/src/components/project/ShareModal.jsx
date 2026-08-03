@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link2, Check } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 const PERMISSIONS = [
   { id: 'view',    label: '可查看',  desc: '只读，看效果' },
@@ -31,9 +31,9 @@ export default function ShareModal({ show, onClose, project }) {
               <label key={p.id} style={{
                 display: 'flex', alignItems: 'flex-start', gap: GAP.md,
                 padding: `${GAP.md}px ${GAP.lg}px`,
-                background: perm === p.id ? 'rgba(45,36,24,0.05)' : '#fff',
+                background: perm === p.id ? 'rgba(45,36,24,0.05)' : COLOR.bgWhite,
                 border: `1px solid ${perm === p.id ? COLOR.btn : COLOR.borderLt}`,
-                borderRadius: 8,
+                borderRadius: RADIUS.lg,
                 cursor: 'pointer',
                 transition: 'all 0.15s',
               }}>
@@ -45,7 +45,7 @@ export default function ShareModal({ show, onClose, project }) {
                 />
                 <div style={{ flex: 1 }}>
                   <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.base, color: COLOR.text, fontWeight: 500 }}>{p.label}</div>
-                  <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 2 }}>{p.desc}</div>
+                  <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: GAP.xxs }}>{p.desc}</div>
                 </div>
               </label>
             ))}
@@ -59,7 +59,7 @@ export default function ShareModal({ show, onClose, project }) {
             padding: `${GAP.sm + 1}px ${GAP.md}px`,
             background: COLOR.bgCard,
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
           }}>
             <Link2 size={13} color={COLOR.text4} style={{ flexShrink: 0 }} />
             <input
@@ -79,7 +79,7 @@ export default function ShareModal({ show, onClose, project }) {
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 500,
                 color: COLOR.btnText, background: COLOR.btn,
                 border: `1px solid ${COLOR.btn}`,
-                borderRadius: 6,
+                borderRadius: RADIUS.md,
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
                 whiteSpace: 'nowrap',
               }}

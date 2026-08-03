@@ -32,11 +32,12 @@ import {
 } from '../../lib/drag-intent.js';
 import { isInsideReactMount } from './DirectEditBridge.js';
 import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, EDITOR } from '../../lib/theme.js';
 
 const GHOST_COLOR = 'rgba(45, 36, 24, 0.85)';        // 跟 EditOverlay 一致的深棕
-const CARET_COLOR = '#3a7afe';                        // 亮蓝（区别于评论橙）
-const ALIGN_COLOR = '#e91e63';                        // Figma 风格洋红 guide
-const DISTANCE_BG  = '#3a7afe';
+const CARET_COLOR = EDITOR.blue;                      // 亮蓝（区别于评论橙）
+const ALIGN_COLOR = EDITOR.magenta;                   // Figma 风格洋红 guide
+const DISTANCE_BG  = EDITOR.blue;
 const DRAG_THRESHOLD = 3;                             // mousedown 到 move 至少 3px 才算拖（避免误触）
 
 export default function DragOverlay({
@@ -507,7 +508,7 @@ export default function DragOverlay({
           top: s.top - 4, left: s.left - 4,
           width: s.width + 8, height: s.height + 8,
           border: `3px solid ${CARET_COLOR}`,
-          borderRadius: 4,
+          borderRadius: RADIUS.sm,
           background: 'rgba(58, 122, 254, 0.12)',
           boxShadow: '0 0 16px rgba(58, 122, 254, 0.5)',
           zIndex: 25,
@@ -577,7 +578,7 @@ export default function DragOverlay({
         width: sourcePlaceholderStyle.width,
         height: sourcePlaceholderStyle.height,
         border: `2px dashed rgba(45, 36, 24, ${sameContainer ? 0.18 : 0.3})`,
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         zIndex: 20,
         opacity: sameContainer ? 0.5 : 1,
       }} />
@@ -591,8 +592,8 @@ export default function DragOverlay({
         width: ghostStyle.width,
         height: ghostStyle.height,
         background: drag.freeMode ? 'rgba(20, 184, 166, 0.10)' : 'rgba(58, 122, 254, 0.08)',
-        border: `2px solid ${drag.freeMode ? '#14b8a6' : GHOST_COLOR}`,
-        borderRadius: 4,
+        border: `2px solid ${drag.freeMode ? EDITOR.teal : GHOST_COLOR}`,
+        borderRadius: RADIUS.sm,
         boxShadow: drag.freeMode
           ? '0 8px 24px rgba(20, 184, 166, 0.30)'
           : '0 8px 24px rgba(0,0,0,0.18)',
@@ -603,14 +604,14 @@ export default function DragOverlay({
           <div style={{
             position: 'absolute',
             top: -22, left: 0,
-            padding: '2px 8px',
-            fontSize: 10, lineHeight: '14px', fontWeight: 600,
-            fontFamily: '"SF Mono", monospace',
-            color: '#fff',
-            background: '#14b8a6',
-            borderRadius: 3,
+            padding: `${GAP.xxs}px ${GAP.md}px`,
+            fontSize: FONT_SIZE.xs, lineHeight: '14px', fontWeight: 600,
+            fontFamily: FONT_MONO,
+            color: COLOR.bgWhite,
+            background: EDITOR.teal,
+            borderRadius: RADIUS.xs,
             whiteSpace: 'nowrap',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+            boxShadow: SHADOW.crisp,
           }}>
             {drag.autoFree ? '📌 绝对定位元素 · 拖动改坐标，不动 DOM 结构' : '📌 自由模式 · 落到像素位置（再按 P 切回）'}
           </div>
@@ -619,12 +620,12 @@ export default function DragOverlay({
           <div style={{
             position: 'absolute',
             top: -22, left: 0,
-            padding: '2px 6px',
-            fontSize: 10, lineHeight: '14px',
-            fontFamily: '"SF Mono", monospace',
-            color: '#fff',
-            background: '#b85c1a',
-            borderRadius: 3,
+            padding: `${GAP.xxs}px ${GAP.sm}px`,
+            fontSize: FONT_SIZE.xs, lineHeight: '14px',
+            fontFamily: FONT_MONO,
+            color: COLOR.bgWhite,
+            background: COLOR.warn,
+            borderRadius: RADIUS.xs,
             whiteSpace: 'nowrap',
           }}>
             React 区 · 落地改 JSX
@@ -634,12 +635,12 @@ export default function DragOverlay({
           <div style={{
             position: 'absolute',
             top: -22, right: 0,
-            padding: '2px 8px',
-            fontSize: 10, lineHeight: '14px', fontWeight: 600,
-            fontFamily: '"SF Mono", monospace',
-            color: '#fff',
-            background: '#8b5cf6',
-            borderRadius: 3,
+            padding: `${GAP.xxs}px ${GAP.md}px`,
+            fontSize: FONT_SIZE.xs, lineHeight: '14px', fontWeight: 600,
+            fontFamily: FONT_MONO,
+            color: COLOR.bgWhite,
+            background: EDITOR.violet,
+            borderRadius: RADIUS.xs,
             whiteSpace: 'nowrap',
             boxShadow: '0 1px 3px rgba(139,92,246,0.4)',
           }}>
@@ -650,12 +651,12 @@ export default function DragOverlay({
           <div style={{
             position: 'absolute',
             bottom: -20, right: 0,
-            padding: '1px 6px',
-            fontSize: 9, lineHeight: '14px',
-            fontFamily: '"SF Mono", monospace',
+            padding: `1px ${GAP.sm}px`,
+            fontSize: FONT_SIZE.xxs, lineHeight: '14px',
+            fontFamily: FONT_MONO,
             color: 'rgba(255,255,255,0.75)',
             background: 'rgba(45,36,24,0.7)',
-            borderRadius: 3,
+            borderRadius: RADIUS.xs,
             whiteSpace: 'nowrap',
           }}>
             {drag.duplicate ? '松开 Alt 取消复制' : '按 P 切自由 · Alt 复制'}
@@ -675,7 +676,7 @@ export default function DragOverlay({
             top: s.top - 2, left: s.left - 2,
             width: s.width + 4, height: s.height + 4,
             border: sameContainer ? `1px dashed ${CARET_COLOR}` : `${strong ? 3 : 2}px solid ${CARET_COLOR}`,
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
             background: sameContainer ? 'transparent' : `rgba(58, 122, 254, ${strong ? 0.10 : 0.04})`,
             zIndex: 18,
             opacity: sameContainer ? 0.45 : 1,
@@ -701,11 +702,11 @@ export default function DragOverlay({
             position: 'absolute',
             top: -24, left: '50%',
             transform: 'translateX(-50%)',
-            padding: '3px 10px',
-            fontSize: 11, lineHeight: '14px', fontWeight: 600,
-            fontFamily: '"SF Mono", monospace',
-            color: '#fff', background: CARET_COLOR,
-            borderRadius: 4,
+            padding: `3px ${GAP.base}px`,
+            fontSize: FONT_SIZE.sm, lineHeight: '14px', fontWeight: 600,
+            fontFamily: FONT_MONO,
+            color: COLOR.bgWhite, background: CARET_COLOR,
+            borderRadius: RADIUS.sm,
             whiteSpace: 'nowrap',
             boxShadow: '0 2px 6px rgba(58, 122, 254, 0.4)',
           }}>
@@ -725,7 +726,7 @@ export default function DragOverlay({
           height: slotPreviewStyle.height,
           border: `2px dashed ${CARET_COLOR}`,
           background: 'rgba(58, 122, 254, 0.10)',
-          borderRadius: 3,
+          borderRadius: RADIUS.xs,
           zIndex: 32,
         }}>
           {sameContainer && (
@@ -733,13 +734,13 @@ export default function DragOverlay({
               position: 'absolute',
               top: -22, left: '50%',
               transform: 'translateX(-50%)',
-              padding: '2px 8px',
-              fontSize: 10, lineHeight: '14px', fontWeight: 600,
-              fontFamily: '"SF Mono", monospace',
-              color: '#fff', background: CARET_COLOR,
-              borderRadius: 3,
+              padding: `${GAP.xxs}px ${GAP.md}px`,
+              fontSize: FONT_SIZE.xs, lineHeight: '14px', fontWeight: 600,
+              fontFamily: FONT_MONO,
+              color: COLOR.bgWhite, background: CARET_COLOR,
+              borderRadius: RADIUS.xs,
               whiteSpace: 'nowrap',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              boxShadow: SHADOW.crisp,
             }}>
               {intent === 'sibling-before' ? '插到此 sibling 之前' : '插到此 sibling 之后'}
             </div>
@@ -802,9 +803,9 @@ export default function DragOverlay({
             position: 'absolute', pointerEvents: 'none',
             top: pos.top, left: pos.left,
             width: pos.width, height: pos.height,
-            background: '#16a34a', color: '#fff',
-            borderRadius: 3,
-            fontFamily: '"SF Mono", monospace', fontSize: 10, lineHeight: '16px',
+            background: EDITOR.green, color: COLOR.bgWhite,
+            borderRadius: RADIUS.xs,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: '16px',
             textAlign: 'center', fontWeight: 600,
             boxShadow: '0 1px 3px rgba(22,163,74,0.3)',
             zIndex: 37,
@@ -822,9 +823,9 @@ export default function DragOverlay({
             position: 'absolute', pointerEvents: 'none',
             top: s.top, left: s.left,
             width: s.width, height: s.height,
-            background: DISTANCE_BG, color: '#fff',
+            background: DISTANCE_BG, color: COLOR.bgWhite,
             borderRadius: 2,
-            fontFamily: '"SF Mono", monospace', fontSize: 10, lineHeight: '16px',
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, lineHeight: '16px',
             textAlign: 'center', fontWeight: 500,
             zIndex: 36,
           }}>

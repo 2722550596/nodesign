@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { LogOut, LayoutDashboard } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -58,7 +58,7 @@ function UserBadge() {
         style={{
           width: 26, height: 26, borderRadius: 13,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: FONT_MONO, fontSize: 11, fontWeight: 600,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 600,
           color: COLOR.text2,
           background: 'rgba(0,0,0,0.045)',
           border: nearCap ? `1.5px solid ${COLOR.warn}` : '1.5px solid transparent',
@@ -69,12 +69,12 @@ function UserBadge() {
 
       {open && (
         <div style={{
-          position: 'absolute', top: '100%', right: 0, marginTop: 6,
+          position: 'absolute', top: '100%', right: 0, marginTop: GAP.sm,
           minWidth: 176,
-          background: '#fff',
+          background: COLOR.bgWhite,
           border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: 10,
-          boxShadow: '0 12px 32px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
+          borderRadius: RADIUS.xl,
+          boxShadow: SHADOW.menu,
           padding: GAP.xs,
           zIndex: 60,
         }}>
@@ -85,7 +85,7 @@ function UserBadge() {
             {authUser.username}
             {usage && (
               <div style={{
-                marginTop: 3, fontSize: 10,
+                marginTop: 3, fontSize: FONT_SIZE.xs,
                 color: pct >= 90 ? COLOR.error : nearCap ? COLOR.warn : COLOR.sub,
               }}>
                 {usage.capped
@@ -118,7 +118,7 @@ const menuItem = {
   padding: `${GAP.sm}px ${GAP.md}px`,
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
   color: COLOR.text2, textDecoration: 'none',
-  borderRadius: 6,
+  borderRadius: RADIUS.md,
   textAlign: 'left',
 };
 
@@ -143,8 +143,8 @@ function Crumb({ item, last }) {
   const interactive = !!(item.to || item.onClick);
   const base = {
     display: 'inline-flex', alignItems: 'center', gap: 5,
-    padding: '3px 8px',
-    borderRadius: 6,
+    padding: `3px ${GAP.md}px`,
+    borderRadius: RADIUS.md,
     border: 'none',
     background: 'transparent',
     fontFamily: 'inherit', fontSize: 'inherit',
@@ -170,7 +170,7 @@ function Crumb({ item, last }) {
     <>
       {item.icon}
       {item.label}
-      {item.hint && <span style={{ color: COLOR.sub, fontFamily: FONT_MONO, fontSize: 11 }}>{item.hint}</span>}
+      {item.hint && <span style={{ color: COLOR.sub, fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm }}>{item.hint}</span>}
     </>
   );
   if (item.to) {
@@ -191,7 +191,7 @@ export default function TopBar({ breadcrumb = [], actions }) {
     <header style={{
       height: 56,
       flexShrink: 0,
-      background: '#fff',
+      background: COLOR.bgWhite,
       borderBottom: `1px solid ${COLOR.border}`,
       display: 'flex',
       alignItems: 'center',
@@ -211,10 +211,10 @@ export default function TopBar({ breadcrumb = [], actions }) {
         letterSpacing: '-0.01em',
       }}>
         <span style={{
-          width: 24, height: 24, borderRadius: 6,
+          width: 24, height: 24, borderRadius: RADIUS.md,
           background: COLOR.btn, color: COLOR.btnText,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 13, fontWeight: 700,
+          fontSize: FONT_SIZE.base, fontWeight: 700,
         }}>N</span>
         Nodesign
       </Link>

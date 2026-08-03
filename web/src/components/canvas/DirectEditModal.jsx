@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { describeStyles, getElementRole } from '../../lib/element-semantics.js';
 
@@ -61,7 +61,7 @@ export default function DirectEditModal({ show, onClose, anchor, iframeDoc, onAp
           padding: `${GAP.sm}px ${GAP.md}px`,
           background: COLOR.bgCard,
           border: `1px solid ${COLOR.borderLt}`,
-          borderRadius: 6,
+          borderRadius: RADIUS.md,
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
@@ -74,7 +74,7 @@ export default function DirectEditModal({ show, onClose, anchor, iframeDoc, onAp
               type="color"
               value={color || '#000000'}
               onChange={e => setColor(e.target.value)}
-              style={{ width: 36, height: 28, borderRadius: 4, border: `1px solid ${COLOR.borderMd}`, cursor: 'pointer' }}
+              style={{ width: 36, height: 28, borderRadius: RADIUS.sm, border: `1px solid ${COLOR.borderMd}`, cursor: 'pointer' }}
             />
             <input
               type="text"
@@ -151,7 +151,7 @@ function Field({ label, children }) {
 
 function Segmented({ value, options, onChange }) {
   return (
-    <div style={{ display: 'inline-flex', background: 'rgba(0,0,0,0.04)', borderRadius: 6, padding: 2 }}>
+    <div style={{ display: 'inline-flex', background: 'rgba(0,0,0,0.04)', borderRadius: RADIUS.md, padding: GAP.xxs }}>
       {options.map(opt => {
         const active = value === opt.id;
         return (
@@ -162,9 +162,9 @@ function Segmented({ value, options, onChange }) {
               padding: `${GAP.xs}px ${GAP.md}px`,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
               color: active ? COLOR.text : COLOR.sub,
-              background: active ? '#fff' : 'transparent',
+              background: active ? COLOR.bgWhite : 'transparent',
               border: 'none',
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               cursor: 'pointer',
               boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
             }}
@@ -182,9 +182,9 @@ const inputStyle = {
   padding: `${GAP.sm}px ${GAP.md}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
   color: COLOR.text,
-  background: '#fff',
+  background: COLOR.bgWhite,
   border: `1px solid ${COLOR.borderMd}`,
-  borderRadius: 6,
+  borderRadius: RADIUS.md,
   outline: 'none',
 };
 

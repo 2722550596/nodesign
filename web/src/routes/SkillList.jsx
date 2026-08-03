@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Wrench, Plus, Upload, Trash2, BookOpen, Box, ChevronDown, ChevronRight } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { Plugins, Skills } from '../lib/api.js';
 
@@ -24,7 +24,7 @@ const SCOPE_LABEL = {
   user: '我的',
 };
 const SCOPE_COLOR = {
-  builtin: '#4A8A4A',
+  builtin: COLOR.success,
   user: '#7A6B3A',
 };
 
@@ -126,7 +126,7 @@ export default function SkillList() {
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, fontWeight: 500,
               color: COLOR.btnText, background: COLOR.btn,
               border: `1px solid ${COLOR.btn}`,
-              borderRadius: 8,
+              borderRadius: RADIUS.lg,
               cursor: uploading ? 'not-allowed' : 'pointer',
               opacity: uploading ? 0.6 : 1,
             }}
@@ -162,7 +162,7 @@ export default function SkillList() {
           <div style={{
             padding: GAP.xl,
             border: `1px dashed ${COLOR.borderMd}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
             textAlign: 'center',
           }}>暂无 plugin。点右上「上传 plugin zip」装一个。</div>
@@ -183,7 +183,7 @@ export default function SkillList() {
           padding: `${GAP.lg}px ${GAP.xl}px`,
           background: COLOR.bgCard,
           border: `1px dashed ${COLOR.borderMd}`,
-          borderRadius: 12,
+          borderRadius: RADIUS.xxl,
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub,
           lineHeight: 1.6,
         }}>
@@ -191,17 +191,17 @@ export default function SkillList() {
           <ul style={{ margin: `${GAP.xs}px 0`, paddingLeft: GAP.xl, lineHeight: 1.7 }}>
             <li>
               <strong>单个 .md 文件</strong>（最简）：含 YAML frontmatter
-              <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>name</code>的 SKILL.md
+              <code style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, margin: `0 ${GAP.xs}px` }}>name</code>的 SKILL.md
             </li>
             <li>
               <strong>Skill zip</strong>：zip 内有
-              <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>SKILL.md</code>
+              <code style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, margin: `0 ${GAP.xs}px` }}>SKILL.md</code>
               + 可选附件（patterns/references/ 等）
             </li>
             <li>
               <strong>完整 plugin zip</strong>：含
-              <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>.claude-plugin/plugin.json</code>
-              + <code style={{ fontFamily: FONT_MONO, fontSize: 11, margin: '0 4px' }}>skills/&lt;id&gt;/SKILL.md</code>
+              <code style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, margin: `0 ${GAP.xs}px` }}>.claude-plugin/plugin.json</code>
+              + <code style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, margin: `0 ${GAP.xs}px` }}>skills/&lt;id&gt;/SKILL.md</code>
               （SDK 原生 plugin convention）
             </li>
           </ul>
@@ -221,9 +221,9 @@ function PluginRow({ plugin, onUninstall }) {
 
   return (
     <div style={{
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.border}`,
-      borderRadius: 10,
+      borderRadius: RADIUS.xl,
       overflow: 'hidden',
     }}>
       <div
@@ -235,7 +235,7 @@ function PluginRow({ plugin, onUninstall }) {
         }}
       >
         <div style={{
-          width: 40, height: 40, borderRadius: 8,
+          width: 40, height: 40, borderRadius: RADIUS.lg,
           background: COLOR.bgCard,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,
@@ -244,7 +244,7 @@ function PluginRow({ plugin, onUninstall }) {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: GAP.xxs }}>
             <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text }}>
               {plugin.name}
             </span>
@@ -253,12 +253,12 @@ function PluginRow({ plugin, onUninstall }) {
             </span>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 3,
-              fontFamily: FONT_MONO, fontSize: 10, color: scopeColor,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: scopeColor,
               padding: '1px 7px',
               background: 'rgba(0,0,0,0.04)',
-              borderRadius: 100,
+              borderRadius: RADIUS.pill,
             }}>
-              <span style={{ width: 5, height: 5, borderRadius: 3, background: scopeColor }} />
+              <span style={{ width: 5, height: 5, borderRadius: RADIUS.xs, background: scopeColor }} />
               {scopeLabel}
             </span>
             <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
@@ -290,7 +290,7 @@ function PluginRow({ plugin, onUninstall }) {
             <span
               title="内置不可卸载"
               style={{
-                fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+                fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
                 opacity: 0.5, padding: `0 ${GAP.xs}px`,
               }}
             >🔒</span>
@@ -322,8 +322,8 @@ function SkillSubrow({ skill }) {
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
       padding: `${GAP.xs + 1}px ${GAP.md}px`,
-      background: '#fff',
-      borderRadius: 6,
+      background: COLOR.bgWhite,
+      borderRadius: RADIUS.md,
     }}>
       <BookOpen size={12} color={COLOR.text4} style={{ marginTop: 3, flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -331,11 +331,11 @@ function SkillSubrow({ skill }) {
           <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2 }}>
             {skill.name}
           </span>
-          <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
             {skill.version}
           </span>
           {skill.id !== skill.name && (
-            <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
               · id: {skill.id}
             </span>
           )}
@@ -343,7 +343,7 @@ function SkillSubrow({ skill }) {
         {skill.description && (
           <div style={{
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-            lineHeight: 1.5, marginTop: 2,
+            lineHeight: 1.5, marginTop: GAP.xxs,
           }}>{skill.description}</div>
         )}
       </div>

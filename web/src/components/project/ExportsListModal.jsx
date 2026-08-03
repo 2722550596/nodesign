@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Download, RefreshCw, FileArchive } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Exports } from '../../lib/api.js';
 
 /**
@@ -75,13 +75,13 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
             onClick={refresh}
             disabled={loading}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
               padding: `${GAP.xs}px ${GAP.sm}px`,
               background: 'rgba(0,0,0,0.04)',
               border: 'none',
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               cursor: loading ? 'wait' : 'pointer',
-              fontFamily: FONT_SANS, fontSize: 11,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
               color: COLOR.sub,
               flexShrink: 0,
               marginLeft: GAP.md,
@@ -99,7 +99,7 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
             padding: GAP.md,
             background: 'rgba(220, 53, 69, 0.06)',
             border: `1px solid ${COLOR.error}33`,
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
             color: COLOR.error,
             marginBottom: GAP.md,
@@ -129,8 +129,8 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
                 gap: GAP.md,
                 padding: `${GAP.sm + 2}px ${GAP.md}px`,
                 border: `1px solid ${COLOR.borderLt}`,
-                borderRadius: 8,
-                background: '#fff',
+                borderRadius: RADIUS.lg,
+                background: COLOR.bgWhite,
               }}
             >
               <FileArchive size={16} color={COLOR.text4} style={{ flexShrink: 0 }} />
@@ -143,8 +143,8 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
                   {file.name}
                 </div>
                 <div style={{
-                  fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
-                  marginTop: 2,
+                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+                  marginTop: GAP.xxs,
                 }}>
                   {formatSize(file.size)} · {formatTs(file.mtime)}
                 </div>
@@ -152,13 +152,13 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
               <button
                 onClick={() => handleDownload(file)}
                 style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
                   padding: `${GAP.xs}px ${GAP.md}px`,
                   fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 500,
                   color: COLOR.btnText,
                   background: COLOR.btn,
                   border: 'none',
-                  borderRadius: 6,
+                  borderRadius: RADIUS.md,
                   cursor: 'pointer',
                   flexShrink: 0,
                 }}

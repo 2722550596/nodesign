@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight, RotateCcw } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * 顶栏 ⋯ 菜单（项目操作）
@@ -34,11 +34,11 @@ export default function ProjectActionsMenu({
       style={{
         position: 'absolute', top: 'calc(100% + 6px)', right: 0,
         minWidth: 180,
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: 8,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
-        padding: 4,
+        borderRadius: RADIUS.lg,
+        boxShadow: SHADOW.pop,
+        padding: GAP.xs,
         zIndex: 50,
       }}
     >
@@ -88,7 +88,7 @@ function Item({ icon, label, onClick, danger, subtle }) {
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
         color: danger ? COLOR.error : COLOR.text2,
         background: 'transparent',
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         cursor: 'pointer',
         textAlign: 'left',
       }}
@@ -98,7 +98,7 @@ function Item({ icon, label, onClick, danger, subtle }) {
       {icon}
       <span style={{ flex: 1 }}>{label}</span>
       {subtle && (
-        <span style={{ fontFamily: 'inherit', fontSize: 10, color: COLOR.sub, opacity: 0.7 }}>{subtle}</span>
+        <span style={{ fontFamily: 'inherit', fontSize: FONT_SIZE.xs, color: COLOR.sub, opacity: 0.7 }}>{subtle}</span>
       )}
     </button>
   );

@@ -10,11 +10,12 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, EDITOR, alpha } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
 
-const PURPLE = '#9c4dcc';
-const PURPLE_GLOW = 'rgba(156, 77, 204, 0.18)';
+const PURPLE = EDITOR.purple;
+const PURPLE_GLOW = alpha(EDITOR.purple, 0.18);
 
 export default function PendingMoveMarkers({ edits = [], iframeRef, zoom = 1 }) {
   const [, setTick] = useState(0);
@@ -94,7 +95,7 @@ export default function PendingMoveMarkers({ edits = [], iframeRef, zoom = 1 }) 
               width: width + 6,
               height: height + 6,
               border: `2px dashed ${PURPLE}`,
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               boxShadow: `0 0 0 3px ${PURPLE_GLOW}`,
               zIndex: 9,
             }} />
@@ -104,14 +105,14 @@ export default function PendingMoveMarkers({ edits = [], iframeRef, zoom = 1 }) 
               top: top - 12,
               left: left + width - 8,
               transform: 'translateX(-100%)',
-              padding: '2px 6px',
-              fontFamily: '"SF Mono", monospace',
-              fontSize: 10, lineHeight: '14px', fontWeight: 500,
-              color: '#fff',
+              padding: `${GAP.xxs}px ${GAP.sm}px`,
+              fontFamily: FONT_MONO,
+              fontSize: FONT_SIZE.xs, lineHeight: '14px', fontWeight: 500,
+              color: COLOR.bgWhite,
               background: PURPLE,
-              borderRadius: 3,
+              borderRadius: RADIUS.xs,
               whiteSpace: 'nowrap',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              boxShadow: SHADOW.crisp,
               zIndex: 11,
               maxWidth: Math.max(120, width),
               overflow: 'hidden',

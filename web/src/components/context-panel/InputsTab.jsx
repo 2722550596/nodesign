@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { Plus, X, FileText, Image as ImageIcon, Link2, Github, Globe } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { formatSize, newId } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -79,7 +79,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
         style={{
           padding: `${GAP.lg + 2}px ${GAP.lg}px`,
           border: `1.5px dashed ${COLOR.border}`,
-          borderRadius: 10,
+          borderRadius: RADIUS.xl,
           background: COLOR.bgCard,
           cursor: 'pointer',
           textAlign: 'center',
@@ -88,7 +88,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
         }}
       >
         <Plus size={20} color={COLOR.text4} style={{ marginBottom: GAP.sm }} />
-        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, marginBottom: 2 }}>
+        <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, marginBottom: GAP.xxs }}>
           拖入文件或点击选择
         </div>
         <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
@@ -113,7 +113,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
             background: 'rgba(0,0,0,0.03)',
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: GAP.xs,
             cursor: 'pointer',
           }}
@@ -128,7 +128,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
             background: 'rgba(0,0,0,0.03)',
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: GAP.xs,
             cursor: 'pointer',
           }}
@@ -162,9 +162,9 @@ function InputRow({ item, onRemove }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: GAP.md,
       padding: showThumb ? GAP.sm : `${GAP.sm + 1}px ${GAP.md}px`,
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 6,
+      borderRadius: RADIUS.md,
     }}>
       {showThumb ? (
         <img
@@ -172,13 +172,13 @@ function InputRow({ item, onRemove }) {
           alt={item.filename}
           style={{
             width: 36, height: 36, objectFit: 'cover',
-            borderRadius: 4, flexShrink: 0,
+            borderRadius: RADIUS.sm, flexShrink: 0,
             border: `1px solid ${COLOR.borderLt}`,
           }}
         />
       ) : (
         <div style={{
-          width: 28, height: 28, borderRadius: 4,
+          width: 28, height: 28, borderRadius: RADIUS.sm,
           background: COLOR.bgCard, flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
@@ -193,7 +193,7 @@ function InputRow({ item, onRemove }) {
         }}>{item.filename}</div>
         {(item.size != null || item.type) && (
           <div style={{
-            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             marginTop: 1,
           }}>
             {item.type && item.type.toUpperCase()}{item.size != null ? ` · ${formatSize(item.size)}` : ''}
@@ -204,7 +204,7 @@ function InputRow({ item, onRemove }) {
       <button
         onClick={() => onRemove?.(item.id)}
         style={{
-          color: COLOR.sub, padding: 4, borderRadius: 3, flexShrink: 0,
+          color: COLOR.sub, padding: GAP.xs, borderRadius: RADIUS.xs, flexShrink: 0,
           background: 'transparent',
         }}
         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; e.currentTarget.style.color = COLOR.error; }}

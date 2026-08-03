@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { Save } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * CodeCanvas — Monaco 显示/编辑 HTML 源
@@ -51,17 +51,17 @@ export default function CodeCanvas({ value = '', onChange, readOnly = false }) {
               onClick={applyNow}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-                padding: `2px ${GAP.md}px`,
-                fontFamily: FONT_SANS, fontSize: 11, fontWeight: 500,
+                padding: `${GAP.xxs}px ${GAP.md}px`,
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
                 color: COLOR.btnText, background: COLOR.btn,
-                border: 'none', borderRadius: 4,
+                border: 'none', borderRadius: RADIUS.sm,
                 cursor: 'pointer',
               }}
             >
               <Save size={10} /> 应用
             </button>
           )}
-          <span style={{ fontSize: 10 }}>
+          <span style={{ fontSize: FONT_SIZE.xs }}>
             {readOnly ? '只读' : '改完会同步到 Edit / Preview'}
           </span>
         </div>

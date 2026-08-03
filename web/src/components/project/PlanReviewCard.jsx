@@ -21,7 +21,7 @@ import ReactMarkdown from 'react-markdown';
 import { Check, Edit3, X, Send } from 'lucide-react';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plan } from '../../lib/api.js';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 
 export default function PlanReviewCard() {
   const planForApproval = useGlobalStore((s) => s.planForApproval);
@@ -109,8 +109,8 @@ export default function PlanReviewCard() {
       padding: GAP.lg,
     }}>
       <div style={{
-        background: '#fff',
-        borderRadius: 12,
+        background: COLOR.bgWhite,
+        borderRadius: RADIUS.xxl,
         boxShadow: '0 12px 40px rgba(0,0,0,0.2)',
         maxWidth: 880,
         width: '100%',
@@ -129,8 +129,8 @@ export default function PlanReviewCard() {
         }}>
           <div>
             <div style={{
-              fontFamily: FONT_MONO, fontSize: 11, color: COLOR.warn,
-              letterSpacing: '0.05em', marginBottom: 2,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.warn,
+              letterSpacing: '0.05em', marginBottom: GAP.xxs,
             }}>
               PLAN MODE
             </div>
@@ -141,8 +141,8 @@ export default function PlanReviewCard() {
               agent 提交了一份设计计划
             </div>
             <div style={{
-              fontFamily: FONT_SANS, fontSize: 12, color: COLOR.sub,
-              marginTop: 2,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, color: COLOR.sub,
+              marginTop: GAP.xxs,
             }}>
               {editing ? '编辑后再批准。SDK 在 plan mode 下不会执行任何文件改动。' : 'review 后批准开始执行；或编辑、或拒绝重新对齐。'}
             </div>
@@ -151,11 +151,11 @@ export default function PlanReviewCard() {
             onClick={() => setEditing(!editing)}
             disabled={submitting}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: `4px ${GAP.sm}px`,
-              fontFamily: FONT_SANS, fontSize: 11,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              padding: `${GAP.xs}px ${GAP.sm}px`,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
               color: editing ? COLOR.btnText : COLOR.text2,
-              background: editing ? COLOR.btn : '#fff',
+              background: editing ? COLOR.btn : COLOR.bgWhite,
               border: `1px solid ${editing ? COLOR.btn : COLOR.borderMd}`,
               borderRadius: 5,
               cursor: submitting ? 'not-allowed' : 'pointer',
@@ -182,12 +182,12 @@ export default function PlanReviewCard() {
                 minHeight: 400,
                 padding: GAP.md,
                 fontFamily: FONT_MONO,
-                fontSize: 13,
+                fontSize: FONT_SIZE.base,
                 lineHeight: 1.6,
                 color: COLOR.text,
                 background: '#fafafa',
                 border: `1px solid ${COLOR.borderMd}`,
-                borderRadius: 6,
+                borderRadius: RADIUS.md,
                 resize: 'vertical',
                 outline: 'none',
               }}
@@ -230,11 +230,11 @@ export default function PlanReviewCard() {
             onClick={handleReject}
             disabled={submitting}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: `6px ${GAP.md}px`,
-              fontFamily: FONT_SANS, fontSize: 12,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              padding: `${GAP.sm}px ${GAP.md}px`,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.md,
               color: COLOR.error,
-              background: '#fff',
+              background: COLOR.bgWhite,
               border: `1px solid ${COLOR.borderMd}`,
               borderRadius: 5,
               cursor: submitting ? 'not-allowed' : 'pointer',
@@ -248,9 +248,9 @@ export default function PlanReviewCard() {
             onClick={handleApprove}
             disabled={submitting}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: `6px ${GAP.md}px`,
-              fontFamily: FONT_SANS, fontSize: 12, fontWeight: 500,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              padding: `${GAP.sm}px ${GAP.md}px`,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 500,
               color: COLOR.btnText,
               background: COLOR.btn,
               border: `1px solid ${COLOR.btn}`,

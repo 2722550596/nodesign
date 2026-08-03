@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { X, Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { SITE_VIEWPORTS, POP_IN } from '../../lib/board-geometry.js';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 import { serializeForAI } from '../../lib/element-semantics.js';
@@ -546,12 +546,12 @@ export default function SiteWindow({
       onClick={() => { if (!extra.disabled) { setSelected(null); setNotePanelOpen(false); setTab(id); } }}
       title={extra.title}
       style={{
-        display: 'flex', alignItems: 'center', gap: 4,
+        display: 'flex', alignItems: 'center', gap: GAP.xs,
         padding: '3px 9px', borderRadius: 5, border: 'none',
         cursor: extra.disabled ? 'default' : 'pointer',
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
         background: tab === id ? COLOR.text : 'transparent',
-        color: tab === id ? '#fff' : COLOR.sub,
+        color: tab === id ? COLOR.bgWhite : COLOR.sub,
         opacity: extra.disabled ? 0.4 : 1,
       }}
     >
@@ -567,9 +567,9 @@ export default function SiteWindow({
         onClick={() => setViewport(v.id)}
         title={`${v.label} · ${v.w}px`}
         style={{
-          display: 'flex', alignItems: 'center', gap: 4,
-          padding: '3px 8px', borderRadius: 5, border: 'none', cursor: 'pointer',
-          fontFamily: FONT_MONO, fontSize: 10,
+          display: 'flex', alignItems: 'center', gap: GAP.xs,
+          padding: `3px ${GAP.md}px`, borderRadius: 5, border: 'none', cursor: 'pointer',
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
           background: viewport === v.id ? 'rgba(0,0,0,0.07)' : 'transparent',
           color: viewport === v.id ? COLOR.text : COLOR.sub,
         }}
@@ -593,7 +593,7 @@ export default function SiteWindow({
     <div data-site-window={task} style={{
       position: 'absolute', inset: 0, zIndex: 400,
       display: 'flex', flexDirection: 'column',
-      background: '#fff', animation: POP_IN,
+      background: COLOR.bgWhite, animation: POP_IN,
     }}>
       {/* 窗口头 */}
       <div style={{
@@ -605,7 +605,7 @@ export default function SiteWindow({
         <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text }}>
           {title || task}
         </span>
-        <div style={{ display: 'flex', gap: 2 }}>
+        <div style={{ display: 'flex', gap: GAP.xxs }}>
           {tabBtn('preview', '预览', Eye)}
           {editable && tabBtn('edit', '编辑', Pencil)}
           {draggable && tabBtn('drag', '拖拽', Move, isStreaming
@@ -614,7 +614,7 @@ export default function SiteWindow({
         </div>
         <div style={{ flex: 1 }} />
         <SitePublishControl projectId={projectId} task={task} />
-        {tab !== 'code' && <div style={{ display: 'flex', gap: 2 }}>{SITE_VIEWPORTS.map(vpBtn)}</div>}
+        {tab !== 'code' && <div style={{ display: 'flex', gap: GAP.xxs }}>{SITE_VIEWPORTS.map(vpBtn)}</div>}
         <button onClick={() => { commitAllPending(); setReloadKey(k => k + 1); }} title="刷新" style={iconBtn}>
           <RotateCw size={13} />
         </button>
@@ -632,7 +632,7 @@ export default function SiteWindow({
       {/* 地址栏：站内页面清单 + 后退 */}
       <div style={{
         height: 30, flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: 6,
+        display: 'flex', alignItems: 'center', gap: GAP.sm,
         padding: `0 ${GAP.md}px`,
         borderBottom: `1px solid ${COLOR.borderLt}`,
         background: '#fafaf9',
@@ -649,8 +649,8 @@ export default function SiteWindow({
             key={p}
             onClick={() => (p === current ? null : navigateTo(p))}
             style={{
-              padding: '2px 8px', borderRadius: 4, border: 'none', cursor: 'pointer',
-              fontFamily: FONT_MONO, fontSize: 10, whiteSpace: 'nowrap',
+              padding: `${GAP.xxs}px ${GAP.md}px`, borderRadius: RADIUS.sm, border: 'none', cursor: 'pointer',
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, whiteSpace: 'nowrap',
               background: p === current ? 'rgba(0,0,0,0.07)' : 'transparent',
               color: p === current ? COLOR.text : COLOR.sub,
             }}
@@ -663,9 +663,9 @@ export default function SiteWindow({
       {/* 模式提示条：怎么用 + 构建型警示 */}
       {(tab === 'edit' || tab === 'drag') && (
         <div style={{
-          flexShrink: 0, padding: `4px ${GAP.md}px`,
+          flexShrink: 0, padding: `${GAP.xs}px ${GAP.md}px`,
           display: 'flex', alignItems: 'center', gap: GAP.sm,
-          fontFamily: FONT_SANS, fontSize: 11, color: COLOR.text2,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
           background: '#fdf8ef', borderBottom: `1px solid ${COLOR.borderLt}`,
         }}>
           {tab === 'edit' ? (
@@ -717,7 +717,7 @@ export default function SiteWindow({
                 width: vp.w,
                 height: scale > 0 ? Math.max(0, (wrapSize.height - GAP.md * 2) / scale) : '100%',
                 border: 0,
-                background: '#fff',
+                background: COLOR.bgWhite,
                 boxShadow: tab === 'edit'
                   ? `0 0 0 2px ${COLOR.btn}, 0 2px 18px rgba(0,0,0,0.08)`
                   : tab === 'drag'
@@ -804,8 +804,8 @@ export default function SiteWindow({
             <div style={{
               position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
               display: 'flex', alignItems: 'center', gap: GAP.sm,
-              padding: `7px ${GAP.md}px`, borderRadius: 999,
-              background: COLOR.text, color: '#fff',
+              padding: `7px ${GAP.md}px`, borderRadius: RADIUS.pill,
+              background: COLOR.text, color: COLOR.bgWhite,
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
               boxShadow: '0 8px 24px rgba(0,0,0,0.3)', zIndex: 60,
             }}>
@@ -818,8 +818,8 @@ export default function SiteWindow({
               <button
                 onClick={saveStaged}
                 style={{
-                  padding: '3px 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
-                  background: '#fff', color: COLOR.text, fontSize: FONT_SIZE.xs,
+                  padding: `3px ${GAP.lg}px`, borderRadius: RADIUS.pill, border: 'none', cursor: 'pointer',
+                  background: COLOR.bgWhite, color: COLOR.text, fontSize: FONT_SIZE.xs,
                   fontFamily: FONT_SANS, fontWeight: 600,
                 }}
               >
@@ -828,9 +828,9 @@ export default function SiteWindow({
               <button
                 onClick={undoStaged}
                 style={{
-                  padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                  padding: `3px ${GAP.base}px`, borderRadius: RADIUS.pill, cursor: 'pointer',
                   border: '1px solid rgba(255,255,255,0.4)', background: 'transparent',
-                  color: '#fff', fontSize: FONT_SIZE.xs, fontFamily: FONT_SANS,
+                  color: COLOR.bgWhite, fontSize: FONT_SIZE.xs, fontFamily: FONT_SANS,
                 }}
               >
                 撤销一步
@@ -838,7 +838,7 @@ export default function SiteWindow({
               <button
                 onClick={discardStaged}
                 style={{
-                  padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                  padding: `3px ${GAP.base}px`, borderRadius: RADIUS.pill, cursor: 'pointer',
                   border: 'none', background: 'transparent',
                   color: 'rgba(255,255,255,0.65)', fontSize: FONT_SIZE.xs, fontFamily: FONT_SANS,
                 }}

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronRight, Crosshair, MessageCircle, Edit3, RefreshCw } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import {
   getElementRole,
@@ -64,7 +64,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
             padding: `${GAP.md}px ${GAP.lg}px`,
             background: COLOR.bgCard,
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
           }}>
             <div style={{
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.lg, fontWeight: 500,
@@ -85,7 +85,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
             )}
             <div style={{
               marginTop: GAP.sm,
-              fontFamily: FONT_MONO, fontSize: 10, color: COLOR.dim,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.dim,
             }}>
               &lt;{aiContext.tag}&gt; {page?.layout && `· layout: ${page.layout}`}
             </div>
@@ -95,8 +95,8 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
 
       {/* 2. 当前样式（人话）*/}
       {styles.length > 0 && (
-        <Section icon={<span style={{ fontSize: 9 }}>◐</span>} label="当前样式">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Section icon={<span style={{ fontSize: FONT_SIZE.xxs }}>◐</span>} label="当前样式">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xxs }}>
             {styles.map(s => (
               <div key={s.key} style={{
                 display: 'flex', alignItems: 'center',
@@ -107,7 +107,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
                 <span style={{ color: COLOR.text2, flex: 1, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs }}>{s.value}</span>
                 {s.swatch && (
                   <span style={{
-                    width: 14, height: 14, borderRadius: 3,
+                    width: 14, height: 14, borderRadius: RADIUS.xs,
                     background: s.swatch,
                     border: `1px solid ${COLOR.borderMd}`,
                     flexShrink: 0,
@@ -121,7 +121,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
 
       {/* 3. 可调维度 */}
       {adjustables.length > 0 && (
-        <Section icon={<span style={{ fontSize: 9 }}>⚙</span>} label="可调">
+        <Section icon={<span style={{ fontSize: FONT_SIZE.xxs }}>⚙</span>} label="可调">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.xs }}>
             {adjustables.map(a => (
               <button
@@ -133,7 +133,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
                   color: COLOR.text2,
                   background: 'rgba(0,0,0,0.04)',
                   border: `1px solid ${COLOR.borderLt}`,
-                  borderRadius: 4,
+                  borderRadius: RADIUS.sm,
                   cursor: 'pointer',
                   transition: 'all 0.15s',
                 }}
@@ -148,7 +148,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
       )}
 
       {/* 4. 改动范围 */}
-      <Section icon={<span style={{ fontSize: 9 }}>◎</span>} label="改动范围">
+      <Section icon={<span style={{ fontSize: FONT_SIZE.xxs }}>◎</span>} label="改动范围">
         <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xs }}>
           {[
             { id: 'this',           label: '仅这一处',           desc: '快速 patch，不影响其他' },
@@ -159,7 +159,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
             <label key={opt.id} style={{
               display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
               padding: `${GAP.xs}px ${GAP.sm}px`,
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               cursor: 'pointer',
               background: scope === opt.id ? 'rgba(45,36,24,0.05)' : 'transparent',
             }}>
@@ -168,13 +168,13 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
                 name="scope"
                 checked={scope === opt.id}
                 onChange={() => setScope(opt.id)}
-                style={{ margin: 0, marginTop: 2, accentColor: COLOR.btn, flexShrink: 0 }}
+                style={{ margin: 0, marginTop: GAP.xxs, accentColor: COLOR.btn, flexShrink: 0 }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, lineHeight: 1.3 }}>
                   {opt.label}
                 </div>
-                <div style={{ fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, marginTop: 1 }}>
+                <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>
                   {opt.desc}
                 </div>
               </div>
@@ -214,7 +214,7 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             padding: `${GAP.xs}px ${GAP.sm}px`,
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
           }}
         >
           <ChevronRight
@@ -229,8 +229,8 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
             padding: GAP.lg,
             background: COLOR.bgCard,
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 6,
-            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.text4,
+            borderRadius: RADIUS.md,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
             lineHeight: 1.5,
             whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             maxHeight: 240, overflow: 'auto',
@@ -282,7 +282,7 @@ function ActionBtn({ icon, label, onClick, primary }) {
         color: primary ? COLOR.btnText : COLOR.text2,
         background: primary ? COLOR.btn : 'rgba(0,0,0,0.04)',
         border: `1px solid ${primary ? COLOR.btn : COLOR.borderLt}`,
-        borderRadius: 8,
+        borderRadius: RADIUS.lg,
         cursor: 'pointer',
         transition: 'all 0.15s',
       }}

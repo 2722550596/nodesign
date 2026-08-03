@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Layers, Check, RotateCcw } from 'lucide-react';
 import { usePanelManager } from './PanelManager.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS, STAGE } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, STAGE } from '../../lib/theme.js';
 
 /**
  * PanelMenu — TopBar dropdown：列出所有 panel + checkbox 控制 visible +
@@ -56,7 +56,7 @@ export default function PanelMenu() {
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
           color: open ? COLOR.text : COLOR.text4,
           background: open ? 'rgba(0,0,0,0.04)' : 'transparent',
-          border: 'none', borderRadius: 6,
+          border: 'none', borderRadius: RADIUS.md,
           cursor: 'pointer',
           transition: 'background 0.15s',
         }}
@@ -70,7 +70,7 @@ export default function PanelMenu() {
           style={{
             position: 'absolute', top: 'calc(100% + 4px)', right: 0,
             minWidth: 200,
-            background: '#fff',
+            background: COLOR.bgWhite,
             borderRadius: STAGE.radius,
             boxShadow: STAGE.shadow,
             border: `1px solid ${STAGE.borderWarm}`,

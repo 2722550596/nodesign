@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { X, MapPin, MessageCircle, Trash2, Check } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { getElementRole, describePage, serializeForAI } from '../../lib/element-semantics.js';
 import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
@@ -161,9 +161,9 @@ export default function InspectFloatingCard({
         left: cardLeft, top: cardTop,
         width: CARD_WIDTH,
         maxHeight: CARD_MAX_HEIGHT,
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: 10,
+        borderRadius: RADIUS.xl,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 50,
@@ -183,8 +183,8 @@ export default function InspectFloatingCard({
         <span style={{
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text4,
           background: 'rgba(0,0,0,0.05)',
-          padding: '1px 6px',
-          borderRadius: 3,
+          padding: `1px ${GAP.sm}px`,
+          borderRadius: RADIUS.xs,
         }}>&lt;{tag}&gt;</span>
         <span style={{
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text,
@@ -198,7 +198,7 @@ export default function InspectFloatingCard({
             onClick={scrollIntoView}
             title="滚动到该元素"
             style={{
-              padding: 4, color: COLOR.text4, borderRadius: 3,
+              padding: GAP.xs, color: COLOR.text4, borderRadius: RADIUS.xs,
               background: 'rgba(0,0,0,0.04)',
             }}
           >
@@ -209,7 +209,7 @@ export default function InspectFloatingCard({
           onClick={onClose}
           title="关闭（ESC）"
           style={{
-            padding: 4, color: COLOR.text5, borderRadius: 3,
+            padding: GAP.xs, color: COLOR.text5, borderRadius: RADIUS.xs,
           }}
         >
           <X size={12} />
@@ -262,9 +262,9 @@ export default function InspectFloatingCard({
               padding: `${GAP.sm}px ${GAP.md}px`,
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
               color: COLOR.text2,
-              background: '#fff',
+              background: COLOR.bgWhite,
               border: `1px solid ${COLOR.borderLt}`,
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               resize: 'vertical',
               boxSizing: 'border-box',
               outline: 'none',
@@ -283,10 +283,10 @@ function CommentRow({ comment, onResolve, onDelete }) {
   return (
     <div style={{
       padding: `${GAP.xs}px ${GAP.sm}px`,
-      background: '#fff',
+      background: COLOR.bgWhite,
       border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: 4,
-      display: 'flex', flexDirection: 'column', gap: 4,
+      borderRadius: RADIUS.sm,
+      display: 'flex', flexDirection: 'column', gap: GAP.xs,
       opacity: resolved ? 0.5 : 1,
     }}>
       <div style={{
@@ -299,19 +299,19 @@ function CommentRow({ comment, onResolve, onDelete }) {
         {comment.text}
       </div>
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4,
+        display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: GAP.xs,
       }}>
         <button
           onClick={onResolve}
           title={resolved ? '取消解决' : '标记解决'}
-          style={{ padding: 2, color: COLOR.sub, borderRadius: 3 }}
+          style={{ padding: GAP.xxs, color: COLOR.sub, borderRadius: RADIUS.xs }}
         >
           <Check size={10} />
         </button>
         <button
           onClick={onDelete}
           title="删除"
-          style={{ padding: 2, color: COLOR.sub, borderRadius: 3 }}
+          style={{ padding: GAP.xxs, color: COLOR.sub, borderRadius: RADIUS.xs }}
         >
           <Trash2 size={10} />
         </button>

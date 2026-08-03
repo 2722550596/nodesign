@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Pencil, Sparkles, Lock } from 'lucide-react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Memory } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -83,10 +83,10 @@ export default function BrandCard({ projectId }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs }}>
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 3,
-              padding: '1px 6px',
+              padding: `1px ${GAP.sm}px`,
               background: 'rgba(45,36,24,0.05)',
-              borderRadius: 4,
-              fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
+              borderRadius: RADIUS.sm,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             }}>
               <Lock size={10} /> 仅你可见
             </span>
@@ -185,18 +185,18 @@ function PaletteRow({ palette }) {
       {groups.map((g, i) => (
         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: GAP.sm }}>
           <span style={{
-            width: 18, fontFamily: FONT_MONO, fontSize: 9, color: COLOR.sub,
+            width: 18, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub,
             textTransform: 'uppercase', letterSpacing: '0.05em',
           }}>{g.label}</span>
-          <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+          <div style={{ display: 'flex', gap: GAP.xs, flex: 1 }}>
             {g.colors.slice(0, 6).map((c, j) => (
               <div
                 key={j}
                 title={c}
                 style={{
-                  width: 22, height: 22, borderRadius: 4,
+                  width: 22, height: 22, borderRadius: RADIUS.sm,
                   background: c,
-                  border: '1px solid rgba(0,0,0,0.06)',
+                  border: `1px solid ${COLOR.border}`,
                   flexShrink: 0,
                 }}
               />
@@ -215,7 +215,7 @@ function TypographyPreview({ display }) {
     <div style={{
       padding: `${GAP.sm}px ${GAP.md}px`,
       background: COLOR.bgCard,
-      borderRadius: 6,
+      borderRadius: RADIUS.md,
       display: 'flex', alignItems: 'center', gap: GAP.md,
     }}>
       <span style={{
@@ -225,10 +225,10 @@ function TypographyPreview({ display }) {
       }}>Aa</span>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
-          fontFamily: FONT_MONO, fontSize: 11, color: COLOR.text2,
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{family}</div>
-        <div style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
           weight {weight}{display.tracking ? ` · ${display.tracking}` : ''}
         </div>
       </div>
@@ -247,7 +247,7 @@ function DontList({ items }) {
         <li key={i} style={{
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
           lineHeight: 1.45,
-          paddingLeft: 12,
+          paddingLeft: GAP.lg,
           position: 'relative',
         }}>
           <span style={{ position: 'absolute', left: 0, color: COLOR.sub }}>·</span>
@@ -297,7 +297,7 @@ function BrandEditModal({ show, onClose, projectId, initialContent, onSaved }) {
         }}>
           markdown 格式。中间的 <code style={{ fontFamily: FONT_MONO, color: COLOR.text2 }}>```json</code> code block 是给
           agent 读的结构化 token；周围的备注 / Don'ts 是写给你自己看的。
-          <span style={{ color: COLOR.dim, marginLeft: GAP.sm, fontFamily: FONT_MONO, fontSize: 10 }}>
+          <span style={{ color: COLOR.dim, marginLeft: GAP.sm, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs }}>
             shared/.claude/agent-memory/brand/memory.md
           </span>
         </div>
@@ -311,9 +311,9 @@ function BrandEditModal({ show, onClose, projectId, initialContent, onSaved }) {
             padding: GAP.md,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             color: COLOR.text, lineHeight: 1.55,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             outline: 'none',
             resize: 'vertical',
             boxSizing: 'border-box',
@@ -363,9 +363,9 @@ function extractDonts(md) {
 // ── styles ──
 
 const cardStyle = {
-  background: '#fff',
+  background: COLOR.bgWhite,
   border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: 12,
+  borderRadius: RADIUS.xxl,
   padding: GAP.lg,
 };
 const cardHeader = {
@@ -378,7 +378,7 @@ const cardTitle = {
   color: COLOR.text,
 };
 const iconBtnStyle = {
-  width: 24, height: 24, borderRadius: 4,
+  width: 24, height: 24, borderRadius: RADIUS.sm,
   background: 'transparent', border: 'none',
   color: COLOR.text2,
   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -395,6 +395,6 @@ const extractBtnStyle = {
   color: COLOR.btnText,
   background: COLOR.btn,
   border: `1px solid ${COLOR.btn}`,
-  borderRadius: 6,
+  borderRadius: RADIUS.md,
   cursor: 'pointer',
 };

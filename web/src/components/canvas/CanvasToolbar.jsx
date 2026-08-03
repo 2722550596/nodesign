@@ -1,5 +1,5 @@
 import { Edit3, Eye, Code2, Move, Pin, Maximize2, Settings, Sliders, MessageSquare, RotateCcw, X } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, STAGE } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, STAGE, EDITOR } from '../../lib/theme.js';
 
 // 桌面化（2026-07-28）：工作台不再是"模式"—— 它是唯一顶层曲面（BoardToolbar 管）。
 // 这条工具栏降级为 DeckWindow（画布内最大化编辑窗口）的窗口头：
@@ -56,8 +56,8 @@ export default function CanvasToolbar({
       <div style={{
         display: 'inline-flex',
         background: 'rgba(0,0,0,0.04)',
-        borderRadius: 6,
-        padding: 2,
+        borderRadius: RADIUS.md,
+        padding: GAP.xxs,
       }}>
         {MODES.map(m => {
           const Icon = m.icon;
@@ -74,8 +74,8 @@ export default function CanvasToolbar({
                 padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
                 fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
                 color: active ? COLOR.text : COLOR.sub,
-                background: active ? '#fff' : 'transparent',
-                borderRadius: 4,
+                background: active ? COLOR.bgWhite : 'transparent',
+                borderRadius: RADIUS.sm,
                 boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
                 transition: 'all 0.15s',
                 opacity: locked ? 0.45 : 1,
@@ -100,9 +100,9 @@ export default function CanvasToolbar({
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             padding: `${GAP.xs + 1}px ${GAP.md}px`,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
-            color: dragFreeMode ? '#fff' : COLOR.text2,
-            background: dragFreeMode ? '#14b8a6' : 'rgba(0,0,0,0.04)',
-            borderRadius: 4,
+            color: dragFreeMode ? COLOR.bgWhite : COLOR.text2,
+            background: dragFreeMode ? EDITOR.teal : 'rgba(0,0,0,0.04)',
+            borderRadius: RADIUS.sm,
             border: 'none',
             cursor: 'pointer',
             transition: 'all 0.15s',
@@ -112,8 +112,8 @@ export default function CanvasToolbar({
           <Pin size={11} />
           {dragFreeMode ? '自由' : '嵌入'}
           <span style={{
-            marginLeft: 2,
-            fontSize: 9,
+            marginLeft: GAP.xxs,
+            fontSize: FONT_SIZE.xxs,
             opacity: 0.7,
             fontWeight: 400,
           }}>P</span>
@@ -164,7 +164,7 @@ export default function CanvasToolbar({
               color: !tweaksEnabled ? COLOR.text5 : (tweaksOpen ? COLOR.text : (tweaksAvailable ? COLOR.text4 : COLOR.text5)),
               background: tweaksEnabled && tweaksOpen ? 'rgba(0,0,0,0.06)' : 'transparent',
               display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-              borderRadius: 4,
+              borderRadius: RADIUS.sm,
               opacity: tweaksEnabled ? (tweaksAvailable ? 1 : 0.7) : 0.5,
               cursor: tweaksEnabled ? 'pointer' : 'not-allowed',
             }}
@@ -179,7 +179,7 @@ export default function CanvasToolbar({
             <Sliders size={11} /> Tweaks
             {!tweaksAvailable && tweaksEnabled && (
               <span style={{
-                fontSize: 9, color: COLOR.text5, marginLeft: 2,
+                fontSize: FONT_SIZE.xxs, color: COLOR.text5, marginLeft: GAP.xxs,
                 fontStyle: 'italic',
               }}>(空)</span>
             )}
@@ -206,7 +206,7 @@ export default function CanvasToolbar({
             color: commentOverviewOpen ? COLOR.text : COLOR.text4,
             background: commentOverviewOpen ? 'rgba(0,0,0,0.06)' : 'transparent',
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
             position: 'relative',
           }}
           title="查看本 deck 已有评论"
@@ -215,9 +215,9 @@ export default function CanvasToolbar({
           {commentCount > 0 && (
             <span style={{
               minWidth: 16, height: 14,
-              padding: '0 4px',
-              fontFamily: FONT_MONO, fontSize: 9, lineHeight: '14px',
-              color: '#fff', background: COLOR.accent || '#c97c4a',
+              padding: `0 ${GAP.xs}px`,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, lineHeight: '14px',
+              color: COLOR.bgWhite, background: '#c97c4a',
               borderRadius: 7,
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             }}>{commentCount}</span>
@@ -235,7 +235,7 @@ export default function CanvasToolbar({
             color: COLOR.text4,
             background: 'transparent',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
           }}
           title="重载 iframe（agent 改完没刷的时候用）"
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
@@ -256,7 +256,7 @@ export default function CanvasToolbar({
             color: systemActive ? COLOR.text : COLOR.text4,
             background: systemActive ? 'rgba(0,0,0,0.06)' : 'transparent',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
           }}
           title="System — A11y / 项目档案"
         >
@@ -276,7 +276,7 @@ export default function CanvasToolbar({
             color: COLOR.text,
             background: 'rgba(0,0,0,0.05)',
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
           }}
           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.1)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
@@ -300,8 +300,8 @@ function ToggleSwitch({ checked, onChange, title }) {
         width: 28, height: 16,
         padding: 0,
         border: 'none',
-        borderRadius: 8,
-        background: checked ? '#3a2a18' : 'rgba(0,0,0,0.18)',
+        borderRadius: RADIUS.lg,
+        background: checked ? COLOR.text : 'rgba(0,0,0,0.18)',
         position: 'relative',
         cursor: 'pointer',
         transition: 'background 0.15s',
@@ -312,9 +312,9 @@ function ToggleSwitch({ checked, onChange, title }) {
         position: 'absolute',
         top: 2, left: checked ? 14 : 2,
         width: 12, height: 12,
-        borderRadius: '50%',
-        background: '#fff',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+        borderRadius: RADIUS.round,
+        background: COLOR.bgWhite,
+        boxShadow: SHADOW.crispSm,
         transition: 'left 0.15s',
       }} />
     </button>
@@ -323,9 +323,9 @@ function ToggleSwitch({ checked, onChange, title }) {
 
 const zoomBtnStyle = {
   width: 22, height: 22,
-  fontFamily: 'inherit', fontSize: 12,
-  color: '#3a2a18',
+  fontFamily: 'inherit', fontSize: FONT_SIZE.md,
+  color: COLOR.text,
   background: 'rgba(0,0,0,0.04)',
-  borderRadius: 4,
+  borderRadius: RADIUS.sm,
 };
 

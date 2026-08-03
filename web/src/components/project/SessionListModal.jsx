@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, GitBranch, Edit2, Tag as TagIcon, Trash2, MoreHorizontal, Check } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Sessions } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { timeAgo } from '../../lib/helpers.js';
@@ -154,7 +154,7 @@ export default function SessionListModal({
             color: COLOR.btnText,
             background: COLOR.btn,
             border: `1px solid ${COLOR.btn}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
             cursor: 'pointer',
             marginBottom: GAP.md,
           }}
@@ -162,7 +162,7 @@ export default function SessionListModal({
           <Plus size={14} />
           + 新会话
           <span style={{
-            marginLeft: 'auto', fontSize: 10, opacity: 0.7, fontFamily: FONT_MONO,
+            marginLeft: 'auto', fontSize: FONT_SIZE.xs, opacity: 0.7, fontFamily: FONT_MONO,
           }}>下次发送时创建</span>
         </button>
 
@@ -186,7 +186,7 @@ export default function SessionListModal({
             maxHeight: 460,
             overflow: 'auto',
             border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: 8,
+            borderRadius: RADIUS.lg,
           }}>
             {sessions.map(s => (
               <SessionRow
@@ -266,7 +266,7 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
         onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = 'transparent'; }}
       >
         <div style={{
-          width: 14, height: 14, flexShrink: 0, marginTop: 2,
+          width: 14, height: 14, flexShrink: 0, marginTop: GAP.xxs,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           {isCurrent && <Check size={12} color={COLOR.success} strokeWidth={2.25} />}
@@ -276,20 +276,20 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
             fontWeight: 500,
             color: COLOR.text,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            marginBottom: 2,
+            marginBottom: GAP.xxs,
           }}>
             {title}
           </div>
           <div style={{
             display: 'flex', gap: GAP.sm, alignItems: 'center',
-            fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
           }}>
             <span>{ts}</span>
             {session.tag && (
               <span style={{
-                padding: '1px 6px',
+                padding: `1px ${GAP.sm}px`,
                 background: 'rgba(45,36,24,0.06)',
-                borderRadius: 3,
+                borderRadius: RADIUS.xs,
                 color: COLOR.text2,
               }}>
                 {session.tag}
@@ -313,7 +313,7 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
           style={{
             position: 'absolute',
             top: GAP.md, right: GAP.md,
-            width: 26, height: 26, borderRadius: 4,
+            width: 26, height: 26, borderRadius: RADIUS.sm,
             background: 'rgba(255,255,255,0.95)',
             border: `1px solid ${COLOR.borderMd}`,
             color: COLOR.text2,
@@ -334,11 +334,11 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
             position: 'fixed',
             top: menuPos.top, right: menuPos.right,
             minWidth: 140,
-            background: '#fff',
+            background: COLOR.bgWhite,
             border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: 6,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)',
-            padding: 4,
+            borderRadius: RADIUS.md,
+            boxShadow: SHADOW.pop,
+            padding: GAP.xs,
             zIndex: 1200,
           }}>
           <MenuItem icon={<GitBranch size={12} />} label="Fork" onClick={onFork} />
@@ -363,7 +363,7 @@ function MenuItem({ icon, label, onClick, danger }) {
         color: danger ? COLOR.error : COLOR.text2,
         background: 'transparent',
         border: 'none',
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         cursor: 'pointer',
         textAlign: 'left',
       }}

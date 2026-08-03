@@ -1,5 +1,5 @@
 import { BookOpen, ScrollText, Palette, Files } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { MARGIN_X, PROJECT_BAND_Y, PROJECT_CARD_W, PROJECT_CARD_H, POP_IN } from '../../lib/board-geometry.js';
 
 /**
@@ -35,7 +35,7 @@ export default function ProjectBand({ summaries = {}, onOpen }) {
               left: MARGIN_X + i * (PROJECT_CARD_W + 16),
               top: PROJECT_BAND_Y,
               width: PROJECT_CARD_W, height: PROJECT_CARD_H,
-              borderRadius: 10,
+              borderRadius: RADIUS.xl,
               background: COLOR.bgCard,
               border: `1px solid ${COLOR.borderLt}`,
               boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
@@ -54,14 +54,14 @@ export default function ProjectBand({ summaries = {}, onOpen }) {
               e.currentTarget.style.borderColor = COLOR.borderLt;
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: 5 }}>
               <Icon size={13} color="#7c6f5a" />
               <span style={{ fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text }}>
                 {c.title}
               </span>
             </div>
             <div style={{
-              fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
+              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
               display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
             }}>
               {sub || c.hint}

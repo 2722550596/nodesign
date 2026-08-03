@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { findElementByAnchor } from '../../lib/html-utils.js';
-import { COLOR } from '../../lib/theme.js';
+import { COLOR, RADIUS } from '../../lib/theme.js';
 import { overlayBase, toOverlayXY } from '../../lib/overlay-rect.js';
 
 /**
@@ -106,7 +106,7 @@ export default function EditOverlay({ selectedAnchor, iframeRef, zoom = 1 }) {
         width: width + 8,
         height: height + 8,
         border: `2px solid ${COLOR.btn}`,
-        borderRadius: 4,
+        borderRadius: RADIUS.sm,
         boxShadow: '0 0 0 4px rgba(45, 36, 24, 0.08)',
         zIndex: 10,
         // 不加 transition —— 滚动跟随要瞬时，否则会拖尾

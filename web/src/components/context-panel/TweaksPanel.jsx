@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Sliders, RotateCcw, Check, Sparkles } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Spec } from '../../lib/api.js';
 
 /**
@@ -198,10 +198,10 @@ function ControlRow({ control, value, onChange }) {
   const labelEl = (
     <div style={{
       fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
-      marginBottom: 4, display: 'flex', alignItems: 'baseline', gap: GAP.xs,
+      marginBottom: GAP.xs, display: 'flex', alignItems: 'baseline', gap: GAP.xs,
     }}>
       <span style={{ flex: 1 }}>{control.label}</span>
-      <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+      <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
         {control.unit ? `${value}${control.unit}` : String(value)}
       </span>
     </div>
@@ -213,8 +213,8 @@ function ControlRow({ control, value, onChange }) {
       {renderControl(control, value, onChange)}
       {control.description && (
         <div style={{
-          fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub,
-          marginTop: 2, lineHeight: 1.4,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+          marginTop: GAP.xxs, lineHeight: 1.4,
         }}>{control.description}</div>
       )}
     </div>
@@ -240,14 +240,14 @@ function renderControl(c, value, onChange) {
           type="color"
           value={String(value || '#000000')}
           onChange={(e) => onChange(e.target.value)}
-          style={{ width: 64, height: 28, border: `1px solid ${COLOR.borderLt}`, borderRadius: 4, cursor: 'pointer' }}
+          style={{ width: 64, height: 28, border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.sm, cursor: 'pointer' }}
         />
       );
     }
     case 'segmented': {
       const opts = c.options || [];
       return (
-        <div style={{ display: 'inline-flex', background: 'rgba(0,0,0,0.05)', borderRadius: 4, padding: 2 }}>
+        <div style={{ display: 'inline-flex', background: 'rgba(0,0,0,0.05)', borderRadius: RADIUS.sm, padding: GAP.xxs }}>
           {opts.map(opt => {
             const active = String(opt.value) === String(value);
             return (
@@ -258,8 +258,8 @@ function renderControl(c, value, onChange) {
                   padding: `${GAP.xs}px ${GAP.md}px`,
                   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
                   color: active ? COLOR.text : COLOR.sub,
-                  background: active ? '#fff' : 'transparent',
-                  borderRadius: 3,
+                  background: active ? COLOR.bgWhite : 'transparent',
+                  borderRadius: RADIUS.xs,
                   boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
                 }}
               >{opt.label}</button>
@@ -283,10 +283,10 @@ function renderControl(c, value, onChange) {
         >
           <span style={{
             position: 'absolute', top: 2, left: on ? 20 : 2,
-            width: 14, height: 14, borderRadius: '50%',
-            background: '#fff',
+            width: 14, height: 14, borderRadius: RADIUS.round,
+            background: COLOR.bgWhite,
             transition: 'left 0.15s',
-            boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+            boxShadow: SHADOW.crispSm,
           }} />
         </button>
       );
@@ -300,8 +300,8 @@ function renderControl(c, value, onChange) {
           style={{
             padding: `${GAP.xs}px ${GAP.sm}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
-            color: COLOR.text2, background: '#fff',
-            border: `1px solid ${COLOR.borderLt}`, borderRadius: 4,
+            color: COLOR.text2, background: COLOR.bgWhite,
+            border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.sm,
           }}
         >
           {opts.map(opt => (
@@ -349,7 +349,7 @@ const btnPrimary = {
   padding: `${GAP.xs + 1}px ${GAP.md}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
   color: COLOR.btnText, background: COLOR.btn,
-  border: `1px solid ${COLOR.btn}`, borderRadius: 4,
+  border: `1px solid ${COLOR.btn}`, borderRadius: RADIUS.sm,
   cursor: 'pointer',
 };
 
@@ -358,6 +358,6 @@ const btnSecondary = {
   padding: `${GAP.xs + 1}px ${GAP.md}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
   color: COLOR.text4, background: 'rgba(0,0,0,0.04)',
-  border: `1px solid ${COLOR.borderLt}`, borderRadius: 4,
+  border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.sm,
   cursor: 'pointer',
 };

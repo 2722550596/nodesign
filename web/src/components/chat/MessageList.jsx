@@ -3,7 +3,7 @@ import { Virtuoso } from 'react-virtuoso';
 import Message from './Message.jsx';
 import TimelineGroup from './TimelineGroup.jsx';
 import { History } from 'lucide-react';
-import { COLOR, GAP, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -109,12 +109,12 @@ function PendingRow({ show, active, tokens }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: GAP.sm,
       padding: `${GAP.sm}px ${GAP.lg}px ${GAP.lg}px`,
-      fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub,
+      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
     }}>
       <span
         title={active ? 'agent 正在输出' : 'agent 在 turn 内但暂无输出（深度思考 / 长工具 / 外部资源）'}
         style={{
-          width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+          width: 7, height: 7, borderRadius: RADIUS.round, flexShrink: 0,
           background: active ? COLOR.success : COLOR.sub,
           animation: active ? 'pulse 1.2s ease-in-out infinite' : 'none',
           transition: 'background 0.3s ease',
@@ -187,7 +187,7 @@ function EmptyState({ onOpenSessionList }) {
         想做什么、什么场合看、想让人感觉到什么。
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', maxWidth: 300 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.sm, width: '100%', maxWidth: 300 }}>
         {STARTERS.map((t) => (
           <button
             key={t}
@@ -197,20 +197,20 @@ function EmptyState({ onOpenSessionList }) {
               textAlign: 'left',
               padding: `${GAP.sm}px ${GAP.md}px`,
               border: `1px solid ${COLOR.borderLt}`,
-              borderRadius: 8,
-              background: '#fff',
+              borderRadius: RADIUS.lg,
+              background: COLOR.bgWhite,
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
               cursor: 'pointer', lineHeight: 1.5,
               transition: 'background 0.15s, border-color 0.15s',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.03)'; e.currentTarget.style.borderColor = COLOR.borderHv; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.borderColor = COLOR.borderLt; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = COLOR.bgWhite; e.currentTarget.style.borderColor = COLOR.borderLt; }}
           >{t}</button>
         ))}
       </div>
 
       <div style={{
-        maxWidth: 300, fontSize: 11, lineHeight: 1.7, color: COLOR.sub,
+        maxWidth: 300, fontSize: FONT_SIZE.sm, lineHeight: 1.7, color: COLOR.sub,
         borderTop: `1px solid ${COLOR.borderLt}`, paddingTop: GAP.md,
       }}>
         agent 会在项目里建一个任务文件夹放产出，写的每一步都在右边画布上实时演。
@@ -224,8 +224,8 @@ function EmptyState({ onOpenSessionList }) {
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: `${GAP.xs}px ${GAP.md}px`,
             border: 'none', background: 'transparent',
-            fontFamily: FONT_MONO, fontSize: 11, color: COLOR.text2,
-            cursor: 'pointer', borderRadius: 6,
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2,
+            cursor: 'pointer', borderRadius: RADIUS.md,
           }}
           onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}

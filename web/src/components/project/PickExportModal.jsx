@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { FileCode, Image as ImageIcon, FileText, Download, Globe } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { Exports } from '../../lib/api.js';
 
 /**
@@ -83,19 +83,19 @@ export default function PickExportModal({ open, onClose, projectId, sessionId, o
 
   return (
     <Modal show={open} onClose={onClose} title="挑着导出" width={520}>
-      <div style={{ fontFamily: FONT_SANS, fontSize: 11, color: COLOR.sub, marginBottom: GAP.md }}>
+      <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, marginBottom: GAP.md }}>
         当前任务的产物。选一个直接下，选多个打成一个 zip。
-        <span style={{ marginLeft: 6 }}>要自包含 HTML / PDF / PPTX 走上面的整包格式。</span>
+        <span style={{ marginLeft: GAP.sm }}>要自包含 HTML / PDF / PPTX 走上面的整包格式。</span>
       </div>
 
-      {loading && <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLOR.sub }}>读取中…</div>}
+      {loading && <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>读取中…</div>}
       {!loading && items.length === 0 && (
-        <div style={{ fontFamily: FONT_MONO, fontSize: 11, color: COLOR.sub }}>
+        <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>
           这个会话还没有产物。
         </div>
       )}
 
-      <div style={{ maxHeight: '46vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div style={{ maxHeight: '46vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: GAP.xxs }}>
         {items.map((it) => {
           const Icon = KIND_ICON[it.kind] || FileText;
           const on = picked.has(it.path);
@@ -105,34 +105,34 @@ export default function PickExportModal({ open, onClose, projectId, sessionId, o
               style={{
                 display: 'flex', alignItems: 'center', gap: GAP.md,
                 padding: `${GAP.sm}px ${GAP.md}px`,
-                borderRadius: 6, cursor: 'pointer',
-                background: on ? 'rgba(176,140,79,0.10)' : 'transparent',
-                border: `1px solid ${on ? 'rgba(176,140,79,0.35)' : 'transparent'}`,
+                borderRadius: RADIUS.md, cursor: 'pointer',
+                background: on ? alpha(CANVAS.brass, 0.10) : 'transparent',
+                border: `1px solid ${on ? alpha(CANVAS.brass, 0.35) : 'transparent'}`,
               }}
             >
-              <input type="checkbox" checked={on} onChange={() => toggle(it.path)} style={{ accentColor: '#b08c4f' }} />
+              <input type="checkbox" checked={on} onChange={() => toggle(it.path)} style={{ accentColor: CANVAS.brass }} />
               <Icon size={13} color={COLOR.text4} style={{ flexShrink: 0 }} />
               <span style={{ flex: 1, fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {it.name}
               </span>
-              <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>{sizeText(it.size)}</span>
+              <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>{sizeText(it.size)}</span>
             </label>
           );
         })}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: GAP.lg }}>
-        <span style={{ fontFamily: FONT_MONO, fontSize: 10, color: COLOR.sub }}>
+        <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
           已选 {picked.size} 项 · {sizeText(total)}
         </span>
         <button
           onClick={download}
           disabled={picked.size === 0 || busy}
           style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px', borderRadius: 7,
+            display: 'flex', alignItems: 'center', gap: GAP.sm,
+            padding: `${GAP.sm}px 14px`, borderRadius: 7,
             border: 'none', background: picked.size === 0 || busy ? COLOR.borderMd : COLOR.text,
-            color: '#fff', fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
+            color: COLOR.bgWhite, fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             cursor: picked.size === 0 || busy ? 'not-allowed' : 'pointer',
           }}
         >

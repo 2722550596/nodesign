@@ -18,6 +18,7 @@ import PendingMoveMarkers from './PendingMoveMarkers.jsx';
 import { applyMoveToRuntime, applyStyleToRuntime } from '../../lib/pending-edit-apply.js';
 import { usePanelManager } from '../layout/PanelManager.jsx';
 import { SessionConfig } from '../../lib/api.js';
+import { COLOR } from '../../lib/theme.js';
 
 /**
  * DeckWindow — 画布内最大化的 deck 编辑窗口（2026-07-28 桌面化）
@@ -247,7 +248,7 @@ export default function DeckWindow({
       {/* 最大化窗口 */}
       <div style={{
         position: 'absolute', inset: '16px 20px',
-        background: '#fff', borderRadius: 14, overflow: 'hidden',
+        background: COLOR.bgWhite, borderRadius: 14, overflow: 'hidden',
         boxShadow: '0 24px 80px rgba(30,22,8,0.45)',
         display: 'flex', flexDirection: 'column',
         animation: 'ndPopIn 240ms cubic-bezier(0.32, 0.72, 0, 1)',

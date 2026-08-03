@@ -1,5 +1,5 @@
 import { Sparkles, X } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * SuggestionChip —— 显示 SDK 预测的下条 user prompt
@@ -25,15 +25,15 @@ export default function SuggestionChip({ suggestion, onAccept, onDismiss }) {
       padding: `${GAP.sm}px ${GAP.md}px`,
       background: 'rgba(45, 36, 24, 0.05)',
       border: `1px dashed ${COLOR.borderMd}`,
-      borderRadius: 10,
+      borderRadius: RADIUS.xl,
       fontFamily: FONT_SANS,
       fontSize: FONT_SIZE.sm,
       color: COLOR.text2,
     }}>
-      <Sparkles size={13} color={COLOR.text4} style={{ flexShrink: 0, marginTop: 2 }} />
+      <Sparkles size={13} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
 
       <div style={{ flex: 1, lineHeight: 1.4 }}>
-        <div style={{ fontSize: 10, color: COLOR.sub, marginBottom: 2, letterSpacing: '0.02em' }}>
+        <div style={{ fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: GAP.xxs, letterSpacing: '0.02em' }}>
           下一步可能想说
         </div>
         <div>{suggestion}</div>
@@ -48,7 +48,7 @@ export default function SuggestionChip({ suggestion, onAccept, onDismiss }) {
             background: COLOR.btn,
             color: COLOR.btnText,
             border: 'none',
-            borderRadius: 6,
+            borderRadius: RADIUS.md,
             fontFamily: FONT_SANS,
             fontSize: FONT_SIZE.xs,
             fontWeight: 500,
@@ -65,7 +65,7 @@ export default function SuggestionChip({ suggestion, onAccept, onDismiss }) {
             height: 22,
             background: 'transparent',
             border: 'none',
-            borderRadius: 4,
+            borderRadius: RADIUS.sm,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',

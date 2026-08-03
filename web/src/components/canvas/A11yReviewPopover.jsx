@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, AlertTriangle, X, RefreshCw } from 'lucide-react';
-import { COLOR, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
  * A11yReviewPopover — Accessibility review 浮窗（mock）
@@ -46,9 +46,9 @@ export default function A11yReviewPopover({ anchorRef, onClose, iframeDoc }) {
       style={{
         position: 'absolute', top: 78, right: 16,
         width: 320,
-        background: '#fff',
+        background: COLOR.bgWhite,
         border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: 10,
+        borderRadius: RADIUS.xl,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 60,
@@ -67,7 +67,7 @@ export default function A11yReviewPopover({ anchorRef, onClose, iframeDoc }) {
           onClick={runReview}
           disabled={running}
           style={{
-            padding: 4, color: COLOR.sub, borderRadius: 3,
+            padding: GAP.xs, color: COLOR.sub, borderRadius: RADIUS.xs,
             opacity: running ? 0.5 : 1,
           }}
           title="重新扫描"
@@ -93,7 +93,7 @@ export default function A11yReviewPopover({ anchorRef, onClose, iframeDoc }) {
         padding: `${GAP.sm}px ${GAP.lg}px`,
         background: COLOR.bgCard,
         borderTop: `1px solid ${COLOR.borderLt}`,
-        fontFamily: FONT_SANS, fontSize: 10, color: COLOR.sub, lineHeight: 1.5,
+        fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
       }}>
         P5 接 LLM 真做 contrast / hierarchy / usability 审查；当前是启发式扫描。
       </div>
@@ -112,9 +112,9 @@ function CheckRow({ kind, label, hint, count }) {
       display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
       padding: `${GAP.xs}px ${GAP.sm}px`,
       background: isOk ? 'transparent' : 'rgba(0,0,0,0.02)',
-      borderRadius: 4,
+      borderRadius: RADIUS.sm,
     }}>
-      <Icon size={12} color={color} style={{ marginTop: 2, flexShrink: 0 }} />
+      <Icon size={12} color={color} style={{ marginTop: GAP.xxs, flexShrink: 0 }} />
       <div style={{ flex: 1 }}>
         <div style={{
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
