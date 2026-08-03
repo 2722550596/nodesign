@@ -73,6 +73,15 @@ export const NODESIGN_PLAN_INSTRUCTIONS = (() => {
 //     WebSearch 走我们自己的 mcp__nodesign__web_search（4 provider，免 server_tool_use）
 //   - Task 是子代理调用入口；agents 字段注册的子代理通过 Task 暴露给主 agent。
 //     **Task 漏挂 = 所有子代理形同摆设**（P0+ stage 1 修复过一次的隐性 bug）
+//     工具真名在 SDK 0.3 已改叫 `Agent`，'Task' 走 sdk.mjs 的旧名映射表（i6）
+//     照样解析成 Agent，故此处不必改名
+//   - TaskOutput 是**子代理报告的取回口**（2026-08-03 加）。子代理默认后台跑，
+//     后台跑时 tool_result 里只有一句 "Async agent launched successfully"，
+//     完成通知也只给一个 output_file 路径 —— 那个路径是 SDK 转录 jsonl，既在
+//     cwd + additionalDirectories 之外（Read 够不着），又明令不许读（会撑爆上下文）。
+//     漏挂 TaskOutput 的后果是主 agent 眼睁睁看着子代理跑完却拿不到结果：实测它
+//     会去 ToolSearch 找 SendMessage，找不到，然后放弃改用自己的记忆硬写。
+//     hooks.js 已强制前台（正常路径拿得到报告），这里是兜底的第二条路。
 //
 // 非显式语义：
 //   - tools 字段是"可见集合"白名单，不在里面的内置工具会被剥离
@@ -89,6 +98,7 @@ export const DEFAULT_TOOL_ALLOWLIST = [
   'AskUserQuestion',
   'WebFetch',
   'Task',
+  'TaskOutput',
   'ExitPlanMode',
   'Skill',
   // deferred MCP 工具的取 schema 入口（ENABLE_TOOL_SEARCH=true 时生效）。

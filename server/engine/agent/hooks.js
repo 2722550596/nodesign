@@ -127,15 +127,15 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // OS 级隔离（macOS sandbox-exec / Linux bubblewrap），filesystem.allowWrite/denyRead
     // 替代命令级正则。
 
-    // PreToolUse Task：拦截 run_in_background:true，强制前台等结果
-    // sdk-tools.d.ts Task input 含 `run_in_background?: boolean` 字段，model 可
-    // 自己传 true 让 subagent fire-and-forget 跑。NoDesign 体验下这等于"agent
-    // 自己派任务出去后继续往下做"，主流文本 chunk 跟 subagent 报告交错，用户看不
-    // 懂。硬拦：true → deny + 提示重试不带这个字段。
+    // PreToolUse Agent：强制子代理前台跑，主 agent 才拿得到报告。
+    //
+    // matcher 写 'Task|Agent'：SDK 0.3 起工具真名叫 **Agent**，'Task' 是旧别名
+    // （sdk.mjs 的 i6 表 Task→Agent，binary 侧 matcher 也吃这个别名 —— 2026-08-03
+    // 双 matcher 探针实测两个都命中）。两个都写，换 SDK 版本时不会静默失配。
     PreToolUse: [{
-      matcher: 'Task',
+      matcher: 'Task|Agent',
       hooks: [
-        makePreToolUseTaskBackgroundDenyHandler(),
+        makePreToolUseAgentForceForegroundHandler(),
         // vision-checker 派遣 prompt 模板首次注入（仅当 subagent_type='vision-checker'）
         makePreToolUseTaskVisionCheckerDispatchInjector(),
       ],
@@ -309,40 +309,51 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
 // ─────────────────────────────────────────────────────────────────────
 
 /**
- * PreToolUse(Task) Background Force-Foreground —— 透明改 input，不 hard deny。
+ * PreToolUse(Agent) 强制前台 —— 透明改 input，不 hard deny。
  *
- * 拦 `Task` 工具调用且 input.run_in_background === true 的情况：
- *   - updatedInput: 把 run_in_background 改成 false（subagent 真的前台跑）
- *   - additionalContext: 温和提示 agent 为什么 NoDesign 偏好前台
- *   - allow（不阻断 tool call）
+ * ⚠️ 2026-08-03 修：**默认值翻了面，这个 hook 之前形同虚设。**
  *
- * 这种设计避免了 hard deny 的"失败重试" churn —— agent 这次直接拿到 subagent
- * 报告（前台等结果），additionalContext 教它下次别再传。
+ * 老 SDK：`run_in_background` 不传 = 前台，所以只需拦 `=== true`。
+ * 新 SDK（sdk-tools.d.ts AgentInput 原文）："Agents run in the background by
+ * default; you will be notified when one completes. **Set to false** to run this
+ * agent synchronously when you need its result before continuing."
  *
- * HTML 创作的核心反馈环：agent 看 explorer/vision-checker 传回的素材 URL /
- * critique → 基于此改 deck → 再自检。fire-and-forget 等于砍掉反馈环，agent
- * 拿不到结果只能盲写。
+ * 也就是说**不传 = 后台**。模型自然写法就是不传（探针实测 bg=undefined），于是：
+ * 主 agent 只拿到一句 "Async agent launched successfully"，报告永远不回来。
+ * 真实事故：2026-08-03 一个 explorer 烧了 38k tokens / 20 次工具调用 / 108 秒查
+ * 完时局资料，主 agent 收到的 tool_result 里一个字都没有，只好自己重搜四轮，
+ * 还跟用户说了句"研究员跑完了但报告没回传到我这儿"。
  *
- * 不动 background 字段 false / undefined（默认前台）的 case。
+ * 所以判据从"等于 true 才改"改成"**不是显式 false 就补 false**"。
+ * 显式传了 false 的（模型自己知道要前台）原样放过，不重复改也不发提示。
+ *
+ * 为什么 NoDesign 一定要前台：创作的核心反馈环是 agent 看 explorer /
+ * vision-checker 传回的素材 URL 与 critique → 据此改产物 → 再自检。
+ * fire-and-forget 等于把这个环剪断，agent 拿不到结果只能盲写。
+ * forwardSubagentText 已开，前台等的时候用户看得见子代理实时进度，不会卡死。
+ *
+ * 兜底另有一层：DEFAULT_TOOL_ALLOWLIST 里挂了 `TaskOutput`，万一还是漏成后台
+ * （比如 isolation:'remote' 强制后台），主 agent 能凭 task_id 把报告捞回来。
  */
-function makePreToolUseTaskBackgroundDenyHandler() {
+function makePreToolUseAgentForceForegroundHandler() {
   return async (input) => {
     const t = input?.tool_input;
-    if (t && t.run_in_background === true) {
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          updatedInput: { ...t, run_in_background: false },
-          additionalContext:
-            'NoDesign 工作台已把 run_in_background 改回 false（前台跑）。HTML 创作'
-            + '需要你看到 subagent 报告才能改进设计——fire-and-forget 等于结果丢了。'
-            + '下次直接前台调（不传 run_in_background 字段），forwardSubagentText '
-            + '已开你能看到 subagent 实时进度，不会卡死。',
-        },
-      };
-    }
-    return {};
+    if (!t || typeof t !== 'object') return {};
+    // 显式前台，不动
+    if (t.run_in_background === false) return {};
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: { ...t, run_in_background: false },
+        additionalContext:
+          'NoDesign 工作台已把这次派遣改成前台（run_in_background: false），'
+          + '你会在这次 tool_result 里直接拿到子代理的完整报告。'
+          + '子代理默认是后台跑的，那样报告不会回到你手里——创作需要你看见素材和'
+          + 'critique 才能改产物，所以这里一律前台。下次派遣请自己显式写 '
+          + '`run_in_background: false`。',
+      },
+    };
   };
 }
 
@@ -672,7 +683,7 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
           parts.push(
             '这个 workspace 还没有产物 —— 产出型工作先建 tasks/<任务名>/，'
             + `deck 往里写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
-            + `世界（小说 / RP）写 ${ENTRY_FILE.world}。`,
+            + `世界（角色扮演）写 ${ENTRY_FILE.world}。`,
           );
         } else {
           const active = getActiveArtifact(sessionId)?.path || null;
@@ -1567,11 +1578,18 @@ function makePreToolUseWriteCanvasReadReminder() {
 }
 
 /**
- * PreToolUse(Task) — subagent_type='vision-checker' 时首次注 派遣 prompt 模板。
+ * PreToolUse(Agent) — subagent_type='vision-checker' 时首次注 派遣 prompt 模板。
  *
- * 注：跟 makePreToolUseTaskBackgroundDenyHandler 共存于同一 'Task' matcher 下，
- * SDK 按数组顺序串行执行多个 hook。本 hook 仅在 input.subagent_type==='vision-checker'
+ * 注：跟 makePreToolUseAgentForceForegroundHandler 共存于同一 'Task|Agent' matcher
+ * 下，SDK 按数组顺序串行执行多个 hook。本 hook 仅在 subagent_type==='vision-checker'
  * 命中时注 dispatch 模板（含全 deck 自检 / 有 plan 时按计划 critique / 单页评审 3 模板）。
+ *
+ * ⚠️ 2026-08-03 修：原来读的是 `input.subagent_type`，而 PreToolUse 的 hook input
+ * 形状是 `{ tool_name, tool_input, tool_use_id, ... }`（sdk.d.ts PreToolUseHookInput），
+ * 工具入参在 **tool_input** 里 —— 顶层那个字段永远是 undefined，条件永远不成立。
+ * 结果：历史上 6 次 vision-checker 派遣，模板一次都没注进去（jsonl 全量 grep 0 命中）。
+ * 同文件的 force-foreground handler 一直读的是 `input?.tool_input`，是对的，
+ * 这里当初抄漏了一层。
  *
  * 触发：本 session 第 1 次派 vision-checker；后续不再注入。
  * 文件源：prompts/tools/vision-checker-dispatch.md（模块加载时缓存）。
@@ -1580,7 +1598,7 @@ function makePreToolUseTaskVisionCheckerDispatchInjector() {
   let alreadyInjected = false;
   return async (input, _toolUseId, _options) => {
     if (alreadyInjected) return {};
-    if (input?.subagent_type !== 'vision-checker') return {};
+    if (input?.tool_input?.subagent_type !== 'vision-checker') return {};
     alreadyInjected = true;
     const dispatch = loadToolPrompt('vision-checker-dispatch');
     return {
