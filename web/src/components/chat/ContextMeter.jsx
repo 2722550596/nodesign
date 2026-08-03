@@ -62,7 +62,7 @@ export default function ContextMeter({ usage, info, onCompact, isStreaming }) {
         style={{
           display: 'block', width: '100%', height: 2,
           padding: 0, border: 0, borderRadius: 0,
-          background: 'rgba(0,0,0,0.06)',
+          background: 'rgba(43,33,23,0.06)',
           cursor: 'pointer',
           position: 'relative',
         }}
@@ -111,8 +111,7 @@ function DetailPopover({ usage, info, pct }) {
       position: 'absolute', bottom: '100%', left: GAP.lg, right: GAP.lg,
       marginBottom: GAP.sm,
       background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.borderMd}`,
-      borderRadius: RADIUS.xl,
+      borderRadius: 2,
       boxShadow: SHADOW.menu,
       padding: `${GAP.md}px ${GAP.lg}px`,
       zIndex: 40,

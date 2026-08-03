@@ -62,7 +62,7 @@ export default function ElicitationModal({ projectId, request, onClose }) {
       <div style={{
         marginBottom: GAP.lg,
         padding: GAP.md,
-        background: 'rgba(0,0,0,0.03)',
+        background: 'rgba(43,33,23,0.03)',
         borderRadius: RADIUS.md,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text,
         lineHeight: 1.5,

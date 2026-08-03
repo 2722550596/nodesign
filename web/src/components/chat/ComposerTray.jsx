@@ -74,7 +74,7 @@ function TrayChip({ item, onRemove }) {
           flexShrink: 0,
           cursor: 'pointer', border: 'none',
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(43,33,23,0.06)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
       >
         <X size={9} />

@@ -35,8 +35,7 @@ export default function ProjectActionsMenu({
         position: 'absolute', top: 'calc(100% + 6px)', right: 0,
         minWidth: 180,
         background: COLOR.bgWhite,
-        border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: RADIUS.lg,
+        borderRadius: 2,
         boxShadow: SHADOW.pop,
         padding: GAP.xs,
         zIndex: 50,
@@ -92,7 +91,7 @@ function Item({ icon, label, onClick, danger, subtle }) {
         cursor: 'pointer',
         textAlign: 'left',
       }}
-      onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(184,58,42,0.08)' : 'rgba(0,0,0,0.04)'; }}
+      onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(184,58,42,0.08)' : 'rgba(43,33,23,0.04)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >
       {icon}

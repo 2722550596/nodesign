@@ -162,8 +162,7 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
           position: 'absolute', bottom: 'calc(100% + 6px)', left: 0,
           minWidth: 240,
           background: COLOR.bgWhite,
-          border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: RADIUS.lg,
+          borderRadius: 2,
           boxShadow: SHADOW.pop,
           padding: GAP.xs,
           zIndex: 60,
@@ -212,7 +211,7 @@ function Option({ active, label, desc, onClick }) {
         background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
         cursor: 'pointer', textAlign: 'left',
       }}
-      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >
       <span style={{ width: 13, flexShrink: 0, marginTop: GAP.xxs }}>

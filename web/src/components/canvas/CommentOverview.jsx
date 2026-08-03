@@ -3,6 +3,7 @@ import { MessageSquare, MapPin, Check, Trash2, X } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { describePage } from '../../lib/element-semantics.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * CommentOverview — 评论汇总浮窗（贴 toolbar Comment 按钮）
@@ -83,8 +84,7 @@ export default function CommentOverview({
         width: 380,
         maxHeight: 'calc(100% - 100px)',
         background: COLOR.bgWhite,
-        border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: RADIUS.xl,
+        borderRadius: 2,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 60,
@@ -181,7 +181,7 @@ function CommentCard({ comment, available, onClick, onResolve, onDelete }) {
     <div style={{
       padding: `${GAP.sm}px ${GAP.md}px`,
       background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.borderLt}`,
+      boxShadow: PAPER_SHADOW.far,
       borderRadius: RADIUS.md,
       display: 'flex', flexDirection: 'column', gap: GAP.xs,
       opacity: resolved ? 0.5 : 1,

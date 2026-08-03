@@ -128,7 +128,7 @@ function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanv
           transition: 'background 0.15s, color 0.15s',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(0,0,0,0.025)';
+          e.currentTarget.style.background = 'rgba(43,33,23,0.025)';
           e.currentTarget.style.color = isActive ? COLOR.warn : COLOR.text;
         }}
         onMouseLeave={(e) => {

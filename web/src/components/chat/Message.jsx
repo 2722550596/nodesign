@@ -19,6 +19,7 @@ import { useGlobalStore } from '../../stores/globalStore.js';
 import { Turn, Sessions } from '../../lib/api.js';
 import TimelineNode from './TimelineNode.jsx';
 import { useTimelinePosition } from './TimelineGroupContext.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * 单条消息渲染。4 种 role：
@@ -113,7 +114,7 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
       <style>{`
         .md-content p { margin: 0 0 ${GAP.md}px 0; }
         .md-content p:last-child { margin-bottom: 0; }
-        .md-content code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: ${RADIUS.xs}px; font-family: ${FONT_MONO}; font-size: ${FONT_SIZE.md}px; }
+        .md-content code { background: rgba(43,33,23,0.06); padding: 1px 5px; border-radius: ${RADIUS.xs}px; font-family: ${FONT_MONO}; font-size: ${FONT_SIZE.md}px; }
         .md-content pre { background: ${COLOR.bgCard}; padding: ${GAP.lg}px; border-radius: ${RADIUS.lg}px; overflow-x: auto; font-size: ${FONT_SIZE.md}px; }
         .md-content ul, .md-content ol { margin: 0 0 ${GAP.md}px 0; padding-left: ${GAP.xxl}px; }
         .md-content li { margin: ${GAP.xxs}px 0; }
@@ -464,8 +465,9 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
       <div style={{
         padding: `${GAP.sm}px ${GAP.md}px`,
         border: `1px solid ${answered ? COLOR.borderLt : COLOR.borderMd}`,
-        borderRadius: RADIUS.lg,
+        borderRadius: 2,
         background: COLOR.bgWhite,
+        boxShadow: PAPER_SHADOW.far,
         opacity: answered ? 0.7 : 1,
       }}>
         <div style={{
@@ -513,6 +515,7 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
             style={{
               marginTop: GAP.sm, border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.md,
               background: COLOR.bgWhite, color: COLOR.text2, cursor: 'pointer',
+              boxShadow: PAPER_SHADOW.far,
               padding: `3px ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
             }}
           >在这里答</button>
@@ -714,9 +717,9 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
       <div
         style={{
           padding: GAP.md,
-          border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: RADIUS.xl,
+          borderRadius: 2,
           background: COLOR.bgWhite,
+          boxShadow: PAPER_SHADOW.far,
           opacity: isAnswered ? 0.6 : 1,
         }}
       >
@@ -1015,7 +1018,7 @@ function SystemMessage({ variant = 'warn', content, pending = false }) {
     info:    { icon: Info,        color: COLOR.btn,     bgRgba: 'rgba(45, 36, 24, 0.05)',   border: 'rgba(45, 36, 24, 0.18)' },
     error:   { icon: AlertCircle, color: COLOR.error,   bgRgba: 'rgba(220, 53, 69, 0.06)',  border: 'rgba(220, 53, 69, 0.30)' },
     success: { icon: CheckCircle2,color: COLOR.success, bgRgba: 'rgba(40, 167, 69, 0.06)',  border: 'rgba(40, 167, 69, 0.30)' },
-  }[variant] || { icon: Info, color: COLOR.text2, bgRgba: 'rgba(0,0,0,0.04)', border: COLOR.borderLt };
+  }[variant] || { icon: Info, color: COLOR.text2, bgRgba: 'rgba(43,33,23,0.04)', border: COLOR.borderLt };
 
   const Icon = config.icon;
 

@@ -22,7 +22,7 @@ export default function ToggleSwitch({ options, value, onChange, width }) {
         left: 3 + activeIdx * slotW,
         width: slotW, borderRadius: 14,
         background: COLOR.bgWhite,
-        boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
+        boxShadow: "0 1px 4px rgba(43,33,23,0.1)",
         transition: "left 0.3s cubic-bezier(0.25, 1, 0.5, 1)",
       }} />
       {/* 选项文字 */}

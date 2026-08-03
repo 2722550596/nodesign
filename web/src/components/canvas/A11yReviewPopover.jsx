@@ -47,8 +47,7 @@ export default function A11yReviewPopover({ anchorRef, onClose, iframeDoc }) {
         position: 'absolute', top: 78, right: 16,
         width: 320,
         background: COLOR.bgWhite,
-        border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: RADIUS.xl,
+        borderRadius: 2,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 60,

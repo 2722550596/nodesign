@@ -4,6 +4,7 @@ import Modal from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { timeAgo } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * SnapshotModal — 项目版本快照管理
@@ -53,7 +54,7 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
                 fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
                 color: COLOR.text,
                 background: COLOR.bgWhite,
-                border: `1px solid ${COLOR.borderMd}`,
+                boxShadow: PAPER_SHADOW.far,
                 borderRadius: RADIUS.md,
                 outline: 'none',
               }}
@@ -146,8 +147,8 @@ function SnapshotRow({ snapshot, onRestore, onDelete, onRename }) {
       display: 'flex', alignItems: 'center', gap: GAP.md,
       padding: `${GAP.md}px ${GAP.lg}px`,
       background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: RADIUS.lg,
+      boxShadow: PAPER_SHADOW.far,
+      borderRadius: 2,
     }}>
       <div style={{
         width: 28, height: 28, borderRadius: RADIUS.md,

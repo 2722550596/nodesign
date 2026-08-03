@@ -3,6 +3,7 @@ import { Download, RefreshCw, FileArchive } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Exports } from '../../lib/api.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * ExportsListModal —— 列 workspace/exports/ 下所有已生成的文件
@@ -77,7 +78,7 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
             style={{
               display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
               padding: `${GAP.xs}px ${GAP.sm}px`,
-              background: 'rgba(0,0,0,0.04)',
+              background: 'rgba(43,33,23,0.04)',
               border: 'none',
               borderRadius: RADIUS.sm,
               cursor: loading ? 'wait' : 'pointer',
@@ -128,9 +129,9 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
                 alignItems: 'center',
                 gap: GAP.md,
                 padding: `${GAP.sm + 2}px ${GAP.md}px`,
-                border: `1px solid ${COLOR.borderLt}`,
-                borderRadius: RADIUS.lg,
+                borderRadius: 2,
                 background: COLOR.bgWhite,
+                boxShadow: PAPER_SHADOW.far,
               }}
             >
               <FileArchive size={16} color={COLOR.text4} style={{ flexShrink: 0 }} />

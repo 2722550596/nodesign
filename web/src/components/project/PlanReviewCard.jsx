@@ -22,6 +22,7 @@ import { Check, Edit3, X, Send } from 'lucide-react';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plan } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 export default function PlanReviewCard() {
   const planForApproval = useGlobalStore((s) => s.planForApproval);
@@ -101,7 +102,7 @@ export default function PlanReviewCard() {
     <div style={{
       position: 'absolute',
       inset: 0,
-      background: 'rgba(0,0,0,0.5)',
+      background: 'rgba(43,33,23,0.5)',
       zIndex: 100,
       display: 'flex',
       alignItems: 'center',
@@ -111,7 +112,7 @@ export default function PlanReviewCard() {
       <div style={{
         background: COLOR.bgWhite,
         borderRadius: RADIUS.xxl,
-        boxShadow: '0 12px 40px rgba(0,0,0,0.2)',
+        boxShadow: '0 12px 40px rgba(43,33,23,0.2)',
         maxWidth: 880,
         width: '100%',
         maxHeight: '90vh',
@@ -207,7 +208,7 @@ export default function PlanReviewCard() {
                 .plan-md p { margin: 0 0 8px 0; }
                 .plan-md ul, .plan-md ol { margin: 0 0 8px 0; padding-left: 20px; }
                 .plan-md li { margin: 2px 0; }
-                .plan-md code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-family: ${FONT_MONO}; font-size: 12px; }
+                .plan-md code { background: rgba(43,33,23,0.06); padding: 1px 5px; border-radius: 3px; font-family: ${FONT_MONO}; font-size: 12px; }
                 .plan-md pre { background: ${COLOR.bgCard}; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; }
                 .plan-md table { border-collapse: collapse; margin: 8px 0; }
                 .plan-md th, .plan-md td { border: 1px solid ${COLOR.borderLt}; padding: 6px 10px; text-align: left; }
@@ -235,7 +236,7 @@ export default function PlanReviewCard() {
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.md,
               color: COLOR.error,
               background: COLOR.bgWhite,
-              border: `1px solid ${COLOR.borderMd}`,
+              boxShadow: PAPER_SHADOW.far,
               borderRadius: 5,
               cursor: submitting ? 'not-allowed' : 'pointer',
               opacity: submitting ? 0.5 : 1,

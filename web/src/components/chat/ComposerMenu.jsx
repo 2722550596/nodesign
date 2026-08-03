@@ -65,7 +65,7 @@ export default function ComposerMenu({
           width: 28, height: 28,
           borderRadius: RADIUS.md,
           color: open ? COLOR.text2 : COLOR.text4,
-          background: open ? 'rgba(0,0,0,0.05)' : 'transparent',
+          background: open ? 'rgba(43,33,23,0.05)' : 'transparent',
           border: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           flexShrink: 0,
@@ -74,7 +74,7 @@ export default function ComposerMenu({
           transition: 'background 0.15s, color 0.15s, transform 0.15s',
           transform: open ? 'rotate(45deg)' : 'none',
         }}
-        onMouseEnter={e => { if (!disabled) { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; e.currentTarget.style.color = COLOR.text2; } }}
+        onMouseEnter={e => { if (!disabled) { e.currentTarget.style.background = 'rgba(43,33,23,0.05)'; e.currentTarget.style.color = COLOR.text2; } }}
         onMouseLeave={e => { if (!open) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.text4; } }}
       >
         <Plus size={15} strokeWidth={1.75} />
@@ -85,8 +85,7 @@ export default function ComposerMenu({
           position: 'absolute', bottom: 'calc(100% + 6px)', left: 0,
           width: 292,
           background: COLOR.bgWhite,
-          border: `1px solid ${COLOR.borderMd}`,
-          borderRadius: RADIUS.xl,
+          borderRadius: 2,
           boxShadow: SHADOW.menu,
           padding: GAP.xs,
           zIndex: 40,
@@ -110,7 +109,7 @@ export default function ComposerMenu({
               {/* 进度条：菜单里不设门槛，任何用量都画。颜色仍按三档，一眼分辨要不要动手 */}
               <div style={{
                 height: 4, borderRadius: 2, overflow: 'hidden',
-                background: 'rgba(0,0,0,0.06)', marginBottom: GAP.sm,
+                background: 'rgba(43,33,23,0.06)', marginBottom: GAP.sm,
               }}>
                 <div style={{
                   width: `${pct}%`, height: '100%',
@@ -185,7 +184,7 @@ function AccountUsage({ account }) {
       {capped && (
         <div style={{
           height: 4, borderRadius: 2, overflow: 'hidden',
-          background: 'rgba(0,0,0,0.06)', marginBottom: 3,
+          background: 'rgba(43,33,23,0.06)', marginBottom: 3,
         }}>
           <div style={{ width: `${p}%`, height: '100%', background: color, transition: 'width 0.3s ease' }} />
         </div>
@@ -246,7 +245,7 @@ function MenuItem({ icon, label, hint, onClick, disabled = false }) {
         cursor: disabled ? 'not-allowed' : 'pointer',
         transition: 'background 0.12s',
       }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >
       <span style={{ color: disabled ? COLOR.text4 : COLOR.text2, display: 'flex', flexShrink: 0 }}>{icon}</span>

@@ -51,7 +51,7 @@ function Toast({ toast, onDismiss }) {
       background: cfg.bg,
       border: `1px solid ${COLOR.borderMd}`,
       borderRadius: RADIUS.lg,
-      boxShadow: '0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.05)',
+      boxShadow: '0 4px 12px rgba(43,33,23,0.10), 0 1px 3px rgba(43,33,23,0.05)',
       display: 'flex', alignItems: 'flex-start', gap: GAP.sm,
       animation: 'toastIn 0.3s cubic-bezier(0.25, 1, 0.5, 1)',
     }}>

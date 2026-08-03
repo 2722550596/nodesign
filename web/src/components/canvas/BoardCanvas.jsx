@@ -1344,7 +1344,7 @@ export default function BoardCanvas({
             transform: `scale(${scale}) translateY(${-viewOffsetY}px)`,
             transformOrigin: '0 0',
             background: CANVAS.paper,
-            backgroundImage: 'radial-gradient(circle, rgba(0,0,0,0.07) 1px, transparent 1px)',
+            backgroundImage: `radial-gradient(circle, ${CANVAS.grid} 1px, transparent 1px)`,
             backgroundSize: '24px 24px',
           }}
         >

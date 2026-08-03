@@ -15,9 +15,9 @@ export function FInput({ label, value, onChange, placeholder, multiline, type = 
 }
 
 export function FSelect({ label, value, onChange, options }) {
-  return (<div style={{ marginBottom: GAP.lg }}><div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>{label}</div><div style={{ display: "flex", gap: GAP.sm }}>{options.map(o => (<button key={o.v} onClick={() => onChange(o.v)} style={{ padding: `5px ${GAP.base}px`, borderRadius: RADIUS.md, cursor: "pointer", background: value === o.v ? "rgba(0,0,0,0.1)" : "rgba(255,255,255,0.3)", border: value === o.v ? `2px solid ${COLOR.borderHv}` : `1px solid ${COLOR.border}`, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: o.c || COLOR.text }}>{o.l}</button>))}</div></div>);
+  return (<div style={{ marginBottom: GAP.lg }}><div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: COLOR.text3, marginBottom: GAP.xs }}>{label}</div><div style={{ display: "flex", gap: GAP.sm }}>{options.map(o => (<button key={o.v} onClick={() => onChange(o.v)} style={{ padding: `5px ${GAP.base}px`, borderRadius: RADIUS.md, cursor: "pointer", background: value === o.v ? "rgba(43,33,23,0.1)" : "rgba(255,255,255,0.3)", border: value === o.v ? `2px solid ${COLOR.borderHv}` : `1px solid ${COLOR.border}`, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xl, color: o.c || COLOR.text }}>{o.l}</button>))}</div></div>);
 }
 
 export function FBtn({ label, onClick, full }) {
-  return (<button onClick={onClick} style={{ padding: `${GAP.md}px ${GAP.xl}px`, borderRadius: RADIUS.lg, cursor: "pointer", background: "rgba(0,0,0,0.08)", border: `1px solid ${COLOR.border}`, fontFamily: FONT_SANS, fontSize: FONT_SIZE.h2, color: COLOR.text, width: full ? "100%" : "auto" }}>{label}</button>);
+  return (<button onClick={onClick} style={{ padding: `${GAP.md}px ${GAP.xl}px`, borderRadius: RADIUS.lg, cursor: "pointer", background: "rgba(43,33,23,0.08)", border: `1px solid ${COLOR.border}`, fontFamily: FONT_SANS, fontSize: FONT_SIZE.h2, color: COLOR.text, width: full ? "100%" : "auto" }}>{label}</button>);
 }

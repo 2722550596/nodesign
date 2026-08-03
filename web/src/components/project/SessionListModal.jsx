@@ -262,7 +262,7 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
           cursor: 'pointer',
           textAlign: 'left',
         }}
-        onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = 'rgba(0,0,0,0.025)'; }}
+        onMouseEnter={e => { if (!isCurrent) e.currentTarget.style.background = 'rgba(43,33,23,0.025)'; }}
         onMouseLeave={e => { if (!isCurrent) e.currentTarget.style.background = 'transparent'; }}
       >
         <div style={{
@@ -335,7 +335,6 @@ function SessionRow({ session, isCurrent, menuOpen, onMenuToggle, onMenuClose, o
             top: menuPos.top, right: menuPos.right,
             minWidth: 140,
             background: COLOR.bgWhite,
-            border: `1px solid ${COLOR.borderMd}`,
             borderRadius: RADIUS.md,
             boxShadow: SHADOW.pop,
             padding: GAP.xs,
@@ -367,7 +366,7 @@ function MenuItem({ icon, label, onClick, danger }) {
         cursor: 'pointer',
         textAlign: 'left',
       }}
-      onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(184,58,42,0.08)' : 'rgba(0,0,0,0.04)'; }}
+      onMouseEnter={e => { e.currentTarget.style.background = danger ? 'rgba(184,58,42,0.08)' : 'rgba(43,33,23,0.04)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >
       {icon} {label}

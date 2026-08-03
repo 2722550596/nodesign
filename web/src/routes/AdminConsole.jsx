@@ -4,11 +4,12 @@ import {
   Copy, Pencil, Ban, RotateCcw, Send, X, Trash2,
 } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, BANNER } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS, BANNER } from '../lib/theme.js';
 import { Admin } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
 import { IssuesPanel, Segmented } from './Issues.jsx';
+import { PAPER_SHADOW } from '../lib/paper.js';
 
 /**
  * AdminConsole — 内测控制台（/admin，2026-08-02）
@@ -61,7 +62,7 @@ export default function AdminConsole() {
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.sm }}>
             <LayoutDashboard size={18} color={COLOR.brown} />
             <h1 style={{
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.h1, fontWeight: 700,
               color: COLOR.text, letterSpacing: '-0.01em', margin: 0,
             }}>控制台</h1>
           </div>
@@ -82,7 +83,7 @@ export default function AdminConsole() {
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: GAP.xxs, padding: 3, background: 'rgba(0,0,0,0.045)', borderRadius: RADIUS.xl, marginBottom: GAP.xl, width: 'fit-content' }}>
+        <div style={{ display: 'flex', gap: GAP.xxs, padding: 3, background: 'rgba(43,33,23,0.045)', borderRadius: RADIUS.xl, marginBottom: GAP.xl, width: 'fit-content' }}>
           {[
             ['users', '用户', Users],
             ['invites', '邀请码', Ticket],
@@ -100,7 +101,7 @@ export default function AdminConsole() {
                 color: tab === key ? COLOR.text : COLOR.sub,
                 background: tab === key ? COLOR.bgWhite : 'transparent',
                 border: 0, borderRadius: RADIUS.lg, cursor: 'pointer',
-                boxShadow: tab === key ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                boxShadow: tab === key ? '0 1px 3px rgba(43,33,23,0.08)' : 'none',
               }}
             ><Icon size={13} /> {label}</button>
           ))}
@@ -121,9 +122,10 @@ function StatCard({ label, value, sub, accent }) {
     <div style={{
       minWidth: 148, padding: `${GAP.lg}px ${GAP.xl}px`,
       background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xxl,
+      boxShadow: PAPER_SHADOW.far,
     }}>
       <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: GAP.xs }}>{label}</div>
-      <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600, color: accent ? COLOR.warn : COLOR.text }}>
+      <div style={{ fontFamily: FONT_KAI, fontSize: FONT_SIZE.h1, fontWeight: 700, color: accent ? COLOR.warn : COLOR.text }}>
         {value}
       </div>
       {sub && <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: GAP.xxs }}>{sub}</div>}
@@ -188,6 +190,7 @@ function UserRow({ u, reload }) {
   return (
     <div style={{
       background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xxl,
+      boxShadow: PAPER_SHADOW.far,
       padding: `${GAP.lg}px ${GAP.xl}px`, opacity: u.disabled ? 0.55 : 1,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap' }}>
@@ -217,7 +220,7 @@ function UserRow({ u, reload }) {
         <div style={{ width: 210, flexShrink: 0 }}>
           {gateLimit ? (
             <>
-              <div style={{ height: 4, borderRadius: 2, background: 'rgba(0,0,0,0.06)', overflow: 'hidden', marginBottom: GAP.xs }}>
+              <div style={{ height: 4, borderRadius: 2, background: 'rgba(43,33,23,0.06)', overflow: 'hidden', marginBottom: GAP.xs }}>
                 <div style={{ width: `${pct}%`, height: '100%', background: barColor }} />
               </div>
               <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: pct >= 75 ? barColor : COLOR.text2 }}>
@@ -423,9 +426,10 @@ function InvitesTab({ invites, users, reload, copy }) {
           <div style={{
             marginTop: GAP.lg, padding: `${GAP.md}px ${GAP.lg}px`,
             background: COLOR.bgWhite, border: `1px dashed ${COLOR.borderHv}`, borderRadius: RADIUS.xl,
+            boxShadow: PAPER_SHADOW.far,
             display: 'flex', alignItems: 'center', gap: GAP.lg,
           }}>
-            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.h2, fontWeight: 600, color: COLOR.text, letterSpacing: '0.02em' }}>
+            <span style={{ fontFamily: FONT_KAI, fontSize: FONT_SIZE.h2, fontWeight: 700, color: COLOR.text, letterSpacing: '0.02em' }}>
               {fresh.code}
             </span>
             {fresh.grant_lifetime_usd && <Chip color={COLOR.blue}>试用 {usd(fresh.grant_lifetime_usd)}</Chip>}
@@ -449,6 +453,7 @@ function InvitesTab({ invites, users, reload, copy }) {
             return (
               <div key={inv.code} style={{
                 background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xl,
+                boxShadow: PAPER_SHADOW.far,
                 padding: `${GAP.md}px ${GAP.lg}px`,
                 display: 'flex', alignItems: 'center', gap: GAP.lg, flexWrap: 'wrap',
                 opacity: open ? 1 : 0.6,
@@ -471,6 +476,7 @@ function InvitesTab({ invites, users, reload, copy }) {
                         width: 64, padding: `${GAP.xxs}px ${GAP.sm}px`,
                         fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text,
                         background: COLOR.bgWhite, border: `1px solid ${COLOR.borderHv}`, borderRadius: RADIUS.md, outline: 'none',
+                        boxShadow: PAPER_SHADOW.far,
                       }}
                     />
                     <PrimaryBtn onClick={() => saveUses(inv)}>改</PrimaryBtn>
@@ -565,6 +571,7 @@ function NoticesTab() {
             padding: `${GAP.md}px ${GAP.lg}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text, lineHeight: 1.6,
             background: COLOR.bgWhite, border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.xl, outline: 'none',
+            boxShadow: PAPER_SHADOW.far,
           }}
         />
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: GAP.xl, flexWrap: 'wrap', marginTop: GAP.md }}>
@@ -617,6 +624,7 @@ function NoticesTab() {
           {data.notices.map(n => (
             <div key={n.id} style={{
               background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`, borderRadius: RADIUS.xl,
+              boxShadow: PAPER_SHADOW.far,
               padding: `${GAP.md}px ${GAP.lg}px`,
               display: 'flex', alignItems: 'center', gap: GAP.lg,
               opacity: n.active ? 1 : 0.55,
@@ -679,6 +687,7 @@ function ModerationTab({ users }) {
       {flags.map(f => (
         <div key={f.id} style={{
           background: COLOR.bgWhite, border: `1px solid ${COLOR.border}`,
+          boxShadow: PAPER_SHADOW.far,
           borderLeft: `3px solid ${f.severity === 'critical' ? COLOR.error : COLOR.warn}`,
           borderRadius: RADIUS.xl, padding: `${GAP.md}px ${GAP.lg}px`,
         }}>
@@ -705,7 +714,7 @@ function ModerationTab({ users }) {
           )}
           <div style={{
             marginTop: GAP.sm, padding: `${GAP.sm}px ${GAP.md}px`,
-            background: 'rgba(0,0,0,0.025)', borderRadius: RADIUS.lg,
+            background: 'rgba(43,33,23,0.025)', borderRadius: RADIUS.lg,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
             lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
           }}>
@@ -751,6 +760,7 @@ function NumInput({ value, onChange, placeholder }) {
         width: 110, padding: `${GAP.sm}px ${GAP.md}px`,
         fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text,
         background: COLOR.bgWhite, border: `1px solid ${COLOR.borderMd}`, borderRadius: RADIUS.lg, outline: 'none',
+        boxShadow: PAPER_SHADOW.far,
       }}
     />
   );
@@ -796,7 +806,7 @@ function IconBtn({ children, title, onClick, danger }) {
         color: danger ? COLOR.error : COLOR.sub,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
-      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.05)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >{children}</button>
   );

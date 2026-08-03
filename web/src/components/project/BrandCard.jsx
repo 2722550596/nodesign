@@ -4,6 +4,7 @@ import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Memory } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 const BRAND_AGENT_TYPE = 'brand';
 
@@ -312,8 +313,8 @@ function BrandEditModal({ show, onClose, projectId, initialContent, onSaved }) {
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             color: COLOR.text, lineHeight: 1.55,
             background: COLOR.bgWhite,
-            border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: RADIUS.lg,
+            boxShadow: PAPER_SHADOW.far,
+            borderRadius: 2,
             outline: 'none',
             resize: 'vertical',
             boxSizing: 'border-box',
@@ -364,8 +365,8 @@ function extractDonts(md) {
 
 const cardStyle = {
   background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: RADIUS.xxl,
+  boxShadow: PAPER_SHADOW.far,
+  borderRadius: 2,
   padding: GAP.lg,
 };
 const cardHeader = {

@@ -3,6 +3,7 @@ import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { describeStyles, getElementRole } from '../../lib/element-semantics.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * DirectEditModal — Inspect "直接改属性" 弹的小 form
@@ -183,7 +184,7 @@ const inputStyle = {
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
   color: COLOR.text,
   background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderMd}`,
+  boxShadow: PAPER_SHADOW.far,
   borderRadius: RADIUS.md,
   outline: 'none',
 };

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Wrench, Plus, Upload, Trash2, BookOpen, Box, ChevronDown, ChevronRight } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { paperCard } from '../lib/paper.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { Plugins, Skills } from '../lib/api.js';
 
@@ -139,7 +140,7 @@ export default function SkillList() {
       <div style={{ maxWidth: 1100, margin: '0 auto', padding: `${GAP.page}px ${GAP.page}px` }}>
         <div style={{ marginBottom: GAP.xl }}>
           <h1 style={{
-            fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
+            fontFamily: FONT_KAI, fontSize: FONT_SIZE.h1, fontWeight: 700,
             color: COLOR.text, marginBottom: GAP.sm,
           }}>我的 Skill</h1>
           <p style={{
@@ -221,9 +222,7 @@ function PluginRow({ plugin, onUninstall }) {
 
   return (
     <div style={{
-      background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.border}`,
-      borderRadius: RADIUS.xl,
+      ...paperCard(),
       overflow: 'hidden',
     }}>
       <div
@@ -255,7 +254,7 @@ function PluginRow({ plugin, onUninstall }) {
               display: 'inline-flex', alignItems: 'center', gap: 3,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: scopeColor,
               padding: '1px 7px',
-              background: 'rgba(0,0,0,0.04)',
+              background: 'rgba(43,33,23,0.04)',
               borderRadius: RADIUS.pill,
             }}>
               <span style={{ width: 5, height: 5, borderRadius: RADIUS.xs, background: scopeColor }} />
@@ -304,7 +303,7 @@ function PluginRow({ plugin, onUninstall }) {
       {expanded && skillCount > 0 && (
         <div style={{
           borderTop: `1px solid ${COLOR.borderLt}`,
-          background: 'rgba(0,0,0,0.02)',
+          background: 'rgba(43,33,23,0.02)',
           padding: `${GAP.md}px ${GAP.xl}px`,
           display: 'flex', flexDirection: 'column', gap: GAP.sm,
         }}>

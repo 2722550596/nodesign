@@ -55,7 +55,7 @@ export default function PanelMenu() {
           padding: `${GAP.xs + 1}px ${GAP.md}px`,
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
           color: open ? COLOR.text : COLOR.text4,
-          background: open ? 'rgba(0,0,0,0.04)' : 'transparent',
+          background: open ? 'rgba(43,33,23,0.04)' : 'transparent',
           border: 'none', borderRadius: RADIUS.md,
           cursor: 'pointer',
           transition: 'background 0.15s',
@@ -105,7 +105,7 @@ export default function PanelMenu() {
                     textAlign: 'left',
                     transition: 'background 0.1s',
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                 >
                   {Icon ? <Icon size={12} style={{ color: COLOR.text4 }} /> : <span style={{ width: 12 }} />}
@@ -138,7 +138,7 @@ export default function PanelMenu() {
                 textAlign: 'left',
                 transition: 'background 0.1s',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
             >
               <RotateCcw size={12} style={{ color: COLOR.text4 }} />

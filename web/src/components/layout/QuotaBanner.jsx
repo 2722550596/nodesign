@@ -144,7 +144,7 @@ export default function QuotaBanner() {
             background: b.bg,
             color: COLOR.bgWhite,
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.md, lineHeight: 1.5,
-            boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+            boxShadow: '0 6px 20px rgba(43,33,23,0.18)',
             animation: 'nd-banner-in 0.22s ease-out',
             whiteSpace: 'pre-wrap',
           }}

@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { AlertTriangle, Bot, Wrench, Check, EyeOff, Trash2, RotateCcw, Bug, Lightbulb } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { Admin } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
+import { PAPER_SHADOW } from '../lib/paper.js';
 
 /**
  * Issues — harness 问题库（/admin/issues，admin 才有意义，后端 adminGuard 兜底）
@@ -37,7 +38,7 @@ export default function Issues() {
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.sm }}>
             <AlertTriangle size={18} color={COLOR.warn} />
             <h1 style={{
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.h1, fontWeight: 700,
               color: COLOR.text, letterSpacing: '-0.01em', margin: 0,
             }}>Harness 问题库</h1>
           </div>
@@ -95,7 +96,7 @@ export function IssuesPanel() {
                 display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
                 fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text2,
                 padding: `${GAP.xs}px ${GAP.md}px`,
-                background: 'rgba(0,0,0,0.035)', borderRadius: RADIUS.pill,
+                background: 'rgba(43,33,23,0.035)', borderRadius: RADIUS.pill,
               }}>
                 {shortTool(s.toolName)}
                 <b style={{ color: COLOR.text }}>{s.total}</b>
@@ -149,9 +150,9 @@ function IssueRow({ issue, onAct }) {
   return (
     <div style={{
       background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.border}`,
+      boxShadow: PAPER_SHADOW.far,
       borderLeft: `3px solid ${isIdea ? COLOR.gold : hot ? COLOR.warn : COLOR.border}`,
-      borderRadius: RADIUS.xl,
+      borderRadius: 2,
       padding: `${GAP.md}px ${GAP.lg}px`,
     }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: GAP.md }}>
@@ -184,7 +185,7 @@ function IssueRow({ issue, onAct }) {
             <div style={{
               marginTop: GAP.md,
               padding: `${GAP.md}px ${GAP.lg}px`,
-              background: 'rgba(0,0,0,0.025)', borderRadius: RADIUS.lg,
+              background: 'rgba(43,33,23,0.025)', borderRadius: RADIUS.lg,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text2,
               lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
@@ -226,7 +227,7 @@ function IconBtn({ children, title, onClick, danger }) {
         color: danger ? COLOR.error : COLOR.sub,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}
-      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.05)'; }}
       onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
     >{children}</button>
   );
@@ -234,7 +235,7 @@ function IconBtn({ children, title, onClick, danger }) {
 
 export function Segmented({ value, onChange, options }) {
   return (
-    <div style={{ display: 'inline-flex', gap: GAP.xxs, padding: GAP.xxs, background: 'rgba(0,0,0,0.04)', borderRadius: RADIUS.lg }}>
+    <div style={{ display: 'inline-flex', gap: GAP.xxs, padding: GAP.xxs, background: 'rgba(43,33,23,0.04)', borderRadius: RADIUS.lg }}>
       {options.map(([v, label]) => (
         <button
           key={v}
@@ -245,7 +246,7 @@ export function Segmented({ value, onChange, options }) {
             color: value === v ? COLOR.text : COLOR.sub,
             background: value === v ? COLOR.bgWhite : 'transparent',
             border: 0, borderRadius: RADIUS.md, cursor: 'pointer',
-            boxShadow: value === v ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+            boxShadow: value === v ? '0 1px 2px rgba(43,33,23,0.06)' : 'none',
           }}
         >{label}</button>
       ))}

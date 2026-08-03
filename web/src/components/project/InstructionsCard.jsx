@@ -4,6 +4,7 @@ import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Instruction } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * InstructionsCard —— Hub 右栏卡片：项目级 instruction（.claude/CLAUDE.md）
@@ -133,8 +134,8 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             color: COLOR.text, lineHeight: 1.55,
             background: COLOR.bgWhite,
-            border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: RADIUS.lg,
+            boxShadow: PAPER_SHADOW.far,
+            borderRadius: 2,
             outline: 'none',
             resize: 'vertical',
             boxSizing: 'border-box',
@@ -163,8 +164,8 @@ function InstructionEditModal({ show, onClose, projectId, initialContent, onSave
 
 const cardStyle = {
   background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: RADIUS.xxl,
+  boxShadow: PAPER_SHADOW.far,
+  borderRadius: 2,
   padding: GAP.lg,
 };
 const cardHeader = {

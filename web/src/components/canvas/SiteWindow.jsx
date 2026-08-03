@@ -18,6 +18,7 @@ import GrabHandle from './GrabHandle.jsx';
 import PostDragNotePanel from './PostDragNotePanel.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
 import SitePublishControl from './SitePublishControl.jsx';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * SiteWindow —— 站点的最大化窗口（2026-07-28，跟 DeckWindow 并列的第二种产物窗）
@@ -820,6 +821,7 @@ export default function SiteWindow({
                 style={{
                   padding: `3px ${GAP.lg}px`, borderRadius: RADIUS.pill, border: 'none', cursor: 'pointer',
                   background: COLOR.bgWhite, color: COLOR.text, fontSize: FONT_SIZE.xs,
+                  boxShadow: PAPER_SHADOW.far,
                   fontFamily: FONT_SANS, fontWeight: 600,
                 }}
               >

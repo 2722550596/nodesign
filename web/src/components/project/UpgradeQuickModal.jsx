@@ -3,6 +3,7 @@ import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useProjectStore } from '../../stores/projectStore.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * UpgradeQuickModal — 把闪聊（kind='quick'）升级为标准项目（kind='project'）
@@ -120,8 +121,8 @@ const inputStyle = {
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.base,
   color: COLOR.text,
   background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderMd}`,
-  borderRadius: RADIUS.lg,
+  boxShadow: PAPER_SHADOW.far,
+  borderRadius: 2,
   outline: 'none',
   boxSizing: 'border-box',
 };

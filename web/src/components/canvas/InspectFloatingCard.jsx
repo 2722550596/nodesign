@@ -4,6 +4,7 @@ import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/t
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { getElementRole, describePage, serializeForAI } from '../../lib/element-semantics.js';
 import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * InspectFloatingCard — 选中元素的 contextual 浮卡（2026-05-07 瘦身版）
@@ -162,8 +163,7 @@ export default function InspectFloatingCard({
         width: CARD_WIDTH,
         maxHeight: CARD_MAX_HEIGHT,
         background: COLOR.bgWhite,
-        border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: RADIUS.xl,
+        borderRadius: 2,
         boxShadow:
           '0 2px 4px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10), inset 0 1px 0 rgba(255,255,255,0.8)',
         zIndex: 50,
@@ -263,7 +263,7 @@ export default function InspectFloatingCard({
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
               color: COLOR.text2,
               background: COLOR.bgWhite,
-              border: `1px solid ${COLOR.borderLt}`,
+              boxShadow: PAPER_SHADOW.far,
               borderRadius: RADIUS.sm,
               resize: 'vertical',
               boxSizing: 'border-box',
@@ -284,7 +284,7 @@ function CommentRow({ comment, onResolve, onDelete }) {
     <div style={{
       padding: `${GAP.xs}px ${GAP.sm}px`,
       background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.borderLt}`,
+      boxShadow: PAPER_SHADOW.far,
       borderRadius: RADIUS.sm,
       display: 'flex', flexDirection: 'column', gap: GAP.xs,
       opacity: resolved ? 0.5 : 1,

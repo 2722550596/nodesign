@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Sparkles, Upload, Trash2, Store, ArrowRight } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../lib/theme.js';
+import { paperCard } from '../lib/paper.js';
+import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS } from '../lib/theme.js';
 import { Me } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
@@ -64,7 +65,7 @@ export default function Showcase() {
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.sm }}>
             <Sparkles size={18} color={COLOR.gold} />
             <h1 style={{
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.h1, fontWeight: 700,
               color: COLOR.text, letterSpacing: '-0.01em', margin: 0,
             }}>我的橱窗</h1>
           </div>
@@ -155,13 +156,8 @@ function ShowcaseCard({ entry, onRemove }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        background: COLOR.bgWhite,
-        border: `1px solid ${hover ? COLOR.borderMd : COLOR.border}`,
-        borderRadius: 14,
+        ...paperCard(hover ? 'near' : 'mid'),
         overflow: 'hidden',
-        boxShadow: hover
-          ? '0 12px 28px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.05)'
-          : '0 1px 3px rgba(0,0,0,0.04)',
         transform: hover ? 'translateY(-3px)' : 'none',
         transition: 'all 0.28s cubic-bezier(0.25, 1, 0.5, 1)',
         display: 'flex', flexDirection: 'column',
@@ -190,7 +186,7 @@ function ShowcaseCard({ entry, onRemove }) {
             <span title="这件作品沉淀出来的 skill" style={{
               display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
               fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.brown,
-              padding: `${GAP.xxs}px 7px`, background: 'rgba(0,0,0,0.03)', borderRadius: RADIUS.pill,
+              padding: `${GAP.xxs}px 7px`, background: 'rgba(43,33,23,0.03)', borderRadius: RADIUS.pill,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%',
             }}>
               <span style={{ width: 5, height: 5, borderRadius: RADIUS.xs, background: COLOR.brown, flexShrink: 0 }} />
@@ -242,7 +238,7 @@ function MarketPlaceholder() {
           Skill 市场
           <span style={{
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 400, color: COLOR.sub,
-            padding: '1px 7px', background: 'rgba(0,0,0,0.04)', borderRadius: RADIUS.pill,
+            padding: '1px 7px', background: 'rgba(43,33,23,0.04)', borderRadius: RADIUS.pill,
           }}>还没开</span>
         </div>
         <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.sub, lineHeight: 1.65 }}>
@@ -264,7 +260,7 @@ const loadingStyle = {
 
 const iconBtnStyle = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
+  fontSize: FONT_SIZE.lg, color: CHROME.ink2,
   padding: `${GAP.sm}px ${GAP.lg}px`,
   borderRadius: RADIUS.lg,
   background: 'transparent',

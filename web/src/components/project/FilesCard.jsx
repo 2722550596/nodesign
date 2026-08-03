@@ -5,6 +5,7 @@ import { Assets } from '../../lib/api.js';
 import { formatSize } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { useDropzone } from '../../lib/useDropzone.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * FilesCard —— Hub 右栏卡片：项目共享 files（shared/assets/）
@@ -165,7 +166,7 @@ function FileRow({ file, onDelete }) {
         display: 'flex', alignItems: 'center', gap: GAP.sm,
         padding: `${GAP.xs + 1}px ${GAP.sm}px`,
         borderRadius: RADIUS.md,
-        background: hover ? 'rgba(0,0,0,0.025)' : 'transparent',
+        background: hover ? 'rgba(43,33,23,0.025)' : 'transparent',
         transition: 'background 0.15s',
       }}
     >
@@ -229,8 +230,8 @@ function tile(rotate, bg, border, dashed) {
 
 const cardStyle = {
   background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: RADIUS.xxl,
+  boxShadow: PAPER_SHADOW.far,
+  borderRadius: 2,
   padding: GAP.lg,
 };
 const cardHeader = {

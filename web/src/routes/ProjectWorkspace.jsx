@@ -27,7 +27,7 @@ import ExportsListModal from '../components/project/ExportsListModal.jsx';
 import PickExportModal from '../components/project/PickExportModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
 import ElicitationModal from '../components/run/ElicitationModal.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO, STAGE } from '../lib/theme.js';
+import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_KAI, FONT_MONO, STAGE } from '../lib/theme.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { newId } from '../lib/helpers.js';
@@ -2045,7 +2045,7 @@ function NotFound({ id, error }) {
         textAlign: 'center',
       }}>
         <h1 style={{
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.h1, fontWeight: 600,
+          fontFamily: FONT_KAI, fontSize: FONT_SIZE.h1, fontWeight: 700,
           color: COLOR.text, marginBottom: GAP.lg,
         }}>项目 <code style={{ color: COLOR.error }}>{id}</code> 不存在</h1>
         <p style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, color: COLOR.sub, marginBottom: GAP.xl }}>
@@ -2066,8 +2066,8 @@ function NotFound({ id, error }) {
 const iconBtnStyle = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   padding: `${GAP.xs + 1}px ${GAP.lg}px`,
-  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
-  background: 'rgba(0,0,0,0.04)',
+  fontSize: FONT_SIZE.lg, color: CHROME.ink2,
+  background: 'rgba(43,33,23,0.055)',
   borderRadius: RADIUS.md,
   border: 'none',
   cursor: 'pointer',
@@ -2076,7 +2076,7 @@ const iconBtnStyle = {
 const primaryBtnStyle = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   padding: `${GAP.xs + 1}px ${GAP.lg}px`,
-  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
+  fontSize: FONT_SIZE.lg, fontWeight: 700,
   color: COLOR.btnText, background: COLOR.btn,
   border: `1px solid ${COLOR.btn}`,
   borderRadius: RADIUS.md,

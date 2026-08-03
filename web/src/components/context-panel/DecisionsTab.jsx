@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Bookmark, History, RefreshCw } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Spec } from '../../lib/api.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * DecisionsTab —— 显示 spec.json 的 decisions[] + history[]
@@ -68,7 +69,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           style={{
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             padding: `${GAP.xs}px ${GAP.sm}px`,
-            background: 'rgba(0,0,0,0.04)',
+            background: 'rgba(43,33,23,0.04)',
             border: 'none',
             borderRadius: RADIUS.sm,
             cursor: loading ? 'wait' : 'pointer',
@@ -107,7 +108,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
           lineHeight: 1.6,
         }}>
           设计决策现在记在画布的任务便利贴上<br />
-          （<code style={{ background: 'rgba(0,0,0,0.06)', padding: `1px ${GAP.xs}px`, borderRadius: RADIUS.xs }}>notes/决策.md</code>，
+          （<code style={{ background: 'rgba(43,33,23,0.06)', padding: `1px ${GAP.xs}px`, borderRadius: RADIUS.xs }}>notes/决策.md</code>，
           任务区里那张黄贴纸）。<br />
           这里只显示旧会话的存量决策和压缩历史。
         </div>
@@ -151,9 +152,9 @@ function DecisionCard({ decision }) {
     <div style={{
       padding: GAP.md,
       marginBottom: GAP.sm,
-      border: `1px solid ${COLOR.borderLt}`,
-      borderRadius: RADIUS.lg,
+      borderRadius: 2,
       background: COLOR.bgWhite,
+      boxShadow: PAPER_SHADOW.far,
     }}>
       <div style={{
         display: 'flex', alignItems: 'center', gap: GAP.xs,

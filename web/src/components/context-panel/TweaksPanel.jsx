@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Sliders, RotateCcw, Check, Sparkles } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Spec } from '../../lib/api.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * TweaksPanel — agent 暴露的 deck 专属可调参数控制台（C5）
@@ -247,7 +248,7 @@ function renderControl(c, value, onChange) {
     case 'segmented': {
       const opts = c.options || [];
       return (
-        <div style={{ display: 'inline-flex', background: 'rgba(0,0,0,0.05)', borderRadius: RADIUS.sm, padding: GAP.xxs }}>
+        <div style={{ display: 'inline-flex', background: 'rgba(43,33,23,0.05)', borderRadius: RADIUS.sm, padding: GAP.xxs }}>
           {opts.map(opt => {
             const active = String(opt.value) === String(value);
             return (
@@ -260,7 +261,7 @@ function renderControl(c, value, onChange) {
                   color: active ? COLOR.text : COLOR.sub,
                   background: active ? COLOR.bgWhite : 'transparent',
                   borderRadius: RADIUS.xs,
-                  boxShadow: active ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+                  boxShadow: active ? '0 1px 2px rgba(43,33,23,0.06)' : 'none',
                 }}
               >{opt.label}</button>
             );
@@ -276,7 +277,7 @@ function renderControl(c, value, onChange) {
           style={{
             width: 36, height: 18,
             borderRadius: 9, padding: 0,
-            background: on ? COLOR.btn : 'rgba(0,0,0,0.15)',
+            background: on ? COLOR.btn : 'rgba(43,33,23,0.15)',
             position: 'relative',
             transition: 'background 0.15s',
           }}
@@ -301,6 +302,7 @@ function renderControl(c, value, onChange) {
             padding: `${GAP.xs}px ${GAP.sm}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
             color: COLOR.text2, background: COLOR.bgWhite,
+            boxShadow: PAPER_SHADOW.far,
             border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.sm,
           }}
         >
@@ -357,7 +359,7 @@ const btnSecondary = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   padding: `${GAP.xs + 1}px ${GAP.md}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-  color: COLOR.text4, background: 'rgba(0,0,0,0.04)',
+  color: COLOR.text4, background: 'rgba(43,33,23,0.04)',
   border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.sm,
   cursor: 'pointer',
 };

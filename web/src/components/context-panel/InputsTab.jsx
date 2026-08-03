@@ -3,6 +3,7 @@ import { Plus, X, FileText, Image as ImageIcon, Link2, Github, Globe } from 'luc
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { formatSize, newId } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * Inputs tab — 上传资料 / 链接 repo / 网页 capture
@@ -111,7 +112,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
           style={{
             padding: `${GAP.md}px ${GAP.sm}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
-            background: 'rgba(0,0,0,0.03)',
+            background: 'rgba(43,33,23,0.03)',
             border: `1px solid ${COLOR.borderLt}`,
             borderRadius: RADIUS.lg,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: GAP.xs,
@@ -126,7 +127,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
           style={{
             padding: `${GAP.md}px ${GAP.sm}px`,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
-            background: 'rgba(0,0,0,0.03)',
+            background: 'rgba(43,33,23,0.03)',
             border: `1px solid ${COLOR.borderLt}`,
             borderRadius: RADIUS.lg,
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: GAP.xs,
@@ -163,7 +164,7 @@ function InputRow({ item, onRemove }) {
       display: 'flex', alignItems: 'center', gap: GAP.md,
       padding: showThumb ? GAP.sm : `${GAP.sm + 1}px ${GAP.md}px`,
       background: COLOR.bgWhite,
-      border: `1px solid ${COLOR.borderLt}`,
+      boxShadow: PAPER_SHADOW.far,
       borderRadius: RADIUS.md,
     }}>
       {showThumb ? (
@@ -207,7 +208,7 @@ function InputRow({ item, onRemove }) {
           color: COLOR.sub, padding: GAP.xs, borderRadius: RADIUS.xs, flexShrink: 0,
           background: 'transparent',
         }}
-        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; e.currentTarget.style.color = COLOR.error; }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.05)'; e.currentTarget.style.color = COLOR.error; }}
         onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.sub; }}
         title="移除"
       >

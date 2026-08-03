@@ -4,6 +4,7 @@ import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { Memory } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 // 模块级常量空数组：给 useGlobalStore selector 当 fallback。
 // 字面量 `[]` 每次 selector 调用都是新引用 → React 19 useSyncExternalStore
@@ -163,7 +164,7 @@ export default function MemoryCard({ projectId }) {
                     fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
                     lineHeight: 1.5,
                     padding: `${GAP.xxs}px ${GAP.sm}px`,
-                    background: 'rgba(0,0,0,0.02)',
+                    background: 'rgba(43,33,23,0.02)',
                     borderRadius: RADIUS.sm,
                   }}>
                     <span style={{ fontFamily: FONT_MONO, fontWeight: 500 }}>
@@ -208,7 +209,7 @@ function MemoryRow({ entry, onEdit, onDelete, onAttach }) {
       style={{
         padding: `${GAP.xs + 1}px ${GAP.sm}px`,
         borderRadius: RADIUS.md,
-        background: hover ? 'rgba(0,0,0,0.025)' : 'transparent',
+        background: hover ? 'rgba(43,33,23,0.025)' : 'transparent',
         transition: 'background 0.15s',
       }}
     >
@@ -318,8 +319,8 @@ function MemoryEditModal({ show, onClose, projectId, agentType, onSaved }) {
             fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm,
             color: COLOR.text, lineHeight: 1.55,
             background: COLOR.bgWhite,
-            border: `1px solid ${COLOR.borderMd}`,
-            borderRadius: RADIUS.lg,
+            boxShadow: PAPER_SHADOW.far,
+            borderRadius: 2,
             outline: 'none',
             resize: 'vertical',
             boxSizing: 'border-box',
@@ -345,8 +346,8 @@ function formatSize(bytes) {
 
 const cardStyle = {
   background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderLt}`,
-  borderRadius: RADIUS.xxl,
+  boxShadow: PAPER_SHADOW.far,
+  borderRadius: 2,
   padding: GAP.lg,
 };
 const cardHeader = {

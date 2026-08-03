@@ -21,6 +21,7 @@ import { Lightbulb, Check, X } from 'lucide-react';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plan } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 const TASK_LABEL = {
   deck: '幻灯片',
@@ -118,7 +119,7 @@ export default function PlanRequestBanner() {
       background: 'linear-gradient(135deg, #FFF8E1 0%, #FFF3D6 100%)',
       border: `1px solid ${COLOR.warn}55`,
       borderRadius: RADIUS.xl,
-      boxShadow: '0 6px 24px rgba(0,0,0,0.08)',
+      boxShadow: '0 6px 24px rgba(43,33,23,0.08)',
       padding: `${GAP.md}px ${GAP.lg}px`,
       display: 'flex',
       alignItems: 'flex-start',
@@ -135,8 +136,9 @@ export default function PlanRequestBanner() {
       <div style={{
         flexShrink: 0,
         width: 32, height: 32,
-        borderRadius: RADIUS.lg,
+        borderRadius: 2,
         background: COLOR.bgWhite,
+        boxShadow: PAPER_SHADOW.far,
         border: `1px solid ${COLOR.warn}55`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
@@ -210,7 +212,7 @@ export default function PlanRequestBanner() {
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.md,
             color: COLOR.text2,
             background: COLOR.bgWhite,
-            border: `1px solid ${COLOR.borderMd}`,
+            boxShadow: PAPER_SHADOW.far,
             borderRadius: RADIUS.md,
             cursor: 'pointer',
             whiteSpace: 'nowrap',

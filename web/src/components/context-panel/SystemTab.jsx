@@ -4,6 +4,7 @@ import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/t
 import { useProjectStore } from '../../stores/projectStore.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plugins } from '../../lib/api.js';
+import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * System tab — 当前 session 的 skill / plugin / DS / model 显示 + spec 摘要 + project 级 plugin 上传
@@ -169,7 +170,7 @@ export default function SystemTab({ project, deckSpec, projectId }) {
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
             color: COLOR.text2,
             background: COLOR.bgWhite,
-            border: `1px solid ${COLOR.borderMd}`,
+            boxShadow: PAPER_SHADOW.far,
             borderRadius: RADIUS.md,
             cursor: uploading ? 'not-allowed' : 'pointer',
             opacity: uploading ? 0.6 : 1,
@@ -223,7 +224,7 @@ export default function SystemTab({ project, deckSpec, projectId }) {
                   <div key={p.id} style={{
                     padding: `${GAP.xs + 1}px ${GAP.md}px`,
                     fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-                    background: 'rgba(0,0,0,0.025)',
+                    background: 'rgba(43,33,23,0.025)',
                     borderRadius: RADIUS.sm,
                     display: 'flex', gap: GAP.sm, alignItems: 'baseline',
                   }}>
@@ -246,7 +247,7 @@ function ProjectPluginRow({ plugin, onUninstall }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: GAP.sm,
       padding: `${GAP.xs + 1}px ${GAP.sm}px`,
-      background: 'rgba(0,0,0,0.025)',
+      background: 'rgba(43,33,23,0.025)',
       borderRadius: RADIUS.sm,
     }}>
       <Box size={11} color={COLOR.text4} />
@@ -294,7 +295,7 @@ function Chip({ icon: Icon, label }) {
       padding: `${GAP.xxs}px ${GAP.sm}px`,
       fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
       color: COLOR.text2,
-      background: 'rgba(0,0,0,0.04)',
+      background: 'rgba(43,33,23,0.04)',
       borderRadius: RADIUS.pill,
     }}>
       <Icon size={10} color={COLOR.text4} />

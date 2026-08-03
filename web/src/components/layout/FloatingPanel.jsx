@@ -194,7 +194,7 @@ export default function FloatingPanel({
           background: COLOR.bgWhite,
           borderRadius: STAGE.radius,
           boxShadow: interacting
-            ? '0 16px 48px rgba(0,0,0,0.18), 0 4px 12px rgba(0,0,0,0.08)'
+            ? '0 16px 48px rgba(43,33,23,0.18), 0 4px 12px rgba(43,33,23,0.08)'
             : STAGE.shadow,
           border: `1px solid ${STAGE.borderWarm}`,
           display: 'flex',
@@ -240,7 +240,7 @@ export default function FloatingPanel({
                 transition: 'background 0.15s, color 0.15s',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(0,0,0,0.06)';
+                e.currentTarget.style.background = 'rgba(43,33,23,0.06)';
                 e.currentTarget.style.color = COLOR.text;
               }}
               onMouseLeave={(e) => {

@@ -74,8 +74,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
         position: 'absolute', top: 'calc(100% + 6px)', right: 0,
         minWidth: 240,
         background: COLOR.bgWhite,
-        border: `1px solid ${COLOR.borderMd}`,
-        borderRadius: RADIUS.lg,
+        borderRadius: 2,
         boxShadow: SHADOW.pop,
         padding: GAP.xs,
         zIndex: 50,
@@ -93,7 +92,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
               background: 'transparent', border: 0, borderRadius: RADIUS.md, cursor: 'pointer',
               fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, textAlign: 'left',
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
             <Share2 size={12} /> 分享链接…
@@ -123,7 +122,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
               textAlign: 'left',
               opacity: item.disabled ? 0.45 : 1,
             }}
-            onMouseEnter={e => { if (!item.disabled) e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+            onMouseEnter={e => { if (!item.disabled) e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
             <Icon size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
@@ -148,7 +147,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
               background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
               cursor: 'pointer', textAlign: 'left',
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
             <CheckSquare size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
@@ -176,7 +175,7 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
               cursor: 'pointer',
               textAlign: 'left',
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
           >
             <FolderOpen size={14} color={COLOR.text4} style={{ flexShrink: 0 }} />

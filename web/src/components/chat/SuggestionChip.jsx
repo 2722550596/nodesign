@@ -72,7 +72,7 @@ export default function SuggestionChip({ suggestion, onAccept, onDismiss }) {
             justifyContent: 'center',
             color: COLOR.sub,
           }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.05)'; }}
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
         >
           <X size={12} />

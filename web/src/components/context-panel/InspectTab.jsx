@@ -131,14 +131,14 @@ export default function InspectTab({ selectedAnchor, iframeDoc, onAddComment, on
                   padding: `${GAP.xs}px ${GAP.md}px`,
                   fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
                   color: COLOR.text2,
-                  background: 'rgba(0,0,0,0.04)',
+                  background: 'rgba(43,33,23,0.04)',
                   border: `1px solid ${COLOR.borderLt}`,
                   borderRadius: RADIUS.sm,
                   cursor: 'pointer',
                   transition: 'all 0.15s',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.08)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.08)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
               >
                 {a.label}
               </button>
@@ -280,7 +280,7 @@ function ActionBtn({ icon, label, onClick, primary }) {
         padding: `${GAP.md}px ${GAP.lg}px`,
         fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
         color: primary ? COLOR.btnText : COLOR.text2,
-        background: primary ? COLOR.btn : 'rgba(0,0,0,0.04)',
+        background: primary ? COLOR.btn : 'rgba(43,33,23,0.04)',
         border: `1px solid ${primary ? COLOR.btn : COLOR.borderLt}`,
         borderRadius: RADIUS.lg,
         cursor: 'pointer',
@@ -288,11 +288,11 @@ function ActionBtn({ icon, label, onClick, primary }) {
       }}
       onMouseEnter={e => {
         if (primary) e.currentTarget.style.background = COLOR.btnHover;
-        else e.currentTarget.style.background = 'rgba(0,0,0,0.07)';
+        else e.currentTarget.style.background = 'rgba(43,33,23,0.07)';
       }}
       onMouseLeave={e => {
         if (primary) e.currentTarget.style.background = COLOR.btn;
-        else e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+        else e.currentTarget.style.background = 'rgba(43,33,23,0.04)';
       }}
     >
       {icon} {label}
