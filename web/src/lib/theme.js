@@ -1,53 +1,61 @@
 // ─── 基础 Token ───────────────────────────────────
 //
-// 2026-08-03 立法（设计语言收敛第一步）：
-//   - 值一律不动（这一轮是制度改革，不是换肤）——迁移后全站像素必须和迁移前一致。
-//   - 新增 RADIUS / SHADOW / TERM / CANVAS / EDITOR / BANNER 和 alpha()，
-//     把过去散落在组件里的字面量收编成单一数据源。
-//   - 删掉的死 token（CARD/DESK/PANEL/BROWSE、COLOR.bgSide/plan/gradDesk/
-//     bgSkeleton/bgSkBar）宿主组件已随本轮清理下线。
-//   - 换肤（第二步审美改革）到来时只改这个文件。
+// 2026-08-03 第一步（立法）：值一律不动，把散落在组件里的字面量收编成单一数据源。
+// 2026-08-03 第二步（换肤）：**只改这个文件的值**，组件一行不动。
+//
+//   登录墙和首页定了一套物料：暖纸、墨字、铅笔灰、红笔。lib/paper.js 是那套物料
+//   的定义。这里做的事就是把基础色系整体挪进同一个色族 —— 全站 110 处 bgWhite、
+//   191 处 border、269 处 FONT_SANS 因此一次性归位，不用去改 50 个组件。
+//
+//   两条口径，改之前先读：
+//   1) 白 → 纸。全站没有纯白，最亮的是 #FFFEF6。
+//   2) 中性灰 → 暖墨。所有 rgba(0,0,0,x) 的描边换成 rgba(43,33,23,x)。
+//
+//   字体的分工是**有意义的**，不是没统一：楷体 = 人写的（正文、标题、按钮），
+//   等宽 = 机器写的（文件名、id、token 数、终端输出）。登录墙上那张终端墨版和
+//   用量小票用的就是等宽，那是同一条规矩。所以 FONT_SANS 指向楷体，FONT_MONO
+//   保持等宽 —— 剩下的活是把**当标题用**的 FONT_MONO 挪去楷体。
 
-/** 颜色体系 */
+/** 颜色体系 —— 值取自 lib/paper.js 那套物料（PAPER.*） */
 export const COLOR = {
-  // 文字层级（从深到浅）
-  text:   "#3a2a18",   // 主标题/主文字
-  text2:  "#4a4540",   // 正文
-  text3:  "#5a5550",   // 表单标签
-  text4:  "#7a6a55",   // 三级文字/图表标签
-  text5:  "#8a7a62",   // 导航/图标默认
-  sub:    "#a09888",   // 辅助说明/时间戳
-  dim:    "#c4bfb5",   // 禁用/占位符
+  // 文字层级（从深到浅）：墨 → 铅笔
+  text:   "#2B2117",   // 主标题/主文字（= PAPER.ink）
+  text2:  "#4A3E31",   // 正文
+  text3:  "#5F5142",   // 表单标签（= PAPER.ink2）
+  text4:  "#7A6B57",   // 三级文字/图表标签
+  text5:  "#8C7E68",   // 导航/图标默认
+  sub:    "#A39882",   // 辅助说明/时间戳（= PAPER.pencil）
+  dim:    "#C3B9A4",   // 禁用/占位符
 
-  // 背景
-  bg:         "#F9F8F6",   // App 根背景
-  bgModal:    "#FDFCFA",   // 弹窗/表单
-  bgCard:     "#f6f1ea",   // 卡片
-  bgWhite:    "#fff",
+  // 背景：没有纯白，最亮的是纸
+  bg:         "#F4EFE3",   // App 根背景（比纸深，比板子浅）
+  bgModal:    "#FFFEF6",   // 弹窗/表单（= PAPER.paper）
+  bgCard:     "#F3EDDF",   // 卡片凹槽/占位底
+  bgWhite:    "#FFFEF6",   // 纸。名字保留是因为 110 处在用，语义已经是"纸"
 
   // 渐变
-  gradModal: "linear-gradient(180deg, #fdfcfa 0%, #fff 30%)",
+  gradModal: "linear-gradient(180deg, #FFFEF6 0%, #FFFEF6 30%)",
 
   // 交互
-  btn:      "#2d2418",
-  btnHover: "#3d3428",
-  btnText:  "#f5f0e8",
+  btn:      "#2B2117",
+  btnHover: "#443627",
+  btnText:  "#F5F0E4",
 
-  // 边框
-  border:   "rgba(0,0,0,0.06)",
-  borderLt: "rgba(0,0,0,0.04)",
-  borderMd: "rgba(0,0,0,0.08)",
-  borderHv: "rgba(0,0,0,0.12)",
+  // 边框：暖墨的淡痕，不是中性黑
+  border:   "rgba(43,33,23,0.09)",
+  borderLt: "rgba(43,33,23,0.06)",
+  borderMd: "rgba(43,33,23,0.13)",
+  borderHv: "rgba(43,33,23,0.20)",
 
   // 状态
-  error:   "#b83a2a",
-  success: "#4a8a4a",
-  warn:    "#b85c1a",
+  error:   "#A8362B",   // = PAPER.red
+  success: "#4F7F4A",
+  warn:    "#A8641F",
 
   // 强调
-  blue:  "#5a7a9a",
-  brown: "#8a6a3a",
-  gold:  "#c4a870",
+  blue:  "#5A748F",
+  brown: "#8A6A3A",
+  gold:  "#C4A870",
 };
 
 /**
@@ -66,9 +74,18 @@ export const GAP = {
   xxs: 2, xs: 4, sm: 6, md: 8, base: 10, lg: 12, xl: 16, xxl: 20, page: 40,
 };
 
-/** 圆角体系（px）。pill 是胶囊（历史上 999 和 100 两种写法，收敛为 999） */
+/**
+ * 圆角体系（px）。
+ *
+ * 2026-08-03 换肤整体收窄：这套语言里最大的实体是**纸**，纸没有圆角。登录墙上
+ * 那张登记卡是直角，它的按钮和印章是 2~3px。原来那套 6/8/10/12 是「网页卡片」
+ * 的手感，压在纸上就是两种材质打架 —— 他看到的「卡片风格没统一」就是这个。
+ * 胶囊和圆点不动（那是形状不是圆角）。
+ */
 export const RADIUS = {
-  xs: 3, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12,
+  // 卡片这一档归零：纸没有圆角。小控件（按钮、chip、输入框）留 2px ——
+  // 登录墙上那个「进 门」墨块和那枚印章就是 2~3px，刀切纸的边也不是绝对的直角。
+  xs: 2, sm: 2, md: 2, lg: 2, xl: 0, xxl: 0,
   pill: 999,
   round: '50%',
 };
@@ -88,9 +105,29 @@ export const FONT_SIZE = {
 
 // ─── Font Families ────────────────────────────────
 
-// Font families — Dashboard 基准
+// 楷体：全站正文。@font-face 在 styles/globals.css，全局只声明一次
+export const FONT_KAI = "'LXGW WenKai ND', 'LXGW WenKai', '霞鹜文楷', serif";
+// 等宽：**机器写的东西**才用（文件名、id、token 数、终端输出、时间码）
 export const FONT_MONO = "'SF Mono', 'Cascadia Code', 'Menlo', monospace";
-export const FONT_SANS = "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif";
+// FONT_SANS 指向楷体：269 处正文因此一次性归位。名字保留是为了不动那 269 个调用点，
+// 新代码直接写 FONT_KAI。真需要无衬线的地方（目前没有）再单开一个 token。
+export const FONT_SANS = FONT_KAI;
+
+/**
+ * 外壳（顶栏）—— 2026-08-03 换肤第一块。
+ *
+ * 原来是纯白条 + 冷灰描边，压在暖纸色的页面上像贴了条胶带。整条改成纸色，
+ * 描边换成墨色的淡痕。顶栏是全站唯一横跨所有路由的构件，值一动全站跟着动，
+ * 所以收在这儿而不是散在 TopBar 里。
+ */
+export const CHROME = {
+  bg:     "#FBF7EC",
+  border: "rgba(43,33,23,0.13)",
+  ink:    "#2B2117",
+  ink2:   "#5F5142",
+  pencil: "#A39882",
+  hover:  "rgba(43,33,23,0.055)",
+};
 
 // ─── 领域 Token ───────────────────────────────────
 
@@ -102,11 +139,24 @@ export const TERM = {
   err: "#e09a94",
 };
 
+/**
+ * 工作台外壳（2026-08-03 换肤第二块）—— 三栏的底色和分界。
+ *
+ * 物理逻辑：首页那面板子上钉着所有项目，进到工作台等于把其中一张取下来摊在台面上。
+ * 所以左右两栏跟顶栏是同一张纸（外壳是连续的），中间那片是台面 —— 比纸深一档，
+ * 白色的产物摊上去才浮得起来。
+ */
+export const WORKBENCH = {
+  panel: "#FBF7EC",                  // 左右两栏：与 CHROME.bg 同色，外壳连成一片
+  edge:  "rgba(43,33,23,0.13)",      // 栏与栏之间那道墨痕
+};
+
 /** 画布工作面专属（暖纸方言；换肤时整组处置） */
 export const CANVAS = {
-  paper: "#f6f4ef",   // 画布底
-  note:  "#fffbeb",   // 便签黄
+  paper: "#EBE5D7",   // 台面（比纸深一档，产物浮在它上面）
+  note:  "#FBF3CF",   // 便签黄（与板上那些便签同色）
   brass: "#b08c4f",   // 暖棕描边/运行态（半透明用 alpha(CANVAS.brass, x)）
+  grid:  "rgba(72,55,32,0.10)",   // 台面上的定位点
 };
 
 /** 画布交互层（拖拽/评论/对齐等 Figma 式高饱和工具色）。
@@ -147,7 +197,7 @@ export const MODAL = {
 // "浮在暖底上的卡片"。CanvasFrame 用 STAGE.shadow + STAGE.radius，
 // ThreeColumnLayout 中间 main 用 STAGE.bg + padding 形成呼吸空间。
 export const STAGE = {
-  bg: "#FAF8F5",                                  // 比 COLOR.bg 暖 1-2 度
+  bg: "#F5F0E5",                                  // 台面四周那圈呼吸，比台面浅一档
   shadow: "0 8px 32px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.05)",
   borderWarm: "rgba(190, 160, 130, 0.15)",        // 暖棕极淡边
   radius: 12,
