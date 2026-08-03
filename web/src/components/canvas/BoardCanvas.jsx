@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
+import { PAPER, PAPER_SHADOW } from '../../lib/paper.js';
 import WorldMap from './WorldMap.jsx';
 import {
   DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H, SIZES,
@@ -45,6 +46,17 @@ import FilesCard from '../project/FilesCard.jsx';
  * pin_to_board 写入互不覆盖；boardVersion 变化（board.updated 事件）时整份
  * 布局从服务端重拉，服务端为准。
  */
+
+/**
+ * 这个物件是不是能渲染的 markdown。
+ *
+ * 产物分类只把便签认成 note、图片认成 image，**剩下一切都掉进 file**
+ * （见 objects useMemo）。所以 agent 写的 世界.md、正文/003-雨夜.md 这些
+ * 全是 file，得在这里按扩展名二次认领，才送得进阅读器。
+ */
+function isMarkdown(o) {
+  return /\.(md|markdown)$/i.test(o?.ext || o?.name || o?.path || '');
+}
 
 const EXT_MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -947,6 +959,19 @@ export default function BoardCanvas({
     if (o.type === 'doc') {
       const r = await Memory.read(projectId, o.readKey).catch(() => null);
       setViewer({ title: o.title, content: r?.content || o.preview || '(空)' });
+    } else if (o.type === 'file' && isMarkdown(o)) {
+      // 普通 .md 产物（世界.md / 正文章节 / agent 写的任何 markdown）。
+      // 2026-08-03 之前这类文件只有「打开」= window.open 原始 URL，浏览器给一坨
+      // 纯文本 —— 41KB 的正文点开满屏 `**` 和 `##`。阅读器本来就是现成的，
+      // 缺的只是这条路由。frontmatter 不剥：便签的 `---` 头是会话元数据该藏，
+      // 普通 md 的 frontmatter 是内容的一部分，替用户删掉是自作主张。
+      const title = o.name || o.title || 'markdown';
+      try {
+        const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
+        setViewer({ title, content: await res.text() });
+      } catch {
+        setViewer({ title, content: o.preview || '(读不出来)' });
+      }
     } else if (o.type === 'note') {
       const title = o.noteTask ? o.name.replace(/\.md$/i, '') : '便签';
       try {
@@ -1002,7 +1027,8 @@ export default function BoardCanvas({
   const primaryOpen = (o) => {
     if (o.type === 'doc' || o.type === 'note') openViewer(o);
     else if (o.type === 'image') setDetail(o);
-    else if (o.type === 'file') openFile(o);
+    // markdown 双击进阅读器（渲染过的），其余文件双击才是丢给浏览器
+    else if (o.type === 'file') (isMarkdown(o) ? openViewer : openFile)(o);
     else if (o.type === 'deck' || o.type === 'site' || o.type === 'world') {
       if (o.pos.expanded) focusDeck(o);
       else patchLayout(o.id, { expanded: true, z: ++zMaxRef.current });
@@ -1369,7 +1395,7 @@ export default function BoardCanvas({
                 zIndex: 1, borderRadius: 14,
                 display: 'flex', alignItems: 'center', gap: GAP.lg,
                 padding: `0 ${GAP.lg}px`,
-                background: dropHint?.kind === 'folder' && dropHint.id === z.id ? '#fff8e8' : 'rgba(255,255,255,0.55)',
+                background: dropHint?.kind === 'folder' && dropHint.id === z.id ? '#fff8e8' : 'rgba(255,254,246,0.55)',
                 border: `1px ${dropHint?.kind === 'folder' && dropHint.id === z.id ? `solid ${CANVAS.brass}` : `dashed ${COLOR.borderLt}`}`,
                 boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
                   ? '0 0 0 3px rgba(176,140,79,0.18), 0 8px 20px rgba(0,0,0,0.14)'
@@ -1379,10 +1405,10 @@ export default function BoardCanvas({
                 animation: POP_IN,
                 ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite' } : null),
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.9)'; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,254,246,0.9)'; }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = dropHint?.kind === 'folder' && dropHint.id === z.id
-                  ? '#fff8e8' : 'rgba(255,255,255,0.55)';
+                  ? '#fff8e8' : 'rgba(255,254,246,0.55)';
               }}
             >
               <Folder size={17} color="#8a7a5c" style={{ flexShrink: 0 }} />
@@ -1439,7 +1465,7 @@ export default function BoardCanvas({
                   : `1.5px dashed ${z.id === currentSessionId ? 'rgba(60,50,30,0.35)' : 'rgba(0,0,0,0.13)'}`,
                 background: dropHint?.kind === 'zone' && dropHint.id === z.id
                   ? 'rgba(255,246,220,0.75)'
-                  : (z.id === currentSessionId ? 'rgba(255,252,242,0.6)' : 'rgba(255,255,255,0.35)'),
+                  : (z.id === currentSessionId ? 'rgba(255,252,242,0.6)' : 'rgba(255,254,246,0.35)'),
                 boxShadow: dropHint?.kind === 'zone' && dropHint.id === z.id ? `0 0 0 4px ${alpha(CANVAS.brass, 0.12)}` : 'none',
                 // agent 正在这块区里动手 → 外圈橙色呼吸光圈（目标物件还没上墙时套区）
                 ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite', borderColor: alpha(CANVAS.brass, 0.75) } : null),
@@ -1535,7 +1561,7 @@ export default function BoardCanvas({
               left: dropHint.ghost.x, top: dropHint.ghost.y,
               width: dropHint.ghost.w, height: dropHint.ghost.h,
               border: '1.5px dashed rgba(150,115,60,0.55)', borderRadius: RADIUS.xl,
-              background: 'rgba(255,255,255,0.45)',
+              background: 'rgba(255,254,246,0.45)',
               zIndex: 0, pointerEvents: 'none',
             }} />
           )}
@@ -1741,14 +1767,20 @@ function BoardObject({
   if (o.type !== 'deck') actions.push({ icon: Plus, title: added ? '已在托盘' : '加入上下文', fn: onAdd });
   if (o.type === 'doc' || o.type === 'note') actions.push({ icon: BookOpen, title: '阅读', fn: onOpenViewer });
   if (o.type === 'image') actions.push({ icon: ExternalLink, title: '详情', fn: onDetail });
+  // .md 两条路都给：「阅读」是渲染过的（默认，双击也走这条），「打开」是原始文件
+  if (o.type === 'file' && isMarkdown(o)) actions.push({ icon: BookOpen, title: '阅读', fn: onOpenViewer });
   if (o.type === 'file') actions.push({ icon: ExternalLink, title: '打开', fn: onOpenFile });
   if (o.type === 'note') actions.push({ icon: Trash2, title: '删除', fn: onDeleteNote });
 
   const Actions = hover && actions.length > 0 && (
     <div data-board-action style={{
       position: 'absolute', top: -26, right: 0, display: 'flex', gap: GAP.xxs,
-      background: 'rgba(255,255,255,0.95)', border: `1px solid ${COLOR.borderLt}`,
+      // 一小片浮起来的纸，不是描边白盒。这条工具标是 2026-08-03 之前全站换肤
+      // 唯一漏掉的地方 —— 因为它写死了 rgba(255,255,255,.95)，绕过了整套 token，
+      // 于是纸面上飘着一个上一代设计语言的白色圆角描边框。
+      background: PAPER.paper, border: 'none',
       borderRadius: RADIUS.md, padding: GAP.xxs, zIndex: 5,
+      boxShadow: PAPER_SHADOW.far,
     }}>
       {actions.map((a, i) => {
         const Icon = a.icon;
