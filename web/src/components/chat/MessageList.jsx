@@ -3,7 +3,8 @@ import { Virtuoso } from 'react-virtuoso';
 import Message from './Message.jsx';
 import TimelineGroup from './TimelineGroup.jsx';
 import { History } from 'lucide-react';
-import { COLOR, GAP, RADIUS, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
+import { COLOR, CHROME, GAP, RADIUS, FONT_KAI, FONT_SIZE } from '../../lib/theme.js';
+import { PAPER, GRAIN, PAPER_SHADOW } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -109,7 +110,7 @@ function PendingRow({ show, active, tokens }) {
     <div style={{
       display: 'flex', alignItems: 'center', gap: GAP.sm,
       padding: `${GAP.sm}px ${GAP.lg}px ${GAP.lg}px`,
-      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+      fontFamily: FONT_KAI, fontSize: FONT_SIZE.xs, color: COLOR.sub,
     }}>
       <span
         title={active ? 'agent 正在输出' : 'agent 在 turn 内但暂无输出（深度思考 / 长工具 / 外部资源）'}
@@ -180,9 +181,9 @@ function EmptyState({ onOpenSessionList }) {
       flex: 1, minHeight: 0, overflow: 'auto',
       padding: `${GAP.xxl}px ${GAP.lg}px`,
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.lg,
-      fontFamily: FONT_SANS, color: COLOR.sub, textAlign: 'center',
+      fontFamily: FONT_KAI, color: CHROME.pencil, textAlign: 'center',
     }}>
-      <div style={{ fontSize: FONT_SIZE.sm, lineHeight: 1.7 }}>
+      <div style={{ fontSize: FONT_SIZE.lg, lineHeight: 1.9, color: CHROME.ink2 }}>
         说一句话开始<br />
         想做什么、什么场合看、想让人感觉到什么。
       </div>
@@ -196,22 +197,24 @@ function EmptyState({ onOpenSessionList }) {
             style={{
               textAlign: 'left',
               padding: `${GAP.sm}px ${GAP.md}px`,
-              border: `1px solid ${COLOR.borderLt}`,
-              borderRadius: RADIUS.lg,
-              background: COLOR.bgWhite,
-              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
-              cursor: 'pointer', lineHeight: 1.5,
-              transition: 'background 0.15s, border-color 0.15s',
+              border: 'none',
+              borderRadius: 2,
+              background: PAPER.paper,
+              backgroundImage: GRAIN,
+              boxShadow: PAPER_SHADOW.far,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg, color: PAPER.ink2,
+              cursor: 'pointer', lineHeight: 1.6,
+              transition: 'box-shadow 0.18s, transform 0.18s',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.03)'; e.currentTarget.style.borderColor = COLOR.borderHv; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = COLOR.bgWhite; e.currentTarget.style.borderColor = COLOR.borderLt; }}
+            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = PAPER_SHADOW.mid; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = PAPER_SHADOW.far; e.currentTarget.style.transform = 'none'; }}
           >{t}</button>
         ))}
       </div>
 
       <div style={{
-        maxWidth: 300, fontSize: FONT_SIZE.sm, lineHeight: 1.7, color: COLOR.sub,
-        borderTop: `1px solid ${COLOR.borderLt}`, paddingTop: GAP.md,
+        maxWidth: 300, fontSize: FONT_SIZE.md, lineHeight: 1.9, color: CHROME.pencil,
+        borderTop: `1px solid ${CHROME.border}`, paddingTop: GAP.md,
       }}>
         agent 会在项目里建一个任务文件夹放产出，写的每一步都在右边画布上实时演。
         它能生成图片、联网查资料、自己截图检查排版、按元素微调。
@@ -224,10 +227,10 @@ function EmptyState({ onOpenSessionList }) {
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: `${GAP.xs}px ${GAP.md}px`,
             border: 'none', background: 'transparent',
-            fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text2,
+            fontFamily: FONT_KAI, fontSize: FONT_SIZE.sm, color: COLOR.text2,
             cursor: 'pointer', borderRadius: RADIUS.md,
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
         >
           <History size={12} /> 之前的对话都在这

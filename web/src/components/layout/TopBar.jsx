@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { LogOut, LayoutDashboard } from 'lucide-react';
-import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, CHROME, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_KAI } from '../../lib/theme.js';
+import { GRAIN } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -58,9 +59,9 @@ function UserBadge() {
         style={{
           width: 26, height: 26, borderRadius: 13,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 600,
-          color: COLOR.text2,
-          background: 'rgba(0,0,0,0.045)',
+          fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg, fontWeight: 700,
+          color: CHROME.ink2,
+          background: 'rgba(43,33,23,0.06)',
           border: nearCap ? `1.5px solid ${COLOR.warn}` : '1.5px solid transparent',
           cursor: 'pointer',
           padding: 0,
@@ -71,8 +72,9 @@ function UserBadge() {
         <div style={{
           position: 'absolute', top: '100%', right: 0, marginTop: GAP.sm,
           minWidth: 176,
-          background: COLOR.bgWhite,
-          border: `1px solid ${COLOR.borderMd}`,
+          background: CHROME.bg,
+          backgroundImage: GRAIN,
+          border: `1px solid ${CHROME.border}`,
           borderRadius: RADIUS.xl,
           boxShadow: SHADOW.menu,
           padding: GAP.xs,
@@ -80,7 +82,7 @@ function UserBadge() {
         }}>
           <div style={{
             padding: `${GAP.sm}px ${GAP.md}px`,
-            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text,
+            fontFamily: FONT_KAI, fontSize: FONT_SIZE.base, color: CHROME.ink,
           }}>
             {authUser.username}
             {usage && (
@@ -94,7 +96,7 @@ function UserBadge() {
               </div>
             )}
           </div>
-          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px 0` }} />
+          <div style={{ height: 1, background: CHROME.border, margin: `${GAP.xs}px 0` }} />
           {authUser.role === 'admin' && (
             <Link to="/admin" onClick={() => setOpen(false)} style={menuItem}>
               <LayoutDashboard size={12} /> 控制台
@@ -116,8 +118,8 @@ function UserBadge() {
 const menuItem = {
   display: 'flex', alignItems: 'center', gap: GAP.sm,
   padding: `${GAP.sm}px ${GAP.md}px`,
-  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
-  color: COLOR.text2, textDecoration: 'none',
+  fontFamily: FONT_KAI, fontSize: FONT_SIZE.base,
+  color: CHROME.ink2, textDecoration: 'none',
   borderRadius: RADIUS.md,
   textAlign: 'left',
 };
@@ -148,8 +150,8 @@ function Crumb({ item, last }) {
     border: 'none',
     background: 'transparent',
     fontFamily: 'inherit', fontSize: 'inherit',
-    color: interactive ? COLOR.text2 : COLOR.text,
-    fontWeight: interactive ? 400 : 500,
+    color: interactive ? CHROME.ink2 : CHROME.ink,
+    fontWeight: interactive ? 400 : 700,
     textDecoration: 'none',
     cursor: interactive ? 'pointer' : 'default',
     maxWidth: 280,
@@ -158,19 +160,19 @@ function Crumb({ item, last }) {
   };
   const hoverOn = (e) => {
     if (!interactive) return;
-    e.currentTarget.style.background = 'rgba(0,0,0,0.055)';
-    e.currentTarget.style.color = COLOR.text;
+    e.currentTarget.style.background = CHROME.hover;
+    e.currentTarget.style.color = CHROME.ink;
   };
   const hoverOff = (e) => {
     if (!interactive) return;
     e.currentTarget.style.background = 'transparent';
-    e.currentTarget.style.color = COLOR.text2;
+    e.currentTarget.style.color = CHROME.ink2;
   };
   const inner = (
     <>
       {item.icon}
       {item.label}
-      {item.hint && <span style={{ color: COLOR.sub, fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm }}>{item.hint}</span>}
+      {item.hint && <span style={{ color: CHROME.pencil, fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm }}>{item.hint}</span>}
     </>
   );
   if (item.to) {
@@ -191,39 +193,38 @@ export default function TopBar({ breadcrumb = [], actions }) {
     <header style={{
       height: 56,
       flexShrink: 0,
-      background: COLOR.bgWhite,
-      borderBottom: `1px solid ${COLOR.border}`,
+      // 顶栏是纸不是白条：底色跟页面同族，下边界是墨色淡痕 + 一道极浅的落影，
+      // 读起来像压在板子上的一条搁板，而不是贴上去的胶带
+      background: CHROME.bg,
+      backgroundImage: GRAIN,
+      borderBottom: `1px solid ${CHROME.border}`,
       display: 'flex',
       alignItems: 'center',
       padding: `0 ${GAP.xl}px`,
       gap: GAP.lg,
-      boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+      boxShadow: '0 1px 4px rgba(93,74,44,0.10)',
+      position: 'relative',
+      zIndex: 3,
     }}>
-      {/* Logo */}
+      {/* Logo —— 跟登录墙上那个字标同一套写法（楷体 700 + 0.06em），
+          原来的深色 N 方块撤掉：门口那面墙上没有它，进门之后也不该冒出来 */}
       <Link to="/" style={{
         display: 'flex',
         alignItems: 'center',
-        gap: GAP.md,
-        fontFamily: FONT_MONO,
-        fontSize: FONT_SIZE.h2,
-        fontWeight: 600,
-        color: COLOR.text,
-        letterSpacing: '-0.01em',
+        fontFamily: FONT_KAI,
+        fontSize: 19,
+        fontWeight: 700,
+        color: CHROME.ink,
+        letterSpacing: '0.06em',
       }}>
-        <span style={{
-          width: 24, height: 24, borderRadius: RADIUS.md,
-          background: COLOR.btn, color: COLOR.btnText,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: FONT_SIZE.base, fontWeight: 700,
-        }}>N</span>
         Nodesign
       </Link>
 
       {/* Breadcrumb —— 可点的一级做成 hover 高亮的小块，一眼看出能按 */}
       {breadcrumb.length > 0 && (
         <>
-          <span style={{ color: COLOR.dim, fontSize: FONT_SIZE.lg }}>/</span>
-          <nav style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2, minWidth: 0 }}>
+          <span style={{ color: CHROME.pencil, fontSize: FONT_SIZE.lg }}>/</span>
+          <nav style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg, color: CHROME.ink2, minWidth: 0 }}>
             {breadcrumb.map((item, i) => (
               <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.sm, minWidth: 0 }}>
                 {i > 0 && <span style={{ color: COLOR.dim }}>/</span>}
@@ -238,7 +239,9 @@ export default function TopBar({ breadcrumb = [], actions }) {
       <div style={{ flex: 1 }} />
 
       {/* Actions */}
-      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: GAP.md }}>{actions}</div>}
+      {/* 字体挂在容器上：各路由自己拼 actions，逐个去改必然漏一个。
+          按钮只要不显式指定 fontFamily 就跟着顶栏走 */}
+      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: GAP.md, fontFamily: FONT_KAI }}>{actions}</div>}
 
       {/* 用户角标（用户名 · 今日用量 · 登出）*/}
       <UserBadge />

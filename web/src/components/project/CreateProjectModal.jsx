@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import Modal, { ModalFooter } from '../ui/Modal.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import Modal, { ModalFooter, modalInput, modalLabel, modalHint, modalInputFocus } from '../ui/Modal.jsx';
+import { GAP } from '../../lib/theme.js';
 import { useProjectStore } from '../../stores/projectStore.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -48,14 +48,15 @@ export default function CreateProjectModal({ show, onClose, onCreated }) {
 
   return (
     <Modal show={show} onClose={onClose} title="新建项目" width={520}>
-      <div style={{ padding: GAP.xl }}>
+      <div style={{ padding: `${GAP.lg}px ${GAP.xl}px ${GAP.xl}px` }}>
 
         <Section label="项目名">
           <input
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="例如：Space Colony 歌词视觉"
-            style={inputStyle}
+            style={modalInput}
+            {...modalInputFocus}
             autoFocus
             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
           />
@@ -68,14 +69,12 @@ export default function CreateProjectModal({ show, onClose, onCreated }) {
             placeholder="例如：这首歌的整套视觉，页面和图都放这里"
             rows={3}
             maxLength={2000}
-            style={{ ...inputStyle, resize: 'vertical', fontFamily: FONT_SANS, lineHeight: 1.5 }}
+            style={{ ...modalInput, resize: 'vertical', lineHeight: 1.7 }}
+            {...modalInputFocus}
           />
         </Section>
 
-        <div style={{
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-          marginTop: GAP.sm, lineHeight: 1.5,
-        }}>
+        <div style={{ ...modalHint, marginTop: GAP.lg }}>
           创建后会进入项目主页，在那里配置项目指引、上传参考素材，再起第一个会话。
         </div>
       </div>
@@ -93,24 +92,8 @@ export default function CreateProjectModal({ show, onClose, onCreated }) {
 function Section({ label, children }) {
   return (
     <div style={{ marginBottom: GAP.xl }}>
-      <div style={{
-        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-        textTransform: 'uppercase', letterSpacing: '0.05em',
-        marginBottom: GAP.sm,
-      }}>{label}</div>
+      <div style={modalLabel}>{label}</div>
       {children}
     </div>
   );
 }
-
-const inputStyle = {
-  width: '100%',
-  padding: `${GAP.md}px ${GAP.lg}px`,
-  fontFamily: FONT_MONO, fontSize: FONT_SIZE.base,
-  color: COLOR.text,
-  background: COLOR.bgWhite,
-  border: `1px solid ${COLOR.borderMd}`,
-  borderRadius: RADIUS.lg,
-  outline: 'none',
-  boxSizing: 'border-box',
-};

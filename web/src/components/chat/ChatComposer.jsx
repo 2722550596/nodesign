@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Square, Upload } from 'lucide-react';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI } from '../../lib/theme.js';
+import { PAPER, GRAIN, PAPER_SHADOW } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { useDropzone } from '../../lib/useDropzone.js';
 import ComposerTray from './ComposerTray.jsx';
@@ -100,19 +101,22 @@ export default function ChatComposer({
   return (
     <div style={{
       padding: GAP.lg,
-      borderTop: `1px solid ${COLOR.border}`,
-      background: COLOR.bgWhite,
+      borderTop: `1px solid ${CHROME.border}`,
+      background: CHROME.bg,
     }}>
       <div
+        className="nd-composer"
         {...dropProps}
         style={{
-          // V2：用户反馈 bg 太重，改用 bgModal（#FDFCFA）— 比 bgCard 淡得多
-          background: COLOR.bgModal,
-          // V3：拖文件入时改 dashed 蓝边 + 浅高亮 → 视觉确认
-          border: dragging
-            ? `1.5px dashed ${COLOR.btn}`
-            : `1px solid ${COLOR.borderLt}`,
-          borderRadius: 14,
+          // 2026-08-03 换纸：这里是一张摊在栏底的小纸，不是一个圆角输入盒。
+          // 聚焦态靠 :focus-within 加深影子（见 nd-composer 那条全局规则）——
+          // 纸没有边框，光靠一根光标判断"进没进输入态"太吃力，首页那张便签同理。
+          background: PAPER.paper,
+          backgroundImage: GRAIN,
+          boxShadow: PAPER_SHADOW.mid,
+          // 拖文件入时改虚线边 + 浅高亮 → 视觉确认
+          border: dragging ? `1.5px dashed ${PAPER.ink}` : '1px solid transparent',
+          borderRadius: 2,
           padding: `${GAP.md + 2}px ${GAP.lg}px ${GAP.md}px`,
           display: 'flex',
           flexDirection: 'column',
@@ -123,11 +127,11 @@ export default function ChatComposer({
         {dragging && (
           <div style={{
             position: 'absolute', inset: 0,
-            background: 'rgba(45,36,24,0.06)',
-            borderRadius: 14,
+            background: 'rgba(43,33,23,0.07)',
+            borderRadius: 2,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             gap: GAP.sm,
-            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+            fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg,
             color: COLOR.text,
             pointerEvents: 'none',
             zIndex: 2,
@@ -165,7 +169,7 @@ export default function ChatComposer({
             border: 'none',
             outline: 'none',
             resize: 'none',
-            fontFamily: FONT_SANS,
+            fontFamily: FONT_KAI,
             fontSize: FONT_SIZE.base,
             lineHeight: 1.55,
             color: COLOR.text,
@@ -227,18 +231,18 @@ export default function ChatComposer({
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs + 1,
                 padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
-                fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
-                color: COLOR.bgWhite,
-                background: COLOR.error,
-                border: `1px solid ${COLOR.error}`,
-                borderRadius: RADIUS.lg,
+                fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg, fontWeight: 700,
+                color: '#F5F0E4',
+                background: PAPER.red,
+                border: `1px solid ${PAPER.red}`,
+                borderRadius: 2,
                 cursor: 'pointer',
                 transition: 'all 0.15s',
               }}
               onMouseEnter={e => { e.currentTarget.style.opacity = 0.85; }}
               onMouseLeave={e => { e.currentTarget.style.opacity = 1; }}
             >
-              <Square size={11} fill="#fff" />
+              <Square size={11} fill="#FFFEF6" />
               停止
             </button>
           ) : (
@@ -249,11 +253,11 @@ export default function ChatComposer({
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs + 1,
                 padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,
-                fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
-                color: COLOR.btnText,
-                background: disabled || empty ? 'rgba(45,36,24,0.35)' : COLOR.btn,
-                border: `1px solid ${disabled || empty ? 'rgba(45,36,24,0.35)' : COLOR.btn}`,
-                borderRadius: RADIUS.lg,
+                fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg, fontWeight: 700,
+                color: disabled || empty ? PAPER.pencil : '#F5F0E4',
+                background: disabled || empty ? 'transparent' : PAPER.ink,
+                border: `1px solid ${disabled || empty ? PAPER.hair : PAPER.ink}`,
+                borderRadius: 2,
                 cursor: disabled || empty ? 'not-allowed' : 'pointer',
                 transition: 'all 0.15s',
               }}

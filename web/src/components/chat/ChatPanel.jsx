@@ -4,7 +4,7 @@ import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ContextMeter from './ContextMeter.jsx';
 import TodoPanel from './TodoPanel.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, CANVAS } from '../../lib/theme.js';
+import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI, CANVAS } from '../../lib/theme.js';
 
 /**
  * Chat Panel — 左栏整体壳
@@ -17,7 +17,7 @@ import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, CANVAS } from '../../lib/them
 const headerBtn = {
   display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
   padding: `3px ${GAP.sm}px`,
-  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+  fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, color: CHROME.pencil,
   background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
   cursor: 'pointer', letterSpacing: '0.04em',
   transition: 'background 0.15s, color 0.15s',
@@ -85,7 +85,7 @@ export default function ChatPanel({
       {/* 顶部 header：session selector（点击弹 SessionListModal）+ 流式状态 */}
       <div style={{
         padding: `${GAP.md}px ${GAP.lg}px`,
-        borderBottom: `1px solid ${COLOR.borderLt}`,
+        borderBottom: `1px solid ${CHROME.border}`,
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
@@ -100,10 +100,10 @@ export default function ChatPanel({
           style={{
             display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
             padding: `${GAP.xs}px ${GAP.sm}px`,
-            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
+            fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, fontWeight: 500,
             color: COLOR.text,
             background: 'transparent',
-            border: `1px solid ${COLOR.borderLt}`,
+            border: `1px solid ${CHROME.border}`,
             borderRadius: RADIUS.md,
             cursor: onOpenSessionList ? 'pointer' : 'default',
             flex: 1,
@@ -112,12 +112,12 @@ export default function ChatPanel({
           }}
           onMouseEnter={e => {
             if (!onOpenSessionList) return;
-            e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+            e.currentTarget.style.background = CHROME.hover;
             e.currentTarget.style.borderColor = COLOR.borderHv;
           }}
           onMouseLeave={e => {
             e.currentTarget.style.background = 'transparent';
-            e.currentTarget.style.borderColor = COLOR.borderLt;
+            e.currentTarget.style.borderColor = CHROME.border;
           }}
         >
           <History size={11} strokeWidth={1.75} color={COLOR.sub} style={{ flexShrink: 0 }} />
@@ -139,7 +139,7 @@ export default function ChatPanel({
             onClick={onNewChat}
             title="开新对话（当前会话保留，随时从会话列表回来）"
             style={headerBtn}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.04)'; e.currentTarget.style.color = COLOR.text2; }}
+            onMouseEnter={e => { e.currentTarget.style.background = CHROME.hover; e.currentTarget.style.color = COLOR.text2; }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.sub; }}
           >
             <SquarePen size={12} strokeWidth={1.75} />
@@ -159,14 +159,14 @@ export default function ChatPanel({
             style={{
               display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
               padding: `${GAP.xs}px ${GAP.sm}px`,
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, color: COLOR.sub,
               background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
               cursor: 'pointer',
               letterSpacing: '0.04em',
               transition: 'background 0.15s, color 0.15s',
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = 'rgba(0,0,0,0.04)';
+              e.currentTarget.style.background = CHROME.hover;
               e.currentTarget.style.color = COLOR.text2;
             }}
             onMouseLeave={e => {
@@ -184,8 +184,8 @@ export default function ChatPanel({
         <div style={{
           display: 'flex', alignItems: 'center', gap: GAP.xs, flexWrap: 'wrap',
           padding: `${GAP.xs}px ${GAP.lg}px`,
-          borderBottom: `1px solid ${COLOR.borderLt}`,
-          background: 'rgba(0,0,0,0.02)',
+          borderBottom: `1px solid ${CHROME.border}`,
+          background: 'rgba(43,33,23,0.02)',
         }}>
           <button onClick={() => setChatTab('main')} style={timelineTab(chatTab === 'main')}>对话</button>
           {Object.entries(subagents).map(([tid, sa]) => (
@@ -217,8 +217,8 @@ export default function ChatPanel({
       {(wsStatus === 'reconnecting' || wsStatus === 'closed') && (
         <div style={{
           padding: `${GAP.xs}px ${GAP.lg}px`,
-          fontFamily: FONT_MONO,
-          fontSize: FONT_SIZE.xs,
+          fontFamily: FONT_KAI,
+          fontSize: FONT_SIZE.md,
           color: wsStatus === 'closed' ? COLOR.error : COLOR.sub,
           letterSpacing: '0.04em',
           background: wsStatus === 'closed' ? 'rgba(220, 53, 69, 0.06)' : 'rgba(255, 193, 7, 0.06)',
@@ -241,8 +241,8 @@ export default function ChatPanel({
       {queueDepth > 0 && (
         <div style={{
           padding: `${GAP.xs}px ${GAP.lg}px`,
-          fontFamily: FONT_MONO,
-          fontSize: FONT_SIZE.xs,
+          fontFamily: FONT_KAI,
+          fontSize: FONT_SIZE.md,
           color: COLOR.sub,
           letterSpacing: '0.04em',
           background: 'rgba(45, 36, 24, 0.04)',
@@ -290,9 +290,9 @@ function timelineTab(active) {
   return {
     display: 'inline-flex', alignItems: 'center', gap: 5,
     padding: `3px ${GAP.base}px`, borderRadius: RADIUS.pill, border: 0,
-    fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, fontWeight: 500,
-    color: active ? COLOR.bg : COLOR.text,
-    background: active ? COLOR.text : 'rgba(0,0,0,0.05)',
+    fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, fontWeight: 500,
+    color: active ? '#F5F0E4' : CHROME.ink,
+    background: active ? CHROME.ink : 'rgba(43,33,23,0.06)',
     cursor: 'pointer', transition: 'all 0.15s',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
   };

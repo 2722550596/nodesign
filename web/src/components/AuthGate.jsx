@@ -23,8 +23,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useGlobalStore } from '../stores/globalStore.js';
-import kaiRegular from '../assets/fonts/lxgw-nd-regular.woff2';
-import kaiBold from '../assets/fonts/lxgw-nd-bold.woff2';
+import { PAPER_VARS } from '../lib/paper.js';
+import { Ring, Clip, Underline } from './PaperBits.jsx';
 import artNight from '../assets/login-wall/ink-night.webp';
 import artDesk from '../assets/login-wall/ink-desk.webp';
 import artPortrait from '../assets/login-wall/ink-portrait.webp';
@@ -56,32 +56,8 @@ const DESIGN_H = 800;
 const SAFE_H = 780;
 
 const CSS = `
-@font-face {
-  font-family: 'LXGW WenKai ND';
-  src: url('${kaiRegular}') format('woff2');
-  font-weight: 400; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: 'LXGW WenKai ND';
-  src: url('${kaiBold}') format('woff2');
-  font-weight: 700; font-style: normal; font-display: swap;
-}
-
 .ndw {
-  --wall: #F0EADB;
-  --paper: #FFFEF6;
-  --legal: #FAF0C6;
-  --kraft: #E2D3B4;
-  --sticky: #FBF3CF;
-  --ink: #2B2117;
-  --ink-2: #5F5142;
-  --pencil: #A39882;
-  --hair: rgba(43,33,23,0.22);
-  --red: #A8362B;
-  --kai: 'LXGW WenKai ND', 'LXGW WenKai', '霞鹜文楷', serif;
-  --code: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.17 0 0 0 0 0.13 0 0 0 0 0.06 0 0 0 0.1 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-
+  ${PAPER_VARS}
   position: fixed; inset: 0; overflow: hidden;
   font-family: var(--kai); color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -375,39 +351,6 @@ const CSS = `
 .ndw-solo .brand { display: block; font: 700 20px var(--kai);
   letter-spacing: 0.06em; margin-bottom: 16px; }
 `;
-
-/** 手写红圈：编号用 */
-function Ring() {
-  return (
-    <svg viewBox="0 0 30 30" aria-hidden="true">
-      <path
-        d="M15.5 2.6 C 23.4 2.2, 28.4 8.2, 27.4 15.4 C 26.5 22.6, 20.6 27.8, 13.6 27.3
-           C 6.4 26.8, 2.1 21.2, 2.7 14.2 C 3.3 7.4, 8.2 3.2, 15.5 2.6
-           C 17.2 2.5, 19.1 2.9, 20.6 3.6"
-        fill="none" stroke="#A8362B" strokeWidth="1.5" strokeLinecap="round" opacity="0.85"
-      />
-    </svg>
-  );
-}
-
-function Clip({ cx }) {
-  return (
-    <svg className="clip" style={{ '--cx': cx }} viewBox="0 0 40 66" aria-hidden="true">
-      <path d="M13 46 V15 a7.5 7.5 0 0 1 15 0 v33 a11.5 11.5 0 0 1-23 0 V19"
-        fill="none" stroke="#8f8676" strokeWidth="3.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** 手绘下划线 */
-function Underline({ w = 2 }) {
-  return (
-    <svg viewBox="0 0 100 8" preserveAspectRatio="none" aria-hidden="true">
-      <path d="M3 4 Q 30 2, 55 4.5 T 97 3.5" fill="none" stroke="#2B2117"
-        strokeWidth={w} strokeLinecap="round" opacity="0.8" />
-    </svg>
-  );
-}
 
 export default function AuthGate({ children }) {
   // checking | login | ok

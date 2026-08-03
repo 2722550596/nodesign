@@ -17,14 +17,24 @@ import {
   listRunsForProject,
 } from '../projects/store.js';
 import { guardProject } from './_guard.js';
-import { ensureProjectWorkspace, removeProjectWorkspace } from '../projects/workspace.js';
+import { listTasks } from '../lib/artifact-target.js';
+import { countPublishedByUser } from '../lib/publish-store.js';
+import { checkQuota } from '../lib/quota.js';
+import { ensureProjectWorkspace, removeProjectWorkspace, getSharedDir } from '../projects/workspace.js';
 import { removeEntriesForProject } from '../lib/showcase-store.js';
 import { disposeProjectBus } from '../ws/broker.js';
 
 const router = express.Router();
 
-/** 列表的归属口径：普通用户只看自己的；admin 看全部 */
-const ownerScope = (req) => (req.user?.role === 'admin' ? null : (req.user?.id ?? null));
+/**
+ * 列表的归属口径：一律只列自己的。
+ *
+ * 2026-08-03 收窄：原本 admin 拿的是全库，于是「我的项目」首页把所有内测用户的
+ * 项目名铺在一起（16 张卡里只有 7 张是自己的）。admin 要看全站有 /admin；
+ * 要打开别人的项目 guardProject 仍然放行 —— 越权能力没变，变的是首页的口径：
+ * 「我的项目」就是我的。
+ */
+const ownerScope = (req) => req.user?.id ?? null;
 
 const KIND_VALUES = new Set(['project', 'quick']);
 const KIND_QUERY_VALUES = new Set(['project', 'quick', 'all']);
@@ -40,6 +50,44 @@ router.get('/', (req, res, next) => {
     }
     const effectiveKind = raw === 'all' ? undefined : (raw || 'project');
     res.json({ projects: listProjects({ kind: effectiveKind, owner: ownerScope(req) }) });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/projects/stats —— 首页卡片那行元信息（这个项目里躺着什么）
+ *
+ * 卡片上原来印的是 skill_id，全站同一个值 'deskskill-engine-mini'，等于一行噪声。
+ * 真正配占那一行的是「这里出了几件东西、都是什么形态」，而这个事实不在库里，
+ * 在 workspace 的 tasks/ 目录里。所以单开一条而不是并进列表接口：列项目不能
+ * 因为要读一圈磁盘而变慢，前端拿到列表先把卡画出来，这条回来了再补那行字。
+ *
+ * kind=null 的任务是开了头还没写出产物的，计入 tasks 但不计入 kinds。
+ *
+ * summary 是首页写在板子上那几笔账（已上线几件、今天花了多少）。搭这趟车而不是
+ * 单开端点：首页为了这四行字已经要发一次请求了，没必要发第三次。两个数都是
+ * 单条 SQL，不额外读盘。
+ *
+ * 注意：必须注册在 '/:pid' 之前，否则 'stats' 会被当成项目 id。
+ */
+router.get('/stats', async (req, res, next) => {
+  try {
+    const projects = listProjects({ kind: 'project', owner: ownerScope(req) });
+    const stats = {};
+    await Promise.all(projects.map(async (p) => {
+      let tasks = [];
+      try { tasks = await listTasks(getSharedDir(p.id)); } catch { /* 目录没了：算 0 件 */ }
+      const kinds = {};
+      for (const t of tasks) if (t.kind) kinds[t.kind] = (kinds[t.kind] || 0) + 1;
+      stats[p.id] = { tasks: tasks.length, kinds };
+    }));
+    // dev 模式（不要求登录）没有 req.user，这两笔账就没有主语，整块不下发
+    const summary = req.user
+      ? {
+        published: countPublishedByUser(req.user.id),
+        usedToday: checkQuota(req.user).usedToday,
+      }
+      : null;
+    res.json({ stats, summary });
   } catch (err) { next(err); }
 });
 

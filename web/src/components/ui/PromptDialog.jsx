@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import Modal, { ModalFooter } from './Modal.jsx';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
+import Modal, { ModalFooter, modalInput, modalInputFocus } from './Modal.jsx';
+import { GAP, FONT_SIZE } from '../../lib/theme.js';
+import { PAPER } from '../../lib/paper.js';
 
 /**
  * 站内输入对话框（替代 window.prompt）
@@ -56,8 +57,8 @@ export default function PromptDialog({
       <div style={{ padding: `${GAP.lg}px ${GAP.xl}px ${GAP.xl}px` }}>
         {message && (
           <div style={{
-            fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2,
-            lineHeight: 1.6, marginBottom: GAP.md, whiteSpace: 'pre-wrap',
+            fontSize: FONT_SIZE.xl, color: PAPER.ink2,
+            lineHeight: 1.85, marginBottom: GAP.lg, whiteSpace: 'pre-wrap',
           }}>
             {message}
           </div>
@@ -69,13 +70,10 @@ export default function PromptDialog({
             onChange={e => setValue(e.target.value)}
             placeholder={placeholder}
             rows={4}
+            {...modalInputFocus}
             style={{
-              width: '100%', padding: `${GAP.sm}px ${GAP.md}px`,
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.base, color: COLOR.text,
-              background: 'rgba(0,0,0,0.02)',
-              border: `1px solid ${error ? COLOR.error : COLOR.borderMd}`,
-              borderRadius: RADIUS.lg, outline: 'none', resize: 'vertical',
-              boxSizing: 'border-box',
+              ...modalInput, resize: 'vertical', lineHeight: 1.7,
+              borderBottomColor: error ? PAPER.red : PAPER.hair,
             }}
           />
         ) : (
@@ -85,20 +83,14 @@ export default function PromptDialog({
             onChange={e => setValue(e.target.value)}
             onKeyDown={handleKey}
             placeholder={placeholder}
-            style={{
-              width: '100%', padding: `${GAP.sm + 1}px ${GAP.md}px`,
-              fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text,
-              background: 'rgba(0,0,0,0.02)',
-              border: `1px solid ${error ? COLOR.error : COLOR.borderMd}`,
-              borderRadius: RADIUS.lg, outline: 'none',
-              boxSizing: 'border-box',
-            }}
+            {...modalInputFocus}
+            style={{ ...modalInput, borderBottomColor: error ? PAPER.red : PAPER.hair }}
           />
         )}
         {error && (
           <div style={{
             marginTop: GAP.sm,
-            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.error,
+            fontSize: FONT_SIZE.md, color: PAPER.red,
           }}>{error}</div>
         )}
       </div>

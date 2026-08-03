@@ -1,5 +1,6 @@
 import Modal, { ModalFooter } from './Modal.jsx';
-import { COLOR, GAP, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
+import { GAP, FONT_SIZE } from '../../lib/theme.js';
+import { PAPER } from '../../lib/paper.js';
 
 /**
  * 站内确认对话框（替代 window.confirm）
@@ -21,8 +22,8 @@ export default function ConfirmDialog({
     <Modal show={show} onClose={onCancel} title={title} width={420}>
       <div style={{
         padding: `${GAP.lg}px ${GAP.xl}px ${GAP.xl}px`,
-        fontFamily: FONT_SANS, fontSize: FONT_SIZE.base, color: COLOR.text2,
-        lineHeight: 1.6, whiteSpace: 'pre-wrap',
+        fontSize: FONT_SIZE.xl, color: PAPER.ink2,
+        lineHeight: 1.85, whiteSpace: 'pre-wrap',
       }}>
         {message}
       </div>

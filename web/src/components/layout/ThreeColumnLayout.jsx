@@ -1,4 +1,4 @@
-import { COLOR, STAGE } from '../../lib/theme.js';
+import { WORKBENCH, STAGE } from '../../lib/theme.js';
 
 /**
  * ThreeColumnLayout — 项目工作台三栏容器
@@ -13,13 +13,13 @@ export default function ThreeColumnLayout({ left, center, right, leftWidth = 360
     <div style={{
       display: 'flex',
       height: '100%',
-      background: COLOR.bg,
+      background: WORKBENCH.panel,
     }}>
       <aside style={{
         width: leftWidth,
         flexShrink: 0,
-        borderRight: `1px solid ${COLOR.border}`,
-        background: COLOR.bgWhite,
+        borderRight: `1px solid ${WORKBENCH.edge}`,
+        background: WORKBENCH.panel,
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
@@ -32,7 +32,7 @@ export default function ThreeColumnLayout({ left, center, right, leftWidth = 360
         minWidth: 0,
         display: 'flex',
         flexDirection: 'column',
-        background: STAGE.bg,         // 暖底（#FAF8F5）
+        background: STAGE.bg,         // 台面四周那圈呼吸
         padding: STAGE.pad,           // 12px 周围呼吸 → 形成 stage
       }}>
         {center}
@@ -41,8 +41,8 @@ export default function ThreeColumnLayout({ left, center, right, leftWidth = 360
       <aside style={{
         width: rightWidth,
         flexShrink: 0,
-        borderLeft: `1px solid ${COLOR.border}`,
-        background: COLOR.bgWhite,
+        borderLeft: `1px solid ${WORKBENCH.edge}`,
+        background: WORKBENCH.panel,
         display: 'flex',
         flexDirection: 'column',
         minHeight: 0,
