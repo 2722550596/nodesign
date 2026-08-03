@@ -57,3 +57,6 @@ web/coverage/
 # && .venv-rembg/bin/python3 -m pip install rembg onnxruntime；u2net.onnx
 # 模型缓存到 ~/.u2net/ 全局，不在 repo 里）
 server/.venv-rembg/
+
+# 构建暂存区（deploy.sh 用；真正上线的是 web/dist）
+web/dist-build/
