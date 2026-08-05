@@ -513,9 +513,16 @@ function QuickEntry({ prefill }) {
       id: tempId, type: 'asset',
       name: file.name, size: file.size, mime: file.type,
       _file: file,  // 暂存 File 等 submit 时统一上传
+      // 图片给托盘出缩略图；移除 / submit 跳走时 revoke
+      previewUrl: (file.type || '').startsWith('image/')
+        ? URL.createObjectURL(file) : undefined,
     }]);
   };
-  const handleRemoveAtt = (id) => setAttachments(arr => arr.filter(a => a.id !== id));
+  const handleRemoveAtt = (id) => setAttachments(arr => {
+    const it = arr.find(a => a.id === id);
+    if (it?.previewUrl) URL.revokeObjectURL(it.previewUrl);
+    return arr.filter(a => a.id !== id);
+  });
 
   const submit = async () => {
     const v = text.trim();
@@ -545,6 +552,9 @@ function QuickEntry({ prefill }) {
       //    initialMessage useEffect（mount 后 250ms 等 WS 上线）单点负责发首条 turn。
       //    旧实现这里也调 Turn.send 预发一条 → 后端 isNewSession=true 起 session A，
       //    Workspace 上线后又发一条 → 起 session B，导致每次闪聊创 2 个 session。
+      // 附件已消费（上传完/失败都算），objectURL 在跳走前回收 —— SPA 跳转
+      // 不卸载页面，不收会一直挂到刷新
+      attachments.forEach(a => { if (a.previewUrl) URL.revokeObjectURL(a.previewUrl); });
       navigate(`/projects/${proj.id}/work`, {
         state: { initialMessage: v, attachments: ready },
       });

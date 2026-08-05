@@ -1350,7 +1350,10 @@ export default function ProjectWorkspace() {
         setCurrentRunId(runId);  // 终止生成用
         setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
       }
-      setInputs([]);  // 已发送的托盘清空
+      setInputs(arr => {  // 已发送的托盘清空（顺带回收图片预览的 objectURL）
+        arr.forEach(it => { if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); });
+        return [];
+      });
       // streamInput 重构修：从 /work 路径起新 session 时立刻 navigate 到 /sessions/<sid>
       // —— 否则用户在第一 turn 跑完前发追加，currentSessionId 还是 null 会被当新 session
       // 起，跟原 session 脱钩（之前只在 run.done/cancelled 后 navigate，慢了一拍）
@@ -1469,12 +1472,17 @@ export default function ProjectWorkspace() {
       return;
     }
     const tempId = newId('asset');
+    // 图片在上传前就生成本地 objectURL —— 托盘缩略图不用等服务端，"上传中"
+    // 也有图看。previewUrl 跟随 item 一生，移除 / 发送清托盘时 revoke。
+    const previewUrl = (input.type || '').startsWith('image/')
+      ? URL.createObjectURL(input) : undefined;
     setInputs(arr => [...arr, {
       id: tempId,
       type: 'asset',
       name: input.name,
       size: input.size,
       mime: input.type,
+      previewUrl,
       // path: undefined → 渲染为 uploading
     }]);
     try {
@@ -1491,7 +1499,11 @@ export default function ProjectWorkspace() {
       showToast(`上传失败：${err.message}`, 'error');
     }
   };
-  const handleRemoveInput = (assetId) => setInputs(arr => arr.filter(a => a.id !== assetId));
+  const handleRemoveInput = (assetId) => setInputs(arr => {
+    const it = arr.find(a => a.id === assetId);
+    if (it?.previewUrl) URL.revokeObjectURL(it.previewUrl);
+    return arr.filter(a => a.id !== assetId);
+  });
 
   /**
    * 流 E direct edit：bridge 在 blur 时已清 contentEditable=false（见 DirectEditBridge
