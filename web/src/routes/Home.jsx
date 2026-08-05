@@ -6,6 +6,7 @@ import CreateProjectModal from '../components/project/CreateProjectModal.jsx';
 import ComposerTray from '../components/chat/ComposerTray.jsx';
 import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE } from '../lib/theme.js';
 import { PAPER_VARS, PAPER_SHADOW } from '../lib/paper.js';
+import { isImeEnter } from '../lib/helpers.js';
 import { Clip, Underline } from '../components/PaperBits.jsx';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
@@ -555,6 +556,7 @@ function QuickEntry({ prefill }) {
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (isImeEnter(e)) return;
       e.preventDefault();
       submit();
     }

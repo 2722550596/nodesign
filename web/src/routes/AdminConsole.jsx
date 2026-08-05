@@ -7,7 +7,7 @@ import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS, BANNER } from '../lib/theme.js';
 import { Admin } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { timeAgo } from '../lib/helpers.js';
+import { timeAgo, isImeEnter } from '../lib/helpers.js';
 import { IssuesPanel, Segmented } from './Issues.jsx';
 import { PAPER_SHADOW } from '../lib/paper.js';
 
@@ -471,7 +471,7 @@ function InvitesTab({ invites, users, reload, copy }) {
                       type="number" min="0" autoFocus
                       value={editUses}
                       onChange={e => setEditUses(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') saveUses(inv); if (e.key === 'Escape') setEditCode(null); }}
+                      onKeyDown={e => { if (e.key === 'Enter' && !isImeEnter(e)) saveUses(inv); if (e.key === 'Escape') setEditCode(null); }}
                       style={{
                         width: 64, padding: `${GAP.xxs}px ${GAP.sm}px`,
                         fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text,

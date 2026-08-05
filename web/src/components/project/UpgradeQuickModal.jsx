@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Modal, { ModalFooter } from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useProjectStore } from '../../stores/projectStore.js';
+import { isImeEnter } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -76,7 +77,7 @@ export default function UpgradeQuickModal({ show, onClose, project, onUpgraded }
             placeholder="给这个项目起个名字"
             style={inputStyle}
             autoFocus
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !isImeEnter(e)) submit(); }}
           />
         </Section>
 

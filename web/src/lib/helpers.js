@@ -4,6 +4,18 @@ export function classNames(...args) {
   return args.filter(Boolean).join(' ');
 }
 
+/**
+ * 这次 Enter 是不是输入法在选词，而不是用户想提交。
+ * 中文/日文输入法里按 Enter 确认候选词时，浏览器照样派发 keydown Enter，
+ * 不判这个就会把编辑到一半的整条消息发出去。isComposing 覆盖 Chrome/Firefox；
+ * Safari 在结束组合的那次 keydown 里 isComposing 已经是 false 但 keyCode
+ * 还是 229，所以两个都要看。React 合成事件和原生事件都能直接传进来。
+ */
+export function isImeEnter(e) {
+  const ev = e.nativeEvent ?? e;
+  return ev.isComposing || ev.keyCode === 229;
+}
+
 export function newId(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }

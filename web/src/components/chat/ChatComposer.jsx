@@ -4,6 +4,7 @@ import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI } from '../../lib/theme
 import { PAPER, GRAIN, PAPER_SHADOW } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { useDropzone } from '../../lib/useDropzone.js';
+import { isImeEnter } from '../../lib/helpers.js';
 import ComposerTray from './ComposerTray.jsx';
 import SuggestionChip from './SuggestionChip.jsx';
 import ComposerMenu from './ComposerMenu.jsx';
@@ -83,6 +84,7 @@ export default function ChatComposer({
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (isImeEnter(e)) return;
       e.preventDefault();
       // streamInput 模式下 Enter 始终 = submit（追加排队）；停止走专门按钮
       submit();

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { X, MapPin, MessageCircle, Trash2, Check } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
+import { isImeEnter } from '../../lib/helpers.js';
 import { getElementRole, describePage, serializeForAI } from '../../lib/element-semantics.js';
 import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
@@ -111,6 +112,7 @@ export default function InspectFloatingCard({
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (isImeEnter(e)) return;
       e.preventDefault();
       handleSubmit();
     }

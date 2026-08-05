@@ -12,6 +12,7 @@
  */
 
 import { serializeStableAnchor } from '../../lib/html-utils.js';
+import { isImeEnter } from '../../lib/helpers.js';
 
 const STATE_KEY = '__nodesignBridgeState';
 
@@ -73,6 +74,7 @@ export function attachEditMode(iframe, { onTextEdit, onSelect } = {}) {
         el.textContent = oldText; // revert
         el.blur();
       } else if (ke.key === 'Enter' && !ke.shiftKey) {
+        if (isImeEnter(ke)) return;
         ke.preventDefault();
         el.blur(); // 触发 handleBlur 上报
       }

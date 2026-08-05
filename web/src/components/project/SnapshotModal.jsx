@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Camera, RotateCcw, Trash2, Edit2, Plus } from 'lucide-react';
 import Modal from '../ui/Modal.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
-import { timeAgo } from '../../lib/helpers.js';
+import { timeAgo, isImeEnter } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -47,7 +47,7 @@ export default function SnapshotModal({ show, onClose, project, onSave, onRestor
               value={newLabel}
               onChange={e => setNewLabel(e.target.value)}
               placeholder="快照名（例如：探索两栏布局前）"
-              onKeyDown={e => { if (e.key === 'Enter') handleSave(); }}
+              onKeyDown={e => { if (e.key === 'Enter' && !isImeEnter(e)) handleSave(); }}
               style={{
                 flex: 1,
                 padding: `${GAP.sm}px ${GAP.md}px`,

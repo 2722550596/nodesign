@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Modal, { ModalFooter, modalInput, modalLabel, modalHint, modalInputFocus } from '../ui/Modal.jsx';
 import { GAP } from '../../lib/theme.js';
 import { useProjectStore } from '../../stores/projectStore.js';
+import { isImeEnter } from '../../lib/helpers.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -58,7 +59,7 @@ export default function CreateProjectModal({ show, onClose, onCreated }) {
             style={modalInput}
             {...modalInputFocus}
             autoFocus
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !isImeEnter(e)) submit(); }}
           />
         </Section>
 

@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Send, X } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, EDITOR } from '../../lib/theme.js';
 import { serializeAnchor } from '../../lib/html-utils.js';
+import { isImeEnter } from '../../lib/helpers.js';
 import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
 
 const PANEL_WIDTH = 260;
@@ -116,6 +117,7 @@ export default function PostDragNotePanel({
   const handleKeyDown = (e) => {
     // Cmd/Ctrl+Enter 提交；普通 Enter 换行
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      if (isImeEnter(e)) return;
       e.preventDefault();
       handleSubmit();
     }

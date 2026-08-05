@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import Modal, { ModalFooter, modalInput, modalInputFocus } from './Modal.jsx';
 import { GAP, FONT_SIZE } from '../../lib/theme.js';
 import { PAPER } from '../../lib/paper.js';
+import { isImeEnter } from '../../lib/helpers.js';
 
 /**
  * 站内输入对话框（替代 window.prompt）
@@ -47,6 +48,7 @@ export default function PromptDialog({
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !multiline && !e.shiftKey) {
+      if (isImeEnter(e)) return;
       e.preventDefault();
       submit();
     }
