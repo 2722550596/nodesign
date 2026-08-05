@@ -94,11 +94,22 @@ export default function ChatComposer({
   const empty = !text.trim();
 
   // V3：拖文件入复合器 → 走和 Paperclip 同条路（onPickFile）。
-  // disabled 状态不接受拖入（避免 streaming 中追加附件被忽略）。
+  // isRunning 不拦：streamInput 模式下附件在 POST /turn 时就拼进 blocks 随消息
+  // 排队，agent 跑着时上传照样能被下一 turn 吃到（"跑着时锁上传"是重构前的旧账）。
   const { dragging, dropProps } = useDropzone({
     onFiles: (files) => files.forEach(f => onPickFile?.(f)),
-    disabled: disabled || isRunning,
+    disabled,
   });
+
+  // 贴图：截图/复制的图片直接 Ctrl+V 进托盘，和拖入/Paperclip 同条路。
+  // 只在剪贴板真有文件时拦默认行为，纯文本粘贴不受影响。
+  const handlePaste = (e) => {
+    if (disabled) return;
+    const files = Array.from(e.clipboardData?.files || []);
+    if (!files.length) return;
+    e.preventDefault();
+    files.forEach(f => onPickFile?.(f));
+  };
 
   return (
     <div style={{
@@ -163,6 +174,7 @@ export default function ChatComposer({
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={handleKey}
+          onPaste={handlePaste}
           placeholder="描述你想做什么…"
           disabled={disabled}
           rows={1}

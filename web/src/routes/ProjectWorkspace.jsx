@@ -1339,8 +1339,17 @@ export default function ProjectWorkspace() {
         // 同上：已有会话时不带 model（真相在 session-config，picker 直接改那边）
         model: sidForRequest ? undefined : (useGlobalStore.getState().modelPref || undefined),
       });
-      setCurrentRunId(runId);  // 终止生成用
-      setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
+      // 追加修（2026-08-05）：只有此刻没有 turn 在跑才立即认领新 runId。
+      // agent 跑着时追加，服务端是把这条排进 inputQueue，当前流上的事件还都
+      // 挂在老 runId 上 —— 这里要是抢先把 currentRunIdRef 换成排队那条的 id，
+      // handleEvent 的 stale guard 会把老 turn 剩下的全部 delta/run.done 判成
+      // 旧事件整段吞掉，表现就是"一追加，实时流当场冻住，只能刷新"。
+      // 排队那条的认领交给它自己的 run.start（turn 边界晋升后服务端会发）。
+      if (!currentRunIdRef.current) {
+        currentRunIdRef.current = runId;
+        setCurrentRunId(runId);  // 终止生成用
+        setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
+      }
       setInputs([]);  // 已发送的托盘清空
       // streamInput 重构修：从 /work 路径起新 session 时立刻 navigate 到 /sessions/<sid>
       // —— 否则用户在第一 turn 跑完前发追加，currentSessionId 还是 null 会被当新 session
