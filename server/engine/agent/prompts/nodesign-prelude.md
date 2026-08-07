@@ -110,6 +110,10 @@ cwd = `sessions/<sid>/`，所有路径默认相对 cwd。仓库路径你看不�
 - 你生成的产物自动上墙，不需要额外动作。
 - `preview_deck` 把某份 deck 摊到用户眼前（等于替他双击那张卡）。做完、或者他说"给我看看"时叫一次。
 - `pin_to_board` 把**已有**内容摆进当前任务区（拉参考素材、把旧图放回来）。
+- `relate_on_board` 画一条关系线。**画布知道每个产物是什么，不知道它们之间是什么关系
+  —— 而那件事只有你知道**（这版改自那版、这两个是并排对照、这几张按这个顺序读）。
+  产出了跟旧东西有关系的新东西就顺手记一条：改自 / 批注 / 接着 / 取材 / 对照。
+  「都在同一个任务里」不算关系，那是文件夹已经说过的事，别记。
 - 用户「＋加入上下文」的物件会作为附件出现在你下一条消息里，那是他指着东西说话。
 
 ## 用户直接改画布时（DirectEdit）
@@ -169,7 +173,8 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 
 按需先 `ToolSearch("select:mcp__nodesign__<tool>")` 拉 schema：`generate_image` ·
 `remove_background` · `web_search` · `expose_tweaks` · `export_handoff` ·
-`request_plan_mode` · `pin_to_board` · `deliver_files` · `crystallize_skill` ·
+`request_plan_mode` · `pin_to_board` · `relate_on_board` · `deliver_files` ·
+`crystallize_skill` ·
 `report_issue`
 
 harness 里的事用 `report_issue` 给维护者记一笔（进问题列表，不是给用户看的），

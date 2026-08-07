@@ -47,6 +47,7 @@ import { makeGenerateImageTool } from './tools/generate-image.js';
 import { makeRemoveBackgroundTool } from './tools/remove-background.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
+import { makeRelateOnBoardTool } from './tools/relate-on-board.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 import { makePublishSiteTool } from './tools/publish-site.js';
@@ -167,6 +168,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 工作台分区画布（2026-07-27）：agent 协助摆放 —— 把产物/文档/deck 钉进
       // 某 session 的工作区。写 board.json（board-store 单锁）+ 广播 board.updated。
       makePinToBoardTool({ sharedRoot, projectId, sessionId, ctx }),
+
+      // 关系线（2026-08-07）：agent 把「这版改自那版」「这两个是对照」这类
+      // **只有它知道**的关系画到画布上。画布知道每个产物是什么，但不知道它们
+      // 之间是什么关系 —— 那是北极星（排出有版面感的布局）真正缺的那一块。
+      makeRelateOnBoardTool({ projectId, ctx }),
 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；

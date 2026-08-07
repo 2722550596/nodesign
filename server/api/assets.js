@@ -207,7 +207,25 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
     const artifacts = [];
 
-    const scanDir = async (dir, kind, relPrefix) => {
+    /**
+     * 任务目录里**不该被当成收纳文件夹**的那些子目录。
+     *
+     * 任务目录是有槽位约定的：构建产物在 dist/out/build/_site/public，站点试作在
+     * _drafts/，便利贴在 notes/（它单独扫、有自己的形态）。这些都由各自的 kind
+     * 解析器管，递归进去只会把构建中间物倒到画布上。
+     */
+    const NOT_A_FOLDER = new Set([
+      'dist', 'out', 'build', '_site', 'public',   // 构建产物（site.js 的 OUTPUT_DIRS）
+      '_drafts',                                    // 站点试作（各自是独立产物）
+      'notes',                                      // 便利贴（单独扫成 note 形态）
+      'node_modules',
+    ]);
+
+    /**
+     * @param {number} depth 还能往下几层。收纳只做**一层** —— 再深就不是"收纳"
+     *   而是目录树了，画布上表达不了，也不是用户要的东西。
+     */
+    const scanDir = async (dir, kind, relPrefix, depth = 0) => {
       let entries;
       try {
         entries = await fs.readdir(dir, { withFileTypes: true });
@@ -216,6 +234,16 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         throw err;
       }
       for (const e of entries) {
+        if (e.isDirectory()) {
+          // 收纳文件夹（2026-08-07）：agent 用 mkdir + mv 把同主题的东西归到
+          // 一起，画布把它显示成一组。它是**真目录**，不是画布上的虚拟分组 ——
+          // 「文件系统即真相」这条不能因为加了个分组就破。
+          if (depth <= 0) continue;
+          if (e.name.startsWith('.') || e.name.startsWith('_')) continue;
+          if (NOT_A_FOLDER.has(e.name)) continue;
+          await scanDir(path.join(dir, e.name), kind, `${relPrefix}/${e.name}`, depth - 1);
+          continue;
+        }
         if (!e.isFile()) continue;
         if (e.name.startsWith('.')) continue;
         const ext = path.extname(e.name).toLowerCase();
@@ -330,7 +358,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         }
 
         tasks.push(task);
-        await scanDir(tDir, 'task-file', `tasks/${t.name}`);
+        await scanDir(tDir, 'task-file', `tasks/${t.name}`, 1);
         // 任务便利贴（2026-07-30）：tasks/<任务>/notes/*.md —— agent 和用户的
         // 共享头脑风暴层（record_decision 的决策贴也写这里）。复用 note kind：
         // 正文解析、zone 归属（naturalZoneOf 按 tasks/<t>/ 前缀）、避让全现成
