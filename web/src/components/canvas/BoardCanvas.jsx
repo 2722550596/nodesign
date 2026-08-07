@@ -5,7 +5,7 @@ import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
   Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
-  Maximize2, Minus, MousePointer2, Type, PenLine, MessageSquarePlus,
+  Maximize2, Minus, MousePointer2, Type, PenLine, MessageSquarePlus, LayoutGrid,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
@@ -17,7 +17,7 @@ import {
   SITE_VIEWPORTS, EASE, POP_IN, newStackedZoneRect, resolveZoneAvoidance, packRow, ROW_GAP, GROUP_LABEL_H,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, legacyBucketOf,
+  SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, legacyBucketOf, isFileBacked,
 } from '../../lib/board-kinds.js';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion, ROAM_MARGIN } from '../../lib/board-camera.js';
@@ -230,7 +230,12 @@ export default function BoardCanvas({
       const patch = {};
       if (d.objects.size) {
         patch.objects = {};
-        for (const id of d.objects) if (layoutRef.current[id]) patch.objects[id] = layoutRef.current[id];
+        for (const id of d.objects) {
+          // 没有坐标了 = 明确删掉这条（服务端 null 即删）。原来这里是
+          // `if (layoutRef.current[id])` 直接跳过，于是「整理」清掉的坐标
+          // 只清在内存里，刷新一次全回来了
+          patch.objects[id] = layoutRef.current[id] || null;
+        }
       }
       if (d.zones.size) {
         patch.zones = {};
@@ -579,28 +584,10 @@ export default function BoardCanvas({
 
     for (const it of items) it.zoneId = effZoneOf(it);
 
-    // pass 2.5：框内收容（2026-07-29）。刷新等时序下 stored 位置可能跟重堆后
-    // 的区矩形对不上（区挪了成员没跟上），卡看起来悬在文件夹外、区高度还按
-    // 错位内容算得很矮。这里把出框成员硬拉回框内，随后的避让 pass 排掉重叠
-    // —— 无论哪条路径产生的错位都在下一帧自愈。拖拽中的那张卡不收容
-    // （拖出边缘是合法路径：可能正拖去别的区/文件夹）。
-    const activeDragId = dragActive ? (dragRef.current?.id ?? null) : null;
-    const containFixes = {};
-    for (const it of items) {
-      if (!it.zoneId || it.id === activeDragId) continue;
-      const g = grids[it.zoneId];
-      if (!g || g.rect.collapsed) continue;
-      const sz = sizeOf(it);
-      const xMin = g.rect.x + ZONE.pad;
-      const xMax = Math.max(xMin, g.rect.x + g.rect.w - ZONE.pad - sz.w);
-      const yMin = g.rect.y + ZONE.header + ZONE.pad;
-      const nx = Math.max(xMin, Math.min(xMax, it.pos.x));
-      const ny = Math.max(yMin, it.pos.y);
-      if (Math.abs(nx - it.pos.x) > 0.5 || Math.abs(ny - it.pos.y) > 0.5) {
-        it.pos = { ...it.pos, x: nx, y: ny };
-        if (!dragActive && layout[it.id]) containFixes[it.id] = { x: nx, y: ny };
-      }
-    }
+    // pass 2.5「框内收容」**2026-08-07 撤除**。它做的是"把出框的成员硬拉回框内"，
+    // 当初是为了掩盖另一个 bug（区挪了成员没跟上）——那个 bug 现在从源头修了
+    // （拖区时成员跟着走同样的位移）。留着它的代价是：你把卡拖到区边缘外一点，
+    // 下一帧就被吸回去，而这跟"拖出任务"这条真实路径直接冲突。
 
     // pass 3：同区避让系统（2026-07-29 重写）
     //
@@ -625,7 +612,7 @@ export default function BoardCanvas({
     //
     // 顺序从当前坐标按**读序**推出来（先上后下、同行先左后右），所以旧数据进来
     // 一次就自洽，不需要迁移；用户拖拽换的也是这个顺序。
-    const overlapFixes = { ...containFixes };
+    const overlapFixes = {};
     const groupBands = [];   // 收纳文件夹的标题带
     for (const [zid, g] of Object.entries(grids)) {
       if (g.rect.collapsed) continue;   // 收起的文件夹成员不渲染，摆它没意义
@@ -662,26 +649,40 @@ export default function BoardCanvas({
           bands.push({ zoneId: zid, name: gname, y: cursorY, x: g.rect.x + ZONE.pad, w: g.rect.w - ZONE.pad * 2 });
           cursorY += GROUP_LABEL_H;
         }
-        const ordered = [...byGroup.get(gname)].sort((a, b) =>
+        // 排的是**这一组里还没有坐标的那些**。已经摆过的不参与，但它们占的
+        // 地方要让开 —— 所以起排线取"这一组里已摆放成员的最低边"，新卡从
+        // 那底下开始铺，不会压到你摆好的东西上。
+        const groupItems = byGroup.get(gname);
+        const seated = groupItems.filter(it => layout[it.id]);
+        const fresh = groupItems.filter(it => !layout[it.id]);
+        const seatedBottom = seated.reduce((m, it) => Math.max(m, it.pos.y + sizeOf(it).h), 0);
+        const yTop = Math.max(cursorY, seatedBottom ? seatedBottom + ROW_GAP : 0);
+        const ordered = [...fresh].sort((a, b) =>
           (a.pos.y - b.pos.y) || (a.pos.x - b.pos.x) || String(a.id).localeCompare(String(b.id)));
         const packed = packRow(
           ordered.map(it => { const sz = sizeOf(it); return { id: it.id, w: sz.w, h: sz.h }; }),
-          { width: g.rect.w - ZONE.pad * 2, xMin: g.rect.x + ZONE.pad, yTop: cursorY },
+          { width: g.rect.w - ZONE.pad * 2, xMin: g.rect.x + ZONE.pad, yTop },
         );
         slots.push(...packed.slots);
-        cursorY = packed.bottom + (gname ? ZONE.pad : ROW_GAP);
+        cursorY = Math.max(packed.bottom, seatedBottom) + (gname ? ZONE.pad : ROW_GAP);
       }
       const packedBottom = cursorY;
       groupBands.push(...bands);
+      // **只给还没有坐标的物件入座**（2026-08-07 改）。
+      //
+      // 原来这里是"每一帧把区里所有成员重排进 packRow 算出来的槽位"——
+      // 也就是说工作区里根本没法自由摆卡：你拖到哪儿，下一帧都被流回行里，
+      // 拖拽实际改的只是顺序。那是 08-01 定的「顺序是权威，坐标是算的」，
+      // 但它跟"手摆出一个版面"是结构性冲突的（北极星恰恰是后者）。
+      //
+      // 现在：新到货的自动入座（agent 跑的时候你可能不在场，总得有人给它
+      // 定个位置），摆过的一律不动。想重排是**手动**的一次动作 → tidyBoard。
       const slotById = new Map(slots.map(s => [s.id, s]));
       for (const it of members) {
+        if (layout[it.id]) continue;              // 有坐标 = 你放的，不动
         const s = slotById.get(it.id);
         if (!s) continue;
-        if (Math.abs(it.pos.x - s.x) < 0.5 && Math.abs(it.pos.y - s.y) < 0.5) continue;
-        // 正在被拖的那张不归位（拖拽期间它跟手，松手后下一趟才排进去）
-        if (dragActive && dragRef.current?.id === it.id) continue;
         it.pos = { ...it.pos, x: s.x, y: s.y };
-        if (!dragActive && layout[it.id]) overlapFixes[it.id] = { x: s.x, y: s.y };
       }
       g.bottom = Math.max(g.bottom, packedBottom + ZONE.pad);
     }
@@ -1316,6 +1317,42 @@ export default function BoardCanvas({
     setViewMode('work');
     if (sid && sid !== currentSessionId) navigate(`/projects/${projectId}/sessions/${sid}`);
   }, [zoneSession, sessionTitles, currentSessionId, navigate, projectId]);
+  /**
+   * 「整理」—— 现在是**手动**的一次动作，不再每帧自动跑（2026-08-07）。
+   *
+   * 做法故意选了最简单的一种：**把坐标忘掉**。没有坐标的物件会被入座那一趟
+   * 重新排（packRow：列宽取最宽的卡、行高贴该行最高的、整块居中），所以
+   * "整理"不需要第二套排版实现 —— 它就是让入座重来一遍。
+   *
+   * 两处不碰：
+   * - **画布原生物件**（涂鸦）：它的坐标就是它本身，不是"摆在哪"。把一笔涂鸦
+   *   流进网格等于毁了内容。
+   * - 收起的文件夹：里面的东西没在渲染，排了也看不见，等展开时自然入座。
+   *
+   * 工作区那边顺手清掉 `pinned`：你说了要整理，那就连搬过的区一起排回队列。
+   */
+  const tidyBoard = useCallback(() => {
+    const targets = positionedRef.current.filter(o => isFileBacked(o));
+    if (!targets.length && !Object.values(zonesRef.current).some(z => z.pinned)) return;
+    setLayout(prev => {
+      const next = { ...prev };
+      for (const o of targets) { delete next[o.id]; dirtyRef.current.objects.add(o.id); }
+      return next;
+    });
+    setZones(prev => {
+      let touched = false;
+      const next = { ...prev };
+      for (const [zid, z] of Object.entries(prev)) {
+        if (!z.pinned) continue;
+        const { pinned, ...rest } = z;
+        next[zid] = rest; dirtyRef.current.zones.add(zid); touched = true;
+      }
+      return touched ? next : prev;
+    });
+    scheduleSave();
+    useGlobalStore.getState().showToast(`已整理 ${targets.length} 件产物`, 'success');
+  }, [scheduleSave]);
+
   const enterZoneRef = useRef(null);
   enterZoneRef.current = enterZone;
 
@@ -2107,6 +2144,11 @@ export default function BoardCanvas({
             {
               id: 'view',
               items: [
+                {
+                  id: 'tidy', icon: LayoutGrid, label: '整理',
+                  title: '重排这块画布上的产物（自动排版只在新产物到货时跑一次，别的时候不动你摆的位置）',
+                  onClick: tidyBoard,
+                },
                 { id: 'fit', icon: Maximize2, label: '全部', title: '全部内容入镜（Shift+1）', onClick: () => camera.zoomToFit() },
                 { id: 'zoomOut', icon: Minus, title: '缩小（Ctrl -）', onClick: () => camera.zoomBy(-1) },
                 { id: 'zoomLevel', icon: null, label: `${Math.round(scale * 100)}%`, title: '回到 100%（Ctrl 0）', onClick: () => camera.zoomTo(1) },
