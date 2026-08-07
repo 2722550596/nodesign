@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move } from 'lucide-react';
+import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move, SquareDashedMousePointer } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { SITE_VIEWPORTS } from '../../lib/board-geometry.js';
 import ArtifactWindow, { WindowBanner } from './ArtifactWindow.jsx';
+import RegionSelect from './RegionSelect.jsx';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 import { serializeForAI } from '../../lib/element-semantics.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
@@ -58,6 +59,7 @@ export default function SiteWindow({
   onResolveComment = null,
   onDeleteComment = null,
   onDomEdit = null,     // 拖拽落盘通道：({ path, html, summary, records, persist }) => void
+  onRegionComment = null,   // 圈选评论：({ region, viewport, elements, text }) => Promise
   onIframeReady = null,
   isStreaming = false,
   comments = [],
@@ -561,6 +563,10 @@ export default function SiteWindow({
           disabled: isStreaming,
           title: isStreaming ? 'agent 正在工作，拖拽暂不可用' : '拖动元素调布局',
         },
+        onRegionComment && {
+          id: 'region', icon: SquareDashedMousePointer, label: '圈选',
+          title: '框一块地方说事 —— 框住谁、当时长什么样、你想说什么，一起交给 agent',
+        },
         { id: 'code', icon: FileCode, label: '源码', title: '看这一页的 HTML' },
       ].filter(Boolean),
     },
@@ -596,7 +602,7 @@ export default function SiteWindow({
   ].filter(Boolean),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [tab, editable, draggable, isStreaming, pageList, current, viewport, history.length,
-    goBack, navigateTo, commitAllPending, projectId, relPath]);
+    goBack, navigateTo, commitAllPending, projectId, relPath, onRegionComment]);
 
   // overlay 全家共用的 iframe 引用。
   //
@@ -748,6 +754,15 @@ export default function SiteWindow({
             hasPendingEditId={true}
             onSubmit={handleDragNote}
             onDismiss={() => setNotePanelOpen(false)}
+          />
+
+          <RegionSelect
+            key={`region-${docTick}`}
+            active={tab === 'region' && !!onRegionComment}
+            iframeRef={overlayIframeRef}
+            zoom={scale}
+            onSubmit={(payload) => onRegionComment?.({ ...payload, path: relPath })}
+            onExit={() => setTab('preview')}
           />
 
           {/* 拖拽暂存确认条：摆完确认才写盘（撤销 = 运行时原地回退）。

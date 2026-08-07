@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
-  Eye, Edit3, Move, Code2, Pin, Maximize2, Minus, Plus,
+  Eye, Edit3, Move, Code2, Pin, Maximize2, Minus, Plus, SquareDashedMousePointer,
   Sliders, MessageSquare, RotateCcw, Settings,
 } from 'lucide-react';
 import ArtifactWindow from './ArtifactWindow.jsx';
+import RegionSelect from './RegionSelect.jsx';
 import HtmlIframe from './HtmlIframe.jsx';
 import EditOverlay from './EditOverlay.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
@@ -69,6 +70,7 @@ export default function DeckWindow({
   project, deckSpec, projectId, sessionId, decisionsReloadKey,
   comments = [],
   onAddComment, onResolveComment, onDeleteComment,
+  onRegionComment = null,   // 圈选评论（要会话才有）
   tweaksAvailable = false,
   pendingEdits = [],
   onCommitMove,
@@ -271,6 +273,13 @@ export default function DeckWindow({
           disabled: isStreaming,
           title: isStreaming ? 'agent 正在跑，拖拽暂停以免和它抢同一份源码' : '拖动元素调布局',
         },
+        {
+          id: 'region', icon: SquareDashedMousePointer, label: '圈选',
+          disabled: !onRegionComment,
+          title: onRegionComment
+            ? '框一块地方说事 —— 框住谁、当时长什么样、你想说什么，一起交给 agent'
+            : '要先开一个会话才能把圈选交给 agent',
+        },
         { id: 'code', icon: Code2, label: '源码', title: '看/改这一份 HTML' },
       ],
     },
@@ -332,7 +341,7 @@ export default function DeckWindow({
   ].filter(Boolean),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [tab, isStreaming, dragFreeMode, zoom, effectiveZoom, tweaksOpen, tweaksEnabled,
-    tweaksAvailable, commentOverviewOpen, systemOpen, openCommentCount]);
+    tweaksAvailable, commentOverviewOpen, systemOpen, openCommentCount, onRegionComment]);
 
   return (
     <ArtifactWindow
@@ -353,13 +362,13 @@ export default function DeckWindow({
         />
       ) : null}
     >
-        {(tab === 'edit' || tab === 'preview' || tab === 'drag') && (
+        {(tab === 'edit' || tab === 'preview' || tab === 'drag' || tab === 'region') && (
           <div ref={iframeWrapRef} style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
             <HtmlIframe
               key={`${activeCandidateId || 'default'}-${reloadKey}-${dirty ? 'doc' : 'src'}`}
               src={dirty ? undefined : htmlSrc}
               srcDoc={dirty ? sourceText : (!htmlSrc ? htmlContent : undefined)}
-              mode={tab === 'drag' ? 'preview' : tab}
+              mode={(tab === 'drag' || tab === 'region') ? 'preview' : tab}
               onSelect={handleSelect}
               onTextEdit={handleTextEdit}
               onIframeReady={handleIframeReady}
@@ -467,6 +476,13 @@ export default function DeckWindow({
                 onDeleteComment={onDeleteComment}
               />
             )}
+            <RegionSelect
+              active={tab === 'region' && !!onRegionComment}
+              iframeRef={{ current: iframeWrapRef.current?.querySelector('iframe') }}
+              zoom={effectiveZoom}
+              onSubmit={(payload) => onRegionComment?.(payload)}
+              onExit={() => onTabChange?.('preview')}
+            />
             <PendingEditsBar
               edits={pendingEdits}
               onApply={onApplyPendingEdits}

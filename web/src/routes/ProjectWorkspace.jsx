@@ -1652,6 +1652,36 @@ export default function ProjectWorkspace() {
       }
     }
   };
+  /**
+   * 圈选评论（2026-08-07）—— 跟点选评论进同一条 pending-changes buffer，
+   * 差别是它多带一张服务端截的区域图。
+   *
+   * **发完直接起一轮**，不像点选评论那样只攒着等下一条消息：用户刚画完框、
+   * 按了「发给 agent」，那个动作本身就是"现在就说这件事"。攒着不动的话
+   * 他会以为没发出去。消息里只写一句指路，具体内容 agent 自己去
+   * get_pending_changes 拉 —— 那边有图有元素清单，比塞进聊天里省得多。
+   */
+  const handleRegionComment = async ({ region, viewport, container, elements, text, path }) => {
+    if (!currentSessionId) {
+      showToast('先开一个会话才能把圈选交给 agent', 'error');
+      return;
+    }
+    if (!path) {
+      showToast('这份产物没有任务路径，圈选暂时用不了', 'error');
+      return;
+    }
+    const rel = path;
+    await PendingChanges.regionComment(id, currentSessionId, {
+      path: rel, region, viewport, container, elements, text,
+    });
+    const what = elements.length
+      ? `${elements.slice(0, 3).map(e => `<${e.tag}>`).join('')}${elements.length > 3 ? ' 等' : ''}`
+      : '一块区域';
+    await handleSend(text
+      ? `我在 ${rel} 上圈了一块（${what}）：${text}`
+      : `我在 ${rel} 上圈了一块（${what}），看一下 —— 截图和框住的元素都在 pending changes 里。`);
+  };
+
   const handleJumpToComment = (comment) => {
     if (!iframeDoc) return;
     const el = findElementByAnchor(comment.anchor, iframeDoc.body);
@@ -1922,6 +1952,7 @@ export default function ProjectWorkspace() {
             onAddComment={handleAddComment}
             onResolveComment={handleResolveComment}
             onDeleteComment={handleDeleteComment}
+            onRegionComment={handleRegionComment}
             onSiteDomEdit={handleSiteDomEdit}
             onDirectEdit={handleDirectEdit}
             onTriggerRun={handleTriggerRun}

@@ -38,6 +38,7 @@ export default function CanvasFrame({
   project, deckSpec, projectId, sessionId, decisionsReloadKey,
   comments = [],
   onAddComment, onResolveComment, onDeleteComment,
+  onRegionComment,
   onSiteDomEdit,
   tweaksAvailable = false,
   pendingEdits = [],
@@ -180,6 +181,12 @@ export default function CanvasFrame({
             onAddComment={onAddComment}
             onResolveComment={onResolveComment}
             onDeleteComment={onDeleteComment}
+            // 圈选要落到一份具体的任务文件上 —— 旧式会话 deck（canvas.html 挂在
+            // 会话目录下、不在 tasks/ 里）没有这样的路径，那种情况下不给这个工具，
+            // 而不是发出去再让服务端 400
+            onRegionComment={(sessionId && deckRelPath && onRegionComment)
+              ? ((payload) => onRegionComment({ ...payload, path: deckRelPath }))
+              : null}
             tweaksAvailable={tweaksAvailable}
             pendingEdits={pendingEdits}
             onCommitMove={onCommitMove}
@@ -212,6 +219,7 @@ export default function CanvasFrame({
               onResolveComment={onResolveComment}
               onDeleteComment={onDeleteComment}
               onDomEdit={sessionId ? onSiteDomEdit : null}
+              onRegionComment={sessionId ? onRegionComment : null}
               comments={comments}
               isStreaming={isStreaming}
               onIframeReady={onIframeReady}

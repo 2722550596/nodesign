@@ -32,7 +32,8 @@ import { randomUUID } from 'crypto';
 import { mutex } from 'async-mutex-lite';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
-import { ensureSessionWorkspace, validateSessionId } from '../projects/workspace.js';
+import { ensureSessionWorkspace, validateSessionId, getSharedDir } from '../projects/workspace.js';
+import { renderRegionShot, saveRegionShot } from '../lib/region-shot.js';
 
 const router = express.Router();
 
@@ -171,6 +172,89 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * 圈选评论（2026-08-07）—— 用户在预览上框一块，连同框里涉及的元素、一张
+ * 该区域的截图、以及一句话交给 agent。
+ *
+ * 单独一条路由而不是复用上面那个 POST，因为它要做两件那边不做的事：
+ * 跑一次 chromium 把区域截下来落盘，以及**不带 anchor**（圈的是一块地方
+ * 不是一个元素，硬塞一个 anchor 只会让 agent 以为用户点的是某一个）。
+ *
+ * 截图失败不挡下单：元素清单和那句话本身就够 agent 干活了，为了一张图把
+ * 用户刚圈完的东西整个丢掉是最差的选择。
+ */
+router.post('/:pid/sessions/:sid/region-comment', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const body = req.body || {};
+    const { region, viewport } = body;
+    const relPath = typeof body.path === 'string' ? body.path.replace(/\\/g, '/') : '';
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+
+    const num = (v) => typeof v === 'number' && Number.isFinite(v);
+    if (!region || !num(region.x) || !num(region.y) || !(region.w > 0) || !(region.h > 0)) {
+      return res.status(400).json({ error: 'region: { x, y, w, h } required' });
+    }
+    if (!viewport || !(viewport.width > 0) || !(viewport.height > 0)) {
+      return res.status(400).json({ error: 'viewport: { width, height } required' });
+    }
+    const parts = relPath.split('/');
+    if (parts[0] !== 'tasks' || parts.length < 3 || parts.includes('..')) {
+      return res.status(400).json({ error: 'path must be tasks/<task>/<file>' });
+    }
+    const sharedDir = getSharedDir(req.params.pid);
+    const absPath = path.resolve(sharedDir, ...parts);
+    if (!absPath.startsWith(path.resolve(sharedDir, 'tasks') + path.sep)) {
+      return res.status(400).json({ error: 'path escapes the task tree' });
+    }
+    try { await fs.access(absPath); } catch {
+      return res.status(404).json({ error: `page not found: ${relPath}` });
+    }
+
+    const elements = Array.isArray(body.elements) ? body.elements.slice(0, 12) : [];
+    const itemId = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : randomUUID();
+    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+
+    let shot = null;
+    let shotError = null;
+    try {
+      const { buffer } = await renderRegionShot({
+        absPath,
+        region: { x: region.x, y: region.y, w: region.w, h: region.h },
+        viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
+      });
+      shot = await saveRegionShot(sessionRoot, itemId, buffer);
+    } catch (err) {
+      shotError = err?.message || String(err);
+      console.warn('[region-comment] 截图失败，只带元素清单下单:', shotError);
+    }
+
+    const item = {
+      id: itemId,
+      kind: 'region-comment',
+      path: relPath,
+      text,
+      region: { x: Math.round(region.x), y: Math.round(region.y), w: Math.round(region.w), h: Math.round(region.h) },
+      ...(body.container && typeof body.container === 'object' ? { container: body.container } : {}),
+      viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
+      elements,
+      ...(shot ? { shot } : {}),
+      ...(shotError ? { shotError } : {}),
+      ts: new Date().toISOString(),
+    };
+
+    const count = await mutex(`pending:${sessionRoot}`, async () => {
+      const { items, file } = await readBuf(sessionRoot);
+      items.push(item);
+      const trimmed = items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items;
+      await writeBuf(file, trimmed);
+      return trimmed.length;
+    });
+
+    res.json({ ok: true, item, count });
+  } catch (err) { next(err); }
+});
+
 router.delete('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
@@ -209,9 +293,11 @@ export async function readPendingSummary(sessionRoot) {
     const duplicates = items.filter(it => it.kind === 'pending-duplicate').length;
     const styles = items.filter(it => it.kind === 'pending-style').length;
     const deletes = items.filter(it => it.kind === 'pending-delete').length;
+    const regions = items.filter(it => it.kind === 'region-comment').length;
     const parts = [];
     if (edits > 0) parts.push(`${edits} 编辑`);
     if (comments > 0) parts.push(`${comments} 评论`);
+    if (regions > 0) parts.push(`${regions} 圈选`);
     if (moves > 0) parts.push(`${moves} 拖动`);
     if (duplicates > 0) parts.push(`${duplicates} 复制`);
     if (styles > 0) parts.push(`${styles} 样式`);

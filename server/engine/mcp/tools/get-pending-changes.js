@@ -45,6 +45,9 @@ import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
+/** 一次调用最多附几张圈选截图（更早的留路径让 agent 按需自己读） */
+const MAX_REGION_SHOTS = 3;
+
 /**
  * @param {object} deps
  * @param {string} deps.workspaceRoot
@@ -95,6 +98,21 @@ Each item has:
 - reactMount: when true, the change touches a React mount subtree → modify
               the JSX inside <script id="__nd-app"> rather than the static HTML
 
+'region-comment' items are different in shape — the user lassoed an AREA of
+the preview rather than clicking one element:
+- region: { x, y, w, h } in page CSS px, and viewport: the size they saw it at
+- elements: what sits inside that box, innermost-first, each with anchor / tag /
+  a text excerpt / its own rect / coverage (how much of it the box covers).
+  Containers much larger than the box are deliberately excluded — the user was
+  pointing at what's inside, not at the wrapper.
+- container: the innermost element that fully encloses the box — i.e. WHERE on
+  the page this is. The elements list alone can't tell you header from footer.
+- text: what they said about it (may be empty — the box itself is the message)
+- shot: a screenshot of that area (plus a little margin), attached to this
+  tool result as an image right after the JSON. Look at it: it is the ground
+  truth of what the user was looking at, and the elements list is only an
+  index into it.
+
 After processing, call mcp__nodesign__clear_pending_changes to clear the
 buffer so subsequent turns don't see the same changes again.`,
     {
@@ -131,13 +149,38 @@ buffer so subsequent turns don't see the same changes again.`,
           };
         }
 
-        return {
-          content: [{
+        const content = [{
+          type: 'text',
+          text: `Pending changes (${items.length} item${items.length === 1 ? '' : 's'}):\n\n`
+            + JSON.stringify(items, null, 2),
+        }];
+
+        // 圈选的截图直接挂在结果里 —— 那张图就是用户当时看着的画面，让 agent
+        // 再去 Read 一次纯属多一跳，而且它多半不会主动去读。
+        // 只带最近 MAX_REGION_SHOTS 张：一次拉出十张图，token 全烧在这上面。
+        const shots = items.filter(it => it.kind === 'region-comment' && it.shot);
+        const attach = shots.slice(-MAX_REGION_SHOTS);
+        for (const it of attach) {
+          try {
+            const buf = await fs.readFile(path.join(workspaceRoot, it.shot));
+            content.push({ type: 'text', text: `↓ 圈选 ${it.id}（${it.path}）用户框住的那一块：` });
+            content.push({ type: 'image', data: buf.toString('base64'), mimeType: 'image/webp' });
+          } catch (err) {
+            content.push({
+              type: 'text',
+              text: `圈选 ${it.id} 的截图读不到（${err?.code || err?.message}）—— 按 elements 清单和 region 坐标处理。`,
+            });
+          }
+        }
+        if (shots.length > attach.length) {
+          content.push({
             type: 'text',
-            text: `Pending changes (${items.length} item${items.length === 1 ? '' : 's'}):\n\n`
-              + JSON.stringify(items, null, 2),
-          }],
-        };
+            text: `另有 ${shots.length - attach.length} 张更早的圈选截图没有附上（一次最多 ${MAX_REGION_SHOTS} 张）。`
+              + `需要的话按 item 里的 shot 路径自己 Read。`,
+          });
+        }
+
+        return { content };
       } catch (err) {
         return {
           content: [{

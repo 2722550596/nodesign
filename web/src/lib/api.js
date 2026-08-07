@@ -196,6 +196,12 @@ export const PendingChanges = {
   list: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/pending-changes`),
   push: (pid, sid, item) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/pending-changes`, item),
+  /**
+   * 圈选评论：{ path, region, viewport, elements, text }。
+   * 服务端顺手跑一次 chromium 把那块截下来，所以比别的 push 慢（一两秒）。
+   */
+  regionComment: (pid, sid, payload) =>
+    jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/region-comment`, payload),
   clear: (pid, sid, ids) => {
     const qs = Array.isArray(ids) && ids.length > 0 ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
     return jsonRequest('DELETE', `/api/projects/${pid}/sessions/${sid}/pending-changes${qs}`);
