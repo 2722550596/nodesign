@@ -54,6 +54,7 @@ import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
 import { getProjectBus } from '../ws/broker.js';
 import { readPendingSummary } from './pending-changes.js';
+import { isExtractable } from '../lib/doc-extract.js';
 import { pendingRewinds } from './sessions.js';
 
 /** 直接 image input 阈值：> 1MB 走 path 让 agent Read，< 1MB inline base64 */
@@ -463,6 +464,9 @@ async function composeUserMessage(chat, attachments, pendingSummary, assetsSumma
     // 先尝试给 image attachment inline base64；inline 失败的当 path 走文本路径
     const inlineImageNames = [];
     const fallbackLines = [];
+    // Office 三件套单独一队：**普通 Read 读它们只会拿到二进制乱码而且不报错**，
+    // 底下那句"用 Read 读取"对这几种是错的指路，agent 会拿着空气往下干
+    const docLines = [];
 
     for (const a of attachments) {
       if (!a || typeof a !== 'object') continue;
@@ -480,6 +484,8 @@ async function composeUserMessage(chat, attachments, pendingSummary, assetsSumma
       if (inline) {
         blocks.push(inline);
         inlineImageNames.push(a.name || path.basename(a.path));
+      } else if (isExtractable(a.path)) {
+        docLines.push(`- ${a.path}${a.name ? `（${a.name}）` : ''}`);
       } else {
         fallbackLines.push(`- ${a.path}${a.name ? `（${a.name}）` : ''}`);
       }
@@ -495,6 +501,13 @@ async function composeUserMessage(chat, attachments, pendingSummary, assetsSumma
       blocks.push({
         type: 'text',
         text: `可用素材（用 Read 工具读取，路径相对 workspace）：\n${fallbackLines.join('\n')}`,
+      });
+    }
+    if (docLines.length > 0) {
+      blocks.push({
+        type: 'text',
+        text: `Office 文档（**用 mcp__nodesign__read_document 读，不要用 Read** ——`
+          + ` 这几种是 zip 包，Read 会返回二进制且不报错）：\n${docLines.join('\n')}`,
       });
     }
   }

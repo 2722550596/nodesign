@@ -48,6 +48,7 @@ import { makeRemoveBackgroundTool } from './tools/remove-background.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
 import { makeRelateOnBoardTool } from './tools/relate-on-board.js';
+import { makeReadDocumentTool } from './tools/read-document.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 import { makePublishSiteTool } from './tools/publish-site.js';
@@ -96,6 +97,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // deliver_files — agent 挑好的产物直接进用户浏览器下载列表（emit run.download_ready）
       makeDeliverFilesTool({ workspaceRoot, projectId, sessionId, ctx }),
+
+      // read_document — Word / Excel / PowerPoint 的读取口（2026-08-07）。
+      // 普通 Read 读这三种只会拿到二进制乱码**而且不报错**，agent 会拿着空气
+      // 往下干。PDF 不在此列：Read 原生支持，真跑验过。
+      makeReadDocumentTool({ workspaceRoot, sharedRoot }),
 
       // C10 export_handoff — 复用 exports.js 的 buildHandoffZip，写到 workspace/exports/
       makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
