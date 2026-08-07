@@ -32,23 +32,10 @@ export const ZONE = {
 // 标题栏 + 一格边距 + 够接住一次拖放的空地。空工作区不再占大半屏空画幅。
 export const ZONE_MIN_H = ZONE.header + ZONE.pad * 2 + 120;
 
-export const SIZES = {
-  doc:   { w: 200, h: 96 },
-  deck:  { w: 240, h: 88 },
-  deckExpanded: { w: DECK_EMBED_W, h: 28 + 360 },
-  image: { w: 200, h: 176 },
-  note:  { w: 200, h: 148 },
-  file:  { w: 224, h: 40 },
-  // 站点：收起态是一张带页面数的条；展开态放一张桌面宽度的缩略预览
-  // （站点没有固定比例，取 16:10 一屏做取景框，够看出版式和配色）
-  site:  { w: 240, h: 88 },
-  siteExpanded: { w: DECK_EMBED_W, h: 28 + 400 },
-  // 世界：收起态是一张带地点/角色计数的条；展开态铺开地图（嵌套地点框 +
-  // 立绘）。高度给固定值不给自适应 —— 布局系统按矩形做避让，尺寸得可预知；
-  // 地图比框高就内部滚动，不去顶别人的位置。
-  world: { w: 240, h: 88 },
-  worldExpanded: { w: DECK_EMBED_W, h: 28 + 420 },
-};
+// 物件尺寸表已随「形态能力表」搬去 `board-kinds.js`（2026-08-07）：尺寸是
+// 形态的属性之一，跟它的阅读器 / 工具条 / 展开能力属于同一张表，散在两个
+// 文件里会出现「加了形态忘了加尺寸」。这里只留纯几何（桌面/工作区/避让）。
+// 需要 `sizeOf` / `SIZES` 的从 board-kinds.js 取。
 
 /**
  * 站点预览的视口档位。
@@ -67,11 +54,84 @@ export const SITE_VIEWPORTS = [
 export const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 export const POP_IN = 'ndPopIn 260ms cubic-bezier(0.32, 0.72, 0, 1)';
 
-export function sizeOf(o) {
-  if (o.type === 'deck') return o.pos?.expanded ? SIZES.deckExpanded : SIZES.deck;
-  if (o.type === 'site') return o.pos?.expanded ? SIZES.siteExpanded : SIZES.site;
-  if (o.type === 'world') return o.pos?.expanded ? SIZES.worldExpanded : SIZES.world;
-  return SIZES[o.type] || SIZES.file;
+/* ── 区内排布：顺序是权威，坐标是算出来的（2026-08-01 写，2026-08-07 接线）──
+ *
+ * 用户报过两件事「自由拖拽手感差」「排列空格不均匀」，量下来是同一处数学的
+ * 两个后果：格子写死 244×210，而卡高从 40（文件条）到 176（图片）不等 ——
+ * 一排 deck 卡（88 高）下面永远吊 122px 死白；区宽去 pad 剩 1088，
+ * floor(1088/244)=4 列只用掉 976，**右边 112px 谁都用不上**。
+ *
+ * 用户拍板「全部自动排，拖只是换位置」，于是模型换成：顺序是权威，坐标是
+ * 派生值。坐标仍存 board.json（schema 不动、pin_to_board 不受影响），
+ * 只是从"真相"降级成"算出来的结果"。
+ *
+ * ⚠️ 这段纯函数 08-01 就写完了、20 条断言也全过，但**一直没有调用点**，
+ * 在 exp/world-live-0801 上躺了六天。08-07 相机改造后截图里那片空隙就是它。
+ */
+/** 收纳文件夹标题带的高度（一行小字 + 呼吸） */
+export const GROUP_LABEL_H = 26;
+
+export const COL_W = 240;
+export const COL_GAP = 16;
+export const ROW_GAP = 16;
+
+/**
+ * 把一组成员按顺序排进一个宽度里（纯函数）。
+ *
+ * @param {Array<{id, w, h}>} members  **已经按想要的先后排好**
+ * @param {{width:number, xMin:number, yTop:number}} box
+ * @returns {{ slots: Array<{id,x,y,w,h}>, bottom:number, cols:number }}
+ */
+export function packRow(members, { width, xMin, yTop }) {
+  const cols = Math.max(1, Math.floor((width + COL_GAP) / (COL_W + COL_GAP)));
+  const used = cols * COL_W + (cols - 1) * COL_GAP;
+  // 余量居中，而不是全留给右边。整块内容偏左是旧网格最显眼的毛病之一
+  // （区宽 1088 / 格宽 244 → 4 列只用掉 976，右边空 112 谁都用不上）。
+  const xStart = xMin + Math.max(0, Math.floor((width - used) / 2));
+
+  const slots = [];
+  let col = 0; let rowY = yTop; let rowH = 0;
+  for (const m of members) {
+    const span = Math.min(cols, Math.max(1, Math.ceil((m.w + COL_GAP) / (COL_W + COL_GAP))));
+    if (col > 0 && col + span > cols) {   // 这一行放不下了，换行
+      rowY += rowH + ROW_GAP;
+      col = 0; rowH = 0;
+    }
+    slots.push({ id: m.id, x: xStart + col * (COL_W + COL_GAP), y: rowY, w: m.w, h: m.h });
+    rowH = Math.max(rowH, m.h);
+    col += span;
+    if (col >= cols) { rowY += rowH + ROW_GAP; col = 0; rowH = 0; }
+  }
+  return { slots, bottom: rowY + rowH, cols };
+}
+
+/**
+ * 光标落在这串槽位的第几个之前（拖拽期间算插入点）。
+ *
+ * 判法是**读序**而不是最近距离：先按行找（落在哪一行的垂直范围里），再在行内
+ * 按水平中点找。最近距离在换行处会跳 —— 你把卡拖到一行的右端，欧氏距离上
+ * 下一行的行首可能更近，于是预览疯狂跳两个位置。读序不会。
+ *
+ * @returns {number} 插入下标 [0, slots.length]
+ */
+export function insertIndexAt(slots, x, y) {
+  if (!slots.length) return 0;
+  const rows = [];
+  for (const s of slots) {
+    const row = rows.find(r => Math.abs(r.y - s.y) < 1);
+    if (row) row.items.push(s);
+    else rows.push({ y: s.y, h: s.h, items: [s] });
+  }
+  for (const r of rows) r.h = Math.max(...r.items.map(s => s.h));
+
+  let row = rows.find(r => y < r.y + r.h + ROW_GAP / 2);
+  if (!row) row = rows[rows.length - 1];       // 落在所有行下面 → 末行
+  let idx = slots.indexOf(row.items[0]);
+  for (const s of row.items) {
+    if (x < s.x + s.w / 2) return idx;
+    idx += 1;
+  }
+  return idx;
 }
 
 // ── 同区避让系统（2026-07-29）──────────────────────────────────────────
