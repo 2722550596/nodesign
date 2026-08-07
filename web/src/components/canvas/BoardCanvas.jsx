@@ -5,21 +5,33 @@ import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
   Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
+  Maximize2, Minus, MousePointer2, Type, PenLine, MessageSquarePlus,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
-import { PAPER, PAPER_SHADOW } from '../../lib/paper.js';
+import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import WorldMap from './WorldMap.jsx';
 import {
-  DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H, SIZES,
-  SITE_VIEWPORTS, EASE, POP_IN, sizeOf, newStackedZoneRect, resolveZoneAvoidance,
+  DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H,
+  PROJECT_BAND_Y, PROJECT_BAND_H,
+  SITE_VIEWPORTS, EASE, POP_IN, newStackedZoneRect, resolveZoneAvoidance, packRow, ROW_GAP, GROUP_LABEL_H,
 } from '../../lib/board-geometry.js';
+import {
+  SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, legacyBucketOf,
+} from '../../lib/board-kinds.js';
+import { useBoardCamera } from './useBoardCamera.js';
+import { boxUnion, ROAM_MARGIN } from '../../lib/board-camera.js';
+import { emptyPresence, reducePresence, followTarget } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
 import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import LiveFrame from './LiveFrame.jsx';
 import ProjectBand from './ProjectBand.jsx';
+import BindingLayer from './BindingLayer.jsx';
+import PresenceLayer from './PresenceLayer.jsx';
+import FloatingToolbar from '../ui/FloatingToolbar.jsx';
+import { useCanvasTools, pointsToPath, pointsBounds } from './useCanvasTools.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
 import InstructionsCard from '../project/InstructionsCard.jsx';
@@ -48,15 +60,25 @@ import FilesCard from '../project/FilesCard.jsx';
  */
 
 /**
- * 这个物件是不是能渲染的 markdown。
- *
- * 产物分类只把便签认成 note、图片认成 image，**剩下一切都掉进 file**
- * （见 objects useMemo）。所以 agent 写的 世界.md、正文/003-雨夜.md 这些
- * 全是 file，得在这里按扩展名二次认领，才送得进阅读器。
+ * 涂鸦墨色。**键必须跟服务端 `sanitizeCanvasData` 的白名单一字不差**
+ * （['ink','red','pencil','brass']）—— 那边不认的颜色会被回落成 ink，
+ * 这边不认的会渲染成默认色，两边不一致的表现是"我选了红色，存下来变黑"。
  */
-function isMarkdown(o) {
-  return /\.(md|markdown)$/i.test(o?.ext || o?.name || o?.path || '');
-}
+/**
+ * 约定目录的中文名。这些目录名是**给程序看的**（agent 按约定写、路由按约定扫），
+ * 直接把 `notes` 印在画布上是把实现细节漏给用户。agent 自己建的收纳文件夹
+ * 用它取的名字，不在这张表里，原样显示。
+ */
+const FOLDER_LABEL = {
+  notes: '便利贴',
+};
+
+const SCRIBBLE_INK = {
+  ink: PAPER.ink,
+  red: PAPER.red,
+  pencil: PAPER.pencil,
+  brass: CANVAS.brass,
+};
 
 const EXT_MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -81,7 +103,6 @@ export default function BoardCanvas({
 }) {
   const navigate = useNavigate();
   const scrollRef = useRef(null);          // 纵向滚动容器（桌面的"视口"）
-  const [paneSize, setPaneSize] = useState({ w: 0, h: 0 });
 
   // 数据源
   const [artifacts, setArtifacts] = useState([]);
@@ -110,9 +131,25 @@ export default function BoardCanvas({
   const zonesRef = useRef(zones); zonesRef.current = zones;
   // 舞台/滚动要在事件回调里读最新布局 —— 状态镜像
   const scaleRef = useRef(1);
+  const zoneViewRef = useRef([]);
+  const camApiRef = useRef(null);   // 相机 API（hook 在下方才调用，用 ref 让上面的回调也够得着）
+
+  /**
+   * 当前工具。`select` 是默认，其余三种是"手上拿着东西"的状态。
+   *
+   * 工具是**画布级**的一个模式，不是某个物件的属性 —— 所以它住在这里，
+   * 由浮动工具栏的模式组切换（FloatingToolbar 的 type:'mode'）。
+   */
+  const [tool, setTool] = useState('select');
+  const [commentDraft, setCommentDraft] = useState(null);   // { targetId, at }
+  const commentDraftRef = useRef(null);
+  const [bindings, setBindings] = useState({});   // board.json 的关系表
+  const [hoveredBinding, setHoveredBinding] = useState(null);
+  const [presence, setPresence] = useState(emptyPresence);
+  const toolRef = useRef('select');
+  toolRef.current = tool;
   const positionedRef = useRef([]);
   const focusZoneRef = useRef(null);
-  const viewOffsetRef = useRef(0);      // 镜头裁切偏移（工作视图把聚焦区提到顶端）
   const primaryOpenRef = useRef(null);  // "双击打开"的引用（preview_deck 工具复用）
   const exitToProjectRef = useRef(null);   // 退出任务（ESC / 面包屑 / 标题栏共用）
   const pendingPreviewRef = useRef(null);  // preview 目标还没上墙 → 等它出现
@@ -166,6 +203,7 @@ export default function BoardCanvas({
     if (b?.board && !layoutLoadedRef.current) {
       layoutLoadedRef.current = true;
       setLayout(b.board.objects || {});
+      setBindings(b.board.bindings || {});
       setZones(b.board.zones || {});
       // 桌面化：board.json 的 size 不再决定画布大小 —— 桌面宽度固定、高度随内容
       const zs = Object.values(b.board.objects || {}).map(o => o.z || 0);
@@ -224,8 +262,17 @@ export default function BoardCanvas({
   }, [tasks]);
 
   // ── 物件派生（数据源 → 物件列表；布局只管摆放）──
+  //
+  // 2026-08-07 起有**两类**物件：
+  //   - 磁盘产物的影子（下面这一大段）：本体是文件，board.json 只存它摆在哪
+  //   - 画布原生（涂鸦）：board.json 就是本体，从 layout 里带 kind 的条目还原
   const objects = useMemo(() => {
     const out = [];
+    // 画布原生物件先进来（它们不依赖任何数据源，只依赖 layout 本身）
+    for (const [id, l] of Object.entries(layout)) {
+      if (!l?.kind) continue;
+      out.push({ id, type: l.kind, data: l.data, native: true, zoneField: l.zone });
+    }
     // 项目级文档（记忆 / 品牌）不再当画布物件 —— 2026-07-28 起由桌面顶带
     // ProjectBand 承载，跟指引、文件一起构成"项目区"。
     for (const s of sessions) {
@@ -309,7 +356,7 @@ export default function BoardCanvas({
       else out.push({ id: a.path, type: 'file', sid, ...a });
     }
     return out;
-  }, [sessions, tasks, artifacts, sessionZone]);
+  }, [sessions, tasks, artifacts, sessionZone, layout]);
 
   // 顶带四张卡的一行摘要
   const bandSummaries = useMemo(() => {
@@ -415,7 +462,7 @@ export default function BoardCanvas({
    *   2. 其余未摆放物件 → 画布下方的收纳带（文档架 / deck 架 / 素材 / 文件）
    *   3. 归属 = 物件中心落在工作区有效矩形内（区随内容向下自然生长）
    */
-  const { positioned, zoneView, contentBottom, overlapFixes } = useMemo(() => {
+  const { positioned, zoneView, contentBottom, overlapFixes, groupBands } = useMemo(() => {
     // 聚焦区（正在里面干活的那个任务）最小画幅 = 一屏；其余贴内容。
     //
     // 两轮反馈来回过一次，记下结论免得再翻烧饼：
@@ -426,18 +473,13 @@ export default function BoardCanvas({
     // 关键在于一屏之后别再多出边角料：桌面高度同时收敛到恰好一屏（见 boardH），
     // 区就把整个视口占满，底下不再留一条既不属于区、也不属于内容的空画幅。
     // 内容多于一屏时区照常往下长。
-    const fitScale = Math.min(1, (paneSize.w || DESKTOP_W) / DESKTOP_W);
-    const oneScreenH = Math.floor((paneSize.h || 600) / (fitScale || 1));
-    const focusedZid = viewMode === 'work'
-      ? (focusZoneId || sessionZone.get(currentSessionId) || currentSessionId)
-      : null;
-    const zoneMinHOf = (zid) => (zid === focusedZid
-      // 一屏减 16 = 上下各留 8（跟 viewOffsetY 的 8 对齐）。这三个数字是一组，
-      // 必须一起改：viewOffsetY 吃掉上边距、这里定区高、boardH 的判定给出下边距。
-      // 任何一个多留几像素，"区高 + 上边距"就越过一屏，桌面被判成装不下再补
-      // 120 的余量 —— 内容只有一屏却常驻一条竖滚动条。
-      ? Math.max(ZONE_MIN_H, oneScreenH - 16)
-      : ZONE_MIN_H);
+    // 工作区高度一律贴内容（ZONE_MIN_H 起）。
+    //
+    // 2026-08-07 相机上线后，**「聚焦区吃满一屏」这条规则从几何搬到了镜头**：
+    // 以前靠把聚焦区做成一屏高来实现，代价是 viewOffsetY / oneScreenH / boardH
+    // 三个常量死死绑在一起（记忆里那条「必须一起改」的坑，来回改过三轮）。
+    // 现在聚焦 = `flyToBox(区矩形)`，镜头自己把它框满，区高不必再撒谎。
+    const zoneMinHOf = () => ZONE_MIN_H;
 
     // 占格：placed 成员先标格子，未摆放的按空格入座
     const grids = {};
@@ -519,10 +561,7 @@ export default function BoardCanvas({
         items.push({ ...o, pos: { x, y, z: 1 } });
         continue;
       }
-      if (o.type === 'doc') legacy.doc.push(o);
-      else if (o.type === 'deck') legacy.deck.push(o);
-      else if (o.type === 'file') legacy.file.push(o);
-      else legacy.art.push(o);
+      legacy[legacyBucketOf(o)].push(o);
     }
 
     // 收纳带（桌面底部）：文档架 / 无工作区 deck / 无主素材 / 文件，列数按桌面宽度算
@@ -574,34 +613,85 @@ export default function BoardCanvas({
     //   - 让位是最小位移：向下 / 向右 / 向左三个方向里挑挪得最少的那个，
     //     连锁避让（被挤的再挤别人）；侧移超过 8 次防振荡，只往下走（必收敛）
     //   - 拖拽期间只改渲染位置不落盘 —— 拖走了别人自动弹回，松手才定格
+    // ── 区内排布：顺序是权威，坐标是算出来的（2026-08-07 接线）────────────
+    //
+    // 原来是「粗网格入座 + 避让系统事后推开」两道工序叠着跑，结果是 08-01 报的
+    // 那两件事：卡高从 40 到 176 不等而格高写死 210，**一排 deck 卡下面永远吊
+    // 122px 死白**；4 列只用掉区宽的 976，右边 112px 谁都用不上。
+    //
+    // 现在改成 packRow 一趟排完：列宽取最宽的收起态卡（COL_W=240）、行高贴该行
+    // 最高的卡、整块居中。**排布本身保证数学上不可能重叠**（断言里那条「60 个
+    // 混排物件零重叠」就是拆掉区内避让的依据），所以工作区内不再跑避让 ——
+    // 避让只留给不属于任何工作区的散件。
+    //
+    // 顺序从当前坐标按**读序**推出来（先上后下、同行先左后右），所以旧数据进来
+    // 一次就自洽，不需要迁移；用户拖拽换的也是这个顺序。
     const overlapFixes = { ...containFixes };
+    const groupBands = [];   // 收纳文件夹的标题带
     for (const [zid, g] of Object.entries(grids)) {
       if (g.rect.collapsed) continue;   // 收起的文件夹成员不渲染，摆它没意义
       const members = items.filter(it => it.zoneId === zid);
-      if (members.length < 2) continue;
-      const { moved, bottom: zoneContentBottom } = resolveZoneAvoidance(
-        members.map(it => { const sz = sizeOf(it); return { id: it.id, pos: it.pos, w: sz.w, h: sz.h }; }),
-        {
-          xMin: g.rect.x + ZONE.pad,
-          xMax: DESKTOP_W - ZONE.pad,     // 右边缘上限（rect 右缘不出桌面）
-          yMin: g.rect.y + ZONE.header + ZONE.pad,
-        },
-      );
+      if (!members.length) continue;
+
+      // 收纳文件夹（2026-08-07）：任务里的子目录各排一条带，带上有标题。
+      // 分组的真相是**磁盘路径**（agent 用 mkdir + mv 收纳），不是画布上的
+      // 虚拟分组 —— 这跟「文件系统即真相」是同一条规矩。
+      const groupOf = (it) => {
+        const p = it.path || it.id;
+        const m = typeof p === 'string' && p.startsWith(`${zid.startsWith('task/') ? `tasks/${zid.slice(5)}` : zid}/`)
+          ? p.slice((zid.startsWith('task/') ? `tasks/${zid.slice(5)}` : zid).length + 1)
+          : '';
+        const seg = m.split('/');
+        // 只认一层：`笔记/a.md` → 「笔记」；`a.md` → 无分组（散在任务根）
+        return seg.length > 1 ? seg[0] : '';
+      };
+      const byGroup = new Map();
       for (const it of members) {
-        const fix = moved.get(it.id);
-        if (!fix) continue;
-        it.pos = { ...it.pos, x: fix.x, y: fix.y };
-        // 拖拽中只做渲染层避让（松手重算时再落盘）；未存过位置的自动入座件也不写
-        if (!dragActive && layout[it.id]) overlapFixes[it.id] = fix;
+        const gname = groupOf(it);
+        if (!byGroup.has(gname)) byGroup.set(gname, []);
+        byGroup.get(gname).push(it);
       }
-      g.bottom = Math.max(g.bottom, zoneContentBottom + ZONE.pad);
+      // 散件排最前，收纳组按名字排在后面（顺序稳定，不随 mtime 跳）
+      const groupNames = [...byGroup.keys()].sort((a, b) =>
+        (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b, 'zh')));
+
+      const slots = [];
+      const bands = [];
+      let cursorY = g.rect.y + ZONE.header + ZONE.pad;
+      for (const gname of groupNames) {
+        if (gname) {
+          bands.push({ zoneId: zid, name: gname, y: cursorY, x: g.rect.x + ZONE.pad, w: g.rect.w - ZONE.pad * 2 });
+          cursorY += GROUP_LABEL_H;
+        }
+        const ordered = [...byGroup.get(gname)].sort((a, b) =>
+          (a.pos.y - b.pos.y) || (a.pos.x - b.pos.x) || String(a.id).localeCompare(String(b.id)));
+        const packed = packRow(
+          ordered.map(it => { const sz = sizeOf(it); return { id: it.id, w: sz.w, h: sz.h }; }),
+          { width: g.rect.w - ZONE.pad * 2, xMin: g.rect.x + ZONE.pad, yTop: cursorY },
+        );
+        slots.push(...packed.slots);
+        cursorY = packed.bottom + (gname ? ZONE.pad : ROW_GAP);
+      }
+      const packedBottom = cursorY;
+      groupBands.push(...bands);
+      const slotById = new Map(slots.map(s => [s.id, s]));
+      for (const it of members) {
+        const s = slotById.get(it.id);
+        if (!s) continue;
+        if (Math.abs(it.pos.x - s.x) < 0.5 && Math.abs(it.pos.y - s.y) < 0.5) continue;
+        // 正在被拖的那张不归位（拖拽期间它跟手，松手后下一趟才排进去）
+        if (dragActive && dragRef.current?.id === it.id) continue;
+        it.pos = { ...it.pos, x: s.x, y: s.y };
+        if (!dragActive && layout[it.id]) overlapFixes[it.id] = { x: s.x, y: s.y };
+      }
+      g.bottom = Math.max(g.bottom, packedBottom + ZONE.pad);
     }
 
     // zone 视图（有效高度随内容生长，含避让后被挤出来的新底边）
     const zv = Object.entries(grids).filter(([zid]) => !sessionZone.has(zid)).map(([zid, g]) => ({
       id: zid,
       x: g.rect.x, y: g.rect.y, w: g.rect.w,
-      // 高度：聚焦区一屏起步、其余贴内容（zoneMinHOf），超出再向下生长；
+      // 高度：贴内容（ZONE_MIN_H 起），超出再向下生长；取景交给相机；
       // 存档矩形的 h 只当创建时的估算，不当地板
       h: Math.max(zoneMinHOf(zid), g.bottom - g.rect.y),
       title: sessionTitles.get(zid) || taskTitles.get(zid) || g.rect.title || '工作区',
@@ -616,36 +706,13 @@ export default function BoardCanvas({
       if (it.zoneId && collapsedSet.has(it.zoneId)) continue;
       bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     }
-    return { positioned: items, zoneView: zv, contentBottom: bottom, overlapFixes };
-  }, [objects, layout, zonesEff, sessionTitles, taskTitles, sessionZone, dragActive, paneSize,
+    return { positioned: items, zoneView: zv, contentBottom: bottom, overlapFixes, groupBands };
+  }, [objects, layout, zonesEff, sessionTitles, taskTitles, sessionZone, dragActive,
     viewMode, focusZoneId, currentSessionId]);
   positionedRef.current = positioned;
+  zoneViewRef.current = zoneView;
+  commentDraftRef.current = commentDraft;
 
-  // 桌面几何：宽度固定，视口窄则整体等比缩小（非交互）。高度与镜头在
-  // 可见性算完之后定（见下方"桌面高度 / 镜头裁切"）。
-  const scale = Math.min(1, (paneSize.w || DESKTOP_W) / DESKTOP_W);
-  scaleRef.current = scale;
-  // floor 不是 ceil：占位壳高度 = boardH * scale，用 ceil 时 ceil(h/s)*s 会比视口
-  // 高出不到 1px，于是内容明明装得下也常驻一条竖滚动条。floor 保证 ≤ 视口。
-  const oneScreen = Math.floor((paneSize.h || 600) / (scale || 1));
-
-  // 量滚动容器尺寸（决定 fitScale 与桌面最小高度）
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const measure = () => {
-      setPaneSize(prev => (prev.w === el.clientWidth && prev.h === el.clientHeight)
-        ? prev : { w: el.clientWidth, h: el.clientHeight });
-    };
-    measure();
-    let ro = null;
-    try { ro = new ResizeObserver(measure); ro.observe(el); } catch { /* ignore */ }
-    window.addEventListener('resize', measure);
-    return () => {
-      if (ro) ro.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, []);
 
   // 遮盖修正落盘：只在真被推开时写一次，之后布局稳定不再触发
   useEffect(() => {
@@ -751,60 +818,193 @@ export default function BoardCanvas({
   //
   // 现在工作视图给桌面一个偏移量：聚焦区被平移到桌面顶端（bandY），高度只按
   // 这块区自己的内容算。整理视图 offset=0，行为不变。
-  const viewOffsetY = focusZone && visibleZones[0]
-    ? Math.max(0, visibleZones[0].y - 8)
-    : 0;
-  viewOffsetRef.current = viewOffsetY;
-  const rawBottom = focusZone
-    ? visibleObjects.reduce(
-        (acc, o) => Math.max(acc, o.pos.y + sizeOf(o).h),
-        visibleZones[0] ? visibleZones[0].y + visibleZones[0].h : 0)
-    : (contentBottom || 0);
-  // 视图内的内容高度（已扣掉偏移）：一屏装得下就恰好一屏（无滚动），
-  // 装不下才向下生长并带出滚动（底部留呼吸区）。
-  const viewBottom = Math.max(0, rawBottom - viewOffsetY);
-  // 装得下就恰好一屏（不留 24 的判定余量 —— 那点余量最后都变成区底下的空隙）
-  const boardH = viewBottom <= oneScreen ? oneScreen : viewBottom + (focusZone ? 120 : 240);
-  const boardSize = { w: DESKTOP_W, h: boardH };
-  // 舞台层还在全局坐标系里贴卡（物件坐标没平移），夹取上界要用未裁切的高度
-  const stageBounds = { w: DESKTOP_W, h: viewOffsetY + boardH };
+  // ── 内容边界（喂给相机约束）──────────────────────────────────────────
+  //
+  // 2026-08-07：`viewOffsetY` 那套「镜头裁切」连同 `boardH` 的一屏判定一起
+  // **退役**。它们当初存在只有一个原因 —— 没有相机，所以只能靠平移内容和
+  // 撑高占位壳来伪造取景。记忆里那条「viewOffsetY / zoneMinHOf / boardH
+  // 这三个是一组，必须一起改」的陷阱，本质就是这个伪造的代价。
+  //
+  // 现在「聚焦区吃满一屏」由**镜头去框它**（flyToBox）实现：意图一模一样，
+  // 但工作区的高度回归贴内容，三常量的联动整个消失。
+  const contentBox = useMemo(() => {
+    const boxes = visibleZones.map(z => ({
+      x: z.x, y: z.y, w: z.w, h: z.collapsed ? FOLDER_CARD_H : z.h,
+    }));
+    for (const o of visibleObjects) {
+      const sz = sizeOf(o);
+      boxes.push({ x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h });
+    }
+    // 项目区顶带也算内容，否则全景 zoom-to-fit 会把它框在外面
+    if (viewMode === 'arrange') {
+      boxes.push({ x: MARGIN_X, y: PROJECT_BAND_Y, w: DESKTOP_W - MARGIN_X * 2, h: PROJECT_BAND_H });
+    }
+    // 一件东西都没有时给一个桌面大小的空板，不然相机没有可约束的东西
+    return boxUnion(boxes) || { x: 0, y: 0, w: DESKTOP_W, h: 600 };
+  }, [visibleZones, visibleObjects, viewMode]);
 
-  // ── 桌面滚动（无限画布退役：纵向滚动是唯一的"镜头"）──
+  const camera = useBoardCamera({ paneRef: scrollRef, contentBox });
+  const { cam } = camera;
+  const scale = cam.z;
+  scaleRef.current = scale;
+  camApiRef.current = camera;
 
-  /** 用户接管：任何主动操作后 8s 内跟随不抢滚动 */
-  const noteUserTakeover = useCallback(() => {
-    userHoldUntilRef.current = Date.now() + 8000;
+  // ── 画布工具（选择 / 文字 / 笔 / 评论）────────────────────────────────
+  //
+  // 落点归属：新东西放进**当前聚焦的工作区**（有的话），否则算项目级散件。
+  // 这跟拖放的归属规则是同一条 —— 谁的框套住它就是谁的。
+  const zoneAtPoint = useCallback((w) => {
+    const zs = focusZoneRef.current
+      ? zoneViewRef.current.filter(z => z.id === focusZoneRef.current)
+      : zoneViewRef.current;
+    const hit = zs.find(z => !z.collapsed
+      && w.x >= z.x && w.x < z.x + z.w && w.y >= z.y && w.y < z.y + z.h);
+    return hit?.id || null;
   }, []);
 
-  /** 跟随 agent：平滑滚到物件（跟随关 / 用户接管期 / 物件不可见时不动）*/
+  /** 写一段字 → 落成 .md（走便签那条路，agent 读得到） */
+  const handleCreateText = useCallback(async (text, at) => {
+    const zid = zoneAtPoint(at);
+    const task = zid && zid.startsWith('task/') ? zid.slice(5) : null;
+    try {
+      let file;
+      if (task) {
+        // 任务内 → 任务便利贴（agent 下一轮从注入清单就看得到）
+        const name = `${Date.now().toString(36)}.md`;
+        await Assets.putTaskNote(projectId, task, name, text);
+        file = `tasks/${task}/notes/${name}`;
+      } else {
+        const r = await Assets.createNote(projectId, { text, sessionId: currentSessionId });
+        file = r?.path || null;
+      }
+      // 落在点击处（而不是让它自动入座）—— 用户是**指着地方**写的
+      if (file) patchLayout(file, { x: Math.round(at.x), y: Math.round(at.y), z: ++zMaxRef.current, ...(zid ? { zone: zid } : {}) });
+      reload();
+      return file;
+    } catch (err) {
+      console.warn('[board] 写字失败:', err.message);
+      return null;
+    }
+  }, [projectId, currentSessionId, zoneAtPoint, patchLayout, reload]);
+
+  /** 画一笔 → 画布原生物件（只活在 board.json） */
+  const handleCreateScribble = useCallback((points) => {
+    const box = pointsBounds(points, 8);
+    const d = pointsToPath(points, box.x, box.y);
+    if (!d) return;
+    const id = `scribble:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
+    const zid = zoneAtPoint({ x: box.x + box.w / 2, y: box.y + box.h / 2 });
+    patchLayout(id, {
+      x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h),
+      z: ++zMaxRef.current,
+      kind: 'scribble', data: { d, color: 'ink', width: 2 },
+      ...(zid ? { zone: zid } : {}),
+    });
+  }, [zoneAtPoint, patchLayout]);
+
+  /**
+   * 标注一个物件 → 一段文字 + 一条 `annotates` 关系。
+   *
+   * **批注是关系不是自由文字**：光写一段话飘在旁边，过两天就没人知道它在说谁；
+   * 存成关系之后，被批注的东西一移动，批注跟着走，线自己重画。
+   */
+  const handleComment = useCallback((targetId, at) => {
+    setCommentDraft({ targetId, at });
+  }, []);
+
+  const commitComment = useCallback(async (text) => {
+    const draft = commentDraftRef.current;
+    setCommentDraft(null);
+    const t = (text || '').trim();
+    if (!t || !draft) return;
+    const noteId = await handleCreateText(t, draft.at);
+    if (!noteId) return;
+    // 文字落好了才连线 —— 端点必须真实存在，否则画布上留一条通向虚空的线
+    const bid = `b:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
+    setBindings(prev => ({
+      ...prev,
+      [bid]: { type: 'annotates', from: noteId, to: draft.targetId, by: 'user' },
+    }));
+    Assets.patchBoard(projectId, {
+      bindings: { [bid]: { type: 'annotates', from: noteId, to: draft.targetId, by: 'user' } },
+    }).catch(() => {});
+  }, [handleCreateText, projectId]);
+
+  const canvasTools = useCanvasTools({
+    tool,
+    toWorld: camera.toWorld,
+    zoneAt: zoneAtPoint,
+    onCreateText: handleCreateText,
+    onCreateScribble: handleCreateScribble,
+    onComment: handleComment,
+  });
+
+  /**
+   * 关系线的端点解析：**物件和工作区都可以当端点**（用户明确要求文件夹之间
+   * 也能连线）。拿不到矩形就返回 null，那条线这一帧不画 —— 端点可能被收进
+   * 文件夹了、可能属于当前不可见的工作区，都不是异常。
+   */
+  const rectOfId = useCallback((id) => {
+    const o = positionedRef.current.find(it => it.id === id);
+    if (o) { const sz = sizeOf(o); return { x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h }; }
+    const z = zoneViewRef.current.find(zz => zz.id === id);
+    if (z) return { x: z.x, y: z.y, w: z.w, h: z.collapsed ? FOLDER_CARD_H : z.h };
+    return null;
+  }, []);
+
+  // 舞台层仍按世界坐标贴卡，夹取上界取内容外沿
+  const stageBounds = {
+    w: Math.max(DESKTOP_W, contentBox.x + contentBox.w),
+    h: contentBox.y + contentBox.h,
+  };
+
+  // ── 镜头（相机导演）────────────────────────────────────────────────
+
+  /** 用户接管：任何主动操作后 8s 内跟随不抢镜头 */
+  const noteUserTakeover = useCallback(() => {
+    userHoldUntilRef.current = Date.now() + 8000;
+    camApiRef.current?.noteTakeover();
+  }, []);
+
+  /** 跟随 agent：把镜头飞到物件（跟随关 / 用户接管期 / 物件不可见时不动）*/
   const followToObject = useCallback((objectId) => {
     if (!followRef.current) return;
     if (Date.now() < userHoldUntilRef.current) return;
     const o = positionedRef.current.find(it => it.id === objectId);
-    const el = scrollRef.current;
-    if (!o || !el) return;
+    if (!o) return;
     // 工作视图里目标不在聚焦工作区 → 不跟（它根本不可见，卡会落 dock）
     const fz = focusZoneRef.current;
     if (fz && o.zoneId !== fz && o.id !== `deck:${fz}`) return;
     const sz = sizeOf(o);
-    // 物件是全局坐标，滚动容器是裁切后的镜头 —— 减掉偏移才对得上
-    const top = Math.max(0, (o.pos.y - viewOffsetRef.current + sz.h / 2) * scaleRef.current - el.clientHeight / 2);
-    el.scrollTo({ top, behavior: 'smooth' });
+    // 保持当前缩放，只把目标挪到视口中心 —— 跟随不该顺手改变用户的缩放，
+    // 那会让"我正在看细节"突然被拉远。
+    camApiRef.current?.flyToPoint({ x: o.pos.x + sz.w / 2, y: o.pos.y + sz.h / 2 });
   }, []);
 
-  // 工作模式：聚焦区已被镜头平移到桌面顶端，切目标时把滚动归零（只归一次）
+  // 聚焦某块工作区 = 把它框进视口（每个目标只飞一次，之后用户自己主宰镜头）。
+  // 这就是「聚焦区吃满一屏」的新实现：镜头去框它，而不是把区做成一屏高。
   useEffect(() => {
     if (viewMode !== 'work') return;
     const target = focusZoneId || currentSessionId;
     if (!target) return;
     const zv = zoneView.find(z => z.id === target);
-    const el = scrollRef.current;
-    if (!zv || !el) return;
+    if (!zv) return;
     const key = `work:${target}`;
     if (fittedKeyRef.current === key) return;
     fittedKeyRef.current = key;
-    el.scrollTo({ top: 0, behavior: 'smooth' });
+    camApiRef.current?.flyToBox(
+      { x: zv.x, y: zv.y, w: zv.w, h: zv.collapsed ? FOLDER_CARD_H : zv.h },
+      { force: true },
+    );
   }, [viewMode, focusZoneId, currentSessionId, zoneView]);
+
+  // 回到项目区（全景）：把所有内容框进来
+  useEffect(() => {
+    if (viewMode !== 'arrange') return;
+    if (fittedKeyRef.current === 'arrange') return;
+    fittedKeyRef.current = 'arrange';
+    camApiRef.current?.zoomToFit();
+  }, [viewMode]);
 
   // 切 session：有 session 默认工作模式（聚焦它的工作区），回 /work 回项目区
   useEffect(() => {
@@ -843,8 +1043,14 @@ export default function BoardCanvas({
     const dx = e.clientX - d.startX; const dy = e.clientY - d.startY;
     if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
     {
-      const nx = Math.max(0, Math.min(DESKTOP_W - 40, d.origX + dx / scale));
-      const ny = Math.max(0, d.origY + dy / scale);
+      // 落点范围：桌面那一列之外还留一圈 ROAM_MARGIN 的空地。
+      //
+      // 原来夹死在 `[0, DESKTOP_W-40]`，那是定宽桌面时代的约束 —— 桌面之外
+      // 根本没有画布，夹住是对的。无限画布上线后那一圈空地是真实存在的，
+      // 涂鸦和批注就该放在产物旁边的余白里，再夹死等于把新画幅锁上。
+      // 仍然给上界（不是无限）：拖到几万像素外的卡片找不回来。
+      const nx = Math.min(DESKTOP_W + ROAM_MARGIN, Math.max(-ROAM_MARGIN, d.origX + dx / scale));
+      const ny = Math.max(-ROAM_MARGIN, d.origY + dy / scale);
       setLayout(prev => ({ ...prev, [d.id]: { ...prev[d.id], x: nx, y: ny } }));
       // 实时落点提示：这个物件松手会归到哪（工作区高亮 / 文件夹卡高亮），
       // 归入工作区时再给一格吸附预览（ghost 虚线框 = 松手后的落位）
@@ -955,16 +1161,23 @@ export default function BoardCanvas({
     setAddedPaths(prev => new Set(prev).add(o.id));
   };
 
-  const openViewer = async (o) => {
-    if (o.type === 'doc') {
+  /**
+   * 进阅读器。走哪条路由由形态表的 `reader` 决定（board-kinds.js），
+   * 这里只实现三种阅读器本身。
+   */
+  const READERS = {
+    // 记忆 / 品牌 / 指引三张卡的画布分身：正文在服务端，不在磁盘产物里
+    async memory(o) {
       const r = await Memory.read(projectId, o.readKey).catch(() => null);
       setViewer({ title: o.title, content: r?.content || o.preview || '(空)' });
-    } else if (o.type === 'file' && isMarkdown(o)) {
-      // 普通 .md 产物（世界.md / 正文章节 / agent 写的任何 markdown）。
-      // 2026-08-03 之前这类文件只有「打开」= window.open 原始 URL，浏览器给一坨
-      // 纯文本 —— 41KB 的正文点开满屏 `**` 和 `##`。阅读器本来就是现成的，
-      // 缺的只是这条路由。frontmatter 不剥：便签的 `---` 头是会话元数据该藏，
-      // 普通 md 的 frontmatter 是内容的一部分，替用户删掉是自作主张。
+    },
+
+    // 普通 .md 产物（世界.md / 正文章节 / agent 写的任何 markdown）。
+    // 2026-08-03 之前这类文件只有「打开」= window.open 原始 URL，浏览器给一坨
+    // 纯文本 —— 41KB 的正文点开满屏 `**` 和 `##`。阅读器本来就是现成的，
+    // 缺的只是这条路由。frontmatter 不剥：便签的 `---` 头是会话元数据该藏，
+    // 普通 md 的 frontmatter 是内容的一部分，替用户删掉是自作主张。
+    async file(o) {
       const title = o.name || o.title || 'markdown';
       try {
         const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
@@ -972,7 +1185,9 @@ export default function BoardCanvas({
       } catch {
         setViewer({ title, content: o.preview || '(读不出来)' });
       }
-    } else if (o.type === 'note') {
+    },
+
+    async note(o) {
       const title = o.noteTask ? o.name.replace(/\.md$/i, '') : '便签';
       try {
         const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
@@ -981,7 +1196,12 @@ export default function BoardCanvas({
         // agent 下轮从注入清单看到文件、自己 Read 到新内容）
         setViewer({ title, content: raw.replace(/^---\n[\s\S]{0,500}?\n---\n?/, ''), note: o.noteTask ? o : null });
       } catch { setViewer({ title, content: o.text || '', note: o.noteTask ? o : null }); }
-    }
+    },
+  };
+
+  const openViewer = async (o) => {
+    const reader = readerOf(o);
+    if (reader) await READERS[reader](o);
   };
 
   const openFile = (o) => {
@@ -1024,16 +1244,18 @@ export default function BoardCanvas({
 
   // 双击打开（统一挂在卡片根节点：pointer capture 会把 click/dblclick 重定向到
   // 捕获元素本身，挂内层 div 事件根本到不了 —— 2026-07-27 双击失灵的根因）
-  const primaryOpen = (o) => {
-    if (o.type === 'doc' || o.type === 'note') openViewer(o);
-    else if (o.type === 'image') setDetail(o);
-    // markdown 双击进阅读器（渲染过的），其余文件双击才是丢给浏览器
-    else if (o.type === 'file') (isMarkdown(o) ? openViewer : openFile)(o);
-    else if (o.type === 'deck' || o.type === 'site' || o.type === 'world') {
+  const PRIMARY = {
+    read: openViewer,
+    detail: (o) => setDetail(o),
+    openFile,
+    // 收起态先展开成内嵌渲染，已经展开了才开最大化窗口
+    expand: (o) => {
       if (o.pos.expanded) focusDeck(o);
       else patchLayout(o.id, { expanded: true, z: ++zMaxRef.current });
-    }
+    },
   };
+
+  const primaryOpen = (o) => PRIMARY[primaryOf(o)]?.(o);
   primaryOpenRef.current = primaryOpen;   // preview_deck 走同一条"双击"路径
 
   // ESC = 退回项目区全景（编辑窗开着时归窗口自己处理，别抢）
@@ -1260,9 +1482,41 @@ export default function BoardCanvas({
     }
     return m;
   }, [tasks]);
+  // ⚠️ 下面这两个必须声明在 useStageState **之前**：它把 handlePresenceEvent
+  // 当参数收走，声明在后面就是 TDZ 白屏。这个文件已经栽过三次同样的事
+  // （绑定表 memo / splitStageCards / 这次），组件里 hook 参数的声明顺序
+  // 不是风格问题，是硬约束。
+  /**
+   * 镜头跟**人**，不跟事件。
+   *
+   * 以前 `followToObject` 挂在每一条 file_changed 上 —— 多个子代理并行时
+   * 镜头会在它们之间来回横跳，看着像抽搐。现在只跟 `followTarget` 选出来的
+   * 那一个（主 agent 优先），它换了目标才动一次。
+   */
+  const followedIdRef = useRef(null);
+  useEffect(() => {
+    const who = followTarget(presence);
+    if (!who) { followedIdRef.current = null; return; }
+    const key = `${who.id}:${who.targetId}`;
+    if (followedIdRef.current === key) return;
+    followedIdRef.current = key;
+    followToObject(who.targetId);
+  }, [presence, followToObject]);
+
+  // 在场表：从同一条事件流归约出"谁在哪干活"（board-presence.js，19 条测试）。
+  // 解析器用画布自己的寻址规则（zoneOfObjectId），跟舞台卡贴物件同一套口径。
+  const handlePresenceEvent = useCallback((evt) => {
+    setPresence(prev => reducePresence(prev, evt, (file) => {
+      if (!file) return null;
+      const objectId = String(file);
+      return { objectId, zoneId: zoneOfObjectId(objectId, currentSessionId) };
+    }));
+  }, [currentSessionId]);
+
   const { stageCards, stageBadges, dismissStageCard } = useStageState({
     stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand: requestAutoExpand,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
+    onRawEvent: handlePresenceEvent,
   });
 
   // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock
@@ -1342,36 +1596,58 @@ export default function BoardCanvas({
         '@keyframes ndShimmer{from{background-position:100% 0}to{background-position:-100% 0}}',
         '@keyframes ndCaret{0%,100%{opacity:1}50%{opacity:0}}',
         '@keyframes ndSpin{to{transform:rotate(360deg)}}',
+        '@keyframes ndPresencePulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.75}}',
         '@keyframes ndPulse{from{box-shadow:0 0 0 0 rgba(79,143,91,0.4)}to{box-shadow:0 0 0 12px rgba(79,143,91,0)}}',
         // agent 正在动的目标：外圈橙色呼吸光圈
         '@keyframes ndAgentRing{0%,100%{box-shadow:0 0 0 2px rgba(176,140,79,0.85),0 0 0 7px rgba(176,140,79,0.16),0 6px 20px rgba(40,32,16,0.12)}50%{box-shadow:0 0 0 2px rgba(176,140,79,0.95),0 0 0 13px rgba(176,140,79,0.05),0 6px 20px rgba(40,32,16,0.12)}}',
       ].join('')}</style>
-      {/* 桌面滚动容器（唯一的"镜头"就是纵向滚动）*/}
+      {/* 视口：不滚动，镜头就是相机（2026-08-07 无限画布）
+       *
+       * 点阵台面画在**视口**上不画在世界层上：世界是无限的，给不出一个"多大"
+       * 的背景元素。做法是背景尺寸跟着 z 缩、背景位置跟着相机走 —— 视觉上等价
+       * 于一张无限大的点阵纸，而且不需要为它铺任何 DOM。 */}
       <div
         ref={scrollRef}
-        onWheel={noteUserTakeover}
-        onPointerDown={noteUserTakeover}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        style={{ position: 'absolute', inset: 0, overflowY: 'auto', overflowX: 'hidden' }}
+        data-board-pane
+        data-tool={tool}
+        data-drawing={canvasTools.draft ? canvasTools.draft.points.length : ''}
+        onPointerDown={(e) => {
+          // 顺序即优先级：工具在手就归工具，工具没接才轮到相机平移。
+          // 否则「拖着画一笔」和「拖空白平移」抢同一个手势，画一笔就跑镜头。
+          if (canvasTools.onPointerDown(e)) return;
+          camera.onPointerDown(e);
+        }}
+        onPointerMove={(e) => {
+          if (canvasTools.onPointerMove(e)) return;
+          if (!camera.onPointerMove(e)) onPointerMove(e);
+        }}
+        onPointerUp={(e) => {
+          if (canvasTools.onPointerUp(e)) return;
+          camera.onPointerUp(e); onPointerUp(e);
+        }}
+        onPointerCancel={(e) => { canvasTools.onPointerUp(e); camera.onPointerUp(e); onPointerUp(e); }}
+        style={{
+          position: 'absolute', inset: 0, overflow: 'hidden',
+          touchAction: 'none',
+          cursor: camera.panning ? 'grabbing'
+            : tool === 'draw' ? 'crosshair'
+            : tool === 'text' ? 'text'
+            : tool === 'comment' ? 'help'
+            : 'default',
+          background: CANVAS.paper,
+          backgroundImage: `radial-gradient(circle, ${CANVAS.grid} 1px, transparent 1px)`,
+          backgroundSize: `${24 * scale}px ${24 * scale}px`,
+          backgroundPosition: `${cam.x * scale}px ${cam.y * scale}px`,
+        }}
       >
-        {/* 占位壳：把缩放后的桌面尺寸交给滚动布局（transform 不改布局尺寸）*/}
-        <div style={{
-          position: 'relative',
-          width: DESKTOP_W * scale, height: boardSize.h * scale,
-          margin: '0 auto',
-        }}>
-        {/* 桌面（定宽 + 点阵背景；视口窄时整体等比缩小，非交互）*/}
+        {/* 世界层：所有内容都用世界坐标摆，整层由相机一次性变换。
+            transform 从右往左应用 → 先 translate 再 scale = (world + cam) * z，
+            跟 board-camera.js 的坐标约定逐字对应。 */}
         <div
           style={{
-            position: 'absolute', left: 0, top: 0,
-            // 高度取未裁切的上界，平移后底部才不露白；transform 顺序 = 先平移镜头再缩放
-            width: DESKTOP_W, height: stageBounds.h,
-            transform: `scale(${scale}) translateY(${-viewOffsetY}px)`,
+            position: 'absolute', left: 0, top: 0, width: 0, height: 0,
+            transform: `scale(${scale}) translate(${cam.x}px, ${cam.y}px)`,
             transformOrigin: '0 0',
-            background: CANVAS.paper,
-            backgroundImage: `radial-gradient(circle, ${CANVAS.grid} 1px, transparent 1px)`,
-            backgroundSize: '24px 24px',
           }}
         >
           {/* 项目区顶带：项目级四件套（记忆 / 指引 / 品牌 / 文件），只在全景出现 */}
@@ -1385,6 +1661,7 @@ export default function BoardCanvas({
                像文件夹列表里的一行，不再是浮在左边的小方卡 */
             <div
               key={z.id}
+              data-board-zone={z.id}
               onClick={(e) => {
                 if (e.target.closest('[data-zone-action]')) return;
                 if (!wasDrag()) patchZone(z.id, { collapsed: false });
@@ -1513,7 +1790,9 @@ export default function BoardCanvas({
                       data-zone-action title="把工作区内容全部加入上下文"
                       onClick={() => {
                         if (wasDrag()) return;
-                        positioned.filter(o => o.zoneId === z.id && o.type !== 'deck').forEach(handleAdd);
+                        // 判据跟单卡那个「＋」共用一份（board-kinds），
+                        // 免得两处各写各的 type 判断，改一处漏一处
+                        positioned.filter(o => o.zoneId === z.id && canAddToContext(o)).forEach(handleAdd);
                       }}
                       style={zoneHeaderBtn}
                     ><Plus size={12} /></button>
@@ -1593,11 +1872,58 @@ export default function BoardCanvas({
             />
           ))}
 
+          {/* 收纳文件夹的标题带：一条细线 + 文件夹名，把同主题的东西圈出来。
+              画成"带"不画成"框"是有意的 —— 框会跟工作区的框打架，而收纳组是
+              工作区**内部**的分节，视觉层级要更轻。 */}
+          {groupBands.map(band => (
+            <div
+              key={`${band.zoneId}:${band.name}`}
+              style={{
+                position: 'absolute', left: band.x, top: band.y, width: band.w,
+                height: GROUP_LABEL_H,
+                display: 'flex', alignItems: 'center', gap: GAP.xs,
+                pointerEvents: 'none', zIndex: 0,
+              }}
+            >
+              <Folder size={11} color={PAPER.pencil} />
+              <span style={{
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: PAPER.ink2,
+                whiteSpace: 'nowrap',
+              }}>{FOLDER_LABEL[band.name] || band.name}</span>
+              <span style={{ flex: 1, height: 1, background: PAPER.hair, opacity: 0.5 }} />
+            </div>
+          ))}
+
+          {/* 关系线（世界坐标，铺在物件之下）*/}
+          <BindingLayer
+            bindings={bindings}
+            rectOf={rectOfId}
+            epoch={positioned}
+            width={stageBounds.w}
+            height={stageBounds.h}
+            hoveredId={hoveredBinding}
+            onHover={setHoveredBinding}
+          />
+
+          {/* 正在画的那一笔（还没落盘，纯渲染层）*/}
+          {canvasTools.draft && canvasTools.draft.points.length > 1 && (
+            <svg style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none', zIndex: 290 }}>
+              <path
+                d={pointsToPath(canvasTools.draft.points)}
+                fill="none" stroke={PAPER.ink} strokeWidth={2}
+                strokeLinecap="round" strokeLinejoin="round"
+              />
+            </svg>
+          )}
+
+          {/* 在场：谁在画布上干活（PresenceLayer.jsx）*/}
+          <PresenceLayer table={presence} rectOf={rectOfId} />
+
           {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）
               单独一层浮在所有物件之上 —— 物件的 z 是会长的（pin_to_board 每次
               置顶都 zMax+1），跟舞台卡比大小早晚会盖住 agent 正在写的那个框。
               这层自己不吃事件，卡片各自开 pointerEvents。 */}
-          <div style={{ position: 'absolute', inset: 0, zIndex: 300, pointerEvents: 'none' }}>
+          <div style={{ position: 'absolute', left: 0, top: 0, zIndex: 300, pointerEvents: 'none' }}>
             <StageBoardLayer
               stageBadges={stageBadges}
               anchoredCards={anchoredCards}
@@ -1609,7 +1935,63 @@ export default function BoardCanvas({
             />
           </div>
         </div>
-        </div>
+
+        {/* 文字输入框：屏幕空间定位，但锚在世界坐标上。
+            放在世界层**外面**是有意的 —— 输入框不该跟着缩放变小变糊，
+            那样在 0.4 倍视图下根本没法打字。 */}
+        {canvasTools.textAt && (
+          <TextDraft
+            screen={{
+              x: (canvasTools.textAt.x + cam.x) * scale,
+              y: (canvasTools.textAt.y + cam.y) * scale,
+            }}
+            onCommit={canvasTools.commitText}
+            onCancel={canvasTools.cancelText}
+          />
+        )}
+
+        {/* 批注输入框：跟文字框同一个组件，只是提交后还要连一条关系线 */}
+        {commentDraft && (
+          <TextDraft
+            screen={{
+              x: (commentDraft.at.x + cam.x) * scale,
+              y: (commentDraft.at.y + cam.y) * scale,
+            }}
+            placeholder="这里想说什么…（⌘/Ctrl+Enter 贴上）"
+            onCommit={commitComment}
+            onCancel={() => setCommentDraft(null)}
+          />
+        )}
+
+        {/* 浮动工具栏（屏幕空间，不进世界层 —— 缩放画布不该把工具也缩小）*/}
+        <FloatingToolbar
+          id="board-tools"
+          boundsRef={scrollRef}
+          defaultPosition={{ x: 20, y: 20 }}
+          groups={[
+            {
+              id: 'view',
+              items: [
+                { id: 'fit', icon: Maximize2, label: '全部', title: '全部内容入镜（Shift+1）', onClick: () => camera.zoomToFit() },
+                { id: 'zoomOut', icon: Minus, title: '缩小（Ctrl -）', onClick: () => camera.zoomBy(-1) },
+                { id: 'zoomLevel', icon: null, label: `${Math.round(scale * 100)}%`, title: '回到 100%（Ctrl 0）', onClick: () => camera.zoomTo(1) },
+                { id: 'zoomIn', icon: Plus, title: '放大（Ctrl +）', onClick: () => camera.zoomBy(1) },
+              ],
+            },
+            {
+              id: 'tools',
+              type: 'mode',
+              value: tool,
+              onChange: setTool,
+              items: [
+                { id: 'select', icon: MousePointer2, title: '选择 / 拖动（V）' },
+                { id: 'text', icon: Type, title: '写一段字（T）' },
+                { id: 'draw', icon: PenLine, title: '涂鸦（P）' },
+                { id: 'comment', icon: MessageSquarePlus, title: '标注一个物件（C）' },
+              ],
+            },
+          ]}
+        />
       </div>
 
       {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}
@@ -1742,12 +2124,16 @@ function BoardObject({
 }) {
   const [hover, setHover] = useState(false);
   const sz = sizeOf(o);
+  // 涂鸦不是一张纸，是一笔墨 —— 不给卡片外观（底色/描边/影子全免），
+  // 只在悬停时浮出一点底色示意"这一笔是可以拖的"。
+  const isInk = o.type === 'scribble';
   const base = {
     position: 'absolute', left: o.pos.x, top: o.pos.y, width: sz.w,
     zIndex: o.pos.z || 1,
-    borderRadius: RADIUS.xl, background: COLOR.bgCard,
-    border: `1px solid ${added ? COLOR.text : COLOR.borderLt}`,
-    boxShadow: hover ? '0 4px 14px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.05)',
+    borderRadius: isInk ? 4 : RADIUS.xl,
+    background: isInk ? (hover ? alpha(CANVAS.brass, 0.10) : 'transparent') : COLOR.bgCard,
+    border: isInk ? 'none' : `1px solid ${added ? COLOR.text : COLOR.borderLt}`,
+    boxShadow: isInk ? 'none' : (hover ? '0 4px 14px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.05)'),
     cursor: 'grab', userSelect: 'none',
     touchAction: 'none',
     animation: POP_IN,
@@ -1761,16 +2147,19 @@ function BoardObject({
     transition: `${animateLayout ? `left 380ms ${EASE}, top 380ms ${EASE}, ` : ''}width 260ms ${EASE}, box-shadow 0.15s`,
   };
 
-  // deck 卡自带常驻标题栏（编辑 / 内嵌渲染都在上面），外挂那条 hover 工具小标
-  // 是重复的第二套按钮 —— 2026-07-28 撤掉，deck 只留卡内那一套。
-  const actions = [];
-  if (o.type !== 'deck') actions.push({ icon: Plus, title: added ? '已在托盘' : '加入上下文', fn: onAdd });
-  if (o.type === 'doc' || o.type === 'note') actions.push({ icon: BookOpen, title: '阅读', fn: onOpenViewer });
-  if (o.type === 'image') actions.push({ icon: ExternalLink, title: '详情', fn: onDetail });
-  // .md 两条路都给：「阅读」是渲染过的（默认，双击也走这条），「打开」是原始文件
-  if (o.type === 'file' && isMarkdown(o)) actions.push({ icon: BookOpen, title: '阅读', fn: onOpenViewer });
-  if (o.type === 'file') actions.push({ icon: ExternalLink, title: '打开', fn: onOpenFile });
-  if (o.type === 'note') actions.push({ icon: Trash2, title: '删除', fn: onDeleteNote });
+  // 按钮清单由形态表给（board-kinds.js 的 actions，顺序即渲染顺序），
+  // 这里只把动作 id 兑换成图标和回调。
+  // deck 那条是空的：它自带常驻标题栏（编辑 / 内嵌渲染都在上面），外挂 hover
+  // 工具小标是重复的第二套按钮 —— 2026-07-28 撤掉。
+  const ACTION_DEFS = {
+    add: { icon: Plus, title: added ? '已在托盘' : '加入上下文', fn: onAdd },
+    read: { icon: BookOpen, title: '阅读', fn: onOpenViewer },
+    detail: { icon: ExternalLink, title: '详情', fn: onDetail },
+    // .md 两条路都给：「阅读」是渲染过的（双击也走这条），「打开」是原始文件
+    open: { icon: ExternalLink, title: '打开', fn: onOpenFile },
+    delete: { icon: Trash2, title: '删除', fn: onDeleteNote },
+  };
+  const actions = actionsOf(o).map(id => ACTION_DEFS[id]).filter(Boolean);
 
   const Actions = hover && actions.length > 0 && (
     <div data-board-action style={{
@@ -2022,6 +2411,24 @@ function BoardObject({
         </div>
       )}
 
+      {o.type === 'scribble' && (
+        /* 涂鸦：路径存的是**相对物件左上角**的偏移，所以这里不用管 o.pos，
+           直接铺满卡片即可 —— 拖动涂鸦只改 x/y，路径一个字节不重写。
+           overflow:visible 是必需的：笔画的抗锯齿会稍稍溢出包围盒。 */
+        <svg
+          width={sz.w} height={sz.h}
+          style={{ display: 'block', overflow: 'visible', pointerEvents: 'none' }}
+        >
+          <path
+            d={o.data?.d || ''}
+            fill="none"
+            stroke={SCRIBBLE_INK[o.data?.color] || PAPER.ink}
+            strokeWidth={o.data?.width || 2}
+            strokeLinecap="round" strokeLinejoin="round"
+          />
+        </svg>
+      )}
+
       {o.type === 'note' && <NoteFaces o={o} />}
 
       {o.type === 'file' && (
@@ -2054,6 +2461,57 @@ function BoardObject({
  * 任务贴（noteTask 非空）右上角带文件名小签，和项目级灵感便签区分。
  * 翻页按钮挂 data-board-action：不触发拖拽 / 双击打开。
  */
+/**
+ * 画布上写字的输入框。
+ *
+ * 提交语义：**Enter 换行、Cmd/Ctrl+Enter 提交、点别处也提交、Esc 丢弃**。
+ * 用 Enter 直接提交是错的 —— 用户在画布上写的多半是一段话不是一个词，
+ * 单行提交会把"想写三行"变成"写了三次"。
+ */
+function TextDraft({ screen, onCommit, onCancel, placeholder = '写点什么…（⌘/Ctrl+Enter 落笔）' }) {
+  const [value, setValue] = useState('');
+  const ref = useRef(null);
+  // 「点别处 = 提交」靠 onBlur 实现，但**创建它的那一次点击自己就会触发 blur**：
+  // mousedown 开框 → 自动聚焦 → 同一次点击的 mouseup 把焦点抢回画布 → blur →
+  // 当成"写完了"，空内容，框当场消失。所以 blur 要等这一拍过去才算数。
+  const settledRef = useRef(false);
+  useEffect(() => {
+    ref.current?.focus();
+    const t = setTimeout(() => { settledRef.current = true; }, 150);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div
+      data-no-pan
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute', left: screen.x, top: screen.y,
+        zIndex: 420, width: 260,
+        ...paperCard('near'), padding: GAP.sm,
+        animation: POP_IN,
+      }}
+    >
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => { if (settledRef.current) onCommit(value); else ref.current?.focus(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onCommit(value); }
+        }}
+        placeholder={placeholder}
+        rows={3}
+        style={{
+          width: '100%', border: 'none', outline: 'none', resize: 'none',
+          background: 'transparent', color: PAPER.ink,
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, lineHeight: 1.6,
+        }}
+      />
+    </div>
+  );
+}
+
 function NoteFaces({ o }) {
   const [face, setFace] = useState(0);
   const faces = useMemo(() => splitNoteFaces(o.text || ''), [o.text]);

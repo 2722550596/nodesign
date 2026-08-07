@@ -3,7 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import { Image as ImageIcon, PencilLine, Terminal, X, Bot } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SANS, FONT_SIZE, TERM, CANVAS, alpha } from '../../lib/theme.js';
 import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
-import { ZONE, STAGE_CARD_W, POP_IN, sizeOf } from '../../lib/board-geometry.js';
+import { ZONE, STAGE_CARD_W, POP_IN } from '../../lib/board-geometry.js';
+import { sizeOf } from '../../lib/board-kinds.js';
 import { AskUserQuestionView } from '../chat/Message.jsx';
 
 // 生图占位卡的身位（4:3 图区 + 一行说明），铺坑位时按它算行列
@@ -30,13 +31,26 @@ const SHIMMER_MIN_H = 84;        // 再挤也不低于这个高度
 
 // ── 状态机 ──
 
-export function useStageState({ stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand, onStageTarget, onPreviewRequest }) {
+export function useStageState({
+  stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand,
+  onStageTarget, onPreviewRequest,
+  /**
+   * 原始事件旁路。舞台层独占 `stageRef`，别的消费者（在场层）没有第二个入口 ——
+   * 与其再开一条事件通道，不如让它在这儿分一份出去。**先分再处理**：舞台层
+   * 自己的 switch 会 `return` 掉不认识的事件，放在后面就漏掉一半。
+   */
+  onRawEvent,
+}) {
   const [stageCards, setStageCards] = useState({});
   const [stageBadges, setStageBadges] = useState({});
   const followedBlocksRef = useRef(new Set());   // 每张舞台卡只推一次镜头
   // Task/Agent 工具入参里的 subagent_type（真名）。task_started 的 taskType 可能
   // 是 'local_agent' 泛名，tool_use 快照和 task.started 到达顺序不定 → 两头接
   const pendingAgentTypeRef = useRef(new Map());
+  // 用 ref 转一手：直接进 handleStageEvent 的依赖会让 stageRef 每次重挂，
+  // 重挂的缝里到达的事件会丢。
+  const onRawEventRef = useRef(null);
+  onRawEventRef.current = onRawEvent;
 
   const removeStageCardLater = useCallback((blockId, ms) => {
     setTimeout(() => {
@@ -57,6 +71,7 @@ export function useStageState({ stageRef, currentSessionId, siteTasks, followToO
   });
 
   const handleStageEvent = useCallback((evt) => {
+    onRawEventRef.current?.(evt);
     switch (evt.type) {
       case 'run.tool_use.started': {
         const kind = stageKindOf(evt.name);

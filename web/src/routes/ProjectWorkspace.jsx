@@ -7,7 +7,7 @@ import AppShell from '../components/layout/AppShell.jsx';
 import FloatingPanel from '../components/layout/FloatingPanel.jsx';
 import { PanelManagerProvider } from '../components/layout/PanelManager.jsx';
 // PanelMenu 已下架（用户反馈"面板"按钮太冗余）— 浮窗仍可通过 hooks 直接 toggle
-import { Sliders } from 'lucide-react';
+import { Sliders, MessageSquare } from 'lucide-react';
 import ChatPanel from '../components/chat/ChatPanel.jsx';
 import CanvasFrame from '../components/canvas/CanvasFrame.jsx';
 // InspectTab 由 InspectFloatingCard 间接使用（不在此处直接 import）
@@ -132,6 +132,8 @@ export default function ProjectWorkspace() {
   const boardApiRef = useRef(null);
   // 舞台层（2026-07-28）：run.* 工具流原样转发进 BoardCanvas，画布演出 agent 实时动作
   const stageRef = useRef(null);
+  // 视口容器（画布铺满它、浮窗在它里面拖）。浮动工具栏的限位也用这一个。
+  const stageAreaRef = useRef(null);
   // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
   const [subagents, setSubagents] = useState({});
   useEffect(() => { setSubagents({}); }, [currentSessionId]);
@@ -299,11 +301,26 @@ export default function ProjectWorkspace() {
   //  - system / decisions → toolbar Settings popover（C2）
   //  - inspect / comments → 选中元素自动弹的 contextual InspectFloatingCard（C3）
   //  - 仅 tweaks 保留 floating panel（C5 schema 驱动）
-  const defaultPanels = useMemo(() => ({
-    tweaks:    { position: { x: 96, y: 160 },  size: { width: 320, height: 360 }, visible: false, zIndex: 100 },
-  }), []);
+  const defaultPanels = useMemo(() => {
+    // 聊天栏默认贴右侧、留出顶栏高度，高度吃满可视区。**位置只是默认值** ——
+    // 拖过一次之后就由 localStorage 说了算（PanelManager 持久化 per-project）。
+    // 用 window 尺寸算是因为 panel 坐标是绝对像素，而"贴右边"要知道容器多宽；
+    // 容器就是视口减顶栏，首帧拿 window 足够准，之后 ResizeObserver 会收边。
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+    const chatW = 380;
+    return {
+      chat: {
+        position: { x: Math.max(16, vw - chatW - 20), y: 16 },
+        size: { width: chatW, height: Math.max(420, vh - 150) },
+        visible: true, zIndex: 120,
+      },
+      tweaks: { position: { x: 96, y: 160 }, size: { width: 320, height: 360 }, visible: false, zIndex: 100 },
+    };
+  }, []);
 
   const panelMeta = useMemo(() => ({
+    chat:      { label: '对话',      icon: MessageSquare },
     tweaks:    { label: 'Tweaks',    icon: Sliders },
   }), []);
 
@@ -1851,63 +1868,29 @@ export default function ProjectWorkspace() {
         </>
       }
     >
-      {/* 主区两栏：左 ChatPanel 固定 + 右 Canvas section（占满 + 浮窗叠加） */}
-      {/* AppShell children 包装层是普通 div（非 flex），用 height:100% 拿满 */}
-      <div style={{
-        height: '100%', display: 'flex', minHeight: 0,
-        background: STAGE.bg,
-        overflow: 'hidden',
-      }}>
-        {/* 左栏 chat 固定 */}
-        {/* 分界用软投影不用硬线（2026-07-30）：一条 1px 边框是"画了一条线"，
-            右向的淡投影是"这一栏有点厚度"，跟画布那张纸的层次读起来更顺。
-            圆角留给真正浮起来的东西（站点窗 / deck 窗），固定轨道不做成卡片 ——
-            它既不能拖也不能关，浮起来的暗示是假的，还要吃掉本就只有 360 的宽度。 */}
-        <aside style={{
-          width: 360, flexShrink: 0,
-          display: 'flex', flexDirection: 'column',
-          background: COLOR.bgWhite,
-          boxShadow: '2px 0 10px rgba(45,36,24,0.05)',
-          zIndex: 1,
-          minHeight: 0,
-        }}>
-          <ChatPanel
-            messages={messages}
-            onSend={handleSend}
-            isStreaming={isStreaming}
-            queueDepth={queueDepth}
-            wsStatus={wsStatus}
-            lastEventAt={lastEventAt}
-            trayItems={inputs}
-            onRemoveTrayItem={handleRemoveInput}
-            onPickFile={handleAddInput}
-            promptSuggestion={promptSuggestion}
-            onDismissSuggestion={() => setPromptSuggestion(null)}
-            agentProgress={agentProgress}
-            thinkingTokens={thinkingTokens}
-            onStop={currentRunId ? handleStop : null}
-            todos={todos}
-            sessionTitle={currentSessionTitle}
-            subagents={subagents}
-            onOpenSessionList={() => setSessionListOpen(true)}
-            onCloseSession={handleCloseSession}
-            onNewChat={() => navigate(`/projects/${id}/work`)}
-            hasActiveSession={!!currentSessionId}
-            systemInfo={systemInfo}
-            contextUsage={contextUsage}
-            onCompact={handleCompact}
-            onRefreshUsage={refreshContextUsage}
-            projectId={id}
-            sessionId={currentSessionId}
-            onCanvasReload={handleCanvasReload}
-          />
-        </aside>
-
-        {/* 右主区：CanvasFrame 占满（边到边，无 padding 卡片）+ 5 浮窗叠加 */}
-        {/* bounds='parent' 限制浮窗在此 section 内，不跑屏外、不跑到 chat 上 */}
-        <section style={{
-          flex: 1, minWidth: 0,
+      {/* 主区一层：画布占满全屏，聊天栏浮在它之上（2026-08-07 外壳改制）
+       *
+       * 原来是「左 360px 固定 chat + 右 canvas」两栏。改的理由是画布成了唯一
+       * 顶层曲面，固定侧栏等于在最值钱的横向空间上永久收 360px 的税，而
+       * DESKTOP_W=1360 这个逻辑宽当初就是照着"旁边有侧栏"定的。
+       *
+       * **「跟随镜头」是靠层级实现的，不是靠代码跟随**：聊天栏是这个视口容器的
+       * absolute 子元素，跟画布内容的滚动/相机不在同一个坐标系里，所以画布怎么
+       * 动它都待在屏幕原处。将来换成真相机（无限画布）也一样成立 —— 它在屏幕
+       * 空间，不在画布空间。
+       */}
+      <div
+        ref={stageAreaRef}
+        style={{
+          height: '100%', minHeight: 0,
           position: 'relative',
+          background: STAGE.bg,
+          overflow: 'hidden',
+        }}
+      >
+        {/* 画布：铺满整个视口容器，边到边 */}
+        <section style={{
+          position: 'absolute', inset: 0,
           display: 'flex', flexDirection: 'column',
           background: COLOR.bgWhite,
         }}>
@@ -1973,6 +1956,51 @@ export default function ProjectWorkspace() {
             />
           </FloatingPanel>
         </section>
+
+        {/* 对话浮窗 —— 主界面，所以 closable={false}：PanelMenu 早已下架，
+            关掉的浮窗没有任何 UI 能叫回来，只能清 localStorage。
+            放在 canvas section **之外**、视口容器之内：它跟画布内容不共用
+            坐标系，画布怎么滚它都待在屏幕原处（这就是「跟随镜头」）。 */}
+        <FloatingPanel
+          id="chat"
+          title={currentSessionTitle || '对话'}
+          icon={MessageSquare}
+          closable={false}
+          minWidth={320}
+          minHeight={280}
+          bodyStyle={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+        >
+          <ChatPanel
+            messages={messages}
+            onSend={handleSend}
+            isStreaming={isStreaming}
+            queueDepth={queueDepth}
+            wsStatus={wsStatus}
+            lastEventAt={lastEventAt}
+            trayItems={inputs}
+            onRemoveTrayItem={handleRemoveInput}
+            onPickFile={handleAddInput}
+            promptSuggestion={promptSuggestion}
+            onDismissSuggestion={() => setPromptSuggestion(null)}
+            agentProgress={agentProgress}
+            thinkingTokens={thinkingTokens}
+            onStop={currentRunId ? handleStop : null}
+            todos={todos}
+            sessionTitle={currentSessionTitle}
+            subagents={subagents}
+            onOpenSessionList={() => setSessionListOpen(true)}
+            onCloseSession={handleCloseSession}
+            onNewChat={() => navigate(`/projects/${id}/work`)}
+            hasActiveSession={!!currentSessionId}
+            systemInfo={systemInfo}
+            contextUsage={contextUsage}
+            onCompact={handleCompact}
+            onRefreshUsage={refreshContextUsage}
+            projectId={id}
+            sessionId={currentSessionId}
+            onCanvasReload={handleCanvasReload}
+          />
+        </FloatingPanel>
       </div>
 
       <ShareModal show={shareOpen} onClose={() => setShareOpen(false)} project={project} />

@@ -83,6 +83,17 @@ export default function FloatingPanel({
   // 默认 'parent' —— 浮窗只在父容器内拖（典型场景：浮在 canvas 上不出 canvas）。
   // snap-to-edge 仅 bounds==='window' 时启用（小区域内 snap 没意义）。
   bounds = 'parent',
+  /**
+   * 能不能关。**默认能，但主界面必须传 false**。
+   *
+   * 受控 panel 原本一律带关闭钮（`effectiveOnClose` 在 controlled 时自动兜底），
+   * 而 PanelMenu 那个"面板"菜单 2026 年已下架 —— 也就是说**关掉的浮窗没有任何
+   * UI 能叫回来**，只能清 localStorage。次级面板（Tweaks）关了无所谓，聊天栏
+   * 关了就等于把主界面弄丢了。所以这个开关是必需的，不是可选的礼貌。
+   */
+  closable = true,
+  /** 标题栏右侧塞自定义控件（收起钮之类），排在关闭钮左边 */
+  titleExtra,
 }) {
   const state = usePanelState(id);
   const [dragging, setDragging] = useState(false);
@@ -147,7 +158,9 @@ export default function FloatingPanel({
   };
 
   const interacting = dragging || resizing;
-  const effectiveOnClose = onClose || (controlled ? () => state.setVisible(false) : null);
+  const effectiveOnClose = closable
+    ? (onClose || (controlled ? () => state.setVisible(false) : null))
+    : null;
 
   return (
     <>
@@ -225,6 +238,7 @@ export default function FloatingPanel({
         >
           {Icon && <Icon size={12} style={{ color: COLOR.text4 }} />}
           <span style={{ flex: 1 }}>{title}</span>
+          {titleExtra}
           {effectiveOnClose && (
             <button
               onClick={(e) => { e.stopPropagation(); effectiveOnClose(); }}
