@@ -1,5 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import CanvasToolbar from './CanvasToolbar.jsx';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  Eye, Edit3, Move, Code2, Pin, Maximize2, Minus, Plus,
+  Sliders, MessageSquare, RotateCcw, Settings,
+} from 'lucide-react';
+import ArtifactWindow from './ArtifactWindow.jsx';
 import HtmlIframe from './HtmlIframe.jsx';
 import EditOverlay from './EditOverlay.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
@@ -18,18 +22,21 @@ import PendingMoveMarkers from './PendingMoveMarkers.jsx';
 import { applyMoveToRuntime, applyStyleToRuntime } from '../../lib/pending-edit-apply.js';
 import { usePanelManager } from '../layout/PanelManager.jsx';
 import { SessionConfig } from '../../lib/api.js';
-import { COLOR } from '../../lib/theme.js';
 
 /**
- * DeckWindow — 画布内最大化的 deck 编辑窗口（2026-07-28 桌面化）
+ * DeckWindow — deck 的内容层（2026-07-28 桌面化；2026-08-07 外壳收归 ArtifactWindow）
  *
  * 工作台是唯一顶层曲面：编辑一个 deck 不再是"切走整个中栏"，而是在桌面上
- * 开一扇最大化的窗——铺满视口绝大部分、桌面压暗在底、窗口头部自带
- * Edit/Drag/Preview/Code 标签和关闭钮，关掉落回画布的内嵌预览态。
+ * 开一扇最大化的窗——铺满视口绝大部分、桌面压暗在底、关掉落回画布的内嵌预览态。
  *
  * 原 CanvasFrame 的 deck 编辑内脏（iframe + bridge + overlay 全家）整体迁到
  * 这里；窗口铺开后编辑器拿到稳定的 1:1 坐标系（DirectEdit / 拖拽 overlay
  * 不用叠画布缩放）。
+ *
+ * 2026-08-07：窗框和工具的容器都交给 ArtifactWindow（三种产物同一扇窗），
+ * 这里只负责 deck 自己的内容与那套工具的定义。原来那条 44px 的 CanvasToolbar
+ * 整条退役 —— 它的按钮变成浮动工具栏的三组，Tweaks 的启用开关挪进 System
+ * （它是会话设置不是工具）。
  */
 const ASPECT_DIMS = {
   '16:9':  { w: 1920, h: 1080 },
@@ -48,6 +55,7 @@ function extractAspect(html) {
 
 export default function DeckWindow({
   tab, onTabChange, onClose,
+  title = '幻灯',
   htmlSrc, htmlContent,
   selectedAnchor, onSelectChange,
   onTextEdit,
@@ -161,6 +169,8 @@ export default function DeckWindow({
       if (e.key !== 'Escape') return;
       const t = e.target;
       if (t?.getAttribute?.('contenteditable') === 'true') return;
+      // 浮层开着时 ESC 归浮层（它们自己会关）—— 不然一下 ESC 把浮层和窗一起关了
+      if (systemOpen || a11yOpen || commentOverviewOpen) return;
       if (selectedAnchor) onSelectChange?.(null);
       else onClose?.();
     };
@@ -174,7 +184,7 @@ export default function DeckWindow({
       window.removeEventListener('keydown', handler);
       try { iframeDocRef?.removeEventListener('keydown', handler); } catch { /* */ }
     };
-  }, [selectedAnchor, iframeDoc, onSelectChange, onClose]);
+  }, [selectedAnchor, iframeDoc, onSelectChange, onClose, systemOpen, a11yOpen, commentOverviewOpen]);
 
   // iframe 主动 postMessage 同步当前页（翻页信号 hook 点）
   useEffect(() => {
@@ -232,72 +242,117 @@ export default function DeckWindow({
     onSelectChange?.(null);
   };
 
+  const openComments = () => {
+    setA11yOpen(false);
+    setSystemOpen(false);
+    setCommentOverviewOpen(o => !o);
+  };
+  const openSystem = () => {
+    setA11yOpen(false);
+    setCommentOverviewOpen(false);
+    setSystemOpen(o => !o);
+  };
+
+  const openCommentCount = Array.isArray(comments)
+    ? comments.filter(c => c.status !== 'resolved').length
+    : 0;
+
+  const groups = useMemo(() => [
+    {
+      id: 'mode',
+      type: 'mode',
+      value: tab,
+      onChange: (m) => { onTabChange?.(m); onSelectChange?.(null); },
+      items: [
+        { id: 'preview', icon: Eye, label: '预览', title: '看成品（左右键翻页）' },
+        { id: 'edit', icon: Edit3, label: '编辑', title: '双击文字直接改 · 单击元素弹评论卡' },
+        {
+          id: 'drag', icon: Move, label: '拖拽',
+          disabled: isStreaming,
+          title: isStreaming ? 'agent 正在跑，拖拽暂停以免和它抢同一份源码' : '拖动元素调布局',
+        },
+        { id: 'code', icon: Code2, label: '源码', title: '看/改这一份 HTML' },
+      ],
+    },
+    tab === 'drag' && {
+      id: 'dragmode',
+      items: [{
+        id: 'free', icon: Pin, label: dragFreeMode ? '自由' : '嵌入',
+        active: dragFreeMode,
+        title: dragFreeMode
+          ? '自由摆放 · 松手落到像素位置（P 切回嵌入）'
+          : '嵌入 · 松手按 DOM 树插进容器（P 切自由摆放）',
+        onClick: () => setDragFreeMode(v => !v),
+      }],
+    },
+    tab !== 'code' && {
+      id: 'zoom',
+      items: [
+        { id: 'zoomOut', icon: Minus, title: '缩小', onClick: () => setZoom(Math.max(0.25, effectiveZoom - 0.1)) },
+        {
+          id: 'zoomLevel', label: `${Math.round(effectiveZoom * 100)}%`,
+          active: zoom === 'fit',
+          title: zoom === 'fit' ? '当前自适应窗口' : '点一下自适应窗口',
+          onClick: () => setZoom('fit'),
+        },
+        { id: 'zoomIn', icon: Plus, title: '放大', onClick: () => setZoom(Math.min(3, effectiveZoom + 0.1)) },
+        { id: 'fit', icon: Maximize2, title: '自适应窗口', onClick: () => setZoom('fit') },
+      ],
+    },
+    {
+      id: 'actions',
+      items: [
+        {
+          id: 'tweaks', icon: Sliders,
+          active: tweaksOpen,
+          disabled: !tweaksEnabled,
+          title: !tweaksEnabled
+            ? 'Tweaks 模式已关（在 System 里开）'
+            : tweaksAvailable ? 'Tweaks：拖控件实时改样式' : 'Tweaks（agent 还没暴露参数 — 跟它说一句让它 expose_tweaks）',
+          onClick: handleToggleTweaks,
+        },
+        {
+          id: 'comment', icon: MessageSquare,
+          label: openCommentCount > 0 ? String(openCommentCount) : undefined,
+          active: commentOverviewOpen,
+          btnRef: commentBtnRef,
+          title: '这一份上已有的评论',
+          onClick: openComments,
+        },
+        { id: 'reload', icon: RotateCcw, title: '重载（agent 改完没刷新时用）', onClick: handleReload },
+        {
+          id: 'system', icon: Settings,
+          active: systemOpen,
+          btnRef: systemBtnRef,
+          title: 'System：项目档案 / Tweaks 模式 / A11y',
+          onClick: openSystem,
+        },
+      ],
+    },
+  ].filter(Boolean),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [tab, isStreaming, dragFreeMode, zoom, effectiveZoom, tweaksOpen, tweaksEnabled,
+    tweaksAvailable, commentOverviewOpen, systemOpen, openCommentCount]);
+
   return (
-    <div style={{ position: 'absolute', inset: 0, zIndex: 120 }}>
-      <style>{'@keyframes ndDimIn{from{opacity:0}to{opacity:1}}'}</style>
-      {/* 桌面压暗层：点击 = 关窗回桌面 */}
-      <div
-        onClick={onClose}
-        title="点击回到工作台"
-        style={{
-          position: 'absolute', inset: 0,
-          background: 'rgba(32, 26, 14, 0.4)',
-          animation: 'ndDimIn 200ms ease',
-        }}
-      />
-      {/* 最大化窗口 */}
-      <div style={{
-        position: 'absolute', inset: '16px 20px',
-        background: COLOR.bgWhite, borderRadius: 14, overflow: 'hidden',
-        boxShadow: '0 24px 80px rgba(30,22,8,0.45)',
-        display: 'flex', flexDirection: 'column',
-        animation: 'ndPopIn 240ms cubic-bezier(0.32, 0.72, 0, 1)',
-      }}>
-        {showCandidateBar && (
-          <CanvasCandidateBar
-            candidates={candidates}
-            activeId={activeCandidateId}
-            onSelect={onSelectCandidate}
-            onAdd={onAddCandidate}
-            onRemove={onRemoveCandidate}
-            onRename={onRenameCandidate}
-          />
-        )}
-
-        <CanvasToolbar
-          mode={tab}
-          onModeChange={(m) => { onTabChange?.(m); onSelectChange?.(null); }}
-          onClose={onClose}
-          dragFreeMode={dragFreeMode}
-          onDragFreeModeChange={setDragFreeMode}
-          isStreaming={isStreaming}
-          zoom={effectiveZoom}
-          isAutoFit={zoom === 'fit'}
-          onZoomChange={(z) => setZoom(z)}
-          onFitToggle={() => setZoom('fit')}
-          onTweaksClick={handleToggleTweaks}
-          tweaksAvailable={tweaksAvailable}
-          tweaksOpen={tweaksOpen}
-          tweaksEnabled={tweaksEnabled}
-          onTweaksEnabledChange={handleTweaksEnabledChange}
-          onCommentClick={() => {
-            setA11yOpen(false);
-            setSystemOpen(false);
-            setCommentOverviewOpen(o => !o);
-          }}
-          commentOverviewOpen={commentOverviewOpen}
-          commentBtnRef={commentBtnRef}
-          commentCount={Array.isArray(comments) ? comments.filter(c => c.status !== 'resolved').length : 0}
-          onReload={handleReload}
-          onSystemClick={() => {
-            setA11yOpen(false);
-            setCommentOverviewOpen(false);
-            setSystemOpen(o => !o);
-          }}
-          systemBtnRef={systemBtnRef}
-          systemActive={systemOpen}
+    <ArtifactWindow
+      kind="deck"
+      title={title}
+      subtitle={aspect}
+      onClose={onClose}
+      escToClose={false}
+      groups={groups}
+      headerExtra={showCandidateBar ? (
+        <CanvasCandidateBar
+          candidates={candidates}
+          activeId={activeCandidateId}
+          onSelect={onSelectCandidate}
+          onAdd={onAddCandidate}
+          onRemove={onRemoveCandidate}
+          onRename={onRenameCandidate}
         />
-
+      ) : null}
+    >
         {(tab === 'edit' || tab === 'preview' || tab === 'drag') && (
           <div ref={iframeWrapRef} style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
             <HtmlIframe
@@ -445,6 +500,8 @@ export default function DeckWindow({
             sessionId={sessionId}
             decisionsReloadKey={decisionsReloadKey}
             onA11yClick={() => { setSystemOpen(false); setA11yOpen(true); }}
+            tweaksEnabled={tweaksEnabled}
+            onTweaksEnabledChange={handleTweaksEnabledChange}
           />
         )}
 
@@ -464,7 +521,6 @@ export default function DeckWindow({
             }}
           />
         )}
-      </div>
-    </div>
+    </ArtifactWindow>
   );
 }

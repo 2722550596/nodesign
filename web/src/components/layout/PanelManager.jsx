@@ -63,10 +63,11 @@ export function PanelManagerProvider({ projectId, defaultPanels, panelMeta = {},
     };
   }, [projectId, panels]);
 
+  // 没在 defaultPanels 里登记过的 id 也接住 —— 原来直接 return prev，表现是
+  // **拖不动而且不报错**（工具条这种"位置全靠拖出来"的浮件天生没有默认条目）。
+  // saved 里多出来的 id mergeLayouts 本来就保留，这里补上写入端。
   const setPanelPosition = useCallback((id, position) => {
-    setPanels(prev => prev[id]
-      ? { ...prev, [id]: { ...prev[id], position } }
-      : prev);
+    setPanels(prev => ({ ...prev, [id]: { ...(prev[id] || {}), position } }));
   }, []);
 
   const setPanelSize = useCallback((id, size) => {

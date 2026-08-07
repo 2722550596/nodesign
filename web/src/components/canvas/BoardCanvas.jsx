@@ -1218,10 +1218,12 @@ export default function BoardCanvas({
 
   const focusDeck = (o) => {
     if (o.type === 'world') {
-      // 阶段 1 还没有 WorldWindow：先开世界书本身。世界的「打开」到底该是
-      // 什么（星形展开？地图全屏？）是阶段 5 的产品决定，在那之前落到最不
-      // 会错的地方 —— 那份文件。
-      onFocusDeck?.({ kind: 'task', task: o.task, file: o.entry || '世界.md', title: o.title });
+      // 世界窗（2026-08-07）：地图 + 世界书两个视图，跟 deck / 站点同一副外壳。
+      // 在这之前这里落到「开那份 .md」—— 因为当时压根没有世界窗。
+      onFocusDeck?.({
+        kind: 'world', task: o.task, base: o.base || `tasks/${o.task}`,
+        entry: o.entry || '世界.md', title: o.title, nodes: o.nodes,
+      });
     } else if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
@@ -2343,7 +2345,7 @@ function BoardObject({
               fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
             }}>{o.title}</span>
-            <button data-board-action title="打开世界书" onClick={onFocus} style={winBtn}>
+            <button data-board-action title="打开世界（地图 + 世界书）" onClick={onFocus} style={winBtn}>
               <PencilLine size={11} />
             </button>
             <button data-board-action title="铺开地图" onClick={onToggleExpand} style={winBtn}>
@@ -2373,7 +2375,7 @@ function BoardObject({
             <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
               {o.title}
             </span>
-            <button data-board-action title="打开世界书" onClick={onFocus} style={winBtn}>
+            <button data-board-action title="打开世界（地图 + 世界书）" onClick={onFocus} style={winBtn}>
               <PencilLine size={11} />
             </button>
             <button data-board-action title="收起" onClick={onToggleExpand} style={winBtn}>

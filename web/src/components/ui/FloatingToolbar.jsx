@@ -36,11 +36,38 @@ import { usePanelState } from '../layout/PanelManager.jsx';
 /** 拖过这么多像素才算拖，否则算点击（防手抖把点按钮变成微拖） */
 const DRAG_SLOP = 3;
 
+/** 贴边留白：工具条不要顶死容器边缘 */
+const ANCHOR_INSET = 20;
+
+/**
+ * 按 anchor 算首次落点。要等**量到自己多宽**才算得出来，所以在 layout effect 里做。
+ * 只在没有存过位置时用一次 —— 存过就听用户的。
+ */
+function anchoredPosition(anchor, bounds, el) {
+  const bw = bounds.clientWidth;
+  const bh = bounds.clientHeight;
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  const cx = Math.max(ANCHOR_INSET, Math.round((bw - w) / 2));
+  switch (anchor) {
+    case 'bottom-center': return { x: cx, y: Math.max(ANCHOR_INSET, bh - h - ANCHOR_INSET) };
+    case 'top-center':    return { x: cx, y: ANCHOR_INSET };
+    case 'top-right':     return { x: Math.max(ANCHOR_INSET, bw - w - ANCHOR_INSET), y: ANCHOR_INSET };
+    default:              return { x: ANCHOR_INSET, y: ANCHOR_INSET };
+  }
+}
+
 export default function FloatingToolbar({
   /** 传了就走 PanelManager 持久化位置；不传就是纯局部状态 */
   id,
   groups = [],
   defaultPosition = { x: 24, y: 24 },
+  /**
+   * 首次落点按容器算（'bottom-center' | 'top-center' | 'top-right' | 'top-left'）。
+   * 给了它就压过 defaultPosition —— 「贴着底边居中」这种位置写不成常量，
+   * 得知道容器多大、自己多宽。存过位置之后一律听存的。
+   */
+  anchor = null,
   /** 组之间的堆叠方向。参考图是竖着堆两条，所以默认 column */
   stack = 'column',
   /** 限位容器（不传就不限位）。传 ref 或 DOM 元素都行 */
@@ -54,11 +81,39 @@ export default function FloatingToolbar({
   const elRef = useRef(null);
   const dragRef = useRef(null);
   const [dragging, setDragging] = useState(false);
+  // 首帧还没量出落点时先藏着：从 (24,24) 跳到底部居中是能看见的一跳
+  const [placed, setPlaced] = useState(() => !anchor || !!panel?.position);
 
   const commit = useCallback((p) => {
     if (panel?.setPosition) panel.setPosition(p);
     else setLocalPos(p);
   }, [panel]);
+
+  /**
+   * 首次落点：量到容器和自己的尺寸之后算一次，之后再不插手。
+   *
+   * ⚠️ 这里**不能用 useLayoutEffect**：React 提交阶段是子在前父在后，子组件的
+   * layout effect 跑的时候，父组件的 ref 还没挂上 —— `boundsRef.current` 是
+   * null。而它一旦空跑一次就没有下一次渲染来救（位置没变=没有 setState），
+   * 工具条就永远停在 hidden。改成 passive effect（此时父 ref 已挂）+ rAF 重试
+   * 兜住"这一帧还没量出来"。
+   */
+  const anchoredRef = useRef(false);
+  useEffect(() => {
+    if (!anchor || anchoredRef.current) return;
+    if (panel?.position) { anchoredRef.current = true; setPlaced(true); return; }
+    let raf = 0;
+    const tryPlace = () => {
+      const bounds = boundsRef?.current;
+      const el = elRef.current;
+      if (!bounds || !el || !el.offsetWidth) { raf = requestAnimationFrame(tryPlace); return; }
+      anchoredRef.current = true;
+      commit(anchoredPosition(anchor, bounds, el));
+      setPlaced(true);
+    };
+    tryPlace();
+    return () => cancelAnimationFrame(raf);
+  });
 
   const onPointerDown = useCallback((e) => {
     // 按在按钮上不起拖 —— 整条都能拖，除了按钮
@@ -136,6 +191,7 @@ export default function FloatingToolbar({
         // 拖拽中略透，让底下的内容还看得见落点
         opacity: dragging ? 0.88 : 1,
         transition: 'opacity 0.15s',
+        visibility: placed ? 'visible' : 'hidden',
         ...style,
       }}
     >
@@ -168,7 +224,9 @@ function ToolGroup({ group }) {
           key={it.id}
           item={it}
           boxed={boxed}
-          active={isMode && group.value === it.id}
+          // 模式组的选中由组的 value 定；动作组里也有"亮着"的（Tweaks 面板开着、
+          // 缩放正处于自适应），那种自己报 active
+          active={isMode ? group.value === it.id : !!it.active}
           onPick={() => (isMode ? group.onChange?.(it.id) : it.onClick?.())}
         />
       ))}
@@ -190,6 +248,7 @@ function ToolButton({ item, boxed, active, onPick }) {
 
   return (
     <button
+      ref={item.btnRef}
       data-tool-btn={item.id}
       title={item.title || item.label || item.id}
       disabled={disabled}

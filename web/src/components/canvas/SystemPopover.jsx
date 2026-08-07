@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { useAnchoredPosition } from '../../lib/anchored-popover.js';
+import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import SystemTab from '../context-panel/SystemTab.jsx';
 import DecisionsTab from '../context-panel/DecisionsTab.jsx';
 
@@ -19,9 +20,13 @@ export default function SystemPopover({
   project, deckSpec,
   projectId, sessionId, decisionsReloadKey = 0,
   onA11yClick,
+  // Tweaks 模式开关（2026-08-07 从工具栏挪进来）：它是**会话设置**不是工具 ——
+  // 决定后端给 agent 注入哪一版提示词，设一次管一整段，不该常驻占工具位。
+  tweaksEnabled = null, onTweaksEnabledChange = null,
 }) {
   const ref = useRef(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const anchored = useAnchoredPosition(anchorRef, 360);
 
   // 点外面关
   useEffect(() => {
@@ -45,9 +50,8 @@ export default function SystemPopover({
     <div
       ref={ref}
       style={{
-        position: 'absolute', top: 78, right: 16,
+        ...anchored,
         width: 360,
-        maxHeight: 'calc(100% - 100px)',
         background: COLOR.bgWhite,
         borderRadius: 2,
         boxShadow:
@@ -94,6 +98,26 @@ export default function SystemPopover({
                 <ShieldCheck size={11} /> A11y
               </button>
             </div>
+          </div>
+        )}
+
+        {onTweaksEnabledChange && (
+          <div style={{
+            padding: `${GAP.md}px ${GAP.lg}px`,
+            borderBottom: `1px solid ${COLOR.borderLt}`,
+            display: 'flex', alignItems: 'center', gap: GAP.sm,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text }}>
+                Tweaks 模式
+              </div>
+              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 2, lineHeight: 1.5 }}>
+                {tweaksEnabled
+                  ? '开：agent 会主动把核心参数做成控件让你拖'
+                  : '关：不暴露控件，改样式走对话'}
+              </div>
+            </div>
+            <ToggleSwitch checked={!!tweaksEnabled} onChange={onTweaksEnabledChange} />
           </div>
         )}
 
@@ -162,6 +186,30 @@ export default function SystemPopover({
         spec 不可在此编辑 — 改 spec 跟 agent 说，触发新 run。
       </div>
     </div>
+  );
+}
+
+/** 极简 toggle（原来长在 CanvasToolbar 里，那条工具栏 2026-08-07 退役了） */
+function ToggleSwitch({ checked, onChange, title }) {
+  return (
+    <button
+      onClick={() => onChange?.(!checked)}
+      title={title}
+      style={{
+        width: 28, height: 16, padding: 0, border: 'none',
+        borderRadius: RADIUS.lg,
+        background: checked ? COLOR.text : 'rgba(0,0,0,0.18)',
+        position: 'relative', cursor: 'pointer',
+        transition: 'background 0.15s', flexShrink: 0,
+      }}
+    >
+      <span style={{
+        position: 'absolute', top: 2, left: checked ? 14 : 2,
+        width: 12, height: 12, borderRadius: RADIUS.round,
+        background: COLOR.bgWhite, boxShadow: SHADOW.crispSm,
+        transition: 'left 0.15s',
+      }} />
+    </button>
   );
 }
 

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move } from 'lucide-react';
+import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
-import { SITE_VIEWPORTS, POP_IN } from '../../lib/board-geometry.js';
+import { SITE_VIEWPORTS } from '../../lib/board-geometry.js';
+import ArtifactWindow, { WindowBanner } from './ArtifactWindow.jsx';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 import { serializeForAI } from '../../lib/element-semantics.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
@@ -542,43 +543,60 @@ export default function SiteWindow({
 
   const pageList = useMemo(() => (pages.length ? pages : [entry]), [pages, entry]);
 
-  const tabBtn = (id, label, Icon, extra = {}) => (
-    <button
-      onClick={() => { if (!extra.disabled) { setSelected(null); setNotePanelOpen(false); setTab(id); } }}
-      title={extra.title}
-      style={{
-        display: 'flex', alignItems: 'center', gap: GAP.xs,
-        padding: '3px 9px', borderRadius: 5, border: 'none',
-        cursor: extra.disabled ? 'default' : 'pointer',
-        fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-        background: tab === id ? COLOR.text : 'transparent',
-        color: tab === id ? COLOR.bgWhite : COLOR.sub,
-        opacity: extra.disabled ? 0.4 : 1,
-      }}
-    >
-      <Icon size={11} />{label}
-    </button>
-  );
+  const VP_ICON = { monitor: Monitor, tablet: Tablet, smartphone: Smartphone };
 
-  const vpBtn = (v) => {
-    const Icon = v.icon === 'monitor' ? Monitor : v.icon === 'tablet' ? Tablet : Smartphone;
-    return (
-      <button
-        key={v.id}
-        onClick={() => setViewport(v.id)}
-        title={`${v.label} · ${v.w}px`}
-        style={{
-          display: 'flex', alignItems: 'center', gap: GAP.xs,
-          padding: `3px ${GAP.md}px`, borderRadius: 5, border: 'none', cursor: 'pointer',
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-          background: viewport === v.id ? 'rgba(0,0,0,0.07)' : 'transparent',
-          color: viewport === v.id ? COLOR.text : COLOR.sub,
-        }}
-      >
-        <Icon size={11} />{v.w}
-      </button>
-    );
-  };
+  const switchTab = (id) => { setSelected(null); setNotePanelOpen(false); setTab(id); };
+
+  const groups = useMemo(() => [
+    {
+      id: 'mode',
+      type: 'mode',
+      value: tab,
+      onChange: switchTab,
+      items: [
+        { id: 'preview', icon: Eye, label: '预览', title: '照常浏览，站内链接可点' },
+        editable && { id: 'edit', icon: Pencil, label: '编辑', title: '双击文字直接改 · 单击元素弹评论卡' },
+        draggable && {
+          id: 'drag', icon: Move, label: '拖拽',
+          disabled: isStreaming,
+          title: isStreaming ? 'agent 正在工作，拖拽暂不可用' : '拖动元素调布局',
+        },
+        { id: 'code', icon: FileCode, label: '源码', title: '看这一页的 HTML' },
+      ].filter(Boolean),
+    },
+    // 多页站点才需要页面切换；单页站点这一组是纯噪音
+    pageList.length > 1 && {
+      id: 'pages',
+      type: 'mode',
+      value: current,
+      onChange: (p) => { if (p !== current) navigateTo(p); },
+      items: pageList.map(p => ({ id: p, label: p.replace(/\.html?$/i, ''), title: p })),
+    },
+    tab !== 'code' && {
+      id: 'viewport',
+      type: 'mode',
+      value: viewport,
+      onChange: setViewport,
+      items: SITE_VIEWPORTS.map(v => ({
+        id: v.id, icon: VP_ICON[v.icon] || Monitor,
+        title: `${v.label} · 按 ${v.w}px 真实宽度渲染`,
+      })),
+    },
+    {
+      id: 'actions',
+      items: [
+        history.length > 0 && { id: 'back', icon: ArrowLeft, title: '站内后退', onClick: goBack },
+        { id: 'reload', icon: RotateCw, title: '刷新', onClick: () => { commitAllPending(); setReloadKey(k => k + 1); } },
+        {
+          id: 'open', icon: ExternalLink, title: '在新标签页打开这一页',
+          onClick: () => window.open(Assets.artifactFileUrl(projectId, relPath), '_blank', 'noopener'),
+        },
+      ].filter(Boolean),
+    },
+  ].filter(Boolean),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [tab, editable, draggable, isStreaming, pageList, current, viewport, history.length,
+    goBack, navigateTo, commitAllPending, projectId, relPath]);
 
   // overlay 全家共用的 iframe 引用。
   //
@@ -591,84 +609,16 @@ export default function SiteWindow({
   const overlayIframeRef = iframeRef;
 
   return (
-    <div data-site-window={task} style={{
-      position: 'absolute', inset: 0, zIndex: 400,
-      display: 'flex', flexDirection: 'column',
-      background: COLOR.bgWhite, animation: POP_IN,
-    }}>
-      {/* 窗口头 */}
-      <div style={{
-        height: 40, flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: GAP.sm,
-        padding: `0 ${GAP.md}px`,
-        borderBottom: `1px solid ${COLOR.borderLt}`,
-      }}>
-        <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text }}>
-          {title || task}
-        </span>
-        <div style={{ display: 'flex', gap: GAP.xxs }}>
-          {tabBtn('preview', '预览', Eye)}
-          {editable && tabBtn('edit', '编辑', Pencil)}
-          {draggable && tabBtn('drag', '拖拽', Move, isStreaming
-            ? { disabled: true, title: 'agent 正在工作，拖拽暂不可用' } : {})}
-          {tabBtn('code', '源码', FileCode)}
-        </div>
-        <div style={{ flex: 1 }} />
-        <SitePublishControl projectId={projectId} task={task} />
-        {tab !== 'code' && <div style={{ display: 'flex', gap: GAP.xxs }}>{SITE_VIEWPORTS.map(vpBtn)}</div>}
-        <button onClick={() => { commitAllPending(); setReloadKey(k => k + 1); }} title="刷新" style={iconBtn}>
-          <RotateCw size={13} />
-        </button>
-        <a
-          href={Assets.artifactFileUrl(projectId, relPath)} target="_blank" rel="noreferrer"
-          title="在新标签页打开" style={{ ...iconBtn, textDecoration: 'none' }}
-        >
-          <ExternalLink size={13} />
-        </a>
-        <button onClick={onClose} title="关闭（ESC）" style={iconBtn}>
-          <X size={14} />
-        </button>
-      </div>
-
-      {/* 地址栏：站内页面清单 + 后退 */}
-      <div style={{
-        height: 30, flexShrink: 0,
-        display: 'flex', alignItems: 'center', gap: GAP.sm,
-        padding: `0 ${GAP.md}px`,
-        borderBottom: `1px solid ${COLOR.borderLt}`,
-        background: '#fafaf9',
-        overflowX: 'auto',
-      }}>
-        <button onClick={goBack} disabled={history.length === 0} title="后退" style={{
-          ...iconBtn, opacity: history.length === 0 ? 0.3 : 1,
-          cursor: history.length === 0 ? 'default' : 'pointer',
-        }}>
-          <ArrowLeft size={12} />
-        </button>
-        {pageList.map(p => (
-          <button
-            key={p}
-            onClick={() => (p === current ? null : navigateTo(p))}
-            style={{
-              padding: `${GAP.xxs}px ${GAP.md}px`, borderRadius: RADIUS.sm, border: 'none', cursor: 'pointer',
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, whiteSpace: 'nowrap',
-              background: p === current ? 'rgba(0,0,0,0.07)' : 'transparent',
-              color: p === current ? COLOR.text : COLOR.sub,
-            }}
-          >
-            {p}
-          </button>
-        ))}
-      </div>
-
-      {/* 模式提示条：怎么用 + 构建型警示 */}
-      {(tab === 'edit' || tab === 'drag') && (
-        <div style={{
-          flexShrink: 0, padding: `${GAP.xs}px ${GAP.md}px`,
-          display: 'flex', alignItems: 'center', gap: GAP.sm,
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2,
-          background: '#fdf8ef', borderBottom: `1px solid ${COLOR.borderLt}`,
-        }}>
+    <ArtifactWindow
+      kind="site"
+      title={title || task}
+      subtitle={current}
+      onClose={onClose}
+      escToClose={false}
+      groups={groups}
+      chromeExtra={<SitePublishControl projectId={projectId} task={task} />}
+      banner={(tab === 'edit' || tab === 'drag') ? (
+        <WindowBanner>
           {tab === 'edit' ? (
             <span>双击文字直接改（Enter 保存 / Esc 还原），单击元素弹评论卡 —— 改动和评论都会带给 agent</span>
           ) : (
@@ -686,9 +636,10 @@ export default function SiteWindow({
               · 构建型站点：这里改的是构建产物，agent 会把改动同步回源再重新构建
             </span>
           )}
-        </div>
-      )}
-
+        </WindowBanner>
+      ) : null}
+    >
+      <div data-site-window={task} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* 内容区 */}
       {tab !== 'code' ? (
         <div ref={wrapRef} style={{
@@ -851,16 +802,11 @@ export default function SiteWindow({
           )}
         </div>
       ) : (
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <CodeCanvas value={sourceText} readOnly onChange={() => {}} />
         </div>
       )}
-    </div>
+      </div>
+    </ArtifactWindow>
   );
 }
-
-const iconBtn = {
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  width: 24, height: 24, borderRadius: 5,
-  border: 'none', background: 'transparent', color: COLOR.sub, cursor: 'pointer',
-};

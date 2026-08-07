@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, AlertTriangle, X, RefreshCw } from 'lucide-react';
+import { useAnchoredPosition } from '../../lib/anchored-popover.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 
 /**
@@ -11,6 +12,7 @@ import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/t
  */
 export default function A11yReviewPopover({ anchorRef, onClose, iframeDoc }) {
   const ref = useRef(null);
+  const anchored = useAnchoredPosition(anchorRef, 320);
   const [running, setRunning] = useState(false);
   const [results, setResults] = useState(null);
 
@@ -44,7 +46,7 @@ export default function A11yReviewPopover({ anchorRef, onClose, iframeDoc }) {
     <div
       ref={ref}
       style={{
-        position: 'absolute', top: 78, right: 16,
+        ...anchored,
         width: 320,
         background: COLOR.bgWhite,
         borderRadius: 2,

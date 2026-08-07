@@ -1,5 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react';
 import { MessageSquare, MapPin, Check, Trash2, X } from 'lucide-react';
+import { useAnchoredPosition } from '../../lib/anchored-popover.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { describePage } from '../../lib/element-semantics.js';
@@ -29,6 +30,7 @@ export default function CommentOverview({
   onSelectAnchor,
 }) {
   const ref = useRef(null);
+  const anchored = useAnchoredPosition(anchorRef, 380);
 
   // 点外面关
   useEffect(() => {
@@ -80,9 +82,8 @@ export default function CommentOverview({
     <div
       ref={ref}
       style={{
-        position: 'absolute', top: 78, right: 16,
+        ...anchored,
         width: 380,
-        maxHeight: 'calc(100% - 100px)',
         background: COLOR.bgWhite,
         borderRadius: 2,
         boxShadow:

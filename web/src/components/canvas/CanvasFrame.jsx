@@ -8,6 +8,7 @@ import BoardCanvas from './BoardCanvas.jsx';
 // 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
 const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
 const SiteWindow = lazy(() => import('./SiteWindow.jsx'));
+const WorldWindow = lazy(() => import('./WorldWindow.jsx'));
 
 /**
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
@@ -82,18 +83,30 @@ export default function CanvasFrame({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // 站点窗（站点跟 deck 是两种取景方式，不是同一扇窗的两个模式）
+  // 站点窗 / 世界窗。三种产物共用 ArtifactWindow 那副外壳（2026-08-07），
+  // 但内容层各是各的：deck 是等比 letterbox 的设计稿，站点按真实设备宽取景，
+  // 世界是地图 + 世界书。同一时刻只开一扇。
   const [siteSrc, setSiteSrc] = useState(null);
+  const [worldSrc, setWorldSrc] = useState(null);
 
   // BoardCanvas ✏️ 入口：
-  //   { kind:'session' } | { kind:'task', task, file, title } | { kind:'site', task, entry, title }
+  //   { kind:'session' } | { kind:'task', task, file, title }
+  //   { kind:'site', task, base, entry, title, pages, built } | { kind:'world', task, base, entry, title, nodes }
   const openDeck = (desc) => {
     if (desc?.kind === 'site') {
       setSiteSrc(desc);
+      setWorldSrc(null);
+      setDeckOpen(false);
+      return;
+    }
+    if (desc?.kind === 'world') {
+      setWorldSrc(desc);
+      setSiteSrc(null);
       setDeckOpen(false);
       return;
     }
     setSiteSrc(null);
+    setWorldSrc(null);
     setDeckTaskSrc(desc?.kind === 'task' ? desc : null);
     setDeckTab('edit');
     setDeckOpen(true);
@@ -136,7 +149,7 @@ export default function CanvasFrame({
           stageRef={stageRef}
           onEditNav={() => { editNavRef.current = true; }}
           onFocusDeck={openDeck}
-          deckOpen={deckOpen || !!siteSrc}
+          deckOpen={deckOpen || !!siteSrc || !!worldSrc}
         />
 
         {deckOpen && (sessionId || deckTaskSrc) && (
@@ -145,6 +158,7 @@ export default function CanvasFrame({
             tab={deckTab}
             onTabChange={setDeckTab}
             onClose={() => setDeckOpen(false)}
+            title={deckTaskSrc?.title || project?.name || '幻灯'}
             htmlSrc={deckHtmlSrc}
             htmlContent={htmlContent}
             selectedAnchor={selectedAnchor}
@@ -202,6 +216,21 @@ export default function CanvasFrame({
               isStreaming={isStreaming}
               onIframeReady={onIframeReady}
               onClose={() => setSiteSrc(null)}
+            />
+          </Suspense>
+        )}
+
+        {worldSrc && (
+          <Suspense fallback={null}>
+            <WorldWindow
+              projectId={projectId}
+              task={worldSrc.task}
+              base={worldSrc.base}
+              entry={worldSrc.entry}
+              title={worldSrc.title}
+              nodes={worldSrc.nodes}
+              fileVersions={fileVersions}
+              onClose={() => setWorldSrc(null)}
             />
           </Suspense>
         )}

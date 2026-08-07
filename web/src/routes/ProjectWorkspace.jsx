@@ -1888,11 +1888,18 @@ export default function ProjectWorkspace() {
           overflow: 'hidden',
         }}
       >
-        {/* 画布：铺满整个视口容器，边到边 */}
+        {/* 画布：铺满整个视口容器，边到边。
+         *
+         * `isolation:'isolate'` 是有用的：它把画布里的一切（世界层、关系线、
+         * 在场标记、打开的产物窗）关进自己的层叠上下文，于是**浮窗层永远在
+         * 产物窗之上** —— 打开一个 deck 还能跟 agent 说话，而那是这个工具的
+         * 全部意义。不隔离的话，产物窗那个 z-index 500 会跟聊天栏的 120 在
+         * 同一个上下文里比大小，把聊天盖死。 */}
         <section style={{
           position: 'absolute', inset: 0,
           display: 'flex', flexDirection: 'column',
           background: COLOR.bgWhite,
+          isolation: 'isolate',
         }}>
           <CanvasFrame
             htmlSrc={currentSessionId ? Canvas.artifactUrl(id, currentSessionId, versionOfFile(fileVersions, 'canvas.html')) : null}
@@ -1944,18 +1951,20 @@ export default function ProjectWorkspace() {
             }}
           />
 
-          {/* 浮窗层 —— bounds='parent' = 不出 canvas section
-              C3：inspect / comments 删 — 改用 InspectFloatingCard（CanvasFrame 内贴选中元素） */}
-          <FloatingPanel id="tweaks" title="Tweaks" icon={Sliders} bodyStyle={{ padding: 0 }}>
-            <TweaksPanel
-              projectId={id}
-              sessionId={currentSessionId}
-              iframeDoc={iframeDoc}
-              reloadKey={tweaksReloadKey}
-              onChat={handleSend}
-            />
-          </FloatingPanel>
         </section>
+
+        {/* Tweaks 浮窗跟聊天栏一样住在画布 section **外面**：它是用来调正在看的
+            那个 deck 的，被产物窗盖住就等于没有。
+            C3：inspect / comments 删 — 改用 InspectFloatingCard（CanvasFrame 内贴选中元素） */}
+        <FloatingPanel id="tweaks" title="Tweaks" icon={Sliders} bodyStyle={{ padding: 0 }}>
+          <TweaksPanel
+            projectId={id}
+            sessionId={currentSessionId}
+            iframeDoc={iframeDoc}
+            reloadKey={tweaksReloadKey}
+            onChat={handleSend}
+          />
+        </FloatingPanel>
 
         {/* 对话浮窗 —— 主界面，所以 closable={false}：PanelMenu 早已下架，
             关掉的浮窗没有任何 UI 能叫回来，只能清 localStorage。
