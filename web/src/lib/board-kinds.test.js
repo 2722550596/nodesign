@@ -31,11 +31,31 @@ const LEGACY_SIZES = {
   worldExpanded: { w: 640, h: 28 + 420 },
 };
 
+/**
+ * 收起态高度的**有意改动**（2026-08-07 晚）。
+ *
+ * 上面那张基线是重构前 BoardCanvas 里的原样口径，而那个口径本身就跟卡体
+ * 实际渲染对不上：产物卡收起态声明 88 高、实渲只有 54；文件卡声明 40、
+ * 实渲 29。卡体是 height:auto，声明值只用来给布局占位 —— 于是每一行产物卡
+ * 白留 34px，每一行文件卡白留 11px，而且是那种"看着就是不太对但说不出哪儿
+ * 不对"的白留。
+ *
+ * 新值在浏览器里逐个量 offsetHeight 校准，各留 2~3px 呼吸。改卡体高度时
+ * 要回来一起改。
+ */
+const CALIBRATED = {
+  deck: { w: 240, h: 56 },
+  site: { w: 240, h: 56 },
+  world: { w: 240, h: 56 },
+  file: { w: 224, h: 32 },
+};
+const expectedSize = (k) => CALIBRATED[k] || LEGACY_SIZES[k];
+
 function legacySizeOf(o) {
-  if (o.type === 'deck') return o.pos?.expanded ? LEGACY_SIZES.deckExpanded : LEGACY_SIZES.deck;
-  if (o.type === 'site') return o.pos?.expanded ? LEGACY_SIZES.siteExpanded : LEGACY_SIZES.site;
-  if (o.type === 'world') return o.pos?.expanded ? LEGACY_SIZES.worldExpanded : LEGACY_SIZES.world;
-  return LEGACY_SIZES[o.type] || LEGACY_SIZES.file;
+  if (o.type === 'deck') return o.pos?.expanded ? LEGACY_SIZES.deckExpanded : expectedSize('deck');
+  if (o.type === 'site') return o.pos?.expanded ? LEGACY_SIZES.siteExpanded : expectedSize('site');
+  if (o.type === 'world') return o.pos?.expanded ? LEGACY_SIZES.worldExpanded : expectedSize('world');
+  return expectedSize(o.type) || expectedSize('file');
 }
 
 function legacyActions(o) {
@@ -199,8 +219,9 @@ describe('SIZES 兼容出口', () => {
    * 断言的是「**老的每一项一个字节都没变**」，不是「两张表完全相等」——
    * 后者会在每次加新形态时红一次，红久了就没人当真了。新增项另测。
    */
-  it('老的尺寸逐项未变', () => {
-    for (const [k, v] of Object.entries(LEGACY_SIZES)) {
+  it('老的尺寸逐项未变（收起态那四项按实渲校准过，见 CALIBRATED）', () => {
+    for (const [k, v0] of Object.entries(LEGACY_SIZES)) {
+      const v = CALIBRATED[k] || v0;
       expect(SIZES[k], `SIZES.${k}`).toEqual(v);
     }
   });

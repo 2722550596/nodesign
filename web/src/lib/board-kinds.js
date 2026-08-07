@@ -44,7 +44,10 @@ export function isMarkdown(o) {
  * 字段：
  * - `label`        中文名，给调试和无障碍标签用
  * - `backing`      `'file'` = 磁盘产物 / `'canvas'` = 只活在 board.json
- * - `size`         收起态尺寸（布局系统按矩形做避让，尺寸必须可预知）
+ * - `size`         收起态尺寸（布局系统按矩形做避让，尺寸必须可预知）。
+ *                  **卡体是 height:auto，这里的高度只用来占位** —— 声明得比
+ *                  实渲高，每一行就白留那么多；2026-08-07 在浏览器里逐个量过
+ *                  offsetHeight 校准，改卡体高度时要回来一起改
  * - `sizeExpanded` 展开态尺寸；有这项即代表 `expandable`
  * - `reader`       双击/「阅读」进哪个阅读器：`'memory'` 走 Memory.read、
  *                  `'file'` 拉原始文件正文、`'note'` 剥 frontmatter 后读、
@@ -67,7 +70,7 @@ export const KINDS = {
   deck: {
     label: '幻灯',
     backing: 'file',
-    size: { w: 240, h: 88 },
+    size: { w: 240, h: 56 },
     sizeExpanded: { w: DECK_EMBED_W, h: 28 + 360 },
     reader: null,
     primary: 'expand',
@@ -80,7 +83,7 @@ export const KINDS = {
   site: {
     label: '站点',
     backing: 'file',
-    size: { w: 240, h: 88 },
+    size: { w: 240, h: 56 },
     // 站点没有固定比例，取 16:10 一屏做取景框，够看出版式和配色
     sizeExpanded: { w: DECK_EMBED_W, h: 28 + 400 },
     reader: null,
@@ -92,7 +95,7 @@ export const KINDS = {
   world: {
     label: '世界',
     backing: 'file',
-    size: { w: 240, h: 88 },
+    size: { w: 240, h: 56 },
     // 展开态铺开地图（嵌套地点框 + 立绘）。高度给固定值不给自适应 ——
     // 布局系统按矩形做避让，尺寸得可预知；地图比框高就内部滚动。
     sizeExpanded: { w: DECK_EMBED_W, h: 28 + 420 },
@@ -148,7 +151,7 @@ export const KINDS = {
   file: {
     label: '文件',
     backing: 'file',
-    size: { w: 224, h: 40 },
+    size: { w: 224, h: 32 },
     reader: null,
     primary: 'openFile',
     actions: ['add', 'open'],
