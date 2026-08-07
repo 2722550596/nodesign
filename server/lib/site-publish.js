@@ -58,13 +58,35 @@ async function runWrangler(args) {
   });
 }
 
-/** 找任务里的目录站点产物（单页试作不可发布） */
-async function resolveSiteRoot(pid, task) {
+/**
+ * 找任务里的目录站点产物（单页试作不可发布）。
+ *
+ * root 消歧（2026-08-07，agent 报障修）：一个任务可以装多个平行站点，
+ * 老逻辑 find() 静默拿第一个——发错了哪个都没人知道。现在：
+ *   - 显式传 root（'.' 表示任务根）→ 精确匹配，匹配不上报错并列出现有的
+ *   - 不传且只有一个 → 照发
+ *   - 不传且有多个 → 409 列出候选，让调用方点名，不猜
+ */
+async function resolveSiteRoot(pid, task, root) {
   const taskDir = path.join(getSharedDir(pid), 'tasks', task);
   try { await fs.access(taskDir); } catch { return null; }
   const manifest = await taskManifest(taskDir);
-  const inst = manifest?.artifacts?.find(a => a.kind === 'site' && !a.single);
-  if (!inst) return null;
+  const sites = (manifest?.artifacts || []).filter(a => a.kind === 'site' && !a.single);
+  if (!sites.length) return null;
+  const label = (a) => a.root || '.';
+  let inst;
+  if (typeof root === 'string' && root !== '') {
+    const want = root === '.' ? '' : root.replace(/\/+$/, '');
+    inst = sites.find(a => (a.root || '') === want);
+    if (!inst) {
+      throw fail(400, `任务里没有 root 为「${root}」的站点，现有：${sites.map(label).join('、')}`);
+    }
+  } else if (sites.length > 1) {
+    throw fail(409, `这个任务下有 ${sites.length} 个平行站点：${sites.map(label).join('、')}`
+      + ' —— 用 root 参数指定要发布哪个（任务根传 "."），不能替你猜');
+  } else {
+    inst = sites[0];
+  }
   return { taskDir, root: inst.root || '', rootAbs: inst.root ? path.join(taskDir, inst.root) : taskDir };
 }
 
@@ -94,6 +116,18 @@ async function stageSite(pid, { taskDir, root, rootAbs }) {
   try {
     await fs.cp(assetsDir, path.join(stage, 'assets'), { recursive: true, force: true });
   } catch { /* 没有素材目录就不带 */ }
+  // 兜底 404（2026-08-07）：Pages 没有 404.html 时按 SPA 处理，任意路径都回退
+  // index.html 返 200 —— 断链和发错站点完全隐形（agent 报障的另一半病根）。
+  // NoDesign 的站点是静态多页，不需要 SPA 回退；站点自带 404.html 则不动。
+  try {
+    await fs.access(path.join(stage, '404.html'));
+  } catch {
+    await fs.writeFile(path.join(stage, '404.html'),
+      '<!doctype html><meta charset="utf-8"><title>404</title>'
+      + '<style>body{font-family:system-ui;display:flex;min-height:100vh;margin:0;'
+      + 'align-items:center;justify-content:center;color:#5F5142;background:#F5F0E4}</style>'
+      + '<p>404 · 这个地址下没有页面</p>');
+  }
   return stage;
 }
 
@@ -211,10 +245,11 @@ const inFlight = new Set();
  * @param {object} p
  * @param {string} p.projectId
  * @param {string} p.task
+ * @param {string} [p.root]  多站点任务点名要发哪个（'.' = 任务根）；单站点可省
  * @param {object} p.user  额度与权限按这个用户算（HTTP = 请求者，MCP = 项目 owner）
  * @returns {{ site, warning: string|null }}
  */
-export async function publishSite({ projectId, task, user }) {
+export async function publishSite({ projectId, task, root, user }) {
   if (!validTaskName(task)) throw fail(400, 'invalid task');
   if (user?.lifetimeCostLimitUsd != null) {
     throw fail(403, '试用账号不能发布站点到公网 —— 想发布可以找站主换正式邀请码');
@@ -226,7 +261,7 @@ export async function publishSite({ projectId, task, user }) {
       throw fail(403, `你已发布 ${used} 个站点（上限 ${publishLimit()}），先下线一个再发`);
     }
   }
-  const resolved = await resolveSiteRoot(projectId, task);
+  const resolved = await resolveSiteRoot(projectId, task, root);
   if (!resolved) throw fail(400, '这个任务里没有可发布的目录站点');
 
   const key = `${projectId}/${task}`;

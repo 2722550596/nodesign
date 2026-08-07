@@ -12,7 +12,8 @@ import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/t
 import { Publish } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
-export default function SitePublishControl({ projectId, task }) {
+// root：站点窗知道自己开的是任务里哪个站点（多平行站点时消歧），发布时点名
+export default function SitePublishControl({ projectId, task, root = null }) {
   const showToast = useGlobalStore(s => s.showToast);
   const [site, setSite] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -39,7 +40,7 @@ export default function SitePublishControl({ projectId, task }) {
     setConfirm(null);
     setBusy(true);
     try {
-      const { site: s, warning } = await Publish.publish(projectId, task);
+      const { site: s, warning } = await Publish.publish(projectId, task, root);
       setSite(s);
       showToast(`已上线：${s.url}（新站点子域名生效可能要等一两分钟）${warning ? ` · ${warning}` : ''}`, 'success');
     } catch (err) {

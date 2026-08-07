@@ -614,7 +614,10 @@ export default function SiteWindow({
           {tabBtn('code', '源码', FileCode)}
         </div>
         <div style={{ flex: 1 }} />
-        <SitePublishControl projectId={projectId} task={task} />
+        <SitePublishControl
+          projectId={projectId} task={task}
+          root={(base || '').replace(/^tasks\/[^/]+\/?/, '') || '.'}
+        />
         {tab !== 'code' && <div style={{ display: 'flex', gap: GAP.xxs }}>{SITE_VIEWPORTS.map(vpBtn)}</div>}
         <button onClick={() => { commitAllPending(); setReloadKey(k => k + 1); }} title="刷新" style={iconBtn}>
           <RotateCw size={13} />

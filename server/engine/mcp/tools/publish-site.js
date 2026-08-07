@@ -36,14 +36,21 @@ action:
 - "unpublish": delete the deployment; the public URL dies immediately.
 - "status": just report whether this task is published and at which URL.
 
+If the task contains more than one site, the tool refuses to guess and lists the
+candidates — pass "root" to name the one to publish ("." = the task root itself).
+A task holds ONE public URL: publishing a different root replaces what is live
+at that URL.
+
 The user's publish quota and permissions apply (trial accounts cannot publish;
 regular accounts have a per-user site limit). If the tool returns a quota or
 permission error, relay it as-is — do not retry.`,
     {
       task: z.string().describe('任务目录名（站点所在的任务）'),
       action: z.enum(['publish', 'unpublish', 'status']).default('publish'),
+      root: z.string().optional().describe(
+        '任务下有多个平行站点时点名要发布哪个（相对任务目录，任务根传 "."）。单站点任务省略'),
     },
-    async ({ task, action }) => {
+    async ({ task, action, root }) => {
       const asText = (text) => ({ content: [{ type: 'text', text }] });
       try {
         const project = getProject(projectId);
@@ -61,7 +68,7 @@ permission error, relay it as-is — do not retry.`,
           const removed = await unpublishSite({ projectId, task });
           return asText(removed ? '已下线，公网地址即刻失效。' : '本来就没有发布。');
         }
-        const { site, warning } = await publishSite({ projectId, task, user: owner });
+        const { site, warning } = await publishSite({ projectId, task, root, user: owner });
         return asText([
           `已上线：${site.url}`,
           '重新发布地址不变；新域名生效可能要等一两分钟。',
