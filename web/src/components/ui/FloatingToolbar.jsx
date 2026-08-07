@@ -39,6 +39,13 @@ const DRAG_SLOP = 3;
 /** 贴边留白：工具条不要顶死容器边缘 */
 const ANCHOR_INSET = 20;
 
+/** dock 到底边时离边缘留多少 */
+const DOCK_INSET = 18;
+/** 底缘这么高的一条算"要去够工具条了" */
+const REVEAL_BAND = 96;
+/** 没人理它多久之后收起来 */
+const AUTOHIDE_DELAY = 1800;
+
 /**
  * 按 anchor 算首次落点。要等**量到自己多宽**才算得出来，所以在 layout effect 里做。
  * 只在没有存过位置时用一次 —— 存过就听用户的。
@@ -68,6 +75,19 @@ export default function FloatingToolbar({
    * 得知道容器多大、自己多宽。存过位置之后一律听存的。
    */
   anchor = null,
+  /**
+   * 钉死在容器某条边上（目前只用 'bottom-center'）。给了它就**不能拖**，
+   * 位置永远是算出来的 —— 画布那条工具栏要的是"永远在同一个地方"，
+   * 拖走了反而找不着。跟 anchor 的区别：anchor 只管第一次落点，之后听用户的。
+   */
+  dock = null,
+  /**
+   * 平时收起，需要时才浮现。三种唤醒：鼠标接近它那条边、`wake` 变化
+   * （相机缩放 / 换工具这类"正在用它"的信号）、以及指针悬在它身上。
+   */
+  autoHide = false,
+  /** 值一变就唤出来（传个计数器或状态串） */
+  wake = null,
   /** 组之间的堆叠方向。参考图是竖着堆两条，所以默认 column */
   stack = 'column',
   /** 限位容器（不传就不限位）。传 ref 或 DOM 元素都行 */
@@ -76,7 +96,8 @@ export default function FloatingToolbar({
 }) {
   const panel = usePanelState(id);
   const [localPos, setLocalPos] = useState(defaultPosition);
-  const pos = (panel?.position) || localPos;
+  const [dockPos, setDockPos] = useState(null);
+  const pos = dock ? (dockPos || { x: -9999, y: -9999 }) : ((panel?.position) || localPos);
 
   const elRef = useRef(null);
   const dragRef = useRef(null);
@@ -115,7 +136,62 @@ export default function FloatingToolbar({
     return () => cancelAnimationFrame(raf);
   });
 
+  /** dock 模式：位置全程由容器算，随容器尺寸变化重算 */
+  useEffect(() => {
+    if (!dock) return undefined;
+    const measure = () => {
+      const bounds = boundsRef?.current;
+      const el = elRef.current;
+      if (!bounds || !el || !el.offsetWidth) return;
+      const x = Math.max(0, Math.round((bounds.clientWidth - el.offsetWidth) / 2));
+      const y = Math.max(0, bounds.clientHeight - el.offsetHeight - DOCK_INSET);
+      setDockPos(prev => (prev && prev.x === x && prev.y === y ? prev : { x, y }));
+    };
+    measure();
+    const raf = requestAnimationFrame(measure);   // 首帧可能还没量到自己
+    let ro = null;
+    try { ro = new ResizeObserver(measure); if (boundsRef?.current) ro.observe(boundsRef.current); } catch { /* 老浏览器 */ }
+    window.addEventListener('resize', measure);
+    return () => { cancelAnimationFrame(raf); ro?.disconnect(); window.removeEventListener('resize', measure); };
+  }, [dock, boundsRef, groups]);
+
+  /**
+   * 按需浮现。默认收着，三种情况露出来：
+   *   ① 鼠标进到容器底缘那一条里（工具条就在那儿，去够它的路上它就出来了）
+   *   ② `wake` 变了 —— 相机缩放、换工具这类"你正在用它"的信号
+   *   ③ 指针悬在它身上（露出来之后不能因为超时又缩回去）
+   * 刚进画布时先亮一会儿再收，否则新用户根本不知道有这么条东西。
+   */
+  const [revealed, setRevealed] = useState(!autoHide);
+  const hoverRef = useRef(false);
+  const hideTimer = useRef(null);
+  const scheduleHide = useCallback(() => {
+    clearTimeout(hideTimer.current);
+    hideTimer.current = setTimeout(() => { if (!hoverRef.current) setRevealed(false); }, AUTOHIDE_DELAY);
+  }, []);
+  useEffect(() => {
+    if (!autoHide) return undefined;
+    setRevealed(true);
+    scheduleHide();
+    return () => clearTimeout(hideTimer.current);
+  }, [autoHide, wake, scheduleHide]);
+  useEffect(() => {
+    if (!autoHide) return undefined;
+    const onMove = (e) => {
+      const bounds = boundsRef?.current;
+      if (!bounds) return;
+      const r = bounds.getBoundingClientRect();
+      const nearEdge = e.clientY >= r.bottom - REVEAL_BAND && e.clientY <= r.bottom
+        && e.clientX >= r.left && e.clientX <= r.right;
+      if (nearEdge) { clearTimeout(hideTimer.current); setRevealed(true); }
+      else if (!hoverRef.current) scheduleHide();
+    };
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onMove);
+  }, [autoHide, boundsRef, scheduleHide]);
+
   const onPointerDown = useCallback((e) => {
+    if (dock) return;               // 钉住的不给拖
     // 按在按钮上不起拖 —— 整条都能拖，除了按钮
     if (e.target.closest?.('[data-tool-btn]')) return;
     if (e.button !== 0) return;
@@ -182,16 +258,22 @@ export default function FloatingToolbar({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onPointerEnter={() => { hoverRef.current = true; clearTimeout(hideTimer.current); setRevealed(true); }}
+      onPointerLeave={() => { hoverRef.current = false; if (autoHide) scheduleHide(); }}
       style={{
         position: 'absolute', left: pos.x, top: pos.y,
         zIndex: panel?.zIndex || 400,
         display: 'flex', flexDirection: stack, alignItems: 'center', gap: GAP.xs,
-        cursor: dragging ? 'grabbing' : 'grab',
+        cursor: dock ? 'default' : (dragging ? 'grabbing' : 'grab'),
         userSelect: 'none', touchAction: 'none',
         // 拖拽中略透，让底下的内容还看得见落点
-        opacity: dragging ? 0.88 : 1,
-        transition: 'opacity 0.15s',
-        visibility: placed ? 'visible' : 'hidden',
+        opacity: dragging ? 0.88 : (revealed ? 1 : 0),
+        // 收起时往下沉一点点：出现/消失是"从边上滑出来"，不是硬闪
+        transform: revealed ? 'translateY(0)' : `translateY(${dock ? 14 : 0}px)`,
+        // 收起时不吃指针，否则画布底部一条永远点不到
+        pointerEvents: revealed ? 'auto' : 'none',
+        transition: 'opacity 220ms ease, transform 220ms cubic-bezier(0.32,0.72,0,1)',
+        visibility: (placed && (dock ? !!dockPos : true)) ? 'visible' : 'hidden',
         ...style,
       }}
     >

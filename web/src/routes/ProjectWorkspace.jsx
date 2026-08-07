@@ -1823,6 +1823,10 @@ export default function ProjectWorkspace() {
   return (
     <PanelManagerProvider projectId={id} defaultPanels={defaultPanels} panelMeta={panelMeta}>
     <AppShell
+      // 工作台顶栏浮在画布之上、鼠标离开就淡出：画布是这里唯一的内容，
+      // 横带越少越好。**浮起来而不是收起高度**——顶栏一参与布局，收展就会
+      // 改画布容器高度，相机可视区跟着变、contain 重算，画面会跳。
+      overlayTop
       breadcrumb={[
         // 「项目」这一级删了（2026-07-30）：左边的 logo 本来就回首页，两个入口指同一处。
         // 面包屑最多两级 —— 项目名 / 任务名。
@@ -1893,6 +1897,8 @@ export default function ProjectWorkspace() {
               onViewCode={handleViewCode}
               isQuickProject={project.kind === 'quick'}
               onUpgrade={() => { setActionsOpen(false); setUpgradeOpen(true); }}
+              onOpenProjectPanel={(key) => boardApiRef.current?.openProjectPanel(key)}
+              projectBand={boardUi?.projectBand || null}
             />
           </div>
         </>

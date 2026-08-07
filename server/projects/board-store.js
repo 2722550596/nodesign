@@ -150,6 +150,9 @@ function sanitizeZone(z, size) {
       ? { title: z.title.trim().slice(0, 120) }
       : {}),
     ...(z.collapsed ? { collapsed: true } : {}),   // 收纳成文件夹形态
+    // 用户手动搬过这块区（2026-08-07）：从此它退出"自动纵向堆叠"，
+    // 坐标听用户的。不落盘的话刷新一次就被重新排回队列里。
+    ...(z.pinned ? { pinned: true } : {}),
   };
 }
 

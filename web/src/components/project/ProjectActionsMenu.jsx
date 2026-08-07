@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight, RotateCcw } from 'lucide-react';
+import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight, RotateCcw,
+  BookOpen, ScrollText, Palette, Files } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
 /**
@@ -12,6 +13,9 @@ export default function ProjectActionsMenu({
   onRename, onDuplicate, onDelete, onHistory, onViewCode, onReload,
   onSaveSnapshot, onOpenSnapshots, snapshotCount = 0,
   onUpgrade, isQuickProject = false,
+  // 项目级四件套（2026-08-07 从画布顶带搬进来）。它们是**设置**不是产物：
+  // 每天都在看却几乎不点，却占着画布最好的一条横带。
+  onOpenProjectPanel = null, projectBand = null,
 }) {
   const ref = useRef(null);
 
@@ -41,6 +45,20 @@ export default function ProjectActionsMenu({
         zIndex: 50,
       }}
     >
+      {onOpenProjectPanel && (
+        <>
+          {PROJECT_PANELS.map(p => (
+            <Item
+              key={p.key}
+              icon={<p.icon size={12} />}
+              label={p.label}
+              title={projectBand?.[p.key] || p.hint}
+              onClick={() => { onOpenProjectPanel(p.key); onClose?.(); }}
+            />
+          ))}
+          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
+        </>
+      )}
       {isQuickProject && (
         <>
           <Item
@@ -76,10 +94,18 @@ export default function ProjectActionsMenu({
   );
 }
 
-function Item({ icon, label, onClick, danger, subtle }) {
+const PROJECT_PANELS = [
+  { key: 'memory', label: '记忆', icon: BookOpen, hint: 'agent 按需记的长期记忆' },
+  { key: 'guide', label: '项目指引', icon: ScrollText, hint: '每次 session 进 system prompt' },
+  { key: 'brand', label: '风格档案', icon: Palette, hint: '视觉风格基线' },
+  { key: 'files', label: '项目文件', icon: Files, hint: 'agent 能直接 Read 的素材' },
+];
+
+function Item({ icon, label, onClick, danger, subtle, title }) {
   return (
     <button
       onClick={onClick}
+      title={title}
       style={{
         width: '100%',
         display: 'flex', alignItems: 'center', gap: GAP.sm,

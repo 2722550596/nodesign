@@ -27,7 +27,6 @@ import { zoneOfObjectId } from '../../lib/stage.js';
 import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import LiveFrame from './LiveFrame.jsx';
-import ProjectBand from './ProjectBand.jsx';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import FloatingToolbar from '../ui/FloatingToolbar.jsx';
@@ -274,7 +273,7 @@ export default function BoardCanvas({
       out.push({ id, type: l.kind, data: l.data, native: true, zoneField: l.zone });
     }
     // 项目级文档（记忆 / 品牌）不再当画布物件 —— 2026-07-28 起由桌面顶带
-    // ProjectBand 承载，跟指引、文件一起构成"项目区"。
+    // 顶栏「⋯」里的四件套之一（2026-08-07 从画布顶带搬过去），跟指引、文件一起构成"项目区"。
     for (const s of sessions) {
       const sid = s.sessionId || s.id;
       // 一对一：会话已经有任务了，它的 deck 就是任务 deck，不再单开一张会话 deck 卡
@@ -739,7 +738,11 @@ export default function BoardCanvas({
   // 生长时，下方工作区自动让位（配合 left/top 过渡 = 平滑下移动画）。
   useEffect(() => {
     if (!layoutLoadedRef.current) return;
-    const ordered = [...zoneView].sort((a, b) => a.y - b.y || a.x - b.x);
+    // 手动搬过的区（pinned）退出这条队列 —— 用户把它放哪儿就在哪儿。
+    // 不跳过的话下面这段会在同一帧把它推回列里，表现是"拖不动"。
+    const ordered = [...zoneView]
+      .filter(z => !zonesEffRef.current[z.id]?.pinned)
+      .sort((a, b) => a.y - b.y || a.x - b.x);
     const targetW = DESKTOP_W - MARGIN_X * 2;
     let cursor = ZONE.bandY;
     const zonePatches = {};
@@ -1090,13 +1093,17 @@ export default function BoardCanvas({
   /**
    * 拖到空白处 = 把物件从工作区里摘出来（写 `zone: ''`）。
    *
-   * **2026-07-28 按用户要求停用。** 这条路径只改 board.json 的视觉归属，磁盘上
-   * 文件还在 `tasks/<任务>/` 里 —— 桌面说它不属于这个任务、文件系统说属于，两边
-   * 对不上。而且很容易误触：拖着挪个位置手一滑落到区外，物件就从任务里"跑"出来了。
+   * 07-28 按用户要求停用过，**08-07 按用户要求恢复**。当时停用的两条理由里，
+   * 第二条（误触）是真的：拖着挪个位置手一滑落到区外，物件就从任务里"跑"出来。
+   * 所以这次不是简单打开，而是加了道门槛 —— 得**明确地**拖出去才算：
+   * 物件中心离开原区边界 DETACH_MARGIN 以上。挨着边扔不算，那是没摆好。
    *
-   * 拖进文件夹 / 拖进别的工作区仍然可用（那是明确意图）。要恢复改回 true。
+   * 第一条理由（board.json 说不属于、磁盘说属于）依然成立，是这个功能的固有
+   * 语义：摘出来的是**画布上的归属**，文件一个字节都没动。想真的搬家要动文件。
    */
-  const DRAG_OUT_DETACHES = false;
+  const DRAG_OUT_DETACHES = true;
+  /** 中心越过原区边界这么多像素才算"真的拖出去了" */
+  const DETACH_MARGIN = 48;
 
   const onPointerUp = () => {
     const d = dragRef.current;
@@ -1134,7 +1141,13 @@ export default function BoardCanvas({
             }
             if (Object.keys(patch).length) patchLayout(d.id, patch);
           } else if (prevZone && DRAG_OUT_DETACHES) {
-            patchLayout(d.id, { zone: '' });
+            // 明确拖出去才摘（挨着边扔的算没摆好，留在原区）
+            const zr = zonesRef.current[prevZone];
+            const cx = pos.x + sz.w / 2;
+            const cy = pos.y + sz.h / 2;
+            const clearlyOut = !zr || cx < zr.x - DETACH_MARGIN || cx > zr.x + zr.w + DETACH_MARGIN
+              || cy < zr.y - DETACH_MARGIN || cy > zr.y + (zr.h || 0) + DETACH_MARGIN;
+            if (clearlyOut) patchLayout(d.id, { zone: '' });
           }
         }
       }
@@ -1303,6 +1316,8 @@ export default function BoardCanvas({
     setViewMode('work');
     if (sid && sid !== currentSessionId) navigate(`/projects/${projectId}/sessions/${sid}`);
   }, [zoneSession, sessionTitles, currentSessionId, navigate, projectId]);
+  const enterZoneRef = useRef(null);
+  enterZoneRef.current = enterZone;
 
   // ── 工作区操作：收纳 ↔ 展开（文件夹两态）/ 聚焦 / 自建文件夹 ──
   const patchZone = useCallback((zid, patch) => {
@@ -1310,6 +1325,116 @@ export default function BoardCanvas({
     dirtyRef.current.zones.add(zid);
     scheduleSave();
   }, [scheduleSave]);
+
+  // ⚠️ 这一段必须待在 patchZone 之后。它的 useCallback 依赖数组在**渲染时**
+  // 求值，写在上面就是 TDZ —— 这个文件第四次栽在 hook 声明顺序上了
+  // （前三次：绑定表 memo、splitStageCards、handlePresenceEvent）。
+  // 症状一律是整页白屏 + "Cannot access 'X' before initialization"，
+  // 而且 build 和单测都照过不误，只有真跑才看得见。
+  /**
+   * 文件夹（工作区）的三种手势 —— 2026-08-07 定的一套语义：
+   *
+   *   长按（280ms）  抓起来搬。搬的是**整块区**，成员跟着走同样的位移，
+   *                  不然松手之后收容 pass 会把它们全拽回旧位置。
+   *   单击           收起 / 展开
+   *   双击           进这个任务（镜头锁到这块区 = 用户说的"全屏"）
+   *
+   * 单击要等 DBLCLICK_MS 才动手：不等的话双击的第一下会先把文件夹折起来，
+   * 第二下落到一个已经变形的目标上。这点延迟换的是两个手势都可靠。
+   *
+   * ⚠️ 双击**不能用 `onDoubleClick`**：这里在 pointerdown 时 setPointerCapture
+   * （长按拖拽需要），而捕获会让浏览器不再派发 click / dblclick —— 这个文件
+   * 2026-07-27 就栽过同一个坑（当时是卡片双击失灵）。所以双击是自己数的：
+   * 第二下 pointerup 时上一次的单击定时器还在，就判定为双击。
+   *
+   * 长按而不是"一拖就走"：拖是这块画布上最频繁的动作（拖卡片、圈选、平移），
+   * 文件夹又是最大的命中面积，随手一拖就把整块区搬走太容易误触。
+   */
+  const ZONE_LONG_PRESS_MS = 280;
+  const ZONE_DBLCLICK_MS = 260;
+  const zoneDragRef = useRef(null);
+  const zoneClickTimer = useRef(null);
+  const [draggingZone, setDraggingZone] = useState(null);
+
+  /**
+   * @param z 区
+   * @param opts.onTap  单击做什么（默认收起/展开；**站在里面时是"退出"** ——
+   *                    你正在这块区里，折叠自己既没意义也没地方点回来）
+   * @param opts.onOpen 双击做什么（默认进任务；站在里面时没有"再进一次"）
+   */
+  const zoneGestureProps = useCallback((z, opts = {}) => ({
+    onPointerDown: (e) => {
+      if (e.button !== 0 || e.target.closest?.('[data-zone-action]')) return;
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      const members = positionedRef.current
+        .filter(o => o.zoneId === z.id)
+        .map(o => ({ id: o.id, x: o.pos.x, y: o.pos.y }));
+      zoneDragRef.current = {
+        id: z.id, startX: e.clientX, startY: e.clientY,
+        origX: z.x, origY: z.y, members, armed: false, moved: false,
+        timer: setTimeout(() => {
+          if (!zoneDragRef.current) return;
+          zoneDragRef.current.armed = true;
+          setDraggingZone(z.id);
+          // 抓起来的**那一刻**就钉住，不能等松手：自动堆叠 effect 每帧都会把
+          // 未钉住的区推回队列里，等松手才钉等于整个拖拽过程都在跟它拔河
+          // （表现就是"按下去了、光标也变了、但它一动不动"）。
+          setZones(prev => (prev[z.id] ? { ...prev, [z.id]: { ...prev[z.id], pinned: true } } : prev));
+        }, ZONE_LONG_PRESS_MS),
+      };
+    },
+    onPointerMove: (e) => {
+      const d = zoneDragRef.current;
+      if (!d) return;
+      const dx = (e.clientX - d.startX) / scaleRef.current;
+      const dy = (e.clientY - d.startY) / scaleRef.current;
+      if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
+      if (!d.armed) return;
+      e.stopPropagation();
+      const nx = Math.max(-ROAM_MARGIN, d.origX + dx);
+      const ny = Math.max(-ROAM_MARGIN, d.origY + dy);
+      setZones(prev => (prev[d.id] ? { ...prev, [d.id]: { ...prev[d.id], x: nx, y: ny } } : prev));
+      setLayout(prev => {
+        const next = { ...prev };
+        for (const m of d.members) next[m.id] = { ...next[m.id], x: m.x + (nx - d.origX), y: m.y + (ny - d.origY) };
+        return next;
+      });
+    },
+    onPointerUp: () => {
+      const d = zoneDragRef.current;
+      zoneDragRef.current = null;
+      if (!d) return;
+      clearTimeout(d.timer);
+      if (d.armed) {
+        setDraggingZone(null);
+        recentDragMovedRef.current = true;      // 别让这一下被当成点击
+        dirtyRef.current.zones.add(d.id);
+        for (const m of d.members) dirtyRef.current.objects.add(m.id);
+        scheduleSave();
+        return;
+      }
+      if (d.moved) return;                       // 动过但没到长按：什么都不做
+      const tap = opts.onTap || (() => patchZone(d.id, { collapsed: !zonesRef.current[d.id]?.collapsed }));
+      // 没有双击语义的时候不用等 —— 那 260ms 是为了给双击让路，白等就是钝
+      if (opts.onOpen === null) { clearTimeout(zoneClickTimer.current); tap(); return; }
+      // 第二下来了 = 双击
+      if (zoneClickTimer.current) {
+        clearTimeout(zoneClickTimer.current);
+        zoneClickTimer.current = null;
+        (opts.onOpen || (() => enterZoneRef.current?.(d.id)))();
+        return;
+      }
+      zoneClickTimer.current = setTimeout(() => { zoneClickTimer.current = null; tap(); }, ZONE_DBLCLICK_MS);
+    },
+    onPointerCancel: () => {
+      const d = zoneDragRef.current;
+      zoneDragRef.current = null;
+      if (d) clearTimeout(d.timer);
+      setDraggingZone(null);
+    },
+  }), [patchZone, scheduleSave]);
+
 
   /**
    * 删任务（2026-07-28）：任务和会话一对一，删任务连它的会话一起删。
@@ -1558,6 +1683,10 @@ export default function BoardCanvas({
     apiRef.current = {
       exitToProject: () => exitToProjectRef.current?.(),
       reload,
+      // 项目级四件套（记忆 / 指引 / 风格 / 文件）2026-08-07 从画布顶带收进
+      // 顶栏的「⋯」——它们是**设置**不是产物，占着画布最好的一条横带每天
+      // 看却几乎不点。面板本身没动，只是换了个入口。
+      openProjectPanel: (key) => setProjectPanel(key),
     };
     return () => { apiRef.current = null; };
   });
@@ -1575,13 +1704,16 @@ export default function BoardCanvas({
       focus: zv ? { id: zv.id, title: zv.title, count: zv.memberCount, isSession: sessionTitles.has(zv.id) } : null,
       artifactKind: focusTaskObj?.kind || null,
       artifactExports: focusTaskObj?.exports || null,
+      // 项目级四件套的一行摘要 —— 卡片撤出画布后，这几句话跟着入口一起
+      // 搬进顶栏的「⋯」，不能因为换了个地方就把"里面有没有东西"弄丢
+      projectBand: bandSummaries,
     };
     // zoneView 每次布局变更都换新引用（拖拽期间逐帧）—— 序列化对比，内容没变不上报
     const key = JSON.stringify(ui);
     if (key === lastUiRef.current) return;
     lastUiRef.current = key;
     onUiState?.(ui);
-  }, [onUiState, viewMode, focusZoneId, currentSessionId, zoneView, sessionTitles, tasks]);
+  }, [onUiState, viewMode, focusZoneId, currentSessionId, zoneView, sessionTitles, tasks, bandSummaries]);
 
   // ── 渲染 ──
   return (
@@ -1652,11 +1784,6 @@ export default function BoardCanvas({
             transformOrigin: '0 0',
           }}
         >
-          {/* 项目区顶带：项目级四件套（记忆 / 指引 / 品牌 / 文件），只在全景出现 */}
-          {viewMode === 'arrange' && (
-            <ProjectBand summaries={bandSummaries} onOpen={setProjectPanel} />
-          )}
-
           {/* 工作区（物件下层）：展开态 = 实体区域（标题栏拖整区），收纳态 = 文件夹卡 */}
           {visibleZones.map((z) => z.collapsed ? (
             /* 收起态 = 一条整宽的窄条（2026-07-28 改）：跟展开态同宽同左缘，
@@ -1664,14 +1791,11 @@ export default function BoardCanvas({
             <div
               key={z.id}
               data-board-zone={z.id}
-              onClick={(e) => {
-                if (e.target.closest('[data-zone-action]')) return;
-                if (!wasDrag()) patchZone(z.id, { collapsed: false });
-              }}
-              title="点击展开"
+              {...zoneGestureProps(z)}
+              title="单击展开 · 双击进任务 · 长按拖动"
               style={{
                 position: 'absolute', left: z.x, top: z.y, width: z.w, height: FOLDER_CARD_H - 16,
-                zIndex: 1, borderRadius: 14,
+                zIndex: draggingZone === z.id ? 20 : 1, borderRadius: 14,
                 display: 'flex', alignItems: 'center', gap: GAP.lg,
                 padding: `0 ${GAP.lg}px`,
                 background: dropHint?.kind === 'folder' && dropHint.id === z.id ? '#fff8e8' : 'rgba(255,254,246,0.55)',
@@ -1679,8 +1803,9 @@ export default function BoardCanvas({
                 boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
                   ? '0 0 0 3px rgba(176,140,79,0.18), 0 8px 20px rgba(0,0,0,0.14)'
                   : 'none',
-                cursor: 'pointer', userSelect: 'none',
-                transition: `background 150ms, border-color 150ms, box-shadow 150ms${dragActive ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}, width 380ms ${EASE}`}`,
+                cursor: draggingZone === z.id ? 'grabbing' : 'pointer',
+                userSelect: 'none', touchAction: 'none',
+                transition: `background 150ms, border-color 150ms, box-shadow 150ms${(dragActive || draggingZone === z.id) ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}, width 380ms ${EASE}`}`,
                 animation: POP_IN,
                 ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite' } : null),
               }}
@@ -1752,17 +1877,19 @@ export default function BoardCanvas({
               }}
             >
               <div
-                onClick={(e) => {
-                  if (e.target.closest('[data-zone-action]')) return;
-                  if (wasDrag()) return;
-                  // 标题栏 = 进出这个任务的门：在里面就退出（连会话一起），
-                  // 在外面就进去（连会话一起切）
-                  if (focusZone === z.id) exitToProject();
-                  else enterZone(z.id);
-                }}
-                title={focusZone === z.id ? '退出任务（同时退出这个会话，ESC 同效）' : '进入任务（切到它的会话）'}
+                data-zone-header={z.id}
+                {...zoneGestureProps(z, focusZone === z.id
+                  // 站在里面时：标题栏是出口，没有"折叠自己"也没有"再进一次"。
+                  // 长按拖动照旧 —— 在哪儿都该能把文件夹搬走。
+                  ? { onTap: () => exitToProject(), onOpen: null }
+                  : {})}
+                title={focusZone === z.id
+                  ? '单击退出任务（ESC 同效）· 长按拖动'
+                  : '单击收起 · 双击进任务 · 长按拖动'}
                 style={{
-                  pointerEvents: 'auto', cursor: 'pointer',
+                  pointerEvents: 'auto',
+                  cursor: draggingZone === z.id ? 'grabbing' : 'pointer',
+                  touchAction: 'none',
                   display: 'flex', alignItems: 'center', gap: GAP.md,
                   margin: GAP.md, height: ZONE.header - 16, padding: '0 14px',
                   borderRadius: RADIUS.xl, background: 'rgba(0,0,0,0.045)',
@@ -1969,7 +2096,13 @@ export default function BoardCanvas({
         <FloatingToolbar
           id="board-tools"
           boundsRef={scrollRef}
-          defaultPosition={{ x: 20, y: 20 }}
+          // 钉在画布底缘正中、平时收着（2026-08-07）：画布是这里唯一的内容，
+          // 一条常驻工具栏在左上角既占地方又一直在视线里。缩放 / 换工具会把它
+          // 唤出来，鼠标往底边去的路上它也会自己出来。
+          dock="bottom-center"
+          autoHide
+          wake={`${tool}|${Math.round(scale * 100)}|${Math.round(cam.x)}|${Math.round(cam.y)}`}
+          stack="row" 
           groups={[
             {
               id: 'view',

@@ -190,7 +190,7 @@ function Crumb({ item, last }) {
 
 export default function TopBar({ breadcrumb = [], actions }) {
   return (
-    <header style={{
+    <header data-top-bar style={{
       height: 56,
       flexShrink: 0,
       // 顶栏是纸不是白条：底色跟页面同族，下边界是墨色淡痕 + 一道极浅的落影，
