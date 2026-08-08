@@ -38,6 +38,26 @@ non_diegetic_music: N/A
 多镜片先跟用户对齐分镜表再逐镜发车，别自作主张连发。同一镜拿到成片后不要擅自重跑
 ——要改也是用户看完提要求。
 
+## 剪辑配方（Bash + ffmpeg，《好巧》97.97s 成片验证过的参数）
+
+素材≠成片。用户要成片时按这四步拼，全程在 assets/generated/ 里做：
+
+1. **归一化**（各镜参数统一，否则 concat 花屏）：
+   `ffmpeg -i in.mp4 -r 24 -c:v libx264 -crf 16 -pix_fmt yuv420p -c:a aac norm_XX.mp4`
+2. **硬切拼装**（列表文件 list.txt 每行 `file 'norm_01.mp4'`）：
+   `ffmpeg -f concat -safe 0 -i list.txt -c copy joined.mp4`
+   对话喜剧用硬切保节奏；只有真正的场景跳变才考虑 xfade。
+3. **音床**（一整条音乐盖全片，压低不抢台词）：
+   `ffmpeg -i joined.mp4 -i bed.ogg -filter_complex "[1:a]volume=0.18,afade=t=out:st=<片长-3>:d=3[bed];[0:a][bed]amix=inputs=2:duration=first:normalize=0[a]" -map 0:v -map "[a]" -c:v copy -c:a aac mixed.mp4`
+   ⚠️ `normalize=0` 必须写——amix 默认把各轨压半，台词会突然变小声。
+   音床别自造：让用户给，或 explorer 搜 Wikimedia Commons 的公有领域曲目 curl 进 assets/。
+4. **轻调色**（收尾提一口气，别重手）：
+   `ffmpeg -i mixed.mp4 -vf "eq=contrast=1.03:saturation=1.04" -c:a copy final.mp4`
+
+注意：这台机器 1 核——`-c copy` 的步骤秒级，重编码步骤每分钟素材要跑约一分钟，
+先告诉用户"拼装中要几分钟"。中间产物用完删掉，别让 norm_*.mp4 留在产物墙上
+（放 /tmp 或拼完 rm）。成片同样**不做视觉检查**，路径交用户验收。
+
 ## 铁律：不做视觉检查
 
 产物 mp4 不 Read、不截图、不派 vision-checker、不试图用任何方式"看"。把
