@@ -672,6 +672,44 @@ router.delete('/:pid/task-notes/:filename', async (req, res, next) => {
  * 路径按**工作区相对路径**收（`稿件/初稿`），因为文件夹可以嵌套。
  */
 /**
+ * POST /:pid/folders —— 新建文件夹（`{ parent?: '稿件', name?: '初稿' }`）。
+ *
+ * 在这之前**用户建不了文件夹**：全仓没有任何接口或按钮，只有 agent `mkdir`
+ * 会让画布上多出一个。也就是说这套收纳体系对用户是只读的 —— 能收起、能搬走、
+ * 能删掉，就是不能建。桌面隐喻里这说不通。
+ *
+ * 重名自动加序号（「新建文件夹 2」），跟操作系统一样 —— 报错让人再想个名字
+ * 是没必要的摩擦，这里没有任何东西会被覆盖。
+ */
+router.post('/:pid/folders', express.json(), async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    const root = getSharedDir(req.params.pid);
+    const parent = String(req.body?.parent ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const wanted = sanitizeFilename(req.body?.name || '新建文件夹').replace(/\.+$/, '') || '新建文件夹';
+
+    const parentAbs = parent ? path.resolve(root, parent) : root;
+    if (parentAbs !== root && !parentAbs.startsWith(root + path.sep)) {
+      return res.status(400).json({ error: 'path escapes workspace' });
+    }
+    if (parent && (RESERVED_DIRS.has(parent.split('/')[0]) || parent.startsWith('.'))) {
+      return res.status(400).json({ error: '不能在这个目录里新建' });
+    }
+    if (!(await fs.stat(parentAbs).catch(() => null))?.isDirectory()) {
+      return res.status(404).json({ error: 'parent folder not found' });
+    }
+    if (parent.split('/').filter(Boolean).length >= FOLDER_MAX_DEPTH) {
+      return res.status(400).json({ error: `文件夹最多套 ${FOLDER_MAX_DEPTH} 层` });
+    }
+
+    let name = wanted;
+    for (let n = 2; await exists(path.join(parentAbs, name)); n += 1) name = `${wanted} ${n}`;
+    await fs.mkdir(path.join(parentAbs, name));
+    res.status(201).json({ ok: true, folder: parent ? `${parent}/${name}` : name });
+  } catch (err) { next(err); }
+});
+
+/**
  * POST /:pid/move —— 把一个东西搬到另一个文件夹里（**真的动磁盘**）。
  *
  * body: `{ from: '稿件/主稿.html', to: '定稿' }`（to='' = 搬到工作区根）

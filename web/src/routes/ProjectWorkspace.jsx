@@ -1986,6 +1986,19 @@ export default function ProjectWorkspace() {
               setInputs(prev => prev.some(it => it.path === item.path) ? prev : [...prev, item]);
               showToast(`已加入上下文：${item.name}（发消息时一起带给 agent）`, 'success');
             }}
+            onAskAgent={(ctx) => {
+              // 画布里的 agent 入口（2026-08-08）：画布只说「用户指着这里」，
+              // 翻译成人话是这里的事 —— 画布不该知道聊天栏长什么样。
+              //
+              // **不替他把话说完**：只垫一句定位，光标停在后面等他写要做什么。
+              // 自动填一整句会变成"猜他想干嘛"，猜错了他还得先删掉。
+              // 复用既有的注入通道（Inspect「触发新 run」走的也是它）：
+              // 写进 chatDraft，ChatComposer 会同步进 textarea 并把光标放到末尾。
+              const lead = ctx?.objects?.length
+                ? `关于「${ctx.objects.map(id => id.split('/').pop()).join('、')}」，`
+                : ctx?.folder ? `在「${ctx.folder.split('/').pop()}」文件夹里，` : '';
+              useGlobalStore.getState().setChatDraft(lead);
+            }}
           />
 
         </section>

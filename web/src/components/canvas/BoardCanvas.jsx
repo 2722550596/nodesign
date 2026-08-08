@@ -6,6 +6,7 @@ import {
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
   Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
   Maximize2, Minus, MousePointer2, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
+  FolderPlus, StickyNote,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
@@ -24,12 +25,14 @@ import { boxUnion, ROAM_MARGIN } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
+import { onChrome } from '../../lib/board-hit.js';
 import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import LiveFrame from './LiveFrame.jsx';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import FloatingToolbar from '../ui/FloatingToolbar.jsx';
+import ContextMenu from './ContextMenu.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds } from './useCanvasTools.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
@@ -99,6 +102,17 @@ export default function BoardCanvas({
   stageRef,
   // 编辑窗开着时 ESC 归它（关窗），画布不抢
   deckOpen = false,
+  /**
+   * 「让 agent 在这儿做点什么」——**画布里的 agent 入口**（2026-08-08）。
+   *
+   * 用户要的是「寓 agent 于各处……像随处可见的管家，而不是需要劳心费神地跑到
+   * 侧边栏去使用」。所以入口不止侧边栏一个，右键菜单是第一处落点。
+   *
+   * 参数是**上下文而不是文案**：`{ objects?: [id], folder?: rel, at?: {x,y} }`。
+   * 画布只说"用户指着这里"，怎么翻译成一句话交给外层 —— 画布不该知道
+   * 聊天栏长什么样。
+   */
+  onAskAgent,
 }) {
   const navigate = useNavigate();
   const scrollRef = useRef(null);          // 纵向滚动容器（桌面的"视口"）
@@ -1571,6 +1585,75 @@ export default function BoardCanvas({
     enterZone(zid);
   };
 
+  /**
+   * 右键菜单（2026-08-08，Windows 桌面语言）。
+   *
+   * 一次 contextmenu 事件能落在三种东西上，菜单跟着变：
+   *   空白    新建文件夹 / 写一段字 / 让 agent 在这儿做点什么
+   *   文件夹  进去 / 新建子文件夹 / 收起 / 删除
+   *   卡片    打开 / 加入上下文 / 让 agent 改它 / 删除
+   *
+   * 落点的**世界坐标**在打开这一刻就算好存下来 —— 新建出来的东西要落在你右键
+   * 的地方，而菜单弹出后镜头可能已经被别的事挪过了。
+   */
+  const [menu, setMenu] = useState(null);   // { x, y, at:{x,y}, items }
+
+  const createFolderAt = useCallback(async (parent, at) => {
+    try {
+      const r = await Assets.createFolder(projectId, { parent });
+      if (r?.folder && at) {
+        // 落在右键处：不这么做的话它会被自动铺位丢到栈底，你得去找它
+        setZones(prev => ({ ...prev, [r.folder]: { x: Math.round(at.x), y: Math.round(at.y), w: 420, h: ZONE_MIN_H, title: r.folder.split('/').pop() } }));
+        dirtyRef.current.zones.add(r.folder);
+        scheduleSave();
+      }
+      reload();
+    } catch (err) {
+      useGlobalStore.getState().showToast(`建不了：${err.message}`, 'error');
+    }
+  }, [projectId, reload, scheduleSave]);
+
+  const openContextMenu = useCallback((e) => {
+    const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
+    const objEl = e.target.closest?.('[data-board-object]');
+    const objId = objEl?.getAttribute('data-board-object') || null;
+    const obj = objId ? positionedRef.current.find(o => o.id === objId) : null;
+    // 文件夹：卡片没命中时才按几何找（展开态的框是 pointerEvents:'none'）
+    const zoneId = !obj
+      ? (e.target.closest?.('[data-zone-header]')?.getAttribute('data-zone-header')
+        || e.target.closest?.('[data-board-zone]')?.getAttribute('data-board-zone')
+        || zoneAtPoint(at))
+      : null;
+
+    let items;
+    if (obj) {
+      items = [
+        { id: 'open', icon: FolderOpen, label: '打开', onClick: () => primaryOpenRef.current?.(obj) },
+        ...(canAddToContext(obj) ? [{ id: 'add', icon: Plus, label: '加入上下文', onClick: () => handleAdd(obj) }] : []),
+        { id: 'ask', icon: MessageSquarePlus, label: '让 agent 改它', onClick: () => onAskAgent?.({ objects: [obj.id] }) },
+        { divider: true },
+        { id: 'del', icon: Trash2, label: '删除', danger: true, onClick: () => handleDeleteNote(obj) },
+      ];
+    } else if (zoneId) {
+      items = [
+        { id: 'enter', icon: FolderOpen, label: '进入', onClick: () => focusZoneAction(zoneId) },
+        { id: 'new', icon: FolderPlus, label: '在里面新建文件夹', onClick: () => createFolderAt(zoneId, null) },
+        { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ folder: zoneId }) },
+        { divider: true },
+        { id: 'del', icon: Trash2, label: '删除文件夹', danger: true, onClick: () => handleDeleteFolder(zoneId, zoneId.split('/').pop()) },
+      ];
+    } else {
+      items = [
+        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt('', at) },
+        { id: 'note', icon: StickyNote, label: '新建便利贴', onClick: () => setTool('text') },
+        { divider: true },
+        { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ at }) },
+        { id: 'tidy', icon: LayoutGrid, label: '整理这块画布', onClick: tidyBoard },
+      ];
+    }
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  }, [zoneAtPoint, createFolderAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent]);
+
   // ── deck 自动内嵌渲染（2026-07-28：工作台=常驻默认视图后的配套）──
   // 工作内容直接在画布里看：当前会话的 deck 有 canvas 就自动展开成内嵌 iframe。
   // 两个触发源：进会话时 HEAD 探测已有 canvas；agent 正在写 deck（file_changed）。
@@ -1816,6 +1899,11 @@ export default function BoardCanvas({
           // 否则「拖着画一笔」和「拖空白平移」抢同一个手势，画一笔就跑镜头。
           if (canvasTools.onPointerDown(e)) return;
           camera.onPointerDown(e);
+        }}
+        onContextMenu={(e) => {
+          if (onChrome(e)) return;                 // 工具栏上右键交给浏览器
+          e.preventDefault();
+          openContextMenu(e);
         }}
         onPointerMove={(e) => {
           if (canvasTools.onPointerMove(e)) return;
@@ -2163,6 +2251,10 @@ export default function BoardCanvas({
 
       {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}
       <StageDock dockPanels={dockPanels} dockChips={dockChips} onDismiss={dismissStageCard} />
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
 
       {/* 项目区浮层：直接用原 Hub 的四张卡（编辑 / 上传 / 删除全套照旧）*/}
       {projectPanel && (

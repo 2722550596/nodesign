@@ -250,6 +250,9 @@ export const Assets = {
    * 把一个东西搬进另一个文件夹（**真的动磁盘**）。
    * to='' = 搬到工作区根。返回 { from, to, moved, board }，board 是改完名的新画布。
    */
+  /** 新建文件夹；parent 为空 = 建在工作区根。重名自动加序号，返回真实落名 */
+  createFolder: (pid, { parent = '', name } = {}) =>
+    jsonRequest('POST', `/api/projects/${pid}/folders`, { parent, ...(name ? { name } : {}) }),
   moveEntry: (pid, from, to) =>
     jsonRequest('POST', `/api/projects/${pid}/move`, { from, to }),
   removeFolder: (pid, rel) =>
