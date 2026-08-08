@@ -112,9 +112,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 才调（发公网是外发动作）；额度按项目 owner 算，与站点窗按钮共用一套闸门。
       makePublishSiteTool({ projectId }),
 
-      // roll_film — 自部署 MiniMax-H3 视频产线（2026-08-08）。管线只有定档主力
-      // 线路一条（Modal H100+sage Turbo8步 ≤12.25s）；花站主 Modal 余额，试用号
-      // 拒（owner 闸门同 publish_site）。视觉 QC 归用户，工具只回文本路径。
+      // roll_film — 自部署 MiniMax-H3 视频产线（2026-08-08）。默认走站主 5090
+      // 盒子（h3box over SSH；Modal 余额告急降备用档，NODESIGN_FILM_BACKEND=modal
+      // 显式才走，绝不自动回退烧余额）；配方恒定 Turbo8步 ≤12.25s；试用号拒
+      // （owner 闸门同 publish_site）。视觉 QC 归用户，工具只回文本路径。
       makeRollFilmTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
 
       // paint_still — 站主本地 GPU 盒子生图（NoobAI/Anima，2026-08-08）。盒子

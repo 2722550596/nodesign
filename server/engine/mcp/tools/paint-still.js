@@ -13,7 +13,6 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { spawn } from 'node:child_process';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import sharp from 'sharp';
@@ -23,39 +22,9 @@ import { getUserById } from '../../../auth/users-store.js';
 import {
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor,
 } from '../../../lib/image-variant.js';
+import { boxConfig, shq, runBox, sshArgs, scpArgs } from './h3box-ssh.js';
 
 const SSH_TIMEOUT_MS = Number(process.env.NODESIGN_H3BOX_TIMEOUT_MS) || 240_000;
-
-function boxConfig() {
-  const target = process.env.NODESIGN_H3BOX_SSH || '';
-  if (!target) return null;
-  return {
-    target,
-    port: process.env.NODESIGN_H3BOX_PORT || '22',
-    pass: process.env.NODESIGN_H3BOX_PASS || '',
-  };
-}
-
-/** POSIX 单引号转义（远端是 zsh/bash，规则相同） */
-const shq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-
-function runBox(box, bin, args) {
-  return new Promise((resolve) => {
-    const env = { ...process.env };
-    let cmd = bin; let argv = args;
-    if (box.pass) {
-      env.SSHPASS = box.pass;
-      cmd = 'sshpass'; argv = ['-e', bin, ...args];
-    }
-    const child = spawn(cmd, argv, { stdio: ['ignore', 'pipe', 'pipe'], env });
-    let out = ''; let err = '';
-    child.stdout.on('data', (d) => { out = (out + d).slice(-8000); });
-    child.stderr.on('data', (d) => { err = (err + d).slice(-2000); });
-    const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* */ } }, SSH_TIMEOUT_MS);
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: String(e.message) }); });
-  });
-}
 
 async function makeThumbnail(rawBuf) {
   try {
@@ -139,10 +108,8 @@ reference the file by its path and move on.`,
         ].filter(Boolean).join(' ');
 
         const t0 = Date.now();
-        const gen = await runBox(box, 'ssh', [
-          '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
-          '-p', box.port, box.target, remoteCmd,
-        ]);
+        const gen = await runBox(box, 'ssh', [...sshArgs(box), remoteCmd],
+          { timeoutMs: SSH_TIMEOUT_MS, signal: ctx?.abortController?.signal });
         if (gen.code !== 0) {
           const reason = gen.code === 255 ? '盒子连不上（没开机/地址过期）' : `生成失败 exit ${gen.code}`;
           return asText(`${reason}：\n${(gen.err || gen.out).slice(-600)}\n转告用户，可改用 generate_image。`, true);
@@ -154,10 +121,8 @@ reference the file by its path and move on.`,
         }
 
         const tmpLocal = path.join(os.tmpdir(), `${jobId}${path.extname(remotePaths[0])}`);
-        const pull = await runBox(box, 'scp', [
-          '-o', 'StrictHostKeyChecking=no', '-P', box.port,
-          `${box.target}:${remotePaths[0]}`, tmpLocal,
-        ]);
+        const pull = await runBox(box, 'scp',
+          [...scpArgs(box), `${box.target}:${remotePaths[0]}`, tmpLocal], { timeoutMs: 60_000 });
         if (pull.code !== 0) {
           return asText(`取图失败：\n${pull.err.slice(-400)}`, true);
         }
