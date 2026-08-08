@@ -168,6 +168,10 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       matcher: 'mcp__nodesign__roll_film',
       hooks: [makePreToolUseRollFilmCookbookInjector()],
     }, {
+      // paint_still 首次调用时注入本地生图手册（四模型选型+BFL 官方提示词实践）
+      matcher: 'mcp__nodesign__paint_still',
+      hooks: [makePreToolUsePaintStillCookbookInjector()],
+    }, {
       // AskUserQuestion 首次调用时注入 NoDesign 的 preview 协议（2026-07-28 从
       // prelude 挪来：常驻 1.2k tokens，但只有真要问用户时才用得上）
       matcher: 'AskUserQuestion',
@@ -1477,6 +1481,28 @@ function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
           `<system-reminder>\n[${meta.title} — 首次注入]\n\n`
         + loadToolPrompt(meta.file)
         + '\n\n本参考每 session 每形态只注入一次。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
+// paint_still 首调注入本地生图手册：四模型选型 + noobai 标签流 + FLUX.2 官方
+// 提示词实践（BFL prompting guide 摘要）+ 装卸税排序纪律。
+function makePreToolUsePaintStillCookbookInjector() {
+  let alreadyInjected = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    alreadyInjected = true;
+    const cookbook = loadToolPrompt('paint-still-cookbook');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[paint_still 本地生图手册 — 首次注入]\n\n'
+        + cookbook
+        + '\n\n本手册每 session 只注入一次，后续调用直接照用。\n'
         + '</system-reminder>',
       },
     };
