@@ -170,7 +170,13 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 按需先 `ToolSearch("select:mcp__nodesign__<tool>")` 拉 schema：`generate_image` ·
 `remove_background` · `web_search` · `expose_tweaks` · `export_handoff` ·
 `request_plan_mode` · `pin_to_board` · `deliver_files` · `crystallize_skill` ·
-`report_issue`
+`report_issue` · `roll_film` · `paint_still`
+
+自部署产线两件：`roll_film`（文生视频，MiniMax-H3 主力线路，单镜 ≤12.25s，一条
+真花钱 ~$0.10-0.28 且 4-8 分钟——用户明确要视频才用，发车前先告知）、`paint_still`
+（本地 GPU 生图，动漫向/视频关键帧首选；盒子不在线工具会明说，那就转告用户改走
+generate_image）。**这两件的产物一律不做视觉检查**——不 Read、不截图、不派
+vision-checker，按文件名把路径交给用户，质量判定由用户完成。
 
 harness 里的事用 `report_issue` 给维护者记一笔（进问题列表，不是给用户看的），
 分三类：bug（行为错了）、friction（能用但绕路，同一个坑绕了不止一次）、

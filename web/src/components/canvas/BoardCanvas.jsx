@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
-  Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
+  Presentation, PencilLine, ChevronsUpDown, Focus, Globe, Film,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
@@ -306,6 +306,7 @@ export default function BoardCanvas({
         });
       }
       else if (a.isImage) out.push({ id: a.path, type: 'image', sid, ...a });
+      else if (a.isVideo) out.push({ id: a.path, type: 'video', sid, ...a });
       else out.push({ id: a.path, type: 'file', sid, ...a });
     }
     return out;
@@ -521,7 +522,7 @@ export default function BoardCanvas({
       }
       if (o.type === 'doc') legacy.doc.push(o);
       else if (o.type === 'deck') legacy.deck.push(o);
-      else if (o.type === 'file') legacy.file.push(o);
+      else if (o.type === 'file' || o.type === 'video') legacy.file.push(o);
       else legacy.art.push(o);
     }
 
@@ -1029,6 +1030,7 @@ export default function BoardCanvas({
     else if (o.type === 'image') setDetail(o);
     // markdown 双击进阅读器（渲染过的），其余文件双击才是丢给浏览器
     else if (o.type === 'file') (isMarkdown(o) ? openViewer : openFile)(o);
+    else if (o.type === 'video') openFile(o);
     else if (o.type === 'deck' || o.type === 'site' || o.type === 'world') {
       if (o.pos.expanded) focusDeck(o);
       else patchLayout(o.id, { expanded: true, z: ++zMaxRef.current });
@@ -2023,6 +2025,30 @@ function BoardObject({
       )}
 
       {o.type === 'note' && <NoteFaces o={o} />}
+
+      {o.type === 'video' && (
+        <div>
+          {/* 播放器区拦下 pointer 事件：video controls 的点击不能变成拖卡 */}
+          <div
+            data-board-action
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{ aspectRatio: '16 / 9', overflow: 'hidden', borderRadius: '10px 10px 0 0', background: '#000' }}
+          >
+            <video
+              src={Assets.artifactFileUrl(projectId, o.path)}
+              controls preload="metadata" playsInline
+              style={{ width: '100%', height: '100%', display: 'block' }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, padding: `${GAP.xs}px ${GAP.sm}px` }}>
+            <Film size={10} color={COLOR.sub} />
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {o.name}
+            </span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{formatSize(o.size)}</span>
+          </div>
+        </div>
+      )}
 
       {o.type === 'file' && (
         <div

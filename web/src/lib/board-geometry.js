@@ -37,6 +37,8 @@ export const SIZES = {
   deck:  { w: 240, h: 88 },
   deckExpanded: { w: DECK_EMBED_W, h: 28 + 360 },
   image: { w: 200, h: 176 },
+  // 视频卡：16:9 播放器（240×135）+ 一行文件名条
+  video: { w: 240, h: 160 },
   note:  { w: 200, h: 148 },
   file:  { w: 224, h: 40 },
   // 站点：收起态是一张带页面数的条；展开态放一张桌面宽度的缩略预览

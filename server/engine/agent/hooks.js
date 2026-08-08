@@ -164,6 +164,10 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
         makePreToolUseGenerateImageCookbookInjector(),
       ],
     }, {
+      // roll_film 首次调用时注入 H3 三字段提示词手册（纪律配方全在里面）
+      matcher: 'mcp__nodesign__roll_film',
+      hooks: [makePreToolUseRollFilmCookbookInjector()],
+    }, {
       // AskUserQuestion 首次调用时注入 NoDesign 的 preview 协议（2026-07-28 从
       // prelude 挪来：常驻 1.2k tokens，但只有真要问用户时才用得上）
       matcher: 'AskUserQuestion',
@@ -1473,6 +1477,28 @@ function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
           `<system-reminder>\n[${meta.title} — 首次注入]\n\n`
         + loadToolPrompt(meta.file)
         + '\n\n本参考每 session 每形态只注入一次。\n'
+        + '</system-reminder>',
+      },
+    };
+  };
+}
+
+// roll_film 首调注入 H3 提示词手册：三字段格式 + 多镜纪律（逐字角色块/同种子）
+// + 禁视觉检查。模式与 generate_image cookbook 完全同款。
+function makePreToolUseRollFilmCookbookInjector() {
+  let alreadyInjected = false;
+  return async (_input, _toolUseId, _options) => {
+    if (alreadyInjected) return {};
+    alreadyInjected = true;
+    const cookbook = loadToolPrompt('roll-film-cookbook');
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        additionalContext:
+          '<system-reminder>\n[roll_film H3 提示词手册 — 首次注入]\n\n'
+        + cookbook
+        + '\n\n本手册每 session 只注入一次，后续调用直接照用。\n'
         + '</system-reminder>',
       },
     };

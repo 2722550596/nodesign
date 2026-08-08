@@ -193,6 +193,9 @@ const ARTIFACT_MIME = {
   '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
 };
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
+// 视频上墙（2026-08-08 roll_film）：isVideo 让前端渲成带播放器的视频卡而不是
+// 通用文件卡。播放走既有 Range+派生档管线（video-variant.js），这里只标记。
+const VIDEO_EXTS = new Set(['.mp4', '.webm']);
 
 /**
  * GET /:pid/artifacts — 产物清单（project 级，跨 session）。
@@ -234,6 +237,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
           mtime: stat.mtime.toISOString(),
           ext,
           isImage: IMAGE_EXTS.has(ext),
+          isVideo: VIDEO_EXTS.has(ext),
           // 不再探盘：缩略图地址对任何 generated 图都一定能出图（artifact-file
           // 缺文件时回原图现编一张，见 lib/image-variant.js）。原来那次 exists()
           // 探的是 .thumb.jpg，改名成 .thumb.webp 之后它会对老图一律返 false，
