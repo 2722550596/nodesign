@@ -177,9 +177,20 @@ export function traitsOf(o) {
   return v ? { ...k, ...v } : k;
 }
 
-/** 物件当前占的矩形（展开态取 sizeExpanded）。 */
+/**
+ * 物件当前占的矩形（展开态取 sizeExpanded）。
+ *
+ * **画布原生物件（涂鸦）自带尺寸**：它的大小是画出来的，不是形态表能预设的。
+ * 创建时就把真实包围盒写进了 `layout.w/h`，这里必须读回来 —— 2026-08-07 前
+ * 这两个字段写了没人读，涂鸦一律按形态表的 160×120 算，于是画一条长线只有
+ * 左上角那一块能拖，笔画其余部分看得见摸不着（靠 `overflow:visible` 才画得出
+ * 来），鼠标落上去直接穿透去平移画布。写了没人读的字段就是这么坑人的。
+ */
 export function sizeOf(o) {
   const k = kindOf(o);
+  if (k.backing === 'canvas' && o?.pos?.w > 0 && o?.pos?.h > 0) {
+    return { w: o.pos.w, h: o.pos.h };
+  }
   return (o?.pos?.expanded && k.sizeExpanded) || k.size;
 }
 

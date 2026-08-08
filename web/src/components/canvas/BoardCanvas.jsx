@@ -5,7 +5,7 @@ import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
   Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
-  Maximize2, Minus, MousePointer2, Type, PenLine, MessageSquarePlus, LayoutGrid,
+  Maximize2, Minus, MousePointer2, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
@@ -134,10 +134,15 @@ export default function BoardCanvas({
   const camApiRef = useRef(null);   // 相机 API（hook 在下方才调用，用 ref 让上面的回调也够得着）
 
   /**
-   * 当前工具。`select` 是默认，其余三种是"手上拿着东西"的状态。
+   * 当前工具。`select` 是默认，其余是"手上拿着东西"的状态。
    *
    * 工具是**画布级**的一个模式，不是某个物件的属性 —— 所以它住在这里，
    * 由浮动工具栏的模式组切换（FloatingToolbar 的 type:'mode'）。
+   *
+   * `select` 和 `hand` 是一对（2026-08-08 拆开）：**指针管东西，抓手管镜头**。
+   * 在这之前只有 select 一个，平移靠"拖到空白处"—— 画布一满就没有空白可拖，
+   * 于是挪镜头这件最频繁的事反而最难做。现在两件事各有各的工具，手上拿的是
+   * 哪个一眼看得见（光标也跟着变）。空格临时抓手照旧，它是 hand 的按住版。
    */
   const [tool, setTool] = useState('select');
   const [commentDraft, setCommentDraft] = useState(null);   // { targetId, at }
@@ -847,7 +852,7 @@ export default function BoardCanvas({
     return boxUnion(boxes) || { x: 0, y: 0, w: DESKTOP_W, h: 600 };
   }, [visibleZones, visibleObjects, viewMode]);
 
-  const camera = useBoardCamera({ paneRef: scrollRef, contentBox });
+  const camera = useBoardCamera({ paneRef: scrollRef, contentBox, handTool: tool === 'hand' });
   const { cam } = camera;
   const scale = cam.z;
   scaleRef.current = scale;
@@ -1032,6 +1037,10 @@ export default function BoardCanvas({
   const onObjectPointerDown = (e, o) => {
     if (e.button !== 0) return;
     if (e.target.closest('[data-board-action]')) return;   // 按钮不触发拖拽
+    // 抓手态（工具或空格）：这一下归镜头。卡片的 handler 挂在卡片上、画布的
+    // 挂在外层，事件是**先卡片后画布**冒泡上去的 —— 卡片不主动让路的话，
+    // 按在卡片上会同时起一个物件拖拽和一次平移，两边各拽各的。
+    if (camApiRef.current?.isHandMode?.()) return;
     recentDragMovedRef.current = false;
     noteUserTakeover();
     setDragActive(true);
@@ -1056,8 +1065,12 @@ export default function BoardCanvas({
       const nx = Math.min(DESKTOP_W + ROAM_MARGIN, Math.max(-ROAM_MARGIN, d.origX + dx / scale));
       const ny = Math.max(-ROAM_MARGIN, d.origY + dy / scale);
       setLayout(prev => ({ ...prev, [d.id]: { ...prev[d.id], x: nx, y: ny } }));
-      // 实时落点提示：这个物件松手会归到哪（工作区高亮 / 文件夹卡高亮），
-      // 归入工作区时再给一格吸附预览（ghost 虚线框 = 松手后的落位）
+      // 实时落点提示：这个物件松手会归到哪（工作区高亮 / 文件夹卡高亮）。
+      //
+      // **只提示归属，不预告坐标**：2026-08-07 前这里还会算一个 244×210 的
+      // 吸附格并画成虚线 ghost，松手时把卡吸过去。那就是「拖动往鼠标反方向
+      // 跑」的全部原因 —— 拖拽过程逐帧是像素级跟手的，是松手那一下被吸到
+      // 格点上，向左拖 30px 能落到 −34px。落点由用户的手决定，不由格子决定。
       const obj = positioned.find(o => o.id === d.id);
       if (obj) {
         const sz = sizeOf({ ...obj, pos: layoutRef.current[d.id] || obj.pos });
@@ -1071,17 +1084,7 @@ export default function BoardCanvas({
         if (folder) {
           hint = { kind: 'folder', id: folder.id };
         } else if (zoneHit) {
-          const cols = Math.max(1, Math.floor((zoneHit.w - ZONE.pad * 2) / ZONE.cellW));
-          const c = Math.max(0, Math.min(cols - 1, Math.round((nx - zoneHit.x - ZONE.pad) / ZONE.cellW)));
-          const r = Math.max(0, Math.round((ny - zoneHit.y - ZONE.header - ZONE.pad) / ZONE.cellH));
-          hint = {
-            kind: 'zone', id: zoneHit.id,
-            ghost: {
-              x: zoneHit.x + ZONE.pad + c * ZONE.cellW,
-              y: zoneHit.y + ZONE.header + ZONE.pad + r * ZONE.cellH,
-              w: sz.w, h: sz.h,
-            },
-          };
+          hint = { kind: 'zone', id: zoneHit.id };
         }
         if (JSON.stringify(dropHintRef.current) !== JSON.stringify(hint)) {
           dropHintRef.current = hint;
@@ -1133,14 +1136,8 @@ export default function BoardCanvas({
               y: Math.max(0, fz.y + ZONE.header + ZONE.pad + Math.floor(n / 4) * ZONE.cellH),
             });
           } else if (hint?.kind === 'zone') {
-            // 吸附：松手落到预览格上；跨区时同时写归属
-            const patch = {};
-            if (prevZone !== hint.id) patch.zone = hint.id;
-            if (hint.ghost) {
-              patch.x = Math.max(0, Math.min(DESKTOP_W - sz.w, hint.ghost.x));
-              patch.y = Math.max(0, hint.ghost.y);
-            }
-            if (Object.keys(patch).length) patchLayout(d.id, patch);
+            // 只写归属，**坐标就是你松手的地方**（拖拽期间已经逐帧落进 layout 了）
+            if (prevZone !== hint.id) patchLayout(d.id, { zone: hint.id });
           } else if (prevZone && DRAG_OUT_DETACHES) {
             // 明确拖出去才摘（挨着边扔的算没摆好，留在原区）
             const zr = zonesRef.current[prevZone];
@@ -1293,6 +1290,28 @@ export default function BoardCanvas({
   }, [deckOpen, viewMode, projectPanel, viewer, detail]);
 
   /**
+   * 换工具的单键快捷键。
+   *
+   * 工具栏的 title 里从一开始就写着「（V）（T）（P）（C）」，但**全仓没有一处
+   * 监听过这些键** —— 提示写了一个不存在的功能，比不写更坏。2026-08-08 补上，
+   * 顺带给抓手一个 H（跟 Figma / Miro 同键位，用户不用学）。
+   *
+   * 带修饰键的一律放行：Ctrl+V 是粘贴，不是换工具。
+   */
+  useEffect(() => {
+    const KEYS = { v: 'select', h: 'hand', t: 'text', p: 'draw', c: 'comment' };
+    const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const next = KEYS[e.key?.toLowerCase()];
+      if (next) setTool(next);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  /**
    * 进入 / 退出任务（2026-07-28：任务=会话一对一后唯一的一条切换路径）
    *
    *   进入  焦点落到这块区；它绑着会话就连会话一起切过去
@@ -1402,6 +1421,7 @@ export default function BoardCanvas({
   const zoneGestureProps = useCallback((z, opts = {}) => ({
     onPointerDown: (e) => {
       if (e.button !== 0 || e.target.closest?.('[data-zone-action]')) return;
+      if (camApiRef.current?.isHandMode?.()) return;   // 抓手态归镜头（同 onObjectPointerDown）
       e.stopPropagation();
       e.currentTarget.setPointerCapture?.(e.pointerId);
       const members = positionedRef.current
@@ -1801,6 +1821,7 @@ export default function BoardCanvas({
           position: 'absolute', inset: 0, overflow: 'hidden',
           touchAction: 'none',
           cursor: camera.panning ? 'grabbing'
+            : tool === 'hand' ? 'grab'
             : tool === 'draw' ? 'crosshair'
             : tool === 'text' ? 'text'
             : tool === 'comment' ? 'help'
@@ -2000,17 +2021,6 @@ export default function BoardCanvas({
           ))}
 
           {/* 吸附预览：松手后物件将落到的格位（虚线 ghost）*/}
-          {dropHint?.ghost && (
-            <div style={{
-              position: 'absolute',
-              left: dropHint.ghost.x, top: dropHint.ghost.y,
-              width: dropHint.ghost.w, height: dropHint.ghost.h,
-              border: '1.5px dashed rgba(150,115,60,0.55)', borderRadius: RADIUS.xl,
-              background: 'rgba(255,254,246,0.45)',
-              zIndex: 0, pointerEvents: 'none',
-            }} />
-          )}
-
           {visibleObjects.map((o) => (
             <BoardObject
               key={o.id}
@@ -2161,7 +2171,8 @@ export default function BoardCanvas({
               value: tool,
               onChange: setTool,
               items: [
-                { id: 'select', icon: MousePointer2, title: '选择 / 拖动（V）' },
+                { id: 'select', icon: MousePointer2, title: '指针：选中和挪动东西（V）' },
+                { id: 'hand', icon: Hand, title: '抓手：拖任何地方都是挪镜头（H，或按住空格）' },
                 { id: 'text', icon: Type, title: '写一段字（T）' },
                 { id: 'draw', icon: PenLine, title: '涂鸦（P）' },
                 { id: 'comment', icon: MessageSquarePlus, title: '标注一个物件（C）' },
