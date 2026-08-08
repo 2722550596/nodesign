@@ -5,6 +5,7 @@ import AppShell from '../components/layout/AppShell.jsx';
 // 主区两栏固定（左 chat + 右 canvas 占满）；5 个次级 UI = 浮窗 bounds=parent
 // 限制在 canvas section 内（chat / canvas 不再可拖动 — PLAN.md:431 旧决策回归）。
 import FloatingPanel from '../components/layout/FloatingPanel.jsx';
+import ChatDock from '../components/layout/ChatDock.jsx';
 import { PanelManagerProvider } from '../components/layout/PanelManager.jsx';
 // PanelMenu 已下架（用户反馈"面板"按钮太冗余）— 浮窗仍可通过 hooks 直接 toggle
 import { Sliders, MessageSquare } from 'lucide-react';
@@ -309,18 +310,15 @@ export default function ProjectWorkspace() {
     const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
     const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
     const chatW = 380;
+    // chat 不在这张表里了：它 2026-08-08 起是钉在右缘的 ChatDock，自己管
+    // 收起/宽度，**位置不再是一个状态**。留在这里只会让 PanelManager 继续
+    // 持久化一份没人读的坐标。
     return {
-      chat: {
-        position: { x: Math.max(16, vw - chatW - 20), y: 16 },
-        size: { width: chatW, height: Math.max(420, vh - 150) },
-        visible: true, zIndex: 120,
-      },
       tweaks: { position: { x: 96, y: 160 }, size: { width: 320, height: 360 }, visible: false, zIndex: 100 },
     };
   }, []);
 
   const panelMeta = useMemo(() => ({
-    chat:      { label: '对话',      icon: MessageSquare },
     tweaks:    { label: 'Tweaks',    icon: Sliders },
   }), []);
 
@@ -2016,20 +2014,13 @@ export default function ProjectWorkspace() {
           />
         </FloatingPanel>
 
-        {/* 对话浮窗 —— 主界面，所以 closable={false}：PanelMenu 早已下架，
-            关掉的浮窗没有任何 UI 能叫回来，只能清 localStorage。
+        {/* 对话栏 —— 钉在右缘，不再是可以拖走的浮窗（2026-08-08）。
             放在 canvas section **之外**、视口容器之内：它跟画布内容不共用
             坐标系，画布怎么滚它都待在屏幕原处（这就是「跟随镜头」）。 */}
-        <FloatingPanel
-          id="chat"
-          title={currentSessionTitle || '对话'}
-          icon={MessageSquare}
-          closable={false}
-          minWidth={320}
-          minHeight={280}
-          bodyStyle={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
-        >
+        <ChatDock title={currentSessionTitle || '对话'}>
+          {({ collapse }) => (
           <ChatPanel
+            onCollapse={collapse}
             messages={messages}
             onSend={handleSend}
             isStreaming={isStreaming}
@@ -2059,7 +2050,8 @@ export default function ProjectWorkspace() {
             sessionId={currentSessionId}
             onCanvasReload={handleCanvasReload}
           />
-        </FloatingPanel>
+          )}
+        </ChatDock>
       </div>
 
       <ShareModal show={shareOpen} onClose={() => setShareOpen(false)} project={project} />

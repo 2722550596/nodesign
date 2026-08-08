@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, XCircle, SquarePen, History } from 'lucide-react';
+import { ChevronDown, XCircle, SquarePen, History, PanelRightClose } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ContextMeter from './ContextMeter.jsx';
@@ -39,6 +39,7 @@ export default function ChatPanel({
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
   onNewChat,                 // 开新对话（原画布工具槽的"新任务"，本质是对话通道操作）
+  onCollapse,                // 把整条对话栏收成右缘一条窄轨（ChatDock 递进来）
   hasActiveSession = false,  // 有 currentSessionId 才显示"结束会话"入口
   projectId,                   // Phase B 批次 2：rewindFiles 走 /api/projects/:pid/sessions/:sid/rewind
   sessionId,
@@ -175,6 +176,27 @@ export default function ChatPanel({
             }}
           >
             <XCircle size={13} strokeWidth={1.75} />
+          </button>
+        )}
+
+        {/* 收起整条对话栏（2026-08-08）。放在这排而不是让 ChatDock 自己画一条
+            标题栏 —— 那样一个面板上会有两条 header。"收起"是一个会话级动作，
+            它属于这里。 */}
+        {onCollapse && (
+          <button
+            onClick={onCollapse}
+            title="收起对话栏（点右缘那条窄轨叫回来）"
+            style={{
+              display: 'inline-flex', alignItems: 'center',
+              padding: `${GAP.xs}px ${GAP.xs}px`,
+              color: COLOR.sub, background: 'transparent', border: 'none',
+              borderRadius: RADIUS.sm, cursor: 'pointer',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = CHROME.hover; e.currentTarget.style.color = COLOR.text2; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = COLOR.sub; }}
+          >
+            <PanelRightClose size={13} strokeWidth={1.75} />
           </button>
         )}
       </div>
