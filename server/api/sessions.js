@@ -29,6 +29,7 @@ import { guardProject } from './_guard.js';
 import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
 import {
   getProjectWorkspace,
+  getWorkspaceRoot,
   getSessionWorkspace,
   ensureSessionWorkspace,
   forkSessionWorkspace,
@@ -74,19 +75,29 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  *   SDK 还会补 customTitle / summary / firstPrompt / tag 等字段）
  */
 export async function listSessionsForProject(pid) {
-  const sessionsRoot = path.join(getProjectWorkspace(pid), 'sessions');
-  let entries;
-  try {
-    entries = await fs.readdir(sessionsRoot, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === 'ENOENT') return [];
-    throw err;
-  }
-  const sids = entries
-    .filter(e => e.isDirectory() && SESSION_ID_RE.test(e.name))
-    .map(e => e.name);
+  // 会话的落脚点在 2026-08-08 扁平化时搬了家：`<项目>/sessions/<sid>/`（每会话
+  // 一个沙盒）→ `<工作区>/.nd/<sid>/`（只剩私档，cwd 是工作区本身）。
+  //
+  // ⚠️ 这里漏改过一次，后果是**迁移之后会话列表永远为空** —— 界面上历史对话
+  // 全部消失（数据没丢，`.nd/` 和转录都在，只是没人去列）。所以两处都读：
+  // 迁移过的看 `.nd/`，没迁移的看老的 `sessions/`。
+  const workspaceRoot = getWorkspaceRoot(pid);
+  const readSids = async (dir) => {
+    try {
+      return (await fs.readdir(dir, { withFileTypes: true }))
+        .filter(e => e.isDirectory() && SESSION_ID_RE.test(e.name)).map(e => e.name);
+    } catch (err) {
+      if (err.code === 'ENOENT') return [];
+      throw err;
+    }
+  };
+  const sids = [...new Set([
+    ...await readSids(path.join(workspaceRoot, '.nd')),
+    ...await readSids(path.join(getProjectWorkspace(pid), 'sessions')),
+  ])];
   const results = await Promise.all(sids.map(async (sid) => {
-    const sessionRoot = path.join(sessionsRoot, sid);
+    // 转录按 **cwd** 编码定位，而 cwd 现在就是工作区（getSessionWorkspace 也返回它）
+    const sessionRoot = workspaceRoot;
     try {
       const info = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
         getSessionInfo(sid, { dir: sessionRoot }),
