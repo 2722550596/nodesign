@@ -68,15 +68,38 @@ function sanitizeSize(raw) {
  * 有意义的文件形态，board.json 就是它的**本体**。这类物件必须显式登记，
  * 否则任何人往 objects 里塞一个 kind 就能造出一个不受形态表管的东西。
  *
- * ⚠️ 文字**不在**这张表里，是有意的：文字要落盘成 `.md`（走便签那条路），
- * agent 才读得到。canvas-native 的东西 agent 是瞎的。
+ * 2026-08-08 加进 `text`。在那之前画布上打的字一律落成 `.md` 便签，理由是
+ * "agent 读得到"。但用户要的是**白板**：在工程文件旁边随手写一句、画一笔，
+ * 那是给自己的记号，不是给 agent 的输入。想让 agent 看见的写便利贴 ——
+ * 那条路还在，挪到了右键菜单里。
  */
-const CANVAS_NATIVE_KINDS = new Set(['scribble']);
+const CANVAS_NATIVE_KINDS = new Set(['scribble', 'text']);
 
 /** 涂鸦路径串上限。一条随手画的线约 300~800 字符，8000 够长且撑不爆 board.json */
 const MAX_SCRIBBLE_PATH = 8000;
+/**
+ * 画布文字的字数上限。
+ *
+ * 它是"写在白板上的一句话"，不是文档 —— 长东西该写成 .md（那是便利贴，
+ * agent 读得到）。2000 字够写一段说明，也撑不爆 board.json。
+ */
+const MAX_TEXT_LEN = 2000;
+
+/** 画布文字可选的字体。**白名单而不是自由字符串** —— 这个值会进 CSS */
+export const TEXT_FONTS = ['kai', 'sans', 'serif', 'mono'];
+const TEXT_SIZES = ['sm', 'md', 'lg', 'xl'];
 
 function sanitizeCanvasData(kind, data) {
+  if (kind === 'text') {
+    const t = typeof data?.t === 'string' ? data.t.slice(0, MAX_TEXT_LEN) : '';
+    if (!t.trim()) return null;
+    return {
+      t,
+      font: TEXT_FONTS.includes(data?.font) ? data.font : 'kai',
+      size: TEXT_SIZES.includes(data?.size) ? data.size : 'md',
+      color: ['ink', 'red', 'pencil', 'brass'].includes(data?.color) ? data.color : 'ink',
+    };
+  }
   if (kind !== 'scribble') return null;
   const d = typeof data?.d === 'string' ? data.d.slice(0, MAX_SCRIBBLE_PATH) : '';
   // 只收 SVG path 里合法的那几个字符，挡住任何往 DOM 里塞东西的尝试
@@ -150,9 +173,9 @@ function sanitizeZone(z, size) {
       ? { title: z.title.trim().slice(0, 120) }
       : {}),
     ...(z.collapsed ? { collapsed: true } : {}),   // 收纳成文件夹形态
-    // 用户手动搬过这块区（2026-08-07）：从此它退出"自动纵向堆叠"，
-    // 坐标听用户的。不落盘的话刷新一次就被重新排回队列里。
-    ...(z.pinned ? { pinned: true } : {}),
+    // ⚠️ 这里曾有 `pinned`（"用户手动搬过这块区，从此退出自动纵向堆叠"）。
+    // 纵向堆叠 2026-08-08 整个退役 —— 文件夹是自由摆的卡，没有队列可退出，
+    // 这个字段也就没有了对立面。存量数据里的 pinned 读进来直接丢。
   };
 }
 

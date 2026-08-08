@@ -27,6 +27,7 @@ import { emptyPresence, reducePresence, followTarget } from '../../lib/board-pre
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
+import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import LiveFrame from './LiveFrame.jsx';
@@ -162,6 +163,8 @@ export default function BoardCanvas({
    * 哪个一眼看得见（光标也跟着变）。空格临时抓手照旧，它是 hand 的按住版。
    */
   const [tool, setTool] = useState('select');
+  /** 手写文字用什么字体（设置里选，见 globalStore.canvasFont） */
+  const canvasFont = useGlobalStore(st => st.canvasFont);
   const [commentDraft, setCommentDraft] = useState(null);   // { targetId, at }
   const commentDraftRef = useRef(null);
   const [bindings, setBindings] = useState({});   // board.json 的关系表
@@ -851,29 +854,50 @@ export default function BoardCanvas({
   }, []);
 
   /** 写一段字 → 落成 .md（走便签那条路，agent 读得到） */
-  const handleCreateText = useCallback(async (text, at) => {
-    const zid = zoneAtPoint(at);
-    const folder = zid || null;
+  /**
+   * 写一段字 → **画布原生文字**（2026-08-08 改）。
+   *
+   * 以前它一律落成 `.md` 便签，理由是"canvas-native 的东西 agent 读不到，
+   * 而用户写字十有八九是想说给 agent 听"。那个判断被推翻了：用户要的是
+   * **白板** —— 在工程文件旁边随手写一句、画一笔，跟涂鸦是同一件事。
+   * 想说给 agent 听的走右键「新建便利贴」，那条路原样还在。
+   *
+   * 字体走设置里选的默认值（fontPref），跟涂鸦一样只活在 board.json。
+   */
+  const handleCreateText = useCallback((text, at) => {
+    const t = String(text || '').trim();
+    if (!t) return null;
+    const id = `text:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
+    // 尺寸按字数估：一行约 26 个全角字符，行高 1.6。估不准也没关系 ——
+    // 卡体是 height:auto，这个值只用来定命中区和避让矩形（同涂鸦那条教训）。
+    const cols = Math.min(26, Math.max(6, t.length));
+    const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
+    const px = { sm: 13, md: 16, lg: 22, xl: 30 }[canvasFont.size] || 16;
+    patchLayout(id, {
+      x: Math.round(at.x), y: Math.round(at.y), z: ++zMaxRef.current,
+      w: Math.round(cols * px * 1.05) + 12,
+      h: Math.round(lines * px * 1.6) + 10,
+      kind: 'text',
+      data: { t, font: canvasFont.font, size: canvasFont.size, color: 'ink' },
+    });
+    return id;
+  }, [patchLayout, canvasFont]);
+
+  /** 写一张便利贴 → `notes/*.md`（**这条是给 agent 看的**，走右键菜单） */
+  const createNoteAt = useCallback(async (at) => {
+    const text = window.prompt('便利贴写点什么？（agent 下一轮就能看到）');
+    if (!text?.trim()) return;
     try {
-      let file;
-      if (folder) {
-        // 落在文件夹里 → 工作区便利贴（agent 下一轮从注入清单就看得到）
-        const name = `${Date.now().toString(36)}.md`;
-        await Assets.putTaskNote(projectId, name, text);
-        file = `notes/${name}`;
-      } else {
-        const r = await Assets.createNote(projectId, { text, sessionId: currentSessionId });
-        file = r?.path || null;
-      }
-      // 落在点击处（而不是让它自动入座）—— 用户是**指着地方**写的
-      if (file) patchLayout(file, { x: Math.round(at.x), y: Math.round(at.y), z: ++zMaxRef.current, ...(zid ? { zone: zid } : {}) });
+      const name = `${Date.now().toString(36)}.md`;
+      await Assets.putTaskNote(projectId, name, text.trim());
+      const file = `notes/${name}`;
+      // 落在右键处（而不是让它自动入座）—— 用户是**指着地方**写的
+      patchLayout(file, { x: Math.round(at?.x ?? 0), y: Math.round(at?.y ?? 0), z: ++zMaxRef.current });
       reload();
-      return file;
     } catch (err) {
-      console.warn('[board] 写字失败:', err.message);
-      return null;
+      useGlobalStore.getState().showToast(`便利贴写不进去：${err.message}`, 'error');
     }
-  }, [projectId, currentSessionId, zoneAtPoint, patchLayout, reload]);
+  }, [projectId, patchLayout, reload]);
 
   /** 画一笔 → 画布原生物件（只活在 board.json） */
   const handleCreateScribble = useCallback((points) => {
@@ -1631,14 +1655,14 @@ export default function BoardCanvas({
     } else {
       items = [
         { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt('', at) },
-        { id: 'note', icon: StickyNote, label: '新建便利贴', onClick: () => setTool('text') },
+        { id: 'note', icon: StickyNote, label: '新建便利贴', hint: 'agent 能看到', onClick: () => createNoteAt(at) },
         { divider: true },
         { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ at }) },
         { id: 'tidy', icon: LayoutGrid, label: '整理这块画布', onClick: tidyBoard },
       ];
     }
     setMenu({ x: e.clientX, y: e.clientY, items });
-  }, [zoneAtPoint, createFolderAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent]);
+  }, [zoneAtPoint, createFolderAt, createNoteAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent]);
 
   // ── deck 自动内嵌渲染（2026-07-28：工作台=常驻默认视图后的配套）──
   // 工作内容直接在画布里看：当前会话的 deck 有 canvas 就自动展开成内嵌 iframe。
@@ -2654,6 +2678,19 @@ function BoardObject({
             </span>
           </div>
         </div>
+      )}
+
+      {o.type === 'text' && (
+        /* 画布手写文字：没有卡片外观（同涂鸦），就是一段字浮在纸上。
+           白名单字体表在 lib/text-fonts.js，跟服务端那份校验对齐。 */
+        <div style={{
+          fontFamily: TEXT_FONT_CSS[o.data?.font] || TEXT_FONT_CSS.kai,
+          fontSize: TEXT_SIZE_PX[o.data?.size] || TEXT_SIZE_PX.md,
+          lineHeight: 1.6,
+          color: SCRIBBLE_INK[o.data?.color] || PAPER.ink,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          padding: '4px 6px', pointerEvents: 'none', userSelect: 'none',
+        }}>{o.data?.t || ''}</div>
       )}
 
       {o.type === 'scribble' && (

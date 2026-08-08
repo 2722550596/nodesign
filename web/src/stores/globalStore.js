@@ -21,6 +21,28 @@ export const useGlobalStore = create((set) => ({
     toasts: s.toasts.filter(t => t.id !== id),
   })),
 
+  /**
+   * 画布手写文字的字体与字号（2026-08-08）。
+   *
+   * 用户要「不同的、好看的字体供选择」，并且「先放在设置里，默认选一个比较
+   * 合适的」。默认楷体：整套语言里正文就是楷体，手写在白板上的一句话跟它同源；
+   * 等宽只留给机器写的东西。
+   *
+   * 存 localStorage 不存后端：它是**这台机器上这个人的手感偏好**，不是项目
+   * 属性 —— 同一个项目换台电脑打开，字体该跟着人走而不是跟着项目走。
+   */
+  canvasFont: (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('nd:canvasFont'));
+      if (v?.font && v?.size) return v;
+    } catch { /* 没设过 / 隐私模式 */ }
+    return { font: 'kai', size: 'md' };
+  })(),
+  setCanvasFont: (v) => {
+    try { localStorage.setItem('nd:canvasFont', JSON.stringify(v)); } catch { /* */ }
+    set({ canvasFont: v });
+  },
+
   // ── Canvas mode（Edit / Preview / Code） ──
   canvasMode: 'edit',
   setCanvasMode: (m) => set({ canvasMode: m }),

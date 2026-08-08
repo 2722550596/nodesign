@@ -134,7 +134,7 @@ export const KINDS = {
    * **agent 读不到它**。
    *
    * 最后那条是设计取舍不是缺陷：涂鸦是用户给自己做的记号（圈一下、划条线），
-   * 要说给 agent 听的话应该写文字（文字落盘成 .md，那条路是通的）。
+   * 要说给 agent 听的话走右键「新建便利贴」（落盘成 .md，进它的注入清单）。
    *
    * 尺寸由笔画包围盒定，不走这张表 —— 这里的 size 只是兜底。
    */
@@ -146,6 +146,26 @@ export const KINDS = {
     primary: null,
     actions: ['delete'],
     legacyBucket: 'art',
+  },
+
+  /**
+   * 画布文字（2026-08-08）：写在白板上的一句话。
+   *
+   * 跟便利贴的分工：**便利贴是给 agent 看的**（落盘成 .md，进它的注入清单），
+   * **画布文字是给自己看的**（只活在 board.json）。以前画布上打的字一律走
+   * 便签那条路，理由是"agent 读得到"—— 但用户要的是在工程文件旁边随手写一句，
+   * 那是记号不是指令。想让 agent 看见的走右键「新建便利贴」。
+   *
+   * 尺寸跟涂鸦一样由内容决定（sizeOf 读 pos.w/h），这里给的是没量过时的兜底。
+   */
+  text: {
+    label: '文字',
+    backing: 'canvas',
+    size: { w: 220, h: 40 },
+    reader: null,
+    primary: null,
+    actions: ['delete'],
+    legacyBucket: 'doc',
   },
 
   file: {

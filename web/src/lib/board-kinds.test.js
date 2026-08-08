@@ -146,11 +146,15 @@ describe('两条轴', () => {
    *
    * - `doc`   记忆/品牌/指引三张卡的画布分身，正文在服务端不在磁盘产物里
    * - `scribble` 涂鸦，2026-08-07 加，用户给自己做的记号
+   * - `text`  画布手写文字，2026-08-08 加。**这是一次产品决定的翻转**：
+   *   在那之前画布上打的字一律落成 .md 便签，理由正是"agent 读得到"。
+   *   翻转的理由是用户要的是白板 —— 在工程文件旁边随手写一句，那是记号不是
+   *   指令。给 agent 看的那条路没删，挪到了右键「新建便利贴」。
    */
   it('canvas-backed 是白名单，加成员要过这一关', () => {
     const canvasBacked = Object.entries(KINDS)
       .filter(([, v]) => v.backing === 'canvas').map(([k]) => k);
-    expect(canvasBacked.sort()).toEqual(['doc', 'scribble']);
+    expect(canvasBacked.sort()).toEqual(['doc', 'scribble', 'text']);
   });
 
   it('canvas-backed 一律不能加入上下文（没有 path 可给）', () => {

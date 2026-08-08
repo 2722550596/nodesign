@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronRight, Settings as SettingsIcon, ShieldCheck } from 'lucide-react';
 import { useAnchoredPosition } from '../../lib/anchored-popover.js';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
+import { TEXT_FONT_CSS, TEXT_FONT_LABELS, TEXT_SIZE_LABELS } from '../../lib/text-fonts.js';
 import SystemTab from '../context-panel/SystemTab.jsx';
 import DecisionsTab from '../context-panel/DecisionsTab.jsx';
 
@@ -24,6 +26,8 @@ export default function SystemPopover({
   // 决定后端给 agent 注入哪一版提示词，设一次管一整段，不该常驻占工具位。
   tweaksEnabled = null, onTweaksEnabledChange = null,
 }) {
+  const canvasFont = useGlobalStore(st => st.canvasFont);
+  const setCanvasFont = useGlobalStore(st => st.setCanvasFont);
   const ref = useRef(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const anchored = useAnchoredPosition(anchorRef, 360);
@@ -120,6 +124,51 @@ export default function SystemPopover({
             <ToggleSwitch checked={!!tweaksEnabled} onChange={onTweaksEnabledChange} />
           </div>
         )}
+
+        {/* 画布手写字体（2026-08-08）。放设置里而不是工具栏：它是设一次管很久的
+            偏好，不是每次落笔都要选的东西。存 localStorage —— 是这台机器上这个
+            人的手感，不是项目属性。 */}
+        <div style={{
+          padding: `${GAP.md}px ${GAP.lg}px`,
+          borderBottom: `1px solid ${COLOR.borderLt}`,
+        }}>
+          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text }}>
+            画布手写字体
+          </div>
+          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 2, marginBottom: GAP.sm }}>
+            用「文字」工具（T）在画布上写字时用这个
+          </div>
+          <div style={{ display: 'flex', gap: GAP.xs, flexWrap: 'wrap' }}>
+            {Object.entries(TEXT_FONT_LABELS).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setCanvasFont({ ...canvasFont, font: k })}
+                style={{
+                  padding: `${GAP.xs}px ${GAP.sm}px`, borderRadius: RADIUS.md, cursor: 'pointer',
+                  fontFamily: TEXT_FONT_CSS[k], fontSize: FONT_SIZE.sm,
+                  border: `1px solid ${canvasFont.font === k ? COLOR.text : COLOR.borderLt}`,
+                  background: canvasFont.font === k ? COLOR.text : 'transparent',
+                  color: canvasFont.font === k ? COLOR.bg : COLOR.text2,
+                }}
+              >{label}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: GAP.xs, marginTop: GAP.sm }}>
+            {Object.entries(TEXT_SIZE_LABELS).map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setCanvasFont({ ...canvasFont, size: k })}
+                style={{
+                  padding: `${GAP.xs}px ${GAP.sm}px`, borderRadius: RADIUS.md, cursor: 'pointer',
+                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+                  border: `1px solid ${canvasFont.size === k ? COLOR.text : COLOR.borderLt}`,
+                  background: canvasFont.size === k ? COLOR.text : 'transparent',
+                  color: canvasFont.size === k ? COLOR.bg : COLOR.text2,
+                }}
+              >{label}</button>
+            ))}
+          </div>
+        </div>
 
         <SystemTab project={project} deckSpec={deckSpec} projectId={projectId} />
 
