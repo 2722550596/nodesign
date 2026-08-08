@@ -6,10 +6,9 @@
 |---|---|---|---|---|
 | noobai | danbooru 标签 | ~20s | 商用可 | 动漫角色/关键帧主力，tag 级控制最强 |
 | anima | 自然语言英文 | ~20s | 非商用 | 氛围感插画 |
-| flux2-turbo | 自然语言 | **~12s** | 非商用 | 海报/字卡/写实细节，flux2 系首选 |
-| flux2 | 自然语言 | ~30s | 非商用 | turbo 不够细时的质量锚（20 步） |
+| krea2 | 自然语言 | ~10s | 个人免费 | 写实/氛围/审美向画面，反 AI 油光脸 |
 
-⚠️ 装卸税：flux2 系和其他模型互切时，切换后第一张要付 ~35G 权重搬运费（几分钟）。
+⚠️ 换模型后的第一张要付一次权重装载（krea2 约 1 分钟，小模型十几秒）。
 **批量时按模型分组排序**（同模型的 stills 排一起），别交错着切。
 
 ## noobai 提示词（danbooru 标签流）
@@ -19,18 +18,15 @@
 `1girl, silver hair, long hair, witch hat, black robe, riding broom, flying,
 cloud sea, sunrise, wide shot, from below, cinematic lighting, depth of field`
 
-## flux2 / flux2-turbo 提示词（BFL 官方实践）
+## krea2 提示词（自然语言审美向）
 
-- **骨架：Subject + Action + Style + Context**（主体→动作→风格→环境氛围）。
-- **长度**：30-80 词是生产档甜区；10-30 词探索；只有真复杂的场景才 80+。
-  形容词堆砌是噪音，每句话都要背视觉信息。
-- **画面文字**：精确文字用引号并放句子前部，指明位置与字体风格——
-  `The text "FILMS" carved in bold serif letters on a wooden signpost in the
-  foreground`。文字短、字数少更稳；首发命中率约 60%，重要字卡同题出 3-5 张挑。
-- **无负面提示**：FLUX.2 不支持 negative（工具的 negative 字段对 flux2 系无效）。
-  描述你要的，不描述你不要的。
-- **颜色**：绑到具体对象上说，可用 hex——"the cloak is #1a1a2e" 比"用深蓝色调"稳。
-- 分辨率 16 的倍数；1344x768 与视频关键帧对齐，海报可开更大。
+- **骨架：Subject + Action + Style + Context** 通用（主体→动作→风格→环境氛围）。
+- **长度**：30-80 词生产甜区；形容词堆砌是噪音，每句话都要背视觉信息。
+- **审美词很吃**：光线（golden hour / soft window light）、介质（35mm film,
+  editorial photography, watercolor）、质感词直接决定成色——它是审美向训练，
+  给足氛围锚它就不出"AI 油光脸"。
+- **8 步蒸馏 cfg=1**：negative 字段无效——描述你要的，不描述你不要的。
+- 分辨率 16 的倍数；1344x768 与视频关键帧对齐。
 
 ## anima 提示词
 

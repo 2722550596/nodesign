@@ -3,7 +3,7 @@
  *
  * 站主本地 GPU 盒子生图。一次调用 = 一批（1-16 张，串行渲、出一张上墙一张）。
  * 三档模型：noobai（danbooru 标签，商用可）/ anima（自然语言，非商用）/
- * flux2（FLUX.2-dev 32B 旗舰档，自然语言，非商用，32G 卡装卸税重出图分钟级）。
+ * krea2（Krea 2 Turbo 12B 审美向，自然语言，个人免费；08-08 FLUX.2 因效果差下架）。
  * 配方 = 08-08 实测/官方模板。盒子不在线就明说，不静默降级。
  * 落盘/缩略图/事件照 generate-image.js；视觉 QC 一律归用户，只回文本路径。
  */
@@ -23,8 +23,8 @@ import {
 import { boxConfig, shq, runBox, sshArgs, scpArgs } from './h3box-ssh.js';
 
 const SSH_TIMEOUT_MS = Number(process.env.NODESIGN_H3BOX_TIMEOUT_MS) || 240_000;
-// flux2 首装要把 35G DiT + 12G TE 摆上 32G 卡（动态装载+分层流式），分钟级正常
-const TIMEOUT_BY_MODEL = { noobai: SSH_TIMEOUT_MS, anima: SSH_TIMEOUT_MS, flux2: 900_000, 'flux2-turbo': 900_000 };
+// krea2 bf16 24G 全驻卡；换模型后的首张要付一次装载（~1 分钟），给足余量
+const TIMEOUT_BY_MODEL = { noobai: SSH_TIMEOUT_MS, anima: SSH_TIMEOUT_MS, krea2: 400_000 };
 
 async function makeThumbnail(rawBuf) {
   try {
@@ -169,8 +169,8 @@ export async function paintStills(
     }
 
     const head = `Batch done ${lines.length}/${stills.length} stills`;
-    const lic = lines.some((l) => / (anima|flux2)/.test(l))
-      ? 'License note: anima/flux2 outputs are non-commercial.' : null;
+    const lic = lines.some((l) => / anima /.test(l))
+      ? 'License note: anima outputs are non-commercial.' : null;
     const tail = 'Do not open or inspect the images — hand the paths to the user for review.';
     if (failed.length) {
       return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, lic, tail]
@@ -197,12 +197,11 @@ Models per still:
   witch hat, cloud sea, sunrise, wide shot, cinematic lighting"). ~20-40s.
   Commercially safe. Best tag-level control for anime.
 - "anima": natural-language English. ~20-40s. NON-COMMERCIAL license.
-- "flux2": FLUX.2-dev 32B flagship, 20 steps — natural-language English,
-  strongest detail/prompt-following/legible text rendering. NON-COMMERCIAL.
-- "flux2-turbo": same flagship distilled to 8 steps — ~12s per image once
-  warm, near-identical quality. Preferred flux2 lane for most work.
-  NOTE for both flux2 lanes: the FIRST call after video work or a different
-  model pays a several-minute weight-swap tax (35GB), then it's fast.
+- "krea2": Krea 2 Turbo 12B — natural-language English, aesthetic-first
+  training that avoids the flat "AI look"; strong photoreal/editorial vibes.
+  8-step distilled, seconds per image once warm (first call after another
+  model loads 24GB, ~1 min). Free for individuals/small teams. The negative
+  field is a no-op for this model — describe what you want instead.
 
 Use for anime needs and video keyframes (1344x768 matches the video lane).
 For photoreal/general images use generate_image. Requires the box online —
@@ -214,7 +213,7 @@ files by path only.`,
     {
       stills: z.array(z.object({
         prompt: z.string().describe('danbooru tags (noobai) or natural English (anima/flux2)'),
-        model: z.enum(['noobai', 'anima', 'flux2', 'flux2-turbo']).default('noobai'),
+        model: z.enum(['noobai', 'anima', 'krea2']).default('noobai'),
         negative: z.string().optional(),
         size: z.string().regex(/^\d{3,4}x\d{3,4}$/).default('1344x768'),
         seed: z.number().int().optional().describe('omit for fresh random per still'),
