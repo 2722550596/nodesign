@@ -448,8 +448,15 @@ router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
     const rec = getQuerySession(sid);
     if (rec?.query && !rec.abortController.signal.aborted) {
       const result = await rec.query.rewindFiles(userMessageId);
-      emitRewindFiles(pid, sid, result);
-      return res.json(result);
+      // 对话层同步回滚（2026-08-08「做完整」）：rewindFiles 只回文件。显示与模型
+      // 记忆读的都是这份 jsonl —— 关掉活口 query（下条消息从截断后的 jsonl resume，
+      // 记忆才真的回退），等 SDK flush 后把 jsonl 截到该 user 消息之前。
+      try { closeQuerySession(sid, 'rewind_truncate'); } catch { /* */ }
+      await new Promise((r) => setTimeout(r, 800));
+      const removed = await truncateJsonlAtMessage(getSessionWorkspace(pid, sid), sid, userMessageId);
+      const payload = { ...result, conversationTruncated: removed != null, removedEntries: removed ?? 0 };
+      emitRewindFiles(pid, sid, payload);
+      return res.json(payload);
     }
 
     // race guard：active session 存在但 query handle 未 attach（session 启动中
@@ -500,8 +507,16 @@ router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
         tempQuery.rewindFiles(userMessageId),
         new Promise((_, rj) => setTimeout(() => rj(new Error('rewind timeout')), 15000)),
       ]);
-      emitRewindFiles(pid, sid, result);
-      res.json(result);
+      // 对话层回滚：先收干净临时 query（文件句柄/尾部 flush），再截断 jsonl
+      try { tempQuery.close(); } catch { /* */ }
+      try { inputQueue.close(); } catch { /* */ }
+      if (drain) { try { await drain; } catch { /* */ } }
+      tempQuery = null; drain = null;
+      await new Promise((r) => setTimeout(r, 300));
+      const removed = await truncateJsonlAtMessage(sessionRoot, sid, userMessageId);
+      const payload = { ...result, conversationTruncated: removed != null, removedEntries: removed ?? 0 };
+      emitRewindFiles(pid, sid, payload);
+      res.json(payload);
     } catch (err) {
       console.warn(`[sessions.rewind] temp query failed (sid=${sid.slice(0, 8)}): ${err.message}`);
       res.status(500).json({ error: err.message, code: 'REWIND_FAILED' });
@@ -518,6 +533,37 @@ router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
  * 检查 SDK jsonl 是否存在 —— 历史 session 在 ~/.claude/projects/<encoded-cwd>/<sid>.jsonl。
  * encodeCwdForSDK + GLOBAL_CLAUDE_CONFIG_DIR 都已在文件顶部定义。
  */
+/**
+ * 对话层回滚（2026-08-08）：把 jsonl 截断到 userMessageId 那条之前（含它与其后全部）。
+ * jsonl 是追加式日志，截到 prefix = 它历史上真实存在过的状态，resume 天然自洽；
+ * 之后的 file-history-snapshot 属于被撤销的编辑，一并丢弃是正确语义。
+ * 原子写（tmp+rename）。找不到该 uuid 返 null（fail-soft：文件回滚仍算成功）。
+ */
+async function truncateJsonlAtMessage(sessionRoot, sid, userMessageId) {
+  const jsonlPath = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', encodeCwdForSDK(sessionRoot), `${sid}.jsonl`);
+  try {
+    const raw = await fs.readFile(jsonlPath, 'utf8');
+    const lines = raw.split('\n');
+    let cut = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i] || !lines[i].includes(userMessageId)) continue;
+      try { if (JSON.parse(lines[i]).uuid === userMessageId) { cut = i; break; } } catch { /* 非 JSON 行跳过 */ }
+    }
+    if (cut < 0) {
+      console.warn(`[sessions.rewind] uuid ${userMessageId.slice(0, 8)} 不在 jsonl 里，跳过对话截断`);
+      return null;
+    }
+    const kept = lines.slice(0, cut).join('\n');
+    const tmp = `${jsonlPath}.tmp-rewind`;
+    await fs.writeFile(tmp, kept ? `${kept}\n` : '');
+    await fs.rename(tmp, jsonlPath);
+    return lines.filter(Boolean).length - lines.slice(0, cut).filter(Boolean).length;
+  } catch (err) {
+    console.warn(`[sessions.rewind] jsonl 截断失败（不影响文件回滚）：${err.message}`);
+    return null;
+  }
+}
+
 async function jsonlExistsForSession(sessionRoot, sid) {
   const encoded = encodeCwdForSDK(sessionRoot);
   const jsonlPath = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', encoded, `${sid}.jsonl`);

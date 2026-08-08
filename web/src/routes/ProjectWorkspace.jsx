@@ -365,6 +365,19 @@ export default function ProjectWorkspace() {
   // 把进行中 turn 的正文洗掉（"漏传"）。WS hydrate 已落地同一个 sid → 直接放弃。
   const prevHydrateSidRef = useRef(null);
   const wsHydratedSidRef = useRef(null);
+
+  // 回滚成功后对话层重拉（2026-08-08）：服务端已把 jsonl 截断，这里强制整体替换
+  // messages（回滚时必无进行中 turn，不存在洗掉流式正文的问题）。
+  useEffect(() => {
+    const onRewound = (e) => {
+      if (!currentSessionId || e.detail?.sessionId !== currentSessionId) return;
+      Sessions.read(id, currentSessionId)
+        .then(({ messages: m = [] }) => setMessages(sessionMessagesToDisplay(m)))
+        .catch(() => { /* 拉不到就等下次切会话自然重拉 */ });
+    };
+    window.addEventListener('nd-conversation-rewound', onRewound);
+    return () => window.removeEventListener('nd-conversation-rewound', onRewound);
+  }, [id, currentSessionId]);
   useEffect(() => {
     if (!currentSessionId) {
       // /work 路径 = 新会话 → 空 chat 让用户从头开始
