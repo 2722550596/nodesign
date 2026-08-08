@@ -238,7 +238,6 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // 桌面上就会同时出现"会话区 + 无主任务区"两块（2026-07-28 实测踩到）
       {
         matcher: 'Bash',
-        hooks: [makePostToolUseBashTaskBinder({ sharedRoot, sessionId })],
       },
       // Canvas 焕新升级 S1d — Edit/Write canvas.html 时检测改动落在哪些 page →
       // emit run.canvas_focus_page（前端 SlideNavigator 跳页 + pulse 高亮）。
@@ -605,15 +604,14 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
       // canonical 答案。especially: agent-memory 路径以前 prompt 0 提及，
       // agent 写品牌档案常写错位置（./brand.md / ./memory.md 等）→ BrandCard 读不到
       parts.push(
-        `你的 cwd 是 ${workspaceRoot}\n`
-        + `关键路径（用 ./ 相对路径访问，软链已挂好不要绕）：\n`
-        + `  ./tasks/<任务名>/          产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css\n`
-        + `  ./tasks/<任务名>/notes/    便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
-        + `  ./spec.json                压缩历史暗档案（决策改写便利贴，这里别再写）\n`
-        + `  ./assets/                  用户上传素材 + 你 curl 下载的资源（软链 → shared，跨 session 共享）\n`
-        + `  ./agent-memory/            跨 session 长期记忆（软链 → shared）\n`
+        `你的 cwd 是 ${workspaceRoot} —— 这是**项目工作区**，产物直接住这儿。\n`
+        + `关键路径（用 ./ 相对路径访问，全是真目录，没有软链）：\n`
+        + `  ./                         产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css；世界 → 世界.md\n`
+        + `  ./notes/                   便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
+        + `  ./assets/                  用户上传素材 + 你 curl 下载的资源\n`
+        + `  ./.claude/agent-memory/    跨项目长期记忆\n`
         + `    ├── memory.md            main agent 通用 memory（前端 MemoryCard 读这条）\n`
-        + `    └── brand/memory.md      品牌档案（前端 BrandCard 读这条；写品牌信息一定走这个完整路径）`,
+        + `    └── brand/memory.md      风格档案（前端 BrandCard 读这条；写风格信息一定走这个完整路径）`,
       );
 
       // 1. spec.json：取最近 N 条 decisions 拼摘要
@@ -641,36 +639,29 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         // spec.json 不存在 / 解析失败 / stat 失败：noop
       }
 
-      // 1.5 任务便利贴清单（2026-07-30）：tasks/*/notes/*.md —— 决策 + 头脑风暴的
-      // 共享层。metadata-not-content：只列文件和每张贴的首行标题，细节 agent 自己 Read
+      // 1.5 便利贴清单（2026-07-30）：notes/*.md —— 决策 + 头脑风暴的共享层。
+      // metadata-not-content：只列文件和每张贴的首行标题，细节 agent 自己 Read
       try {
-        const tasksDir = path.join(workspaceRoot, 'tasks');
-        const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
+        const notesDir = path.join(workspaceRoot, 'notes');
+        const noteFiles = (await fs.readdir(notesDir))
+          .filter(n => n.endsWith('.md') && !n.startsWith('.'));
         const lines = [];
-        for (const t of taskEntries) {
-          if (!t.isDirectory() || t.name.startsWith('.')) continue;
-          let noteFiles = [];
+        for (const n of noteFiles.slice(0, 12)) {
+          let title = '';
+          let faces = 0;
           try {
-            noteFiles = (await fs.readdir(path.join(tasksDir, t.name, 'notes')))
-              .filter(n => n.endsWith('.md') && !n.startsWith('.'));
-          } catch { continue; }
-          for (const n of noteFiles.slice(0, 12)) {
-            let title = '';
-            let faces = 0;
-            try {
-              const raw = await fs.readFile(path.join(tasksDir, t.name, 'notes', n), 'utf8');
-              title = (raw.match(/^#\s+(.{1,60})/m)?.[1] || '').trim();
-              faces = raw.split(/\n---\n/).length;
-            } catch { /* 列出文件名就够 */ }
-            const meta = [title, faces > 1 ? `${faces} 面` : ''].filter(Boolean).join(' · ');
-            lines.push(`  tasks/${t.name}/notes/${n}${meta ? `（${meta}）` : ''}`);
-          }
+            const raw = await fs.readFile(path.join(notesDir, n), 'utf8');
+            title = (raw.match(/^#\s+(.{1,60})/m)?.[1] || '').trim();
+            faces = raw.split(/\n---\n/).length;
+          } catch { /* 列出文件名就够 */ }
+          const meta = [title, faces > 1 ? `${faces} 面` : ''].filter(Boolean).join(' · ');
+          lines.push(`  notes/${n}${meta ? `（${meta}）` : ''}`);
         }
         if (lines.length > 0) {
-          parts.push(`任务便利贴（和用户共享，他看得到也可能改过；细节 Read）：\n${lines.join('\n')}`);
+          parts.push(`便利贴（和用户共享，他看得到也可能改过；细节 Read）：\n${lines.join('\n')}`);
         }
       } catch {
-        // tasks/ 不存在：noop
+        // notes/ 不存在：noop
       }
 
       // 2. 现有产物清单（2026-07-28：任务模型下产物住 tasks/<任务>/，这里以前只看
@@ -681,36 +672,22 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         const artifacts = await listWorkspaceArtifacts(workspaceRoot);
         if (artifacts.length === 0) {
           parts.push(
-            '这个 workspace 还没有产物 —— 产出型工作先建 tasks/<任务名>/，'
-            + `deck 往里写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
+            '这个工作区还没有产物 —— 直接在工作区根上写：'
+            + `deck 写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
             + `世界（角色扮演）写 ${ENTRY_FILE.world}。`,
           );
         } else {
           const active = getActiveArtifact(sessionId)?.path || null;
           const lines = [];
-          const manifestCache = new Map();   // 同任务多产物：manifest 只算一次
+          // 一个工作区一份 manifest，八个产物共用（原来是"同任务多产物"缓存）
+          let manifest = null;
           for (const a of artifacts.slice(0, 8)) {
             let note = '';
             try {
-              if (a.task) {
-                // 形态说明由注册表出（每个产物一行：deck 报页数，站点报页面清单+产物根）
-                const taskDir = path.join(workspaceRoot, 'tasks', a.task);
-                if (!manifestCache.has(a.task)) manifestCache.set(a.task, await taskManifest(taskDir));
-                const m = manifestCache.get(a.task);
-                const relInTask = a.rel.replace(/^tasks\/[^/]+\//, '');
-                const art = m?.artifacts?.find(x => x.entryRel === relInTask) || null;
-                note = art ? await kindDef(art.kind).describe(taskDir, art) : '还判不出形态';
-              } else {
-                // 旧式 cwd 单 deck
-                const stat = await fs.stat(path.join(workspaceRoot, a.rel));
-                if (stat.size <= CANVAS_HTML_MAX_BYTES) {
-                  const raw = await fs.readFile(path.join(workspaceRoot, a.rel), 'utf8');
-                  const n = (raw.match(/<section\b[^>]*\bdata-page=/g) || []).length;
-                  note = n > 0 ? `deck · ${n} 页` : 'deck · 还没有 <section data-page=> 分页结构';
-                } else {
-                  note = `deck · ${(stat.size / 1024).toFixed(0)}KB，Read 时配 limit 分段读`;
-                }
-              }
+              // 形态说明由注册表出（每个产物一行：deck 报页数，站点报页面清单+产物根）
+              if (!manifest) manifest = await taskManifest(workspaceRoot);
+              const art = manifest?.artifacts?.find(x => x.entryRel === a.rel) || null;
+              note = art ? await kindDef(art.kind).describe(workspaceRoot, art) : '还判不出形态';
             } catch { note = '读不到'; }
             lines.push(`  ${a.rel}（${note}）${a.rel === active ? '  ← 画布工具默认打这份' : ''}`);
           }
@@ -817,7 +794,6 @@ function makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, ses
       const filePath = typeof t?.file_path === 'string' ? t.file_path
         : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
       if (filePath) {
-        await bindTaskToSession(filePath, sharedRoot, sessionId);
         // 刚写的这份 html 就是"当前产物"——list_pages / screenshot / read_page
         // 不给 path 时默认打它，子代理不必知道任务目录长什么样（artifact-target.js）。
         // 形态（deck / site）不在这里定：resolveArtifactTarget 每次解析都按任务现状
@@ -1808,32 +1784,15 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
 }
 
 
-/** PostToolUse(Bash) —— 命令里出现 tasks/<名> 就把它认领给当前会话 */
-function makePostToolUseBashTaskBinder({ sharedRoot, sessionId }) {
-  return async (input, _toolUseId, _options) => {
-    try {
-      const cmd = input?.tool_input?.command;
-      if (typeof cmd !== 'string') return {};
-      const seen = new Set();
-      for (const m of cmd.matchAll(/tasks\/([^\s/'"`;|&]+)/g)) {
-        if (seen.has(m[1])) continue;
-        seen.add(m[1]);
-        await bindTaskToSession(`tasks/${m[1]}/.probe`, sharedRoot, sessionId);
-      }
-    } catch (err) {
-      console.warn('[hooks/PostToolUse:bash-task-bind]', err.message);
-    }
-    return {};
-  };
-}
-
 /**
- * 任务=会话（2026-07-28 定死的一对一）：会话第一次往 tasks/<任务>/ 里写东西时，
- * 在任务目录里落一个 .nd-task.json 记住是谁的家。前端据此把"进任务"翻译成
- * "进那个会话"，把"退出任务"翻译成"退出会话"，不用再各处对表。
+ * ⚠️ 这里曾经有「任务 → 会话」的认领机制（2026-07-28 ~ 08-07）：会话第一次往
+ * `tasks/<任务>/` 写东西时落一个 `.nd-task.json` 记住是谁的家，前端据此把
+ * "进任务"翻译成"进那个会话"。还配了一个 PostToolUse(Bash) 钩子扫命令行里的
+ * `tasks/<名>`，因为 `mkdir tasks/x` 不走 Write 工具。
  *
- * 只写一次（已有 marker 不覆盖）—— 任务的归属在它被建出来那一刻就定了。
+ * 整套随任务层一起退役 —— 产物属于项目，不属于任何一次对话。
  */
+
 /** 工具入参给的可能是绝对路径，也可能是相对 cwd 的 —— 统一成 workspace 相对 */
 function toWorkspaceRel(filePath, workspaceRoot) {
   const p = String(filePath).replace(/\\/g, '/');
@@ -1842,43 +1801,6 @@ function toWorkspaceRel(filePath, workspaceRoot) {
   const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
   return abs.startsWith(root + path.sep) ? abs.slice(root.length + 1) : p;
 }
-
-async function bindTaskToSession(filePath, sharedRoot, sessionId) {
-  if (!sharedRoot || !sessionId) return;
-  const m = String(filePath).replace(/\\/g, '/').match(/(?:^|\/)tasks\/([^/]+)\//);
-  if (!m) return;
-  const taskDir = path.join(sharedRoot, 'tasks', m[1]);
-  const marker = path.join(taskDir, '.nd-task.json');
-  try {
-    await fs.access(taskDir);     // 目录还没建出来就别造标记
-  } catch { return; }
-
-  // 形态（deck / site）在建目录那一刻还判不出来 —— Bash 认领走的是 `mkdir tasks/x`，
-  // 那时目录是空的。所以 kind 允许**后补**：第一次写出入口文件后这里就能判出来，
-  // 补进已有 marker。归属（sessionId）仍然只写一次，认领了就不改。
-  const kind = await detectTaskKind(taskDir);
-  const existing = await readTaskMarker(taskDir);
-  if (existing) {
-    if (kind && existing.kind !== kind && !existing.kindLocked) {
-      try {
-        await fs.writeFile(marker, JSON.stringify({ ...existing, kind }, null, 2), 'utf8');
-      } catch (err) {
-        console.warn('[hooks] backfill task kind failed:', err.message);
-      }
-    }
-    return;                       // 已有归属，不动
-  }
-  try {
-    await fs.writeFile(marker, JSON.stringify({
-      sessionId,
-      boundAt: new Date().toISOString(),
-      ...(kind ? { kind } : {}),
-    }, null, 2), 'utf8');
-  } catch (err) {
-    console.warn('[hooks] bind task→session failed:', err.message);
-  }
-}
-
 
 /**
  * PostToolUse(record_decision) —— 锚定风格那一笔之后提醒落两处长期资产

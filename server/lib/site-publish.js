@@ -37,6 +37,9 @@ export function publishLimit() {
 }
 
 export function validTaskName(name) {
+  // `.` 是工作区根上那个站的 key（扁平化后最常见的一种），单独放行；
+  // 其余仍然是单层目录名。
+  if (name === '.') return true;
   return typeof name === 'string' && name.length > 0
     && !name.includes('/') && !name.includes('..') && !name.startsWith('.');
 }
@@ -58,14 +61,29 @@ async function runWrangler(args) {
   });
 }
 
-/** 找任务里的目录站点产物（单页试作不可发布） */
-async function resolveSiteRoot(pid, task) {
-  const taskDir = path.join(getSharedDir(pid), 'tasks', task);
-  try { await fs.access(taskDir); } catch { return null; }
-  const manifest = await taskManifest(taskDir);
-  const inst = manifest?.artifacts?.find(a => a.kind === 'site' && !a.single);
+/**
+ * 找要发布的目录站点产物（单页试作不可发布）。
+ *
+ * `key` 扁平化之后是**站点的产物根**：`.` = 工作区根上那个站，`v2` 之类 =
+ * 子目录站。发布记录表里的存量数据存的还是旧任务名，那些记录仍然能下线
+ * （unpublish 走存下来的 host，不需要重新寻址），但重发布会认不出来 ——
+ * 这是可接受的：重发布本来就要用户在界面上点一下当前那个站。
+ */
+async function resolveSiteRoot(pid, key) {
+  const workspaceRoot = getSharedDir(pid);
+  try { await fs.access(workspaceRoot); } catch { return null; }
+  const manifest = await taskManifest(workspaceRoot);
+  const sites = (manifest?.artifacts || []).filter(a => a.kind === 'site' && !a.single);
+  const wanted = key === '.' || key === '' ? '' : key;
+  const inst = sites.find(a => (a.root || '') === wanted)
+    // 只有一个站时不挑剔 key —— 旧的发布记录带着任务名回来，别让它发不出去
+    || (sites.length === 1 ? sites[0] : null);
   if (!inst) return null;
-  return { taskDir, root: inst.root || '', rootAbs: inst.root ? path.join(taskDir, inst.root) : taskDir };
+  return {
+    taskDir: workspaceRoot,
+    root: inst.root || '',
+    rootAbs: inst.root ? path.join(workspaceRoot, inst.root) : workspaceRoot,
+  };
 }
 
 /** staging：与整站 zip 同语义（产物根 + .ndignore + assets 副本 + 相对路径改写） */
@@ -76,7 +94,7 @@ async function stageSite(pid, { taskDir, root, rootAbs }) {
   let staged = 0;
   for (const f of files) {
     if (!root && f.rel === 'canvas.html') continue;          // 根站排 deck 保留名
-    if (f.rel === '.nd-task.json') continue;
+    if (f.rel === '.nd-project.json') continue;
     const dest = path.join(stage, f.rel);
     await fs.mkdir(path.dirname(dest), { recursive: true });
     if (/\.(html?|css)$/i.test(f.rel)) {

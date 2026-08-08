@@ -38,6 +38,7 @@ import {
   ensureSessionWorkspace,
   validateSessionId,
   readAssetsSummary,
+  getSessionMetaDir,
 } from '../projects/workspace.js';
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
@@ -277,7 +278,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     const requestedModel = typeof req.body?.model === 'string' && req.body.model.trim()
       ? req.body.model.trim() : null;
     if (requestedModel) {
-      await applySessionModel(sid, sessionRoot, requestedModel, 'turn');
+      await applySessionModel(sid, getSessionMetaDir(project.id, sid), requestedModel, 'turn');
     }
 
     const pendingSummary = isNewSession ? { count: 0, summary: '' } : await readPendingSummary(sessionRoot);
@@ -904,8 +905,8 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
     // 运行时切完再落盘：setModel 失败就不该留下"配置说切了"的假象
     let persisted = null;
     if (sid) {
-      const sessionRoot = await ensureSessionWorkspace(project.id, sid);
-      persisted = await applySessionModel(sid, sessionRoot, model ?? null, 'runtime');
+      await ensureSessionWorkspace(project.id, sid);
+      persisted = await applySessionModel(sid, getSessionMetaDir(project.id, sid), model ?? null, 'runtime');
     }
     res.json({ ok: true, model: persisted?.model ?? model, override: persisted?.override ?? null });
   } catch (err) { next(err); }

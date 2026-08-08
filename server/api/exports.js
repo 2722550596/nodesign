@@ -29,7 +29,7 @@ import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
 import { buildStandaloneHtml, isHybridHtml, inlineLocalImages } from './exports/build-standalone.js';
 import {
-  resolveCanvasTarget, KIND_SITE, ENTRY_FILE, formatAllowed, taskNameOf,
+  resolveCanvasTarget, KIND_SITE, ENTRY_FILE, formatAllowed,
 } from '../lib/artifact-target.js';
 import { walkTaskFiles, loadIgnore } from '../lib/task-scan.js';
 
@@ -645,8 +645,9 @@ export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, proj
     // dirname(入口) 就是产物根（手写 = 任务根，构建型 = dist/）；忽略规则
     // 从任务根读（.ndignore 住那），试作 `_drafts/` 不进交付包。
     const artifactDirAbs = path.dirname(path.resolve(sessionRoot, deckPath));
-    const taskName = taskNameOf(deckPath);
-    const taskRootAbs = taskName ? path.resolve(sessionRoot, 'tasks', taskName) : artifactDirAbs;
+    // 忽略规则（.ndignore）住工作区根；构建型站点的产物根是 dist/，
+    // 规则却写在源那边，所以这两个目录必须分开取
+    const taskRootAbs = path.resolve(sessionRoot);
     const siteFiles = await walkTaskFiles(artifactDirAbs, {
       maxDepth: 6,
       ignore: await loadIgnore(taskRootAbs),

@@ -54,8 +54,24 @@ function withConfigLock(sessionRoot, fn) {
   return next;
 }
 
-function configPath(sessionRoot) {
-  return path.join(sessionRoot, CONFIG_NAME);
+/**
+ * ⚠️ 参数是**会话私档目录**（`<工作区>/.nd/<sid>/`），不是工作区根。
+ *
+ * 2026-08-07 扁平化之前两者是同一个目录（一个会话一个沙盒），所以这里叫
+ * `sessionRoot` 也没错。现在工作区是全项目共用的 —— 传工作区根进来的话，
+ * 一个项目里所有会话会共用一份 session-config.json，**在一条会话里换模型，
+ * 另一条会话跟着变**。调用方一律传 getSessionMetaDir(pid, sid)。
+ */
+function configPath(sessionMetaDir) {
+  // 传错了要当场炸，不能默默共用一份配置。这个错误的表现是"在一条会话里换了
+  // 模型，另一条会话也变了"——没人会把它跟一个路径参数联系起来，静默半年都可能。
+  if (!/[/\\]\.nd[/\\][0-9a-f-]{36}$/i.test(path.resolve(sessionMetaDir))) {
+    throw new Error(
+      `[session-model] 需要会话私档目录（<工作区>/.nd/<sid>/），拿到的是 ${sessionMetaDir}。`
+      + '用 getSessionMetaDir(pid, sid)，别传工作区根。',
+    );
+  }
+  return path.join(sessionMetaDir, CONFIG_NAME);
 }
 
 /** 读整份 config（文件不存在 / 坏了 → {}）。不带任何默认字段填充 */

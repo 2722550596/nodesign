@@ -5,7 +5,7 @@
 ## 目录
 
 ```
-tasks/<任务名>/
+（工作区根）
   index.html        入口（**这个文件名决定了系统把这个任务当站点**）
   about.html        子页，同目录直接加
   style.css         全站共用一份
@@ -21,18 +21,18 @@ tasks/<任务名>/
 导出、发布看的**全是产物根** —— 改完源必须重新构建，否则用户看到的还是旧的。
 `node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
 
-手写起手：`cp site.template.html tasks/<任务名>/index.html` +
-`cp style.template.css tasks/<任务名>/style.css`，然后改。
+手写起手：`cp site.template.html index.html` +
+`cp style.template.css style.css`，然后改。
 
 ## 路径铁律
 
-预览和导出都走 `…/artifact-file/tasks/<任务>/…` 这个前缀，URL 结构跟磁盘结构 1:1。
+预览和导出都走 `…/artifact-file/<路径>` 这个前缀，URL 结构跟磁盘结构 1:1。
 所以：
 
 - 站内链接**只用相对路径**：`about.html` / `posts/x.html` ✓
 - **绝不用根路径**：`/about.html` ✗ —— 会跳出前缀直接 404
 - 素材优先用**任务本地** `assets/`：项目共享素材（生成图 / 用户上传）先
-  `cp ../../assets/generated/x.png tasks/<任务>/assets/`，站内写 `assets/x.png`。
+  `cp assets/generated/x.png ./assets/`，站内写 `assets/x.png`。
   这样导出 zip / 发布时零改写。直接引 `../../assets/…` 也能用（导出时系统会归一），
   但拷进来更稳
 - 外链正常写 `https://…`

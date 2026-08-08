@@ -11,7 +11,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { walkTaskFiles, loadIgnore, DRAFTS_DIR } from '../task-scan.js';
+import { walkTaskFiles, loadIgnore, DRAFTS_DIR, RESERVED_DIRS } from '../task-scan.js';
 
 const ENTRY = 'index.html';
 
@@ -71,7 +71,8 @@ async function discoverInstances(taskDir, marker) {
     try { entries = await fs.readdir(taskDir, { withFileTypes: true }); } catch { /* */ }
     const ignore = await loadIgnore(taskDir);
     for (const e of entries) {
-      if (!e.isDirectory() || e.name.startsWith('.') || e.name === DRAFTS_DIR || e.name === 'assets') continue;
+      if (!e.isDirectory() || e.name.startsWith('.') || e.name === DRAFTS_DIR) continue;
+      if (RESERVED_DIRS.has(e.name)) continue;
       if (ignore(e.name, true)) continue;
       if (await exists(path.join(taskDir, e.name, ENTRY))) {
         out.push({ srcRoot: e.name, root: e.name, single: false });

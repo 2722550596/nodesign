@@ -17,7 +17,7 @@ import {
   listRunsForProject,
 } from '../projects/store.js';
 import { guardProject } from './_guard.js';
-import { listTasks } from '../lib/artifact-target.js';
+import { taskManifest } from '../lib/artifact-target.js';
 import { countPublishedByUser } from '../lib/publish-store.js';
 import { checkQuota } from '../lib/quota.js';
 import { ensureProjectWorkspace, removeProjectWorkspace, getSharedDir } from '../projects/workspace.js';
@@ -74,11 +74,16 @@ router.get('/stats', async (req, res, next) => {
     const projects = listProjects({ kind: 'project', owner: ownerScope(req) });
     const stats = {};
     await Promise.all(projects.map(async (p) => {
-      let tasks = [];
-      try { tasks = await listTasks(getSharedDir(p.id)); } catch { /* 目录没了：算 0 件 */ }
+      // 首页卡上的"有几件东西"。扁平化前数的是任务数（每项目恒为 1，
+      // 所以那张卡上永远写着 1），现在数**产物**——一个项目里并排的 deck /
+      // 站点 / 世界各算一件，这才是用户眼里的"这个项目里有什么"。
+      let artifacts = [];
+      try {
+        artifacts = (await taskManifest(getSharedDir(p.id)))?.artifacts || [];
+      } catch { /* 目录没了：算 0 件 */ }
       const kinds = {};
-      for (const t of tasks) if (t.kind) kinds[t.kind] = (kinds[t.kind] || 0) + 1;
-      stats[p.id] = { tasks: tasks.length, kinds };
+      for (const a of artifacts) if (a.kind) kinds[a.kind] = (kinds[a.kind] || 0) + 1;
+      stats[p.id] = { tasks: artifacts.length, kinds };
     }));
     // dev 模式（不要求登录）没有 req.user，这两笔账就没有主语，整块不下发
     const summary = req.user

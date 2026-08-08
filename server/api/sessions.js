@@ -34,6 +34,8 @@ import {
   forkSessionWorkspace,
   removeSessionWorkspace,
   validateSessionId,
+  getSessionMetaDir,
+  encodeCwdForSDK,
 } from '../projects/workspace.js';
 import { withConfigDir } from '../lib/sdk-session.js';
 import { patchBoard } from '../projects/board-store.js';
@@ -52,12 +54,6 @@ import { SELECTABLE_MODELS } from '../engine/agent/model-context.js';
 export const pendingRewinds = new Set();
 
 const router = express.Router();
-
-// SDK 内部把 cwd 编码成 ~/.claude/projects/<encoded>/ 子目录路径，
-// 算法（grep 自 sdk.mjs）：所有非字母数字字符转 '-'。
-function encodeCwdForSDK(cwd) {
-  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
-}
 
 // SDK session API 需要 CLAUDE_CONFIG_DIR 指向 JSONL 实际存储的全局目录
 // 来自 runtime/platform.js（跨平台决策单一来源）
@@ -171,7 +167,7 @@ router.get('/:pid/sessions/:sid/context-usage', async (req, res, next) => {
         // 模型从 session-config 现读 —— 原来这里问的是 querySession.ctx?.appModel，
         // 而那个 ctx 字段从注册起就是 null 且无人填写，那一支永远走不到，分母只能
         // 掉回 SDK 的 compact 触发线，同一个会话两次读数对不上。
-        const { model: appModel } = await resolveSessionModel(getSessionWorkspace(req.params.pid, sid));
+        const { model: appModel } = await resolveSessionModel(getSessionMetaDir(req.params.pid, sid));
         if (usage) return res.json({ ...Events.contextUsage(usage, appModel), live: true });
       } catch (err) {
         // SDK 拒答不算错（query 正在收尾等）—— 掉到记忆值上，别把菜单打成红的
@@ -204,8 +200,9 @@ router.get('/:pid/sessions/:sid/model', async (req, res, next) => {
     validateSessionId(req.params.sid);
     const project = guardProject(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    const { model, override, fallback } = await resolveSessionModel(sessionRoot);
+    const { model, override, fallback } = await resolveSessionModel(
+      getSessionMetaDir(req.params.pid, req.params.sid),
+    );
     res.json({ model, override, default: fallback, options: SELECTABLE_MODELS });
   } catch (err) { next(err); }
 });
@@ -226,9 +223,10 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
       return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
     }
 
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
-    const result = await applySessionModel(req.params.sid, sessionRoot, raw, 'picker');
-    const { fallback } = await resolveSessionModel(sessionRoot);
+    await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const metaDir = getSessionMetaDir(req.params.pid, req.params.sid);
+    const result = await applySessionModel(req.params.sid, metaDir, raw, 'picker');
+    const { fallback } = await resolveSessionModel(metaDir);
     res.json({
       model: result.model,
       override: result.override,
@@ -258,37 +256,39 @@ router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
     const newSid = result.sessionId;
     validateSessionId(newSid);
 
-    // 2. cp -r src 产物（canvas/spec/.git）→ sessions/<newSid>/
+    // 2. 备好新会话的私档目录（不再复制任何产物 —— 分叉的是对话，不是工作区）
     await forkSessionWorkspace(req.params.pid, srcSid, newSid);
 
-    // 3. mv 新 jsonl：SDK fork 在 srcSessionRoot 的 encoded-cwd 下生成 newSid.jsonl，
-    //    需要移到 newSessionRoot 的 encoded-cwd 下（让 resume/list 按新 cwd 找到）
+    // 3. jsonl 归位。
+    //
+    // 扁平化之后同一个项目的所有会话共用一个 cwd，encoded 目录因此**完全相同**，
+    // SDK fork 出来的 newSid.jsonl 一落地就已经在对的位置了。这一整段搬运
+    // （含"换个 encoded 目录再找一遍"的兜底）只对旧数据还有意义：那时每个
+    // 会话一个 cwd，fork 出来的 jsonl 落在**源会话**的目录里，不搬就找不到。
     const srcEncoded = encodeCwdForSDK(srcSessionRoot);
-    const srcJsonl = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', srcEncoded, `${newSid}.jsonl`);
-
     const newSessionRoot = getSessionWorkspace(req.params.pid, newSid);
     const newEncoded = encodeCwdForSDK(newSessionRoot);
-    const newJsonlDir = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', newEncoded);
-    const newJsonl = path.join(newJsonlDir, `${newSid}.jsonl`);
-
-    await fs.mkdir(newJsonlDir, { recursive: true });
-    try {
-      await fs.rename(srcJsonl, newJsonl);
-    } catch (err) {
-      console.warn(`[fork] rename ${srcJsonl} → ${newJsonl} failed (${err.code}); searching alt encoded dir`);
-      const altParent = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects');
-      // 多用户（2026-07-30）：兜底扫描收紧到本 pid 的 encoded 目录，
-      // 不再遍历全局（那是唯一一处不按 pid 约束的文件扫描）
-      const pidPrefix = encodeCwdForSDK(path.join(getProjectWorkspace(req.params.pid), 'sessions'));
-      const altSubs = (await fs.readdir(altParent).catch(() => []))
-        .filter(sub => sub.startsWith(pidPrefix));
-      for (const sub of altSubs) {
-        const candidate = path.join(altParent, sub, `${newSid}.jsonl`);
-        try {
-          await fs.access(candidate);
-          await fs.rename(candidate, newJsonl);
-          break;
-        } catch { /* continue */ }
+    if (srcEncoded !== newEncoded) {
+      const srcJsonl = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', srcEncoded, `${newSid}.jsonl`);
+      const newJsonlDir = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', newEncoded);
+      const newJsonl = path.join(newJsonlDir, `${newSid}.jsonl`);
+      await fs.mkdir(newJsonlDir, { recursive: true });
+      try {
+        await fs.rename(srcJsonl, newJsonl);
+      } catch (err) {
+        console.warn(`[fork] rename ${srcJsonl} → ${newJsonl} failed (${err.code}); searching alt encoded dir`);
+        const altParent = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects');
+        const pidPrefix = encodeCwdForSDK(getProjectWorkspace(req.params.pid));
+        const altSubs = (await fs.readdir(altParent).catch(() => []))
+          .filter(sub => sub.startsWith(pidPrefix));
+        for (const sub of altSubs) {
+          const candidate = path.join(altParent, sub, `${newSid}.jsonl`);
+          try {
+            await fs.access(candidate);
+            await fs.rename(candidate, newJsonl);
+            break;
+          } catch { /* continue */ }
+        }
       }
     }
 
@@ -362,15 +362,12 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
       console.warn(`[delete session] SDK delete failed (${err.message}); proceeding to rm dir`);
     }
 
-    // 2. rm 整个 sessions/<sid>/ 目录（产物 + git + 软链）
+    // 2. 删这条会话的私档（`.nd/<sid>/`）。
+    //
+    // ⚠️ 这里以前是 `rm -rf sessions/<sid>/`（产物 + git + 软链），后面还跟着
+    // 一步"连带删掉绑定的任务文件夹"。**删对话现在绝不能碰产物** —— 产物属于
+    // 项目，同一个项目里换条对话继续做是常态。
     await removeSessionWorkspace(req.params.pid, req.params.sid);
-
-    // 2.5 连带删掉绑定的任务文件夹（2026-07-28：任务和会话一对一，不独立存在）
-    //     归属记在 tasks/<任务>/.nd-task.json，PostToolUse 写的。
-    const removedTasks = await removeBoundTaskDirs(req.params.pid, req.params.sid);
-    if (removedTasks.length) {
-      console.log(`[delete session] 连带删任务文件夹: ${removedTasks.join(', ')}`);
-    }
 
     // 3. 清 active_session_id 如果指向被删的
     if (project.activeSessionId === req.params.sid) {
@@ -381,39 +378,6 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * 删掉归属于某会话的任务文件夹（一对一模型：会话没了，它的任务也就没有家了）。
- * 归属看 tasks/<任务>/.nd-task.json 里的 sessionId；没有标记的旧任务不动。
- */
-async function removeBoundTaskDirs(pid, sid) {
-  const tasksDir = path.join(getProjectWorkspace(pid), 'shared', 'tasks');
-  const removed = [];
-  let entries;
-  try {
-    entries = await fs.readdir(tasksDir, { withFileTypes: true });
-  } catch { return removed; }
-  for (const e of entries) {
-    if (!e.isDirectory() || e.name.startsWith('.')) continue;
-    const marker = path.join(tasksDir, e.name, '.nd-task.json');
-    try {
-      const raw = await fs.readFile(marker, 'utf8');
-      if (JSON.parse(raw)?.sessionId !== sid) continue;
-    } catch { continue; }        // 无标记 / 读不了 → 不认领，不删
-    try {
-      await fs.rm(path.join(tasksDir, e.name), { recursive: true, force: true });
-      removed.push(e.name);
-      // 桌面 zone 行一起清（board.json 持久化，不清就留僵尸文件夹，2026-07-30）
-      try {
-        await patchBoard(pid, { zones: { [`task/${e.name}`]: null } });
-      } catch (err) {
-        console.warn(`[delete session] 清 board zone 失败 ${e.name}:`, err.message);
-      }
-    } catch (err) {
-      console.warn(`[delete session] 删任务文件夹失败 ${e.name}:`, err.message);
-    }
-  }
-  return removed;
-}
 
 // ── POST /:pid/sessions/:sid/rewind ──
 // SDK Query.rewindFiles(userMessageId) 控制方法 —— 把 session 内文件回滚到该

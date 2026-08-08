@@ -7,6 +7,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { isReservedFile } from '../task-scan.js';
 
 const ENTRY = 'canvas.html';
 
@@ -41,6 +42,7 @@ export default {
     try { entries = await fs.readdir(taskDir, { withFileTypes: true }); } catch { /* */ }
     return entries
       .filter(e => e.isFile() && /\.html?$/i.test(e.name) && !e.name.startsWith('.'))
+      .filter(e => !isReservedFile(e.name))
       .map(e => e.name)
       .filter(f => !opts.rootSiteExists || f === ENTRY)
       .sort((a, b) => (b === ENTRY) - (a === ENTRY) || a.localeCompare(b))

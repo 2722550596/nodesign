@@ -69,7 +69,7 @@ import {
 } from './agent-shared.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
 import { commitTaskWorkspace } from '../../projects/workspace.js';
-import { listTasks } from '../../lib/artifact-target.js';
+import { taskManifest } from '../../lib/artifact-target.js';
 
 /**
  * Plan-mode 硬 deny 列表（canUseTool 钩子拦）。Allowlist 反过来推：
@@ -251,10 +251,12 @@ export async function runSession({
   }
   if (!eventBus) throw new Error('runSession: eventBus required');
 
+  // 2026-08-07 扁平化：cwd 就是项目工作区，`sharedRoot` 和它是同一个目录。
+  // 旧代码在这里用 `../../shared` 从会话沙盒爬回共享目录 —— 那条相对路径现在
+  // 会爬到数据根之外，两个名字保留只是为了不动下游几十处引用。
   const cwdRoot = sessionWorkspaceRoot;
-  const sharedRoot = projectId
-    ? path.join(sessionWorkspaceRoot, '..', '..', 'shared')
-    : null;
+  const sharedRoot = cwdRoot;
+  const sessionMetaRoot = path.join(cwdRoot, '.nd', sessionId);
 
   const sessionAbortController = new AbortController();
   // initialPermissionMode 落进 active-runs，canUseTool 通过 getSessionPermissionMode 读
@@ -311,7 +313,7 @@ export async function runSession({
   // model 优先级：调用方显式 > session-config.json（用户在 picker 选的，随会话
   // 持久）> env 全局默认。这条链现在只写在 session-model.js 一处 —— 以前它在这里、
   // turn.js、canvas.js 各有一份写法不同的复制品，对不上的时候没人发现。
-  const { model: resolvedModel } = await resolveSessionModel(cwdRoot);
+  const { model: resolvedModel } = await resolveSessionModel(sessionMetaRoot);
   const model = resolvedModel;
   const sdkModel = resolveSdkSpoofModel(model);
 
@@ -781,12 +783,10 @@ export async function runSession({
    * 画布上编辑同一份文件也不会撞 index.lock。
    */
   const commitWorldTasks = async (root, status) => {
-    const tasks = await listTasks(root);
-    for (const t of tasks) {
-      if (t.kind !== 'world') continue;
-      const tag = status === 'success' ? '' : `（${status}）`;
-      await commitTaskWorkspace(t.dir, `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`);
-    }
+    const m = await taskManifest(root);
+    if (!(m?.artifacts || []).some(a => a.kind === 'world')) return;
+    const tag = status === 'success' ? '' : `（${status}）`;
+    await commitTaskWorkspace(root, `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`);
   };
 
   const finishTurn = async (status, info) => {

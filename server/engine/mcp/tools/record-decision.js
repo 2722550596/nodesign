@@ -21,23 +21,9 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { getActiveArtifact, taskNameOf } from '../../../lib/artifact-target.js';
 import { Events } from '../../agent/events.js';
 
 const NOTE_FILE = '决策.md';
-
-/** 定位当前会话的任务名：活跃产物 → tasks/ 唯一目录 → null */
-async function resolveTask(workspaceRoot, sessionId) {
-  const active = getActiveArtifact(sessionId)?.path || null;
-  const fromActive = active ? taskNameOf(active) : null;
-  if (fromActive) return fromActive;
-  try {
-    const entries = await fs.readdir(path.join(workspaceRoot, 'tasks'), { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name);
-    if (dirs.length === 1) return dirs[0];
-  } catch { /* tasks/ 不存在 */ }
-  return null;
-}
 
 /**
  * @param {object} deps
@@ -48,8 +34,8 @@ async function resolveTask(workspaceRoot, sessionId) {
 export function makeRecordDecisionTool({ workspaceRoot, sessionId, ctx }) {
   return tool(
     'record_decision',
-    `Record a key design decision as a face of the task's decision sticky note
-(tasks/<task>/notes/决策.md). The note is SHARED with the user — it renders as
+    `Record a key design decision as a face of the project's decision sticky note
+(notes/决策.md). The note is SHARED with the user — it renders as
 a flippable sticky on their canvas, they can read and edit it. Use this to
 capture WHY you made a particular choice — color, type scale, layout metaphor,
 copy strategy — so the intent survives across sessions and the user can push
@@ -67,7 +53,7 @@ Do NOT use this tool for:
 - Every change — over-recording bloats the note and dilutes signal
 
 For free-form shared notes (brainstorm material, reference digests, handoff
-context), just Write tasks/<task>/notes/<slug>.md directly — same sticky-note
+context), just Write notes/<slug>.md directly — same sticky-note
 rendering, no tool needed.`,
     {
       title: z
@@ -97,18 +83,6 @@ rendering, no tool needed.`,
             isError: true,
           };
         }
-        const task = await resolveTask(workspaceRoot, sessionId);
-        if (!task) {
-          return {
-            content: [{
-              type: 'text',
-              text: 'No task folder yet — create tasks/<name>/ (and your artifact) first; '
-                + 'decisions live on the task as a sticky note.',
-            }],
-            isError: true,
-          };
-        }
-
         const alts = Array.isArray(alternatives)
           ? alternatives.map(s => String(s).trim()).filter(Boolean) : [];
         const face = [
@@ -120,7 +94,7 @@ rendering, no tool needed.`,
           `- ${new Date().toISOString().slice(0, 10)}`,
         ].join('\n');
 
-        const notesDir = path.join(workspaceRoot, 'tasks', task, 'notes');
+        const notesDir = path.join(workspaceRoot, 'notes');
         await fs.mkdir(notesDir, { recursive: true });
         const noteFile = path.join(notesDir, NOTE_FILE);
         let prev = '';

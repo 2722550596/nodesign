@@ -19,8 +19,9 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
-import { patchBoard } from '../projects/board-store.js';
+import { patchBoard, readBoard } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
+import { RESERVED_DIRS } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
 import {
   sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
@@ -202,7 +203,8 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
  */
 router.get('/:pid/artifacts', async (req, res, next) => {
   try {
-    if (!guardProject(req, res)) return;
+    const project = guardProject(req, res);
+    if (!project) return;
 
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
     const artifacts = [];
@@ -219,12 +221,20 @@ router.get('/:pid/artifacts', async (req, res, next) => {
       '_drafts',                                    // 站点试作（各自是独立产物）
       'notes',                                      // 便利贴（单独扫成 note 形态）
       'node_modules',
+      // 扁平化之后扫描根变成整个工作区，这两个是基础设施不是收纳文件夹：
+      // assets/ 上面已经按 upload / generated / note 三种语义单独扫过一遍，
+      // 不挡的话每张图会以两个不同的 path 上墙两次。
+      'assets', 'exports',
     ]);
 
     /**
      * @param {number} depth 还能往下几层。收纳只做**一层** —— 再深就不是"收纳"
      *   而是目录树了，画布上表达不了，也不是用户要的东西。
      */
+    // 工作区根的 relPrefix 是空串，`${prefix}/${name}` 会拼出 `/canvas.html`
+    // 这种带头斜杠的路径 —— 它会一路当成物件 id 传到画布和 artifact-file 路由。
+    const joinRel = (prefix, name) => (prefix ? `${prefix}/${name}` : name);
+
     const scanDir = async (dir, kind, relPrefix, depth = 0) => {
       let entries;
       try {
@@ -241,7 +251,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
           if (depth <= 0) continue;
           if (e.name.startsWith('.') || e.name.startsWith('_')) continue;
           if (NOT_A_FOLDER.has(e.name)) continue;
-          await scanDir(path.join(dir, e.name), kind, `${relPrefix}/${e.name}`, depth - 1);
+          await scanDir(path.join(dir, e.name), kind, joinRel(relPrefix, e.name), depth - 1);
           continue;
         }
         if (!e.isFile()) continue;
@@ -257,7 +267,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         const item = {
           kind,
           name: e.name,
-          path: `${relPrefix}/${e.name}`,
+          path: joinRel(relPrefix, e.name),
           size: stat.size,
           mtime: stat.mtime.toISOString(),
           ext,
@@ -296,88 +306,70 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     await scanDir(path.join(assetsDir, 'generated'), 'generated', 'assets/generated');
     await scanDir(path.join(assetsDir, 'notes'), 'note', 'assets/notes');
 
-    // 任务模型（2026-07-28；2026-07-29 多产物平权）：任务=shared/tasks/ 下的
-    // 目录（agent 按需自建），目录名即任务名。一个任务可以装**多个平等产物**
-    // （tasks[].artifacts，一条一卡）：顶层每个 .html 各是一份 deck、根 index.html
-    // =一个站（子页和 style.css 不各自上墙）、无根站时带 index.html 的子目录各
-    // 是一个站、_drafts/*.html 各是一个单页。没有主/试作等级。
+    // ── 项目产物（2026-08-07 扁平化）────────────────────────────────────
+    //
+    // 产物直接住工作区根，一个项目可以并排放**多个平等产物**：顶层每个 .html
+    // 各是一份 deck、根 index.html = 一个站（子页和 style.css 不各自上墙）、
+    // 无根站时带 index.html 的子目录各是一个站、_drafts/*.html 各是一个单页。
+    // 没有主 / 试作等级。
+    //
+    // 返回的字段名仍叫 `tasks`，但它现在是**一个长度恒为 0 或 1 的数组** ——
+    // 前端要的其实一直是 `tasks[0].artifacts`。留着这层壳是为了让这次改动不
+    // 波及前端的取数路径，画布那边拆分区时一并收掉。
+    const workspaceRoot = getSharedDir(req.params.pid);
     const tasks = [];
-    const tasksDir = path.join(getSharedDir(req.params.pid), 'tasks');
-    const siteTaskNames = new Set();
+    let hasRootSite = false;
     try {
-      const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
-      for (const t of taskEntries) {
-        if (!t.isDirectory() || t.name.startsWith('.')) continue;
-        const tDir = path.join(tasksDir, t.name);
-        let tStat;
-        try {
-          tStat = await fs.stat(tDir);
-        } catch { continue; }   // 任务目录扫到一半被删：跳过，别让整份清单 500
-        // 形态解析统一走 kinds/ 注册表 —— 前端、感知工具、导出吃同一份 manifest，
-        // 不再各自猜文件名（2026-07-29）
-        const manifest = await taskManifest(tDir);
-        const kind = manifest?.kind || null;
+      const wStat = await fs.stat(workspaceRoot);
+      const manifest = await taskManifest(workspaceRoot);
+      const list = manifest?.artifacts || [];
+      hasRootSite = list.some(a => a.kind === KIND_SITE && !a.single && !a.srcRoot);
 
-        const task = {
-          id: t.name,
-          title: t.name,
-          kind,                       // 'deck' | 'site' | 'world' | null（还没写出产物）
-          sessionId: manifest?.sessionId
-            ?? await (async () => {
-              try {
-                const raw = JSON.parse(await fs.readFile(path.join(tDir, '.nd-task.json'), 'utf8'));
-                return typeof raw?.sessionId === 'string' ? raw.sessionId : null;
-              } catch { return null; }
-            })(),
-          mtime: tStat.mtime.toISOString(),
-          exports: manifest?.exportFormats || [],
-        };
-
-        // 多产物平权（2026-07-29）：任务的产物是一份平等清单，前端一条一卡。
-        // base = 该产物的预览 URL 根（站点是产物根目录；deck / 单页是任务根）
-        task.artifacts = (manifest?.artifacts || []).map((a) => ({
-          kind: a.kind,
-          view: a.view,
-          single: !!a.single,
-          file: a.file,                // deck / 单页：html 文件（相对任务根）
-          root: a.root || '',
-          srcRoot: a.srcRoot || '',    // 站点源目录；root≠srcRoot = 构建型（编辑要同步回源）
-          entry: a.kind === 'site' && !a.single ? a.entry : a.entryRel,
-          entryRel: a.entryRel,
-          base: `tasks/${t.name}${a.kind === 'site' && !a.single && a.root ? `/${a.root}` : ''}`,
-          pages: a.pages,
-          title: a.title,              // null = 用任务名
-          exports: a.exportFormats,
-          // world 的地图（`世界/` 递归扫出的嵌套节点平列表，带 parent）。
-          // 其余形态没有这个字段，前端按 kind 分支取用。
-          nodes: a.nodes,
-          truncated: a.truncated,   // 撞深度上限被截断的目录，要让人看见
-        }));
-        if ((manifest?.artifacts || []).some(a => a.kind === KIND_SITE && !a.single)) {
-          siteTaskNames.add(t.name);
-        }
-
-        tasks.push(task);
-        await scanDir(tDir, 'task-file', `tasks/${t.name}`, 1);
-        // 任务便利贴（2026-07-30）：tasks/<任务>/notes/*.md —— agent 和用户的
-        // 共享头脑风暴层（record_decision 的决策贴也写这里）。复用 note kind：
-        // 正文解析、zone 归属（naturalZoneOf 按 tasks/<t>/ 前缀）、避让全现成
-        await scanDir(path.join(tDir, 'notes'), 'note', `tasks/${t.name}/notes`);
+      if (list.length) {
+        tasks.push({
+          id: '.',
+          title: project.name || '产物',
+          kind: manifest.kind,
+          sessionId: null,          // 产物与会话脱钩（2026-08-07）
+          mtime: wStat.mtime.toISOString(),
+          exports: manifest.exportFormats || [],
+          artifacts: list.map((a) => ({
+            kind: a.kind,
+            view: a.view,
+            single: !!a.single,
+            file: a.file,                // deck / 单页：html 文件（相对工作区根）
+            root: a.root || '',
+            srcRoot: a.srcRoot || '',    // 站点源目录；root≠srcRoot = 构建型（编辑要同步回源）
+            entry: a.kind === 'site' && !a.single ? a.entry : a.entryRel,
+            entryRel: a.entryRel,
+            base: a.kind === 'site' && !a.single && a.root ? a.root : '',
+            pages: a.pages,
+            title: a.title,
+            exports: a.exportFormats,
+            // world 的地图（`世界/` 递归扫出的嵌套节点平列表，带 parent）。
+            // 其余形态没有这个字段，前端按 kind 分支取用。
+            nodes: a.nodes,
+            truncated: a.truncated,   // 撞深度上限被截断的目录，要让人看见
+          })),
+        });
       }
+
+      // 散文件（agent 写的 .md、数据文件、脚本…）。工作区根平铺一层 + notes/。
+      await scanDir(workspaceRoot, 'task-file', '', 1);
+      await scanDir(path.join(workspaceRoot, 'notes'), 'note', 'notes');
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
     }
-    // deck 任务里的 .html 不当普通文件卡上墙（由 tasks[].decks 派生成 deck 物件）；
-    // 站点任务整个目录都不散着上墙（由 tasks[].site 派生成一个站点物件）
+
+    // .html 不当普通文件卡上墙（deck / 站点物件已经代表它们了）；
+    // 根站存在时整个工作区的文件都归那个站，不散着上墙。
     const filtered = artifacts.filter((a) => {
       if (a.kind !== 'task-file') return true;
-      const owner = a.path.split('/')[1];
-      if (siteTaskNames.has(owner)) return false;
+      if (hasRootSite) return false;
       return !a.name.toLowerCase().endsWith('.html');
     });
 
     filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
-    tasks.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
     res.json({ artifacts: filtered, tasks });
   } catch (err) { next(err); }
 });
@@ -492,44 +484,41 @@ function safeNoteSegment(s, { md = false } = {}) {
   return true;
 }
 
-function resolveTaskNote(pid, task, filename) {
-  const base = path.join(getSharedDir(pid), 'tasks');
-  const file = path.resolve(base, task, 'notes', filename);
+function resolveTaskNote(pid, filename) {
+  const base = path.join(getSharedDir(pid), 'notes');
+  const file = path.resolve(base, filename);
   if (!file.startsWith(base + path.sep)) return null;
   return file;
 }
 
-/** PUT /:pid/task-notes/:task/:filename — 写/改任务便利贴（用户侧编辑） */
-router.put('/:pid/task-notes/:task/:filename', express.json(), async (req, res, next) => {
+/** PUT /:pid/task-notes/:filename — 写/改便利贴（用户侧编辑） */
+router.put('/:pid/task-notes/:filename', express.json(), async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
-    const { task, filename } = req.params;
-    if (!safeNoteSegment(task) || !safeNoteSegment(filename, { md: true })) {
-      return res.status(400).json({ error: 'invalid task/filename' });
+    const { filename } = req.params;
+    if (!safeNoteSegment(filename, { md: true })) {
+      return res.status(400).json({ error: 'invalid filename' });
     }
     const text = String(req.body?.text ?? '');
     if (!text.trim()) return res.status(400).json({ error: 'text required' });
     if (text.length > 20_000) return res.status(400).json({ error: 'note too long (max 20k chars)' });
-    const file = resolveTaskNote(req.params.pid, task, filename);
+    const file = resolveTaskNote(req.params.pid, filename);
     if (!file) return res.status(400).json({ error: 'invalid path' });
-    try {
-      await fs.access(path.join(getSharedDir(req.params.pid), 'tasks', task));
-    } catch { return res.status(404).json({ error: 'task not found' }); }
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, text, 'utf8');
-    res.json({ ok: true, path: `tasks/${task}/notes/${filename}` });
+    res.json({ ok: true, path: `notes/${filename}` });
   } catch (err) { next(err); }
 });
 
-/** DELETE /:pid/task-notes/:task/:filename — 删任务便利贴 */
-router.delete('/:pid/task-notes/:task/:filename', async (req, res, next) => {
+/** DELETE /:pid/task-notes/:filename — 删便利贴 */
+router.delete('/:pid/task-notes/:filename', async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
-    const { task, filename } = req.params;
-    if (!safeNoteSegment(task) || !safeNoteSegment(filename, { md: true })) {
-      return res.status(400).json({ error: 'invalid task/filename' });
+    const { filename } = req.params;
+    if (!safeNoteSegment(filename, { md: true })) {
+      return res.status(400).json({ error: 'invalid filename' });
     }
-    const file = resolveTaskNote(req.params.pid, task, filename);
+    const file = resolveTaskNote(req.params.pid, filename);
     if (!file) return res.status(400).json({ error: 'invalid path' });
     try {
       await fs.unlink(file);
@@ -547,58 +536,54 @@ router.delete('/:pid/task-notes/:task/:filename', async (req, res, next) => {
  * 防 traversal 同 canvas.js：resolve 后必须留在 shared/assets 下。
  */
 /**
- * DELETE /:pid/tasks/:name —— 删任务文件夹
+ * DELETE /:pid/folders/*subPath —— 删一个文件夹（连同里面的一切）。
  *
- * 任务和会话一对一：删任务连它的会话一起删（.nd-task.json 记着 sessionId）。
- * 反过来删会话也会连带删任务（server/api/sessions.js）。两者不独立存在。
- * 返回 { removedTask, removedSession }。
+ * 取代旧的 `DELETE /:pid/tasks/:name`。那条做三件事：删任务目录、**连带删掉
+ * 绑定的那次对话**、清 board.json 里的 zone 行。中间那件随「任务=会话」一起
+ * 废了 —— 会话现在归项目，跟任何文件夹都没有绑定关系，删文件夹不该动对话。
+ *
+ * 路径按**工作区相对路径**收（`稿件/初稿`），因为文件夹可以嵌套。
  */
-router.delete('/:pid/tasks/:name', async (req, res, next) => {
+router.delete('/:pid/folders/*subPath', async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
-    const name = String(req.params.name || '');
-    if (!name || name.includes('/') || name.includes('..') || name.startsWith('.')) {
-      return res.status(400).json({ error: 'invalid task name' });
-    }
-    const taskDir = path.join(getSharedDir(req.params.pid), 'tasks', name);
-    let boundSession = null;
-    try {
-      boundSession = JSON.parse(await fs.readFile(path.join(taskDir, '.nd-task.json'), 'utf8'))?.sessionId || null;
-    } catch { /* 旧任务没标记 */ }
+    const raw = req.params.subPath;
+    const rel = (Array.isArray(raw) ? raw.join('/') : (raw || '')).replace(/\/+$/, '');
+    if (!rel) return res.status(400).json({ error: 'folder path required' });
 
-    // fs.rm force:true 对不存在的目录静默成功 —— 删除语义幂等：目录早没了也照样
-    // 把 zone 行清掉（孤儿 zone「删不了」的根因之一，2026-07-30）
-    await fs.rm(taskDir, { recursive: true, force: true });
+    const root = getSharedDir(req.params.pid);
+    const dir = path.resolve(root, rel);
+    // 防越界 + 防把工作区自己删了；保留目录一概不许删（.claude 里是项目指引和
+    // 记忆，.nd 是各次对话的暗档案，.git 是历史 —— 都不是"用户的文件夹"）
+    if (dir !== path.join(root, rel) || !dir.startsWith(root + path.sep)) {
+      return res.status(400).json({ error: 'invalid path' });
+    }
+    if (RESERVED_DIRS.has(rel.split('/')[0])) {
+      return res.status(400).json({ error: 'reserved directory' });
+    }
+    const st = await fs.stat(dir).catch(() => null);
+    if (!st?.isDirectory()) return res.status(404).json({ error: 'folder not found' });
 
-    // 连带删会话：走 sessions 路由同一条实现（HTTP self-call 太绕，直接复用逻辑）
-    let removedSession = null;
-    if (boundSession) {
-      try {
-        await removeSessionByTask(req.params.pid, boundSession);
-        removedSession = boundSession;
-      } catch (err) {
-        console.warn('[delete task] 连带删会话失败:', err.message);
-      }
+    await fs.rm(dir, { recursive: true, force: true });
+
+    // board.json 跟着剪：这个文件夹自己的那行，以及住在它里面的全部物件。
+    // 不剪的话磁盘上没了、画布上还在，就是 2026-07-30 那批「删不掉的僵尸
+    // 文件夹」的来源 —— 删除必须是一个动作，不能指望前端补第二刀。
+    const board = await readBoard(req.params.pid);
+    const patch = { zones: { [rel]: null }, objects: {} };
+    const under = `${rel}/`;
+    for (const id of Object.keys(board?.objects || {})) {
+      const p = id.includes(':') ? id.slice(id.indexOf(':') + 1) : id;
+      if (p === rel || p.startsWith(under)) patch.objects[id] = null;
     }
-    // 桌面 zone 行是持久化的（board.json），任务没了它不会自己消失 ——
-    // 2026-07-30 前这里从来不清，每删一个任务留一个僵尸文件夹
-    try {
-      await patchBoard(req.params.pid, { zones: { [`task/${name}`]: null } });
-    } catch (err) {
-      console.warn('[delete task] 清 board zone 失败:', err.message);
+    for (const zid of Object.keys(board?.zones || {})) {
+      if (zid.startsWith(under)) patch.zones[zid] = null;      // 嵌套在里面的子文件夹
     }
-    res.json({ removedTask: name, removedSession });
+    await patchBoard(req.params.pid, patch);
+
+    res.json({ ok: true, removed: rel, objects: Object.keys(patch.objects).length });
   } catch (err) { next(err); }
 });
-
-/** 删任务时连带删它的会话目录（SDK jsonl 由 sessions 路由那条负责，这里只清工作区）*/
-async function removeSessionByTask(pid, sid) {
-  await removeSessionWorkspace(pid, sid);
-  const project = getProject(pid);
-  if (project?.activeSessionId === sid) {
-    try { setActiveSession(pid, null); } catch { /* ignore */ }
-  }
-}
 
 router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
   try {
@@ -615,20 +600,23 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     const raw = req.params.subPath;
     let subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
     if (!subPath) return res.status(400).json({ error: 'file path required' });
-    // 兼容旧形态：无前缀 = assets/ 相对路径（2026-07-28 前 api.js 会剥前缀）
-    if (!subPath.startsWith('assets/') && !subPath.startsWith('tasks/')) {
-      subPath = `assets/${subPath}`;
-    }
+    // 兼容旧形态：`tasks/<任务>/x` 是扁平化之前的路径，浏览器缓存里、旧
+    // board.json 里、用户收藏的链接里都还有。剥掉前两段就是现在的位置。
+    subPath = subPath.replace(/^tasks\/[^/]+\//, '');
 
-    // 可服务根：assets/（素材）+ tasks/（任务产出，含任务 deck 的 canvas.html）。
-    // subPath 必须带前缀落在其一之内，防穿越
+    // 可服务根 = 整个项目工作区（产物就住在这儿），但**挡掉基础设施**：
+    // .claude/（含 settings.json 和整份 SDK 转录）、.nd/（会话私档）、.git/。
+    // 扁平化之前这三样都在可服务根之外，是目录结构在替我们把门；现在它们跟
+    // 产物同级，必须显式拦 —— 否则 `artifact-file/.claude/settings.json`
+    // 是一个能公开读到配置的 URL。
     const sharedRoot = path.resolve(getSharedDir(req.params.pid));
     const absPath = path.resolve(sharedRoot, subPath);
-    const inRoot = (root) => absPath === root || absPath.startsWith(root + path.sep);
-    const assetsRoot = path.join(sharedRoot, 'assets');
-    const tasksRoot = path.join(sharedRoot, 'tasks');
-    if (!inRoot(assetsRoot) && !inRoot(tasksRoot)) {
-      return res.status(403).json({ error: 'path escapes assets/ or tasks/' });
+    if (absPath !== sharedRoot && !absPath.startsWith(sharedRoot + path.sep)) {
+      return res.status(403).json({ error: 'path escapes workspace' });
+    }
+    const rel = path.relative(sharedRoot, absPath).split(path.sep);
+    if (rel.some(seg => seg.startsWith('.'))) {
+      return res.status(403).json({ error: 'not a servable path' });
     }
 
     let stat;

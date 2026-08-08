@@ -1221,7 +1221,9 @@ export default function BoardCanvas({
 
   const handleDeleteNote = async (o) => {
     try {
-      if (o.noteTask) await Assets.removeTaskNote(projectId, o.noteTask, o.name);
+      // 便利贴落点从 `tasks/<任务>/notes/` 收敛成工作区的 `notes/` 之后，
+      // 删除只认文件名（不再需要先知道它属于哪个任务）
+      if (o.noteTask) await Assets.removeTaskNote(projectId, o.name);
       else await Assets.removeNote(projectId, o.name);
       reload();
     } catch (err) { console.warn('[board] delete note failed:', err.message); }
@@ -1494,22 +1496,23 @@ export default function BoardCanvas({
 
 
   /**
-   * 删任务（2026-07-28）：任务和会话一对一，删任务连它的会话一起删。
-   * 会话区（还没建任务的）不给删钮 —— 那种走左栏会话列表删。
+   * 删文件夹（2026-08-08）。
+   *
+   * 以前这里是「删任务」，连带把绑定的那次对话一起删 —— 那条绑定随「任务=会话」
+   * 一起废了，所以现在只删目录和它在画布上的那些卡，**对话一个字不动**。
+   * zid 就是文件夹的工作区相对路径（可以是嵌套的 `稿件/初稿`）。
    */
-  const handleDeleteTask = useCallback(async (zid, title) => {
-    if (!zid.startsWith('task/')) return;
-    const name = zid.slice(5);
+  const handleDeleteFolder = useCallback(async (zid, title) => {
     const ok = await useGlobalStore.getState().confirm({
-      title: '删除任务',
-      message: `删除任务「${title}」？文件夹里的全部产出，以及它绑定的那次对话，会一起删掉。此操作不可撤销。`,
+      title: '删除文件夹',
+      message: `删除「${title || zid}」？文件夹里的全部内容会一起删掉，此操作不可撤销。对话记录不受影响。`,
       confirmLabel: '删除',
       danger: true,
     });
     if (!ok) return;
     try {
-      const r = await Assets.removeTask(projectId, name);
-      // 服务端已把 board.json 里的 zone 行清掉，本地 state 也要同步剪，
+      await Assets.removeFolder(projectId, zid);
+      // 服务端已把 board.json 里的行清掉，本地 state 也要同步剪，
       // 否则要刷新页面僵尸文件夹才消失（2026-07-30「删不了」修复的一半）
       removedZonesRef.current.add(zid);
       setZones(prev => {
@@ -1519,15 +1522,11 @@ export default function BoardCanvas({
       });
       if (focusZoneRef.current === zid) exitToProjectRef.current?.();
       else reload();
-      useGlobalStore.getState().showToast(
-        r?.removedSession ? '任务和它的会话已删除' : '任务已删除', 'info');
-      if (r?.removedSession && r.removedSession === currentSessionId) {
-        navigate(`/projects/${projectId}/work`);
-      }
+      useGlobalStore.getState().showToast('文件夹已删除', 'info');
     } catch (err) {
       useGlobalStore.getState().showToast(`删除失败：${err.message}`, 'error');
     }
-  }, [projectId, currentSessionId, navigate, reload]);
+  }, [projectId, reload]);
 
   /**
    * 旧式会话 zone（任务模型之前的遗产，id 是 sessionId 或历史残行）从桌面移除。
@@ -1901,7 +1900,7 @@ export default function BoardCanvas({
                 {z.id.startsWith('task/') ? (
                   <button
                     data-zone-action title="删除任务（连同它的对话）"
-                    onClick={() => !wasDrag() && handleDeleteTask(z.id, z.title)}
+                    onClick={() => !wasDrag() && handleDeleteFolder(z.id, z.title)}
                     style={{ ...zoneHeaderBtn, color: COLOR.error }}
                   ><Trash2 size={13} /></button>
                 ) : (zoneSession.get(z.id) || z.id) !== currentSessionId && z.memberCount === 0 && (
@@ -1996,7 +1995,7 @@ export default function BoardCanvas({
                   {z.id.startsWith('task/') ? (
                     <button
                       data-zone-action title="删除任务（连同它的对话）"
-                      onClick={() => { if (!wasDrag()) handleDeleteTask(z.id, z.title); }}
+                      onClick={() => { if (!wasDrag()) handleDeleteFolder(z.id, z.title); }}
                       style={{ ...zoneHeaderBtn, color: COLOR.error }}
                     ><Trash2 size={13} /></button>
                   ) : (zoneSession.get(z.id) || z.id) !== currentSessionId && z.memberCount === 0 && (

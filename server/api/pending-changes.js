@@ -198,14 +198,16 @@ router.post('/:pid/sessions/:sid/region-comment', async (req, res, next) => {
     if (!viewport || !(viewport.width > 0) || !(viewport.height > 0)) {
       return res.status(400).json({ error: 'viewport: { width, height } required' });
     }
+    // 页面路径相对项目工作区根。扁平化之前这里硬要求 `tasks/<任务>/<文件>`
+    // 三段起步，现在根上的 `index.html` 只有一段，那条判据会把它全拒掉。
     const parts = relPath.split('/');
-    if (parts[0] !== 'tasks' || parts.length < 3 || parts.includes('..')) {
-      return res.status(400).json({ error: 'path must be tasks/<task>/<file>' });
+    if (!parts.length || parts.includes('..') || parts.some(p => !p || p.startsWith('.'))) {
+      return res.status(400).json({ error: 'invalid page path' });
     }
-    const sharedDir = getSharedDir(req.params.pid);
+    const sharedDir = path.resolve(getSharedDir(req.params.pid));
     const absPath = path.resolve(sharedDir, ...parts);
-    if (!absPath.startsWith(path.resolve(sharedDir, 'tasks') + path.sep)) {
-      return res.status(400).json({ error: 'path escapes the task tree' });
+    if (!absPath.startsWith(sharedDir + path.sep)) {
+      return res.status(400).json({ error: 'path escapes the workspace' });
     }
     try { await fs.access(absPath); } catch {
       return res.status(404).json({ error: `page not found: ${relPath}` });

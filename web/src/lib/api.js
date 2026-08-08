@@ -236,11 +236,18 @@ export const Assets = {
   /** 删便签 */
   removeNote: (pid, filename) =>
     jsonRequest('DELETE', `/api/projects/${pid}/notes/${encodeURIComponent(filename)}`),
-  /** 任务便利贴（tasks/<任务>/notes/*.md，agent 和用户的共享头脑风暴层）*/
-  putTaskNote: (pid, task, filename, text) =>
-    jsonRequest('PUT', `/api/projects/${pid}/task-notes/${encodeURIComponent(task)}/${encodeURIComponent(filename)}`, { text }),
-  removeTaskNote: (pid, task, filename) =>
-    jsonRequest('DELETE', `/api/projects/${pid}/task-notes/${encodeURIComponent(task)}/${encodeURIComponent(filename)}`),
+  /** 便利贴（notes/*.md，agent 和用户的共享头脑风暴层）*/
+  putTaskNote: (pid, filename, text) =>
+    jsonRequest('PUT', `/api/projects/${pid}/task-notes/${encodeURIComponent(filename)}`, { text }),
+  removeTaskNote: (pid, filename) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/task-notes/${encodeURIComponent(filename)}`),
+  /**
+   * 删文件夹（连同里面的一切）。rel = 工作区相对路径，可以是嵌套的 `稿件/初稿`。
+   * 每一段单独编码 —— 整串 encodeURIComponent 会把分隔的 '/' 也编掉，
+   * 服务端的通配路由就只能收到一段。
+   */
+  removeFolder: (pid, rel) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/folders/${String(rel).split('/').map(encodeURIComponent).join('/')}`),
   /** 画布布局（空间画布，含 zones 分区）*/
   getBoard: (pid) => jsonRequest('GET', `/api/projects/${pid}/board`),
   putBoard: (pid, board) => jsonRequest('PUT', `/api/projects/${pid}/board`, { board }),
@@ -248,9 +255,7 @@ export const Assets = {
   patchBoard: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/board`, { patch }),
   /**
    * 产物文件 URL（project 级，不依赖 session）。
-   * relPath 是 artifacts 返回的 agent 视角路径（'assets/...'），
-   * artifact-file 路由根=shared/（2026-07-28 任务模型起），路径必须带
-   * 'assets/' 或 'tasks/' 前缀原样传递（server 兼容旧的无前缀形态）。
+   * relPath 是 artifacts 返回的 agent 视角路径，相对项目工作区根原样传递。
    */
   artifactFileUrl: (pid, relPath) => {
     const sub = String(relPath || '');
@@ -261,9 +266,6 @@ export const Assets = {
    * 没产物时返 204，<img> 走 onError 兜底成占位框。
    */
   coverUrl: (pid) => `/api/projects/${pid}/cover`,
-  /** 删任务文件夹 —— 连它绑定的会话一起删（一对一，不独立存在）*/
-  removeTask: (pid, name) =>
-    jsonRequest('DELETE', `/api/projects/${pid}/tasks/${encodeURIComponent(name)}`),
 };
 
 // ── Exports（H3：session-scoped）──
