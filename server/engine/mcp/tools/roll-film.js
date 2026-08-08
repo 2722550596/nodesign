@@ -84,6 +84,9 @@ export async function rollFilm(
     if (owner.lifetimeCostLimitUsd != null) {
       return asText('试用账号不能使用自部署视频产线 —— 想用可以找站主换正式邀请码。原话转告用户，不要重试。', true);
     }
+    if (owner.role !== 'admin' && !owner.allowLocalGen) {
+      return asText('本地视频产线是批准制 —— 该账号还没被站主开通。原话转告用户，不要重试。', true);
+    }
 
     const frames = frameCount(duration);
     if (frames > 294) {

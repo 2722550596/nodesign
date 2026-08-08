@@ -60,6 +60,7 @@ import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
 import {
   NODESIGN_PRELUDE,
+  renderPrelude,
   NODESIGN_PLAN_INSTRUCTIONS,
   DEFAULT_TOOL_ALLOWLIST,
   STREAMING_ENABLED,
@@ -68,6 +69,8 @@ import {
   detectArtifact,
 } from './agent-shared.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
+import { getUserById } from '../../auth/users-store.js';
+import { levelFor } from '../../lib/moderation.js';
 import { commitTaskWorkspace } from '../../projects/workspace.js';
 import { listTasks } from '../../lib/artifact-target.js';
 
@@ -452,7 +455,12 @@ export async function runSession({
     systemPrompt: {
       type: 'preset',
       preset: 'claude_code',
-      append: NODESIGN_PRELUDE,
+      // 成人段随项目 owner 的外审档联动（agent-shared.renderPrelude）；
+      // 找不到 owner 时落 loose 默认，绝不落 off
+      append: (() => {
+        const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
+        return renderPrelude(owner ? levelFor(owner) : 'loose');
+      })(),
     },
     plugins: installed.plugins,
     skills: installed.skills,

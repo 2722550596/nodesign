@@ -291,6 +291,7 @@ function LimitEditor({ u, onDone, onCancel }) {
   const [lifetime, setLifetime] = useState(u.lifetimeCostLimitUsd ?? '');
   // '' = 跟随默认档（存 null）；其余三档是显式覆盖
   const [level, setLevel] = useState(u.moderationLevel ?? '');
+  const [localGen, setLocalGen] = useState(u.allowLocalGen ? '1' : '0');
   const [saving, setSaving] = useState(false);
   const isAdmin = u.role === 'admin';
 
@@ -303,7 +304,10 @@ function LimitEditor({ u, onDone, onCancel }) {
     setSaving(true);
     try {
       const patch = { moderationLevel: level === '' ? null : level };
-      if (!isAdmin) { patch.dailyCostLimitUsd = num(daily); patch.lifetimeCostLimitUsd = num(lifetime); }
+      if (!isAdmin) {
+        patch.dailyCostLimitUsd = num(daily); patch.lifetimeCostLimitUsd = num(lifetime);
+        patch.localGen = localGen === '1';
+      }
       await Admin.patchUser(u.id, patch);
       showToast(`已更新 ${u.username}`, 'success');
       onDone();
@@ -333,6 +337,13 @@ function LimitEditor({ u, onDone, onCancel }) {
           ['', '跟随默认'], ['off', '关闭'], ['loose', '宽松'], ['strict', '严格'],
         ]} />
       </Field>
+      {!isAdmin && (
+        <Field label="本地产线（生图/视频盒子）">
+          <Segmented value={localGen} onChange={setLocalGen} options={[
+            ['0', '未开通'], ['1', '开通'],
+          ]} />
+        </Field>
+      )}
       <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, flex: 1, minWidth: 220, lineHeight: 1.5 }}>
         {!isAdmin && <>终身额度非空即生效且取代日限：对全史花费封顶、不刷新（试用口径）。<br /></>}
         外审默认档：试用号严格 / 正式号宽松 / admin 关闭。宽松只拦硬违规

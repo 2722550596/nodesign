@@ -94,6 +94,9 @@ reference the file by its path and move on.`,
         if (owner?.lifetimeCostLimitUsd != null) {
           return asText('试用账号不能使用本地生图盒子 —— 改用 generate_image。', true);
         }
+        if (owner?.role !== 'admin' && !owner?.allowLocalGen) {
+          return asText('本地生图盒子是批准制 —— 该账号还没被站主开通，改用 generate_image。', true);
+        }
 
         const theSeed = seed ?? (Date.now() % 1_000_000);
         const jobId = `nd${Date.now().toString(36)}`;

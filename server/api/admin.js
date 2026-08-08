@@ -83,6 +83,9 @@ router.patch('/users/:id', (req, res) => {
     }
     patch.moderationLevel = lv;
   }
+  if ('localGen' in (req.body || {})) {
+    patch.localGen = !!req.body.localGen;
+  }
   // 07-31 起限额单位是美元。老字段 dailyTokenLimit 仍收（存量数据能改回去），
   // 但它已经不参与闸门判断了 —— 真正生效的是 dailyCostLimitUsd。
   for (const [key, label] of [['dailyCostLimitUsd', '美元'], ['lifetimeCostLimitUsd', '美元'], ['dailyTokenLimit', 'token']]) {
