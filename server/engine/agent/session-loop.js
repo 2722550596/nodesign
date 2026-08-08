@@ -784,9 +784,20 @@ export async function runSession({
    */
   const commitWorldTasks = async (root, status) => {
     const m = await taskManifest(root);
-    if (!(m?.artifacts || []).some(a => a.kind === 'world')) return;
+    const worlds = (m?.artifacts || []).filter(a => a.kind === 'world');
+    if (!worlds.length) return;
     const tag = status === 'success' ? '' : `（${status}）`;
-    await commitTaskWorkspace(root, `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`);
+    const msg = `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`;
+    // 提交**每个世界自己那个仓**，不是工作区根。
+    //
+    // 2026-08-07 cwd 收敛成工作区之后这里传的 root 变成了工作区根，于是
+    // commitTaskWorkspace 提交的是项目仓 —— 世界自己的历史从那天起就冻住了，
+    // 而那正是它的撤销机制（RP 的「回退三轮」是 checkout，小说的「这条线不要了」
+    // 是 branch）。一句报错都没有，因为提交本身成功了，只是提交错了地方。
+    for (const w of worlds) {
+      const dir = w.root ? path.join(root, w.root) : root;
+      await commitTaskWorkspace(dir, msg);
+    }
   };
 
   const finishTurn = async (status, info) => {
@@ -852,7 +863,10 @@ export async function runSession({
     // （见 board-store.js 的 reconcileBoardRenames），而它需要有 commit 可比。
     //
     // 失败只 warn：一个 commit 落不下不该让已经跑完的 turn 变成失败。
-    commitWorkspace(projectId, sessionId, `turn ${status}: ${new Date().toISOString()}`, { author: 'agent' })
+    // **等它落完再往下走**：对账器（reconcileBoardRenames）靠这条 commit 才看得见
+    // agent 这一轮 mv 了什么。不等的话，turn 完成事件触发的那次产物重扫可能跑在
+    // commit 前面，改名这一轮就漏掉了。
+    await commitWorkspace(projectId, sessionId, `turn ${status}: ${new Date().toISOString()}`, { author: 'agent' })
       .catch((err) => console.warn('[git] turn commit failed:', err.message));
 
     activeTurnRunId = null;

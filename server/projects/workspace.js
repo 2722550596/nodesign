@@ -102,6 +102,10 @@ const DEFAULT_GITIGNORE = `node_modules/
 .nd/
 # generate_image 产物 — 通常很大且能从 spec.json 的 prompt 重生
 assets/generated/
+# 画布布局 —— 属于"你怎么摆的"，不属于"你做出了什么"。
+# 进历史的坏处是具体的：每拖一次卡就弄脏工作区，而且 revertWorkspace
+# 会连着把画布布局一起回退（卡片弹回旧位置、清掉的死 id 复活）。
+board.json
 `;
 
 const DEFAULT_SPEC_JSON = JSON.stringify(
@@ -333,7 +337,12 @@ export async function ensureSessionWorkspace(projectId, sessionId) {
  * 现在一个项目一个仓 —— 产物归项目，历史当然也归项目。
  */
 async function ensureProjectGit(root) {
-  if (await fileExists(path.join(root, '.git'))) return;
+  if (await fileExists(path.join(root, '.git'))) {
+    // board.json 2026-08-08 才进 gitignore，而 gitignore 对**已经被跟踪**的
+    // 文件不起作用 —— 得显式从索引里摘一次。幂等：没被跟踪时 rm 会失败，吞掉。
+    await runGit(root, ['rm', '--cached', '-q', '--ignore-unmatch', 'board.json']).catch(() => {});
+    return;
+  }
   await runGit(root, ['init', '-q', '-b', 'main']);
   await runGit(root, ['add', '-A']);
   await runGit(root, [
@@ -911,8 +920,50 @@ export async function gitRenamesSince(projectId, fromCommit) {
       if (st[0] === 'R') { renames.push([parts[i + 1], parts[i + 2]]); i += 2; }
       else i += 1;                       // 其余状态只跟一个路径
     }
-    return { head, renames: renames.filter(([a, b]) => a && b) };
+    const files = renames.filter(([a, b]) => a && b);
+    return { head, renames: [...await deriveFolderRenames(root, files), ...files] };
   });
+}
+
+/**
+ * 从文件级改名推出**目录改名**。
+ *
+ * git 只认文件：`mv 稿件 定稿` 报出来是一串
+ * `稿件/a.md → 定稿/a.md`、`稿件/b.md → 定稿/b.md`。而画布上的文件夹条目
+ * （位置、标题、收起状态）的 id 是 `稿件` —— 没有任何一条文件配对匹配得上它，
+ * 于是**机制二能改物件，永远改不了文件夹**。
+ *
+ * 推法：一对路径去掉最长公共后缀，剩下的头就是目录改名的候选
+ * （`稿件/初稿/a.md → 定稿/初稿/a.md` 去掉 `/初稿/a.md` 得 `稿件 → 定稿`，
+ * 天然拿到最高一层，正好是 mapId 前缀匹配要的粒度）。
+ *
+ * 然后**拿磁盘验一遍**才算数：老的确实没了、新的确实在。只有一个文件从
+ * A/ 挪进 B/ 也会产生候选，但那时 A/ 还在，验不过。
+ *
+ * 目录排在文件前面返回：mapId 顺着 renames 的顺序找第一个命中，先按目录前缀
+ * 改能一次盖住整棵子树，省得每个文件各改一遍还可能改出中间态。
+ */
+async function deriveFolderRenames(root, filePairs) {
+  const cand = new Map();
+  for (const [from, to] of filePairs) {
+    const a = from.split('/');
+    const b = to.split('/');
+    let i = a.length - 1; let j = b.length - 1;
+    while (i >= 0 && j >= 0 && a[i] === b[j]) { i -= 1; j -= 1; }
+    if (i < 0 || j < 0) continue;                 // 一方是另一方的子路径，不是改名
+    const dirA = a.slice(0, i + 1).join('/');
+    const dirB = b.slice(0, j + 1).join('/');
+    if (dirA && dirB && dirA !== dirB) cand.set(dirA, dirB);
+  }
+  const out = [];
+  for (const [dirA, dirB] of cand) {
+    if (await pathExists(path.join(root, dirA))) continue;   // 老的还在 = 没搬走
+    if (!(await pathExists(path.join(root, dirB)))) continue; // 新的不在 = 别的事
+    out.push([dirA, dirB]);
+  }
+  // 长的排前面：`稿件/初稿` 要先于 `稿件` 匹配，否则外层一改，内层那条就对不上了
+  out.sort((x, y) => y[0].length - x[0].length);
+  return out;
 }
 
 /**

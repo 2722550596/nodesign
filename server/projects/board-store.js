@@ -373,25 +373,52 @@ export function renameBoardPaths(pid, pairs) {
     };
 
     const remap = (bag) => {
+      const src = bag || {};
       const next = {};
-      for (const [id, v] of Object.entries(bag || {})) {
+      // **先把没改名的放进去占位**，再放改了名的。撞名时该让路的是"搬过来的
+      // 那个"，不是原地那个 —— 按插入顺序一趟写的话，改名源恰好排在前面就会
+      // 把活着的条目静默顶掉，而顺序是 JSON 键序，纯属看运气。
+      for (const [id, v] of Object.entries(src)) if (mapId(id) === id) next[id] = v;
+      for (const [id, v] of Object.entries(src)) {
         const n = mapId(id);
-        if (n !== id) applied.push([id, n]);
-        // 撞名时**新来的让路**：目标位置已经有条目说明那边是活的
-        if (!next[n]) next[n] = v;
+        if (n === id) continue;
+        if (next[n]) {
+          // 目标位置有活的 —— 搬不过去就**留在原地**，不能一声不响地丢掉。
+          // （只写 continue 的话这条从 next 里彻底消失，用户的卡凭空没了。）
+          if (!next[id]) next[id] = v;
+          continue;
+        }
+        next[n] = v;
+        applied.push([id, n]);
       }
       return next;
     };
 
     board.objects = remap(board.objects);
     board.zones = remap(board.zones);
-    for (const b of Object.values(board.bindings || {})) {
-      b.from = mapId(b.from);
-      b.to = mapId(b.to);
+
+    // 显式归属字段也要跟着改名。`objects[*].zone` 是活的：pin_to_board 写它、
+    // 拖进文件夹写它。只改键不改这个值的话，文件夹一改名，所有显式归属的成员
+    // 就指向一个不存在的文件夹（画布上表现为"卡片从文件夹里掉出来了"）。
+    let touchedField = false;
+    for (const o of Object.values(board.objects)) {
+      if (typeof o.zone !== 'string' || !o.zone) continue;
+      const n = mapId(o.zone);
+      if (n !== o.zone) { o.zone = n; touchedField = true; }
     }
 
-    if (applied.length) {
-      noteRenames(pid, applied, now);
+    // 关系线端点。**这里改了也要算数** —— board.objects 是稀疏的，一条线完全
+    // 可以指向一个没有坐标条目的产物，那种情况下 applied 是空的，可对账位点
+    // 照样往前推：不落盘 = 这次改名永久丢失，下次再也算不出来。
+    let touchedBinding = false;
+    for (const b of Object.values(board.bindings || {})) {
+      const from = mapId(b.from);
+      const to = mapId(b.to);
+      if (from !== b.from || to !== b.to) { b.from = from; b.to = to; touchedBinding = true; }
+    }
+
+    if (applied.length || touchedField || touchedBinding) {
+      if (applied.length) noteRenames(pid, applied, now);
       await writeBoard(pid, board);
     }
     return { board, renamed: applied.length };

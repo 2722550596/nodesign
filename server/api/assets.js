@@ -19,7 +19,7 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
-import { patchBoard, readBoard, reconcileBoardRenames } from '../projects/board-store.js';
+import { patchBoard, readBoard, reconcileBoardRenames, forwardId } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
@@ -204,6 +204,28 @@ const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
  * 挡在外面，跟深度无关。
  */
 const FOLDER_MAX_DEPTH = 3;
+
+/**
+ * 「这个文件夹是真没了，还是只是这一瞬看不见」的两次判定。
+ *
+ * 记的是**上一次扫描时哪些是可疑的**。只有连着两次都不在才算死。一次 mv、
+ * 一次改名、agent 写到一半的目录都活不过第二次判定 —— 而它们只要活到 turn
+ * 结束，git 的改名检测就能把画布上那条改成新名字（reconcileBoardRenames）。
+ *
+ * 同时跳过正在改名窗口里的 id：转发表说它刚被改成别的名字，那它当然不在
+ * 磁盘上，删了就等于把刚改好的名字又废掉。
+ */
+const zoneSuspects = new Map();   // pid → Set(上一轮可疑的 zone id)
+
+function confirmDeadZones(pid, suspects, live) {
+  const prev = zoneSuspects.get(pid) || new Set();
+  const dead = suspects.filter(z => prev.has(z) && forwardId(pid, z) === z);
+  // 这一轮的可疑名单留给下一轮；已经确认死掉的不用再留
+  zoneSuspects.set(pid, new Set(suspects.filter(z => !dead.includes(z))));
+  // 活过来的（改完名又出现、或者 agent 重新建了）自然从名单里消失
+  for (const z of live) zoneSuspects.get(pid).delete(z);
+  return dead;
+}
 
 /**
  * GET /:pid/artifacts — 产物清单（project 级，跨 session）。
@@ -427,13 +449,16 @@ router.get('/:pid/artifacts', async (req, res, next) => {
 
     try {
       await collect(workspaceRoot, '', 0);
-      // 散文件（agent 写的 .md、数据文件、脚本…）。工作区根 + 每个文件夹各平铺
-      // 一层，这样收进文件夹的 .md 也上墙 —— 它的 id 天然带着文件夹前缀，
-      // 前端据此把它归到那个文件夹里。
-      await scanDir(workspaceRoot, 'task-file', '', 1);
+      // 散文件（agent 写的 .md、数据文件、脚本…）：**每个目录只平铺自己那一层**。
+      //
+      // `folders` 已经是递归全量（含嵌套），所以根扫一层 + 每个文件夹各扫一层
+      // 正好覆盖一遍。之前根这里传的是 depth=1（自己递归下去一层），跟后面
+      // 那个 folders 循环重叠 —— 文件夹里的每个文件都被吐两遍，实测一个项目
+      // 24 条产物里 6 条重复，画布上就是一张卡叠着另一张同名卡。
+      await scanDir(workspaceRoot, 'task-file', '', 0);
       await scanDir(path.join(workspaceRoot, 'notes'), 'note', 'notes');
       for (const rel of folders) {
-        await scanDir(path.join(workspaceRoot, rel), 'task-file', rel, 1);
+        await scanDir(path.join(workspaceRoot, rel), 'task-file', rel, 0);
       }
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
@@ -447,18 +472,23 @@ router.get('/:pid/artifacts', async (req, res, next) => {
       return !a.name.toLowerCase().endsWith('.html');
     });
 
-    // 剪掉画布上没有对应目录的文件夹。
+    // 剪掉画布上没有对应目录的文件夹 —— **但要等它连着两次都不在**。
     //
-    // 跟物件不一样，文件夹**有权威清单**：`folders` 就是刚扫出来的磁盘真相。
-    // 物件那边不能这么干（board.objects 是稀疏的，"不在 board 里"是常态，
-    // "在 board 里但磁盘上没有"跟 agent 正在写时的一瞬读不到没法区分），
-    // 文件夹这边可以 —— 渲染用的和判断用的是同一份清单。
+    // 跟物件不一样，文件夹有权威清单（`folders` 就是刚扫出来的磁盘真相），所以
+    // 剪是可以剪的。物件那边不行：board.objects 是稀疏的，"不在 board 里"是常态。
     //
-    // 存量垃圾有两类：任务模型之前的「会话分区」（id 是 sessionId），以及
-    // 中途某个版本写下的 `task/.`。它们在画布上是永远删不掉的空框。
+    // 但立刻剪是错的，而且是**破坏性**的：这个接口在一轮对话中途会被反复调用
+    // （每次 listVersion 跳动），而 agent 的 `mv 稿件 定稿` 要到 turn 结束才进
+    // git。中间那次扫描一看「稿件」没了就删，而 patchBoard 的端点级联会把连着
+    // 这个文件夹的关系线一起删掉 —— 等 turn 结束、对账把里面的物件改好名时，
+    // 文件夹的位置、标题、连线已经没了，找不回来。
+    //
+    // 两道闸：① 正在改名窗口里的（转发表里有）一律不碰 ② 连续两次扫描都不在
+    // 才算真没了。改名、临时 mv、agent 写到一半，都活不过第二次判定。
     const live = new Set(folders);
     const board = await readBoard(req.params.pid);
-    const deadZones = Object.keys(board.zones || {}).filter(z => !live.has(z));
+    const suspects = Object.keys(board.zones || {}).filter(z => !live.has(z));
+    const deadZones = confirmDeadZones(req.params.pid, suspects, live);
     if (deadZones.length) {
       await patchBoard(req.params.pid, {
         zones: Object.fromEntries(deadZones.map(z => [z, null])),
