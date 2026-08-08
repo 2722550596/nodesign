@@ -16,10 +16,10 @@ import path from 'path';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
 import {
-  getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
+  getSharedDir, ensureProjectWorkspace, removeSessionWorkspace, commitWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
-import { patchBoard, readBoard, reconcileBoardRenames, forwardId } from '../projects/board-store.js';
+import { patchBoard, readBoard, reconcileBoardRenames, forwardId, renameBoardPaths } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
@@ -671,6 +671,84 @@ router.delete('/:pid/task-notes/:filename', async (req, res, next) => {
  *
  * 路径按**工作区相对路径**收（`稿件/初稿`），因为文件夹可以嵌套。
  */
+/**
+ * POST /:pid/move —— 把一个东西搬到另一个文件夹里（**真的动磁盘**）。
+ *
+ * body: `{ from: '稿件/主稿.html', to: '定稿' }`（to='' = 搬到工作区根）
+ *
+ * 这是「拖进文件夹 = 真 mv」那条交互的落点。语义按操作系统桌面走：画布上
+ * 在哪，磁盘上就在哪，永远一致。代价是**移动 = 换身份**（id 就是路径），
+ * 所以这一步的顺序不能错：
+ *
+ *   ① fs.rename          先动磁盘。失败就整个失败，画布一个字节不改
+ *   ② renameBoardPaths   同一个请求内改画布身份（物件 / 文件夹 / 归属字段 /
+ *                        关系线端点），顺带在转发表里记一笔
+ *   ③ 带着新 board 响应   前端拿到就重写 layoutRef —— 不给的话它手上还是旧 id，
+ *                        800ms 后那一发防抖 flush 会把旧条目写回来
+ *   ④ 同步 commit         对账器稍后会看到这次改名并重放一遍；因为 ② 已经做完，
+ *                        重放是个空操作（幂等）。不 commit 的话它下次算 diff
+ *                        时才看到，中间任何一次扫描都可能把旧文件夹当死的剪掉
+ */
+router.post('/:pid/move', express.json(), async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    const root = getSharedDir(req.params.pid);
+    const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const from = norm(req.body?.from);
+    const to = norm(req.body?.to);
+    if (!from) return res.status(400).json({ error: 'from required' });
+
+    const absFrom = path.resolve(root, from);
+    const absToDir = to ? path.resolve(root, to) : root;
+    const inside = (p) => p === root || p.startsWith(root + path.sep);
+    if (!inside(absFrom) || absFrom === root || !inside(absToDir)) {
+      return res.status(400).json({ error: 'path escapes workspace' });
+    }
+    // 基础设施与语义目录不参与搬家：assets/ 是按 upload/generated/note 三种
+    // 语义单独扫的，搬出去它就不是"素材"了；.claude/.nd/.git 更不用说。
+    const guardSeg = (rel) => rel.split('/')[0];
+    if (RESERVED_DIRS.has(guardSeg(from)) || guardSeg(from).startsWith('.')) {
+      return res.status(400).json({ error: '这个位置的东西不参与搬家' });
+    }
+    if (to && (RESERVED_DIRS.has(guardSeg(to)) || guardSeg(to).startsWith('.'))) {
+      return res.status(400).json({ error: '不能搬进这个目录' });
+    }
+    // 搬进自己肚子里（文件夹拖到它自己的子文件夹上）—— fs.rename 会报
+    // EINVAL，但那时目录树已经没法自洽了，提前拦住
+    if (to === from || to.startsWith(from + '/')) {
+      return res.status(400).json({ error: '不能把文件夹搬进它自己里面' });
+    }
+
+    const srcStat = await fs.stat(absFrom).catch(() => null);
+    if (!srcStat) return res.status(404).json({ error: 'source not found' });
+    const dirStat = await fs.stat(absToDir).catch(() => null);
+    if (!dirStat?.isDirectory()) return res.status(404).json({ error: 'target folder not found' });
+
+    // 目标目录**本身是一件产物**（整站 / 世界）时不许搬进去：它的内部结构由
+    // 形态解析器管，塞进去的东西会从产物枚举里彻底消失（既不是页面也不是卡）。
+    if (to) {
+      const m = await taskManifest(absToDir);
+      const opaque = (m?.artifacts || []).some(
+        a => a.kind === 'world' || (a.kind === KIND_SITE && !a.single && !a.root));
+      if (opaque) return res.status(400).json({ error: '这是一件产物，不是收纳文件夹' });
+    }
+
+    const base = path.basename(from);
+    const nextRel = to ? `${to}/${base}` : base;
+    if (nextRel === from) return res.json({ ok: true, from, to: from, moved: false });
+    if (await exists(path.resolve(root, nextRel))) {
+      return res.status(409).json({ error: `「${base}」在那儿已经有一个了` });
+    }
+
+    await fs.rename(absFrom, path.resolve(root, nextRel));                    // ①
+    const { board } = await renameBoardPaths(req.params.pid, [[from, nextRel]]);  // ②
+    res.json({ ok: true, from, to: nextRel, moved: true, board });            // ③
+    // ④ 响应之后再 commit：它只服务于稍后的对账，不该让用户多等一次 git add
+    commitWorkspace(req.params.pid, null, `move: ${from} → ${nextRel}`, { author: 'user' })
+      .catch(err => console.warn('[git] move commit failed:', err.message));
+  } catch (err) { next(err); }
+});
+
 router.delete('/:pid/folders/*subPath', async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;

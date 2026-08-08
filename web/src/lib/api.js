@@ -246,6 +246,12 @@ export const Assets = {
    * 每一段单独编码 —— 整串 encodeURIComponent 会把分隔的 '/' 也编掉，
    * 服务端的通配路由就只能收到一段。
    */
+  /**
+   * 把一个东西搬进另一个文件夹（**真的动磁盘**）。
+   * to='' = 搬到工作区根。返回 { from, to, moved, board }，board 是改完名的新画布。
+   */
+  moveEntry: (pid, from, to) =>
+    jsonRequest('POST', `/api/projects/${pid}/move`, { from, to }),
   removeFolder: (pid, rel) =>
     jsonRequest('DELETE', `/api/projects/${pid}/folders/${String(rel).split('/').map(encodeURIComponent).join('/')}`),
   /** 画布布局（空间画布，含 zones 分区）*/

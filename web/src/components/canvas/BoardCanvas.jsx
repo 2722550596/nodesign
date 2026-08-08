@@ -1111,9 +1111,10 @@ export default function BoardCanvas({
     // "余韵"记在这个 ref 上，让点击类 handler 能区分"拖完松手"和"真点击"
     recentDragMovedRef.current = !!d?.moved;
     if (d?.kind === 'object') {
-      // 拖放落点判定 → 写显式归属（几何只在松手这一刻起作用）：
-      //   落在文件夹卡上 = 收进该文件夹（位置也挪进它的区内）
-      //   落在展开工作区内 = 归入该区；落在空白 = 明确移出原归属
+      // 落点判定 → **真的搬文件**（2026-08-08）：
+      //   落在文件夹上（收起态卡 / 展开态框）= 搬进那个目录
+      //   明确拖到空白 = 搬回工作区根
+      //   落在原地 = 只是挪了个位置，什么也不搬
       if (d.moved) {
         const obj = positioned.find(o => o.id === d.id);
         const pos = layoutRef.current[d.id];
@@ -1121,26 +1122,19 @@ export default function BoardCanvas({
         if (obj && pos) {
           const sz = sizeOf({ ...obj, pos });
           const prevZone = obj.zoneId || null;
-          if (hint?.kind === 'folder') {
-            const fz = zonesRef.current[hint.id];
-            const n = positioned.filter(o => o.zoneId === hint.id && o.id !== d.id).length;
-            patchLayout(d.id, {
-              zone: hint.id,
-              x: Math.max(0, Math.min(DESKTOP_W - sz.w, fz.x + ZONE.pad + (n % 4) * ZONE.cellW)),
-              y: Math.max(0, fz.y + ZONE.header + ZONE.pad + Math.floor(n / 4) * ZONE.cellH),
-            });
-          } else if (hint?.kind === 'zone') {
-            // 只写归属，**坐标就是你松手的地方**（拖拽期间已经逐帧落进 layout 了）
-            if (prevZone !== hint.id) patchLayout(d.id, { zone: hint.id });
+          let target = null;                       // null = 不搬；字符串 = 搬到这个目录（'' = 根）
+          if (hint?.kind === 'folder' || hint?.kind === 'zone') {
+            if (hint.id !== prevZone) target = hint.id;
           } else if (prevZone && DRAG_OUT_DETACHES) {
-            // 明确拖出去才摘（挨着边扔的算没摆好，留在原区）
+            // 明确拖出去才算（挨着边扔的算没摆好，留在原区）
             const zr = zonesRef.current[prevZone];
             const cx = pos.x + sz.w / 2;
             const cy = pos.y + sz.h / 2;
             const clearlyOut = !zr || cx < zr.x - DETACH_MARGIN || cx > zr.x + zr.w + DETACH_MARGIN
               || cy < zr.y - DETACH_MARGIN || cy > zr.y + (zr.h || 0) + DETACH_MARGIN;
-            if (clearlyOut) patchLayout(d.id, { zone: '' });
+            if (clearlyOut) target = '';
           }
+          if (target !== null) moveEntry(obj, target, { x: pos.x, y: pos.y });
         }
       }
       dropHintRef.current = null;
@@ -1149,6 +1143,52 @@ export default function BoardCanvas({
       scheduleSave();
     }
   };
+
+  /**
+   * 把一个物件真的搬进另一个文件夹。
+   *
+   * **画布上在哪，磁盘上就在哪** —— 这是用户定的操作系统桌面语义。以前这里只写
+   * 一个 `zone` 字段（画布说不属于、磁盘说属于），那种分裂正是「拖进拖出改归属」
+   * 这个概念被废掉的原因。
+   *
+   * id 就是路径，所以搬完之后这张卡换了身份：先把新坐标记在**新 id** 上，再让
+   * 服务端搬（它会同步改 board.json 里的物件 / 文件夹 / 归属字段 / 关系线端点），
+   * 拿回新 board 后按它对齐本地 state。失败就原样回滚，卡片弹回去。
+   */
+  const moveEntry = useCallback(async (obj, toFolder, at) => {
+    const from = String(obj.id).slice(String(obj.id).indexOf(':') + 1);
+    const base = from.split('/').pop();
+    const to = toFolder ? `${toFolder}/${base}` : base;
+    if (to === from) return;
+    const nextId = obj.id.includes(':') ? `${obj.id.split(':')[0]}:${to}` : to;
+
+    // 乐观更新：新 id 上先摆好，旧 id 撤掉。不这么做的话下一帧产物清单还没刷新，
+    // 卡片会闪一下回到旧位置
+    setLayout(prev => {
+      const next = { ...prev };
+      next[nextId] = { ...(prev[obj.id] || {}), x: at.x, y: at.y, zone: undefined };
+      delete next[obj.id];
+      return next;
+    });
+    try {
+      const r = await Assets.moveEntry(projectId, from, to);
+      if (r?.board) {
+        // 服务端已经把身份都改好了 —— 以它为准，别让本地的旧条目再写回去
+        setZones(r.board.zones || {});
+        setBindings(r.board.bindings || {});
+        dirtyRef.current = { objects: new Set(), zones: new Set() };
+      }
+      reload();
+    } catch (err) {
+      setLayout(prev => {                       // 搬失败：身份没变，把卡放回去
+        const next = { ...prev };
+        next[obj.id] = { ...(next[nextId] || {}), x: obj.pos.x, y: obj.pos.y };
+        delete next[nextId];
+        return next;
+      });
+      useGlobalStore.getState().showToast(`搬不过去：${err.message}`, 'error');
+    }
+  }, [projectId, reload]);
 
   const recentDragMovedRef = useRef(false);
   const wasDrag = () => !!(dragRef.current?.moved || recentDragMovedRef.current);
