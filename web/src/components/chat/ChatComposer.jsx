@@ -50,6 +50,7 @@ export default function ChatComposer({
   const ref = useRef(null);
   const fileInputRef = useRef(null);
   const chatDraft = useGlobalStore(s => s.chatDraft);
+  const composerFocusTick = useGlobalStore(s => s.composerFocusTick);
   const setChatDraft = useGlobalStore(s => s.setChatDraft);
 
   // textarea 自动增高
@@ -59,6 +60,18 @@ export default function ChatComposer({
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [text]);
+
+  // 外部要求把光标放进来（画布按 `/` 唤出、右键「让 agent…」）。跟 chatDraft
+  // 分开是因为那边判空值 —— 没垫词的时候什么也不会发生。首帧的 0 不触发。
+  useEffect(() => {
+    if (!composerFocusTick) return;
+    requestAnimationFrame(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [composerFocusTick]);
 
   // 监听 chatDraft（外部注入：Inspect "触发新 run" 等）→ 同步到 textarea + focus
   useEffect(() => {

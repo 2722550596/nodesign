@@ -43,6 +43,25 @@ export const useGlobalStore = create((set) => ({
     set({ canvasFont: v });
   },
 
+  /**
+   * 镜头跟随 agent（2026-08-08）。开关，默认开。
+   *
+   * 跟随本身早就有（跟人不跟事件，见 BoardCanvas 的 followTarget），缺的是
+   * 一个能关掉它的地方 —— 用户在画布另一头摆自己的东西时，镜头被 agent 拽走
+   * 是很烦的。用户接管冷却（8 秒）只能缓解，关不掉。
+   */
+  followAgent: (() => {
+    try {
+      const v = localStorage.getItem('nd:followAgent');
+      if (v !== null) return v === '1';
+    } catch { /* 隐私模式 */ }
+    return true;
+  })(),
+  setFollowAgent: (v) => {
+    try { localStorage.setItem('nd:followAgent', v ? '1' : '0'); } catch { /* */ }
+    set({ followAgent: v });
+  },
+
   // ── Canvas mode（Edit / Preview / Code） ──
   canvasMode: 'edit',
   setCanvasMode: (m) => set({ canvasMode: m }),
@@ -54,6 +73,16 @@ export const useGlobalStore = create((set) => ({
   // ── Chat draft（让 Inspect "触发新 run" 把元素意图填回 ChatComposer）──
   chatDraft: '',
   setChatDraft: (s) => set({ chatDraft: s }),
+  /**
+   * 「把光标放进输入框」的信号（2026-08-08）。
+   *
+   * 不能靠 chatDraft 兼职：它的消费方判的是 `if (chatDraft)`，而空串是假值 ——
+   * 按 `/` 唤出时垫的词恰好就是空串（没有指着任何东西），于是既不填也不聚焦。
+   * 用一个只增不减的计数器：值本身没有意义，**变化**才是信号，所以连着按两次
+   * 也能各触发一次。
+   */
+  composerFocusTick: 0,
+  focusComposer: () => set((st) => ({ composerFocusTick: st.composerFocusTick + 1 })),
   consumeChatDraft: () => {
     const draft = useGlobalStore.getState().chatDraft;
     set({ chatDraft: '' });

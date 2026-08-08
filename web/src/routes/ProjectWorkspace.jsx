@@ -1995,7 +1995,8 @@ export default function ProjectWorkspace() {
               const lead = ctx?.objects?.length
                 ? `关于「${ctx.objects.map(id => id.split('/').pop()).join('、')}」，`
                 : ctx?.folder ? `在「${ctx.folder.split('/').pop()}」文件夹里，` : '';
-              useGlobalStore.getState().setChatDraft(lead);
+              if (lead) useGlobalStore.getState().setChatDraft(lead);
+              useGlobalStore.getState().focusComposer();
             }}
           />
 

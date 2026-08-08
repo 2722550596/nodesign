@@ -165,6 +165,8 @@ export default function BoardCanvas({
   const [tool, setTool] = useState('select');
   /** 手写文字用什么字体（设置里选，见 globalStore.canvasFont） */
   const canvasFont = useGlobalStore(st => st.canvasFont);
+  /** 镜头跟不跟 agent 跑（设置里的开关，默认开） */
+  const followAgent = useGlobalStore(st => st.followAgent);
   const [commentDraft, setCommentDraft] = useState(null);   // { targetId, at }
   const commentDraftRef = useRef(null);
   const [bindings, setBindings] = useState({});   // board.json 的关系表
@@ -1338,12 +1340,16 @@ export default function BoardCanvas({
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // 全局唤出 agent（2026-08-08）：斜杠。用户要「不用找鼠标，沉浸在画布里
+      // 随手支使」。选的是 `/` 而不是某个字母 —— 字母全被工具占了，而斜杠在
+      // 各家工具里本来就是"开始输入命令"的意思。
+      if (e.key === '/') { e.preventDefault(); onAskAgent?.({}); return; }
       const next = KEYS[e.key?.toLowerCase()];
       if (next) setTool(next);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [onAskAgent]);
 
   /**
    * 进入 / 退出任务（2026-07-28：任务=会话一对一后唯一的一条切换路径）
@@ -1785,9 +1791,10 @@ export default function BoardCanvas({
     if (!who) { followedIdRef.current = null; return; }
     const key = `${who.id}:${who.targetId}`;
     if (followedIdRef.current === key) return;
-    followedIdRef.current = key;
+    followedIdRef.current = key;   // 关着也记下来：重新打开时不该把攒的一路补播一遍
+    if (!followAgent) return;
     followToObject(who.targetId);
-  }, [presence, followToObject]);
+  }, [presence, followToObject, followAgent]);
 
   // 在场表：从同一条事件流归约出"谁在哪干活"（board-presence.js，19 条测试）。
   // 解析器用画布自己的寻址规则（zoneOfObjectId），跟舞台卡贴物件同一套口径。
@@ -1892,7 +1899,12 @@ export default function BoardCanvas({
         '@keyframes ndPresencePulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.75}}',
         '@keyframes ndPulse{from{box-shadow:0 0 0 0 rgba(79,143,91,0.4)}to{box-shadow:0 0 0 12px rgba(79,143,91,0)}}',
         // agent 正在动的目标：外圈橙色呼吸光圈
+        // agent 正在动这个东西：**一圈跑动的光**，不只是边框在呼吸。
+        // 用户要的是"运动环绕光圈"—— 呼吸是"这里有点什么"，跑动才是"有人正在
+        // 这儿干活"。两层叠着：底下一圈稳的实边（认得出是哪一个），上面
+        // 一段亮弧沿着边转（看得出在动）。
         '@keyframes ndAgentRing{0%,100%{box-shadow:0 0 0 2px rgba(176,140,79,0.85),0 0 0 7px rgba(176,140,79,0.16),0 6px 20px rgba(40,32,16,0.12)}50%{box-shadow:0 0 0 2px rgba(176,140,79,0.95),0 0 0 13px rgba(176,140,79,0.05),0 6px 20px rgba(40,32,16,0.12)}}',
+        '@keyframes ndAgentSweep{to{transform:rotate(1turn)}}',
       ].join('')}</style>
       {/* 视口：不滚动，镜头就是相机（2026-08-07 无限画布）
        *
@@ -2406,7 +2418,8 @@ function BoardObject({
     cursor: 'grab', userSelect: 'none',
     touchAction: 'none',
     animation: POP_IN,
-    // agent 此刻正在动这个物件 → 外圈橙色呼吸光圈（放在 animation 之后才盖得住）
+    // agent 此刻正在动这个物件 → 外圈光圈（放在 animation 之后才盖得住）。
+    // 转动的那段亮弧画在下面的伪层里，这里只管稳的那一圈。
     ...(agentActive ? {
       animation: 'ndAgentRing 1600ms ease-in-out infinite',
       borderColor: alpha(CANVAS.brass, 0.85),
@@ -2678,6 +2691,20 @@ function BoardObject({
             </span>
           </div>
         </div>
+      )}
+
+      {/* 运动环绕光圈（2026-08-08）：一段亮弧沿着卡的外沿转。
+          conic-gradient 转一圈 + mask 只留边框那一环 —— 比逐帧画 SVG 便宜，
+          而且跟着卡片圆角走。pointerEvents:none，不吃任何手势。 */}
+      {agentActive && (
+        <div aria-hidden style={{
+          position: 'absolute', inset: -2, borderRadius: 'inherit',
+          padding: 2, pointerEvents: 'none', zIndex: 3,
+          background: `conic-gradient(from 0deg, transparent 0deg, transparent 250deg, ${alpha(CANVAS.brass, 0.95)} 320deg, transparent 360deg)`,
+          WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+          WebkitMaskComposite: 'xor', maskComposite: 'exclude',
+          animation: 'ndAgentSweep 1400ms linear infinite',
+        }} />
       )}
 
       {o.type === 'text' && (

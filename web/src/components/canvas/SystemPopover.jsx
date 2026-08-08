@@ -27,6 +27,8 @@ export default function SystemPopover({
   tweaksEnabled = null, onTweaksEnabledChange = null,
 }) {
   const canvasFont = useGlobalStore(st => st.canvasFont);
+  const followAgent = useGlobalStore(st => st.followAgent);
+  const setFollowAgent = useGlobalStore(st => st.setFollowAgent);
   const setCanvasFont = useGlobalStore(st => st.setCanvasFont);
   const ref = useRef(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -124,6 +126,27 @@ export default function SystemPopover({
             <ToggleSwitch checked={!!tweaksEnabled} onChange={onTweaksEnabledChange} />
           </div>
         )}
+
+        {/* 镜头跟随 agent（2026-08-08）。用户要「这项需要可以开关」——
+            跟随本身早就有，缺的是一个能关掉它的地方：你在画布另一头摆自己的
+            东西时，镜头被 agent 拽走很烦，而 8 秒接管冷却只能缓解、关不掉。 */}
+        <div style={{
+          padding: `${GAP.md}px ${GAP.lg}px`,
+          borderBottom: `1px solid ${COLOR.borderLt}`,
+          display: 'flex', alignItems: 'center', gap: GAP.sm,
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text }}>
+              镜头跟随 agent
+            </div>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 2, lineHeight: 1.5 }}>
+              {followAgent
+                ? '开：agent 换到哪个产物，镜头就飞过去（你操作后 8 秒内不抢）'
+                : '关：镜头只听你的；agent 在动什么看光圈'}
+            </div>
+          </div>
+          <ToggleSwitch checked={followAgent} onChange={setFollowAgent} />
+        </div>
 
         {/* 画布手写字体（2026-08-08）。放设置里而不是工具栏：它是设一次管很久的
             偏好，不是每次落笔都要选的东西。存 localStorage —— 是这台机器上这个
