@@ -32,6 +32,17 @@ cloud sea, sunrise, wide shot, from below, cinematic lighting, depth of field`
 
 自然语言英文白描，一两句说清主体与光线氛围即可，堆砌反而糊。
 
+## 现成 LoRA（风格补丁，按 still 传 lora / lora_strength）
+
+- **Krea 2 官方风格包（已装盒，只配 krea2，无触发词，挂上即生效，强度 0.6-0.8）**：
+  `krea2_retroanime`（90年代赛璐璐动漫，krea2 的动漫档就靠它）· `krea2_softwatercolor`
+  水彩 · `krea2_darkbrush` 暗调厚涂 · `krea2_neondrip` 霓虹 · `krea2_rainywindow`
+  雨窗 · `krea2_sunsetblur` 落日虚化 · `krea2_vintagetarot` 复古塔罗 ·
+  `krea2_dotmatrix` 点阵 · `krea2_kidsdrawing` 童稚涂鸦（文件名加 .safetensors）
+- **其他 LoRA**（Civitai 下载的角色/画风）：只用用户明确给出的文件名——名字不存在
+  会直接报错；多数带**触发词**，要写进提示词才激活；角色 LoRA 强度 0.8-1.0。
+- v1 一张只挂一个 LoRA；风格强度拉太高会吃掉构图。
+
 ## 批量纪律
 
 - stills 数组一次交（≤16 张），逐张上墙，中途失败即停。

@@ -134,6 +134,7 @@ export async function paintStills(
         `--size ${still.size}`,
         `--name ${still.jobId}`,
         still.negative ? `--neg ${shq(still.negative)}` : '',
+        still.lora ? `--lora ${shq(still.lora)} --lora-strength ${still.lora_strength ?? 0.8}` : '',
       ].filter(Boolean).join(' ');
 
       const t0 = Date.now();
@@ -207,6 +208,10 @@ Use for anime needs and video keyframes (1344x768 matches the video lane).
 For photoreal/general images use generate_image. Requires the box online —
 if unreachable, tell the user and fall back to generate_image.
 
+Ready-made LoRAs supported per still (lora + lora_strength) — the cookbook
+lists the installed Krea 2 style pack; for others only use filenames the user
+explicitly provides.
+
 Outputs land at assets/generated/still-*.png. DO NOT visually inspect —
 no Read, no screenshot, no vision checker. QC is the user's job: reference
 files by path only.`,
@@ -218,6 +223,8 @@ files by path only.`,
         size: z.string().regex(/^\d{3,4}x\d{3,4}$/).default('1344x768'),
         seed: z.number().int().optional().describe('omit for fresh random per still'),
         name: z.string().regex(/^[\w-]{1,40}$/).default('still'),
+        lora: z.string().optional().describe('LoRA filename in the box loras/ dir; only use names from the cookbook list or given by the user'),
+        lora_strength: z.number().min(0).max(1.5).optional().describe('default 0.8'),
       })).min(1).max(16).describe('stills rendered serially in one batch'),
     },
     (args) => paintStills(deps, args),
