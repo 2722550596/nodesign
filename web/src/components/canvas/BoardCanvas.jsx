@@ -16,6 +16,7 @@ import {
   DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H,
   PROJECT_BAND_Y, PROJECT_BAND_H,
   SITE_VIEWPORTS, EASE, POP_IN, newStackedZoneRect, resolveZoneAvoidance, packRow, ROW_GAP, GROUP_LABEL_H,
+  ZONE_MIN_W, COL_W, COL_GAP,
 } from '../../lib/board-geometry.js';
 import {
   SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, legacyBucketOf, isFileBacked,
@@ -712,17 +713,30 @@ export default function BoardCanvas({
     }
 
     // zone 视图（有效高度随内容生长，含避让后被挤出来的新底边）
-    const zv = Object.entries(grids).map(([zid, g]) => ({
-      id: zid,
-      x: g.rect.x, y: g.rect.y, w: g.rect.w,
-      // 高度：贴内容（ZONE_MIN_H 起），超出再向下生长；取景交给相机；
-      // 存档矩形的 h 只当创建时的估算，不当地板
-      h: Math.max(zoneMinHOf(zid), g.bottom - g.rect.y),
-      title: sessionTitles.get(zid) || taskTitles.get(zid) || g.rect.title || '工作区',
-      collapsed: !!g.rect.collapsed,
-    }));
+    // 文件夹的矩形**贴自己的内容**（2026-08-08），不再是整个桌面宽的一条带。
+    // 严格分区时代它是版面上的一行，所以拉满宽度是对的；现在它是桌面上的一个
+    // 东西，宽度该由里面装了什么决定 —— 空文件夹是一张小卡，装满了才铺开。
+    const zv = Object.entries(grids).map(([zid, g]) => {
+      const members = items.filter(it => it.zoneId === zid);
+      // 收起态里成员根本不渲染，"贴内容"就没有内容可贴 —— 那时以存档宽度为准
+      // （「整理」写下的那个）。不这么分的话收起之后宽度会塌回最小身位，
+      // 展开又弹回去，一收一展跳两次。
+      let right = g.rect.x + (g.rect.collapsed ? (g.rect.w || ZONE_MIN_W) : ZONE_MIN_W);
+      if (!g.rect.collapsed) {
+        for (const it of members) right = Math.max(right, it.pos.x + sizeOf(it).w + ZONE.pad);
+      }
+      return {
+        id: zid,
+        x: g.rect.x, y: g.rect.y,
+        // 存档矩形的 w/h 只当创建时的估算，不当地板 —— 贴内容才是真相
+        w: Math.min(DESKTOP_W - MARGIN_X * 2, Math.max(ZONE_MIN_W, right - g.rect.x)),
+        h: Math.max(zoneMinHOf(zid), g.bottom - g.rect.y),
+        title: taskTitles.get(zid) || g.rect.title || zid.split('/').pop() || '文件夹',
+        collapsed: !!g.rect.collapsed,
+        memberCount: members.length,
+      };
+    });
 
-    for (const z of zv) z.memberCount = items.filter(it => it.zoneId === z.id).length;
     // 桌面高度 = 可见内容最低点 + 余量（收纳进文件夹的成员藏着，不该撑出死滚动区）
     const collapsedSet = new Set(zv.filter(z => z.collapsed).map(z => z.id));
     let bottom = zoneBottom;
@@ -758,71 +772,17 @@ export default function BoardCanvas({
     });
   }, [overlapFixes, scheduleSave]);
 
-  // ── 工作区堆叠（桌面化）：zones 永远按序纵向排布，宽度=桌面宽 ──
-  // 旧数据（无限画布时代的自由坐标 / 3 列平铺）在这里被一次性迁移；工作区内容
-  // 生长时，下方工作区自动让位（配合 left/top 过渡 = 平滑下移动画）。
-  useEffect(() => {
-    if (!layoutLoadedRef.current) return;
-    // 手动搬过的区（pinned）退出这条队列 —— 用户把它放哪儿就在哪儿。
-    // 不跳过的话下面这段会在同一帧把它推回列里，表现是"拖不动"。
-    const ordered = [...zoneView]
-      .filter(z => !zonesEffRef.current[z.id]?.pinned)
-      .sort((a, b) => a.y - b.y || a.x - b.x);
-    const targetW = DESKTOP_W - MARGIN_X * 2;
-    let cursor = ZONE.bandY;
-    const zonePatches = {};
-    const shifts = {};
-    for (const z of ordered) {
-      const dx = MARGIN_X - z.x;
-      const dy = cursor - z.y;
-      const stored = zonesEffRef.current[z.id];
-      if (Math.abs(dx) > 1 || Math.abs(dy) > 1 || Math.abs((stored?.w ?? 0) - targetW) > 1) {
-        zonePatches[z.id] = { x: MARGIN_X, y: cursor, w: targetW };
-        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) shifts[z.id] = { dx, dy };
-      }
-      cursor += (z.collapsed ? FOLDER_CARD_H : z.h) + ZONE_GAP_Y;
-    }
-    if (!Object.keys(zonePatches).length) return;
-    setZones(prev => {
-      const next = { ...prev };
-      for (const [zid, patch] of Object.entries(zonePatches)) {
-        if (!next[zid]) continue;
-        next[zid] = { ...next[zid], ...patch };
-        dirtyRef.current.zones.add(zid);
-      }
-      return next;
-    });
-    // 影子区也跟着归位：漏掉它的话它自己不动、成员却按 shift 挪走，
-    // 每次 zoneView 变化再挪一次 —— deck 会被推到工作区下面几百像素（实测 +504）
-    setGhostZones(prev => {
-      let touched = false;
-      const next = { ...prev };
-      for (const [zid, patch] of Object.entries(zonePatches)) {
-        if (!next[zid]) continue;
-        next[zid] = { ...next[zid], ...patch };
-        touched = true;
-      }
-      return touched ? next : prev;
-    });
-    // 成员跟着自己的工作区平移（只动 layout 里有记录的；自动入座的天然跟随）
-    if (Object.keys(shifts).length) {
-      setLayout(prev => {
-        const next = { ...prev };
-        for (const it of positionedRef.current) {
-          const sh = it.zoneId ? shifts[it.zoneId] : null;
-          if (!sh || !prev[it.id]) continue;
-          next[it.id] = {
-            ...next[it.id],
-            x: Math.max(0, Math.min(DESKTOP_W - 40, (next[it.id].x ?? it.pos.x) + sh.dx)),
-            y: Math.max(0, (next[it.id].y ?? it.pos.y) + sh.dy),
-          };
-          dirtyRef.current.objects.add(it.id);
-        }
-        return next;
-      });
-    }
-    scheduleSave();
-  }, [zoneView, scheduleSave]);
+  // ⚠️ 这里曾经有「工作区堆叠」：一条 effect 每帧把所有 zone 按序纵向排成一列、
+  // 宽度拉成整个桌面宽，被手动搬过的靠 `pinned` 标记退出队列。
+  //
+  // 那是「严格分区」时代的几何 —— 分区是版面上的一条带，不是桌面上的一个东西。
+  // 方向变了：文件夹是**能自由摆在任意位置的卡**，那就不该有一支队伍每帧把它
+  // 推回去。连带没有意义的还有 `pinned`（不再有"队列"可退出）和成员跟随平移
+  // （区不再被系统挪动，成员自然不用跟着补偿）。
+  //
+  // 新建文件夹的落点：右键处（openContextMenu 里现算），或者 newStackedZoneRect
+  // 给的栈底空位（agent 建的那种，用户不在场时总得有个不重叠的地方）。
+
 
   // 可见性：工作模式只看聚焦工作区（区内成员 + 该 deck 本体）；整理模式下
   // 收纳成文件夹的工作区内容不铺开（这就是"收纳"）。拖拽中的物件永不隐藏。
@@ -1397,28 +1357,57 @@ export default function BoardCanvas({
    *   流进网格等于毁了内容。
    * - 收起的文件夹：里面的东西没在渲染，排了也看不见，等展开时自然入座。
    *
-   * 工作区那边顺手清掉 `pinned`：你说了要整理，那就连搬过的区一起排回队列。
+   * **文件夹也一起排**（2026-08-08）：从左到右铺、排满换行，跟桌面上的图标一样。
+   * 平时不动它们（你摆哪儿就是哪儿），但这是个显式动作 —— 你点了"整理"，
+   * 意思就是"把这一桌收拾干净"。存量数据尤其需要：它们的坐标是旧的纵向堆叠
+   * 写下来的，全挤在左边一列。
    */
   const tidyBoard = useCallback(() => {
     const targets = positionedRef.current.filter(o => isFileBacked(o));
-    if (!targets.length && !Object.values(zonesRef.current).some(z => z.pinned)) return;
+    const zv = zoneViewRef.current;
+    if (!targets.length && !zv.length) return;
+
     setLayout(prev => {
       const next = { ...prev };
       for (const o of targets) { delete next[o.id]; dirtyRef.current.objects.add(o.id); }
       return next;
     });
-    setZones(prev => {
-      let touched = false;
-      const next = { ...prev };
-      for (const [zid, z] of Object.entries(prev)) {
-        if (!z.pinned) continue;
-        const { pinned, ...rest } = z;
-        next[zid] = rest; dirtyRef.current.zones.add(zid); touched = true;
+
+    if (zv.length) {
+      // 顶层文件夹进网格；嵌套的（`a/b`）不单独排 —— 它画在父文件夹里面，
+      // 位置由父的排布决定，单独摆会跑到外面去
+      const tops = zv.filter(z => !z.id.includes('/'))
+        .sort((a, b) => a.y - b.y || a.x - b.x);
+      const GAP_X = 24; const GAP_Y = 24;
+      const maxW = DESKTOP_W - MARGIN_X * 2;
+      // **宽度在这一趟定死并写进去**。不定的话会自相矛盾：排布用的是排之前的
+      // 宽度，而排完之后宽度跟着内容重算（贴内容），算好的格子对不上真实占地，
+      // 相邻两个文件夹就压在一起（实测 760 宽那个被下一个从 706 处压上）。
+      // 空的给最小身位，有东西的给三列内容的宽 —— 跟桌面上一格一格的图标同理。
+      const slotW = (z) => (z.memberCount ? Math.min(maxW, COL_W * 3 + COL_GAP * 2 + ZONE.pad * 2) : ZONE_MIN_W);
+      let cx = MARGIN_X; let cy = ZONE.bandY; let rowH = 0;
+      const patches = {};
+      for (const z of tops) {
+        const w = slotW(z);
+        const h = z.collapsed ? FOLDER_CARD_H : z.h;
+        if (cx > MARGIN_X && cx + w > MARGIN_X + maxW) { cx = MARGIN_X; cy += rowH + GAP_Y; rowH = 0; }
+        patches[z.id] = { x: cx, y: cy, w };
+        cx += w + GAP_X; rowH = Math.max(rowH, h);
       }
-      return touched ? next : prev;
-    });
+      setZones(prev => {
+        const next = { ...prev };
+        for (const [zid, patch] of Object.entries(patches)) {
+          if (!next[zid]) continue;
+          next[zid] = { ...next[zid], ...patch };
+          dirtyRef.current.zones.add(zid);
+        }
+        return next;
+      });
+    }
     scheduleSave();
-    useGlobalStore.getState().showToast(`已整理 ${targets.length} 件产物`, 'success');
+    useGlobalStore.getState().showToast(
+      `已整理 ${targets.length} 件产物` + (zv.length ? ` · ${zv.filter(z => !z.id.includes('/')).length} 个文件夹` : ''),
+      'success');
   }, [scheduleSave]);
 
   const enterZoneRef = useRef(null);
@@ -1483,10 +1472,7 @@ export default function BoardCanvas({
           if (!zoneDragRef.current) return;
           zoneDragRef.current.armed = true;
           setDraggingZone(z.id);
-          // 抓起来的**那一刻**就钉住，不能等松手：自动堆叠 effect 每帧都会把
-          // 未钉住的区推回队列里，等松手才钉等于整个拖拽过程都在跟它拔河
-          // （表现就是"按下去了、光标也变了、但它一动不动"）。
-          setZones(prev => (prev[z.id] ? { ...prev, [z.id]: { ...prev[z.id], pinned: true } } : prev));
+          // （堆叠 effect 退役之后这里不用再"抢先钉住"了 —— 没有队伍会来抢）
         }, ZONE_LONG_PRESS_MS),
       };
     },
