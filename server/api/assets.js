@@ -19,9 +19,9 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace,
 } from '../projects/workspace.js';
 import { setActiveSession } from '../projects/store.js';
-import { patchBoard, readBoard } from '../projects/board-store.js';
+import { patchBoard, readBoard, reconcileBoardRenames } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
-import { RESERVED_DIRS } from '../lib/task-scan.js';
+import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
 import {
   sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
@@ -196,6 +196,16 @@ const ARTIFACT_MIME = {
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
 
 /**
+ * 文件夹递归深度上限。
+ *
+ * 3 层是给用户的（prelude 里也是这么跟 agent 说的："层级别超过两三层"）——
+ * 再深就得点进去好几下才看得见东西，桌面这个隐喻本身就失效了。这不是防御性
+ * 的深度限制，构建目录 / node_modules 那类由 RESERVED_DIRS + HARD_IGNORE_DIRS
+ * 挡在外面，跟深度无关。
+ */
+const FOLDER_MAX_DEPTH = 3;
+
+/**
  * GET /:pid/artifacts — 产物清单（project 级，跨 session）。
  * 返回 { artifacts: [{ kind, name, path, size, mtime, ext, hasThumb }] }
  *   kind: 'generated'（agent 生成图，assets/generated/）| 'upload'（用户上传，assets/ 顶层）
@@ -205,6 +215,15 @@ router.get('/:pid/artifacts', async (req, res, next) => {
   try {
     const project = guardProject(req, res);
     if (!project) return;
+
+    // 结构迁移挂在这里而不是只挂在「发消息 / 上传」上：这是**打开项目必调**的
+    // 那个接口，而迁移一旦晚于第一次渲染，用户会先看到一个叫 `tasks` 的文件夹
+    // 套着他的文件夹。跑过之后是三次 stat 的事（幂等早退），不值得省。
+    await ensureProjectWorkspace(req.params.pid);
+    // 跟上 agent 在画布背后做的改名（`mv` 之后卡片 id 就变了）。同上：挂在这里
+    // 是为了让用户看到的第一帧就是对齐过的。没有新 commit 时是一次 rev-parse。
+    await reconcileBoardRenames(req.params.pid).catch(
+      (err) => console.warn('[board] 改名对账失败:', err.message));
 
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
     const artifacts = [];
@@ -256,6 +275,8 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         }
         if (!e.isFile()) continue;
         if (e.name.startsWith('.')) continue;
+        // 基础设施不上墙（board.json 是画布自己的布局档、*.template.* 是起手模板）
+        if (isReservedFile(e.name)) continue;
         const ext = path.extname(e.name).toLowerCase();
         // agent 正在写的时候文件可能在 readdir 和 stat 之间消失（重写 / 改名）。
         // 原来这里 stat 抛出会一路冒到路由 → 500 → 前端把画布清空。
@@ -313,37 +334,58 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     // 无根站时带 index.html 的子目录各是一个站、_drafts/*.html 各是一个单页。
     // 没有主 / 试作等级。
     //
-    // 返回的字段名仍叫 `tasks`，但它现在是**一个长度恒为 0 或 1 的数组** ——
-    // 前端要的其实一直是 `tasks[0].artifacts`。留着这层壳是为了让这次改动不
-    // 波及前端的取数路径，画布那边拆分区时一并收掉。
+    // ── 文件夹枚举（2026-08-08）──────────────────────────────────────────
+    //
+    // 工作区就是一张桌面：产物可以摊在根上，也可以收进文件夹，文件夹还能套
+    // 文件夹。所以解析器要**按文件夹跑**，一个文件夹一份 manifest。
+    //
+    // 字段名仍叫 `tasks`（前端的取数路径不用动），但语义已经是「文件夹」：
+    // `id` 是**工作区相对路径**，根用 `''`。所有 id 都是路径，画布上的身份和
+    // 磁盘上的位置是同一个字符串 —— 这样 agent `mv` 一个文件之后，git 的改名
+    // 检测能直接翻译成画布 id 的改名（见 board-store 的 reconcileBoardRenames）。
     const workspaceRoot = getSharedDir(req.params.pid);
     const tasks = [];
     let hasRootSite = false;
-    try {
-      const wStat = await fs.stat(workspaceRoot);
-      const manifest = await taskManifest(workspaceRoot);
+
+    /** manifest 里的路径是相对**它那个目录**的，挂到工作区坐标系上要加前缀 */
+    const under = (base, p) => (!p ? p : (base ? `${base}/${p}` : p));
+    // 文件夹清单跟产物清单分开：**空文件夹也要出现在桌面上**（你刚建的那个
+    // 还没往里放东西的文件夹，不该等有了产物才显形）
+    const folders = [];
+
+    const collect = async (dir, rel, depth) => {
+      let stat;
+      try { stat = await fs.stat(dir); } catch { return; }
+
+      const manifest = await taskManifest(dir);
       const list = manifest?.artifacts || [];
-      hasRootSite = list.some(a => a.kind === KIND_SITE && !a.single && !a.srcRoot);
+      if (!rel) hasRootSite = list.some(a => a.kind === KIND_SITE && !a.single && !a.srcRoot);
 
       if (list.length) {
         tasks.push({
-          id: '.',
-          title: project.name || '产物',
+          id: rel,
+          title: rel ? rel.split('/').pop() : (project.name || '产物'),
           kind: manifest.kind,
           sessionId: null,          // 产物与会话脱钩（2026-08-07）
-          mtime: wStat.mtime.toISOString(),
+          mtime: stat.mtime.toISOString(),
           exports: manifest.exportFormats || [],
           artifacts: list.map((a) => ({
             kind: a.kind,
             view: a.view,
             single: !!a.single,
-            file: a.file,                // deck / 单页：html 文件（相对工作区根）
-            root: a.root || '',
-            srcRoot: a.srcRoot || '',    // 站点源目录；root≠srcRoot = 构建型（编辑要同步回源）
-            entry: a.kind === 'site' && !a.single ? a.entry : a.entryRel,
-            entryRel: a.entryRel,
-            base: a.kind === 'site' && !a.single && a.root ? a.root : '',
-            pages: a.pages,
+            file: under(rel, a.file),        // deck / 单页：html 文件（相对工作区根）
+            root: under(rel, a.root) || rel,
+            srcRoot: under(rel, a.srcRoot),  // 站点源目录；root≠srcRoot = 构建型
+            // entry 是**相对 base 的**，base + '/' + entry 必须永远拼得出真实路径。
+            // 单页站点以前 base 给空、entry 给全路径，前端拿不到 base 就回退成
+            // 文件夹名，拼出 `rin/rin/_drafts/…` 这种双前缀（实测 404）。
+            // 现在单页也给 base（= 入口文件所在目录），两种站点一个拼法。
+            entry: a.single ? path.basename(a.entryRel || '') : a.entry,
+            entryRel: under(rel, a.entryRel),
+            base: a.single
+              ? under(rel, path.dirname(a.entryRel || '.')).replace(/^\.$/, rel)
+              : (under(rel, a.root) || rel),
+            pages: a.pages,                  // 站点内部路径，相对站根，不加前缀
             title: a.title,
             exports: a.exportFormats,
             // world 的地图（`世界/` 递归扫出的嵌套节点平列表，带 parent）。
@@ -354,9 +396,45 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         });
       }
 
-      // 散文件（agent 写的 .md、数据文件、脚本…）。工作区根平铺一层 + notes/。
+      if (depth >= FOLDER_MAX_DEPTH) return;
+
+      // 这个目录里，哪些子目录**已经被上面那份 manifest 认领**了。
+      //
+      // 一个站点目录既能被父目录扫成一件产物（`site:伊蕾娜手账研究站`），又能被
+      // 当成一个文件夹递归进去 —— 不去重的话它在桌面上出现两次：一张站点卡 +
+      // 一张同名文件夹卡，点哪个都对一半。认领了就跳过：**它是产物，不是容器**，
+      // 里面的 `assets/` `pages/` 是这个站的内部结构，不是并列的文件夹。
+      const claimed = new Set();
+      for (const a of list) {
+        for (const p of [a.root, a.srcRoot, a.file, a.entryRel]) {
+          const seg = String(p || '').split('/')[0];
+          if (seg && seg !== p) claimed.add(seg);       // 只有带下级路径的才算认领
+          else if (seg && a.kind !== 'deck') claimed.add(seg);
+        }
+      }
+
+      let entries = [];
+      try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (!e.isDirectory() || e.name.startsWith('.')) continue;
+        if (RESERVED_DIRS.has(e.name) || HARD_IGNORE_DIRS.has(e.name)) continue;
+        if (e.name === DRAFTS_DIR) continue;      // 站点试作，由 site 解析器管
+        if (claimed.has(e.name)) continue;        // 已经是一件产物了
+        folders.push(under(rel, e.name));
+        await collect(path.join(dir, e.name), under(rel, e.name), depth + 1);
+      }
+    };
+
+    try {
+      await collect(workspaceRoot, '', 0);
+      // 散文件（agent 写的 .md、数据文件、脚本…）。工作区根 + 每个文件夹各平铺
+      // 一层，这样收进文件夹的 .md 也上墙 —— 它的 id 天然带着文件夹前缀，
+      // 前端据此把它归到那个文件夹里。
       await scanDir(workspaceRoot, 'task-file', '', 1);
       await scanDir(path.join(workspaceRoot, 'notes'), 'note', 'notes');
+      for (const rel of folders) {
+        await scanDir(path.join(workspaceRoot, rel), 'task-file', rel, 1);
+      }
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
     }
@@ -369,8 +447,27 @@ router.get('/:pid/artifacts', async (req, res, next) => {
       return !a.name.toLowerCase().endsWith('.html');
     });
 
+    // 剪掉画布上没有对应目录的文件夹。
+    //
+    // 跟物件不一样，文件夹**有权威清单**：`folders` 就是刚扫出来的磁盘真相。
+    // 物件那边不能这么干（board.objects 是稀疏的，"不在 board 里"是常态，
+    // "在 board 里但磁盘上没有"跟 agent 正在写时的一瞬读不到没法区分），
+    // 文件夹这边可以 —— 渲染用的和判断用的是同一份清单。
+    //
+    // 存量垃圾有两类：任务模型之前的「会话分区」（id 是 sessionId），以及
+    // 中途某个版本写下的 `task/.`。它们在画布上是永远删不掉的空框。
+    const live = new Set(folders);
+    const board = await readBoard(req.params.pid);
+    const deadZones = Object.keys(board.zones || {}).filter(z => !live.has(z));
+    if (deadZones.length) {
+      await patchBoard(req.params.pid, {
+        zones: Object.fromEntries(deadZones.map(z => [z, null])),
+      });
+      console.log(`[board] ${req.params.pid} 清掉 ${deadZones.length} 个没有目录撑着的文件夹: ${deadZones.slice(0, 3).join(', ')}`);
+    }
+
     filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
-    res.json({ artifacts: filtered, tasks });
+    res.json({ artifacts: filtered, tasks, folders });
   } catch (err) { next(err); }
 });
 
@@ -614,8 +711,14 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     if (absPath !== sharedRoot && !absPath.startsWith(sharedRoot + path.sep)) {
       return res.status(403).json({ error: 'path escapes workspace' });
     }
+    // 点开头的一律拒**是错的**：缩略图就住在 `assets/generated/.thumbnails/`，
+    // 一刀切下去产物墙上所有生成图的缩略图全 403（实测一个项目 110 条报错，
+    // 图能显示只是因为兜底会回原图现编一张，代价是每次都重编）。
+    // 所以按名字判：这几个是**已知安全**的内部目录，其余点开头的照拒
+    // （白名单而不是黑名单 —— 将来冒出个 `.env` 不该因为没人想到就漏出去）。
+    const DOT_OK = new Set(['.thumbnails', '.meta']);
     const rel = path.relative(sharedRoot, absPath).split(path.sep);
-    if (rel.some(seg => seg.startsWith('.'))) {
+    if (rel.some(seg => seg.startsWith('.') && !DOT_OK.has(seg))) {
       return res.status(403).json({ error: 'not a servable path' });
     }
 

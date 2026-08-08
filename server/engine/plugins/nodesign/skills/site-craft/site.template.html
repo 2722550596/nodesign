@@ -11,7 +11,7 @@
        预览走的是 /api/projects/<id>/artifact-file/tasks/<任务>/… 这个前缀，
        根路径会跳出前缀直接 404
 
-  图片引用项目素材写 ../../assets/generated/x.png（相对本文件的位置）。
+  图片引用项目素材写 ../assets/generated/x.png（相对本文件的位置；站点住在工作区的一个文件夹里，所以只爬一层）。
   导出时系统会把它归一成包内的 assets/，不用你操心。
 -->
 <!DOCTYPE html>

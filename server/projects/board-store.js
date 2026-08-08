@@ -19,7 +19,7 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { getSharedDir, ensureProjectWorkspace } from './workspace.js';
+import { getSharedDir, ensureProjectWorkspace, gitRenamesSince } from './workspace.js';
 import { isBindingType } from '../lib/binding-types.js';
 
 export const DEFAULT_BOARD_SIZE = { w: 4000, h: 2600 };
@@ -226,17 +226,23 @@ export function patchBoard(pid, patch) {
     // 它是稀疏的（只存被拖过 / pin 过的物件，没动过的产物压根没有条目），
     // 那样会把连向"还没被摆过的产物"的线全误删。只清确实删了的。
     const removed = new Set();
+    // 拿着旧 id 迟到的写入要落到新名字上（前端 800ms 防抖 / agent 本轮的旧路径）。
+    // 不转发的话它会把刚改完名的旧条目**重新插回来**，画布上多出一张回到默认
+    // 位置的重影，而且不报错。见 renameBoardPaths 上面那段。
+    const fwd = (id) => forwardId(pid, id);
     if (patch?.zones && typeof patch.zones === 'object') {
-      for (const [id, z] of Object.entries(patch.zones)) {
-        if (typeof id !== 'string' || id.length > 300) continue;
+      for (const [rawId, z] of Object.entries(patch.zones)) {
+        if (typeof rawId !== 'string' || rawId.length > 300) continue;
+        const id = fwd(rawId);
         if (z === null) { delete board.zones[id]; removed.add(id); continue; }
         const s = sanitizeZone(z, board.size);
         if (s && (board.zones[id] || Object.keys(board.zones).length < MAX_ZONES)) board.zones[id] = s;
       }
     }
     if (patch?.objects && typeof patch.objects === 'object') {
-      for (const [id, o] of Object.entries(patch.objects)) {
-        if (typeof id !== 'string' || id.length > 300) continue;
+      for (const [rawId, o] of Object.entries(patch.objects)) {
+        if (typeof rawId !== 'string' || rawId.length > 300) continue;
+        const id = fwd(rawId);
         if (o === null) { delete board.objects[id]; removed.add(id); continue; }
         const s = sanitizeObject(o, board.size);
         if (s && (board.objects[id] || Object.keys(board.objects).length < MAX_OBJECTS)) board.objects[id] = s;
@@ -247,7 +253,10 @@ export function patchBoard(pid, patch) {
         if (typeof id !== 'string' || id.length > 300) continue;
         if (b === null) { delete board.bindings[id]; continue; }
         const s = sanitizeBinding(b);
-        if (s && (board.bindings[id] || Object.keys(board.bindings).length < MAX_BINDINGS)) board.bindings[id] = s;
+        if (!s) continue;
+        // 端点也要转发：agent 本轮拿旧路径连的线，落下来必须连到新名字上
+        const fixed = { ...s, from: fwd(s.from), to: fwd(s.to) };
+        if (board.bindings[id] || Object.keys(board.bindings).length < MAX_BINDINGS) board.bindings[id] = fixed;
       }
     }
     // 端点被删掉的线一起清掉，否则画布上留一条连向虚空的线。放在最后：
@@ -260,6 +269,176 @@ export function patchBoard(pid, patch) {
     await writeBoard(pid, board);
     return board;
   });
+}
+
+// ── 改名（2026-08-08）────────────────────────────────────────────────────
+//
+// id 是**工作区相对路径**，所以文件一动，画布上的身份就跟着变。移动从罕见事件
+// 变成日常动作（拖进文件夹 = 真 mv）之后，这件事必须有一等公民的地位。
+//
+// ## 为什么不能用 patchBoard 删旧插新
+//
+// patchBoard 末尾那段"端点被删的线一起清掉"会把指向旧 id 的 `annotates` 线
+// 一并删掉 —— 也就是**每拖一次卡，挂在它上面的评论就没了**。删除和改名是
+// 两件事：删除意味着"这东西不在了，连着它的线也没意义了"，改名意味着
+// "还是它，换了个名字"。用同一个动词表达，必然丢掉后者的语义。
+
+/**
+ * 改名的转发表：**旧 id → 新 id**，带 TTL。
+ *
+ * 改名不是一次写入，是三个并发写方都得学会的一件事：
+ *   ① 服务端（这里）——立刻知道
+ *   ② 前端画布 —— scheduleSave 是 800ms 防抖，从 layoutRef 按**旧 id** 组 patch，
+ *      改完名之后那一发迟到的 flush 会把 objects[旧id] 重新插回来
+ *   ③ agent —— 这一轮的上下文里还是旧路径，会继续往旧 id 上 pin、上批注
+ *
+ * 不转发的话，表现是"拖进文件夹时灵时不灵"（迟到的写入把旧条目复活，画布上
+ * 就多出一张回到默认位置的重影）。这类症状最难查，因为它**不报错**。
+ *
+ * 内存表 + TTL 够用：它只需要盖住"改完名之后还有人拿着旧 id"那个窗口。
+ * 进程重启、以及 agent 在画布背后自己 mv 的情况，由 git 改名对账兜底
+ * （见 workspace.js 的 reconcileBoardRenames）。
+ */
+const RENAME_TTL_MS = 5 * 60 * 1000;
+/** @type {Map<string, Map<string, { to: string, at: number }>>} pid → (旧 id → 新 id) */
+const renameJournal = new Map();
+
+function journalOf(pid) {
+  let m = renameJournal.get(pid);
+  if (!m) { m = new Map(); renameJournal.set(pid, m); }
+  return m;
+}
+
+function noteRenames(pid, pairs, now) {
+  const j = journalOf(pid);
+  for (const [from, to] of pairs) j.set(from, { to, at: now });
+  for (const [k, v] of j) if (now - v.at > RENAME_TTL_MS) j.delete(k);
+}
+
+/**
+ * 把一个可能过期的 id 换成它现在的名字。
+ * 顺着链走（`a→b` 之后又 `b→c`，拿着 a 的迟到写入要落到 c 上）。
+ */
+export function forwardId(pid, id, now = Date.now()) {
+  const j = renameJournal.get(pid);
+  if (!j || typeof id !== 'string') return id;
+  let cur = id;
+  for (let hop = 0; hop < 8; hop++) {
+    const e = j.get(cur);
+    if (!e || now - e.at > RENAME_TTL_MS) return cur;
+    cur = e.to;
+  }
+  return cur;
+}
+
+/** 只在测试里用：清掉转发表，免得用例之间串味 */
+export function _resetRenameJournal() { renameJournal.clear(); }
+
+/**
+ * 一次 id 改名：物件、文件夹、以及所有关系线端点一起改。
+ *
+ * 文件夹改名是**前缀改名** —— `稿件` → `定稿` 要连带它下面的一切：
+ * 子文件夹 `稿件/初稿`、物件 `deck:稿件/主稿.html`、裸路径 `稿件/说明.md`。
+ * 而且同一个目录**同时**可能是文件夹（zones['稿件']）和产物（objects['site:稿件']），
+ * 两个命名空间都得一致地改 —— 今天 rewriteBoardIds 的 mapEnd 就在这个形状上
+ * 栽过一次（文件夹端点掉进物件那条分支，被原样放行成了断头线）。
+ *
+ * @param {string} pid
+ * @param {Array<[string, string]>} pairs  [旧路径, 新路径]，**路径不带 kind 前缀**
+ * @returns {Promise<{ board: object, renamed: number }>}
+ */
+export function renameBoardPaths(pid, pairs) {
+  const clean = (pairs || [])
+    .map(([a, b]) => [String(a || '').replace(/\/+$/, ''), String(b || '').replace(/\/+$/, '')])
+    .filter(([a, b]) => a && b && a !== b);
+  if (!clean.length) return Promise.resolve({ board: null, renamed: 0 });
+
+  return withBoardLock(pid, async () => {
+    const board = await readBoard(pid);
+    const now = Date.now();
+    const applied = [];
+
+    /** 一个 id（可能带 `deck:` 之类前缀）在这批改名下的新名字；没动就返回原值 */
+    const mapId = (id) => {
+      if (typeof id !== 'string' || !id) return id;
+      const c = id.indexOf(':');
+      // kind 前缀只认字母（`deck:` `site:` `world:`）—— 路径里的冒号不算前缀
+      const prefix = c > 0 && /^[a-z]+$/.test(id.slice(0, c)) ? id.slice(0, c + 1) : '';
+      const p = id.slice(prefix.length);
+      for (const [from, to] of clean) {
+        if (p === from) return prefix + to;
+        if (p.startsWith(from + '/')) return prefix + to + p.slice(from.length);
+      }
+      return id;
+    };
+
+    const remap = (bag) => {
+      const next = {};
+      for (const [id, v] of Object.entries(bag || {})) {
+        const n = mapId(id);
+        if (n !== id) applied.push([id, n]);
+        // 撞名时**新来的让路**：目标位置已经有条目说明那边是活的
+        if (!next[n]) next[n] = v;
+      }
+      return next;
+    };
+
+    board.objects = remap(board.objects);
+    board.zones = remap(board.zones);
+    for (const b of Object.values(board.bindings || {})) {
+      b.from = mapId(b.from);
+      b.to = mapId(b.to);
+    }
+
+    if (applied.length) {
+      noteRenames(pid, applied, now);
+      await writeBoard(pid, board);
+    }
+    return { board, renamed: applied.length };
+  });
+}
+
+/**
+ * 对账：把 agent 在画布背后做的改名，补写进 board.json。
+ *
+ * 转发表（上面那个）盖的是"刚改完名、还有人拿着旧 id"的那几分钟窗口，活在内存里。
+ * 这一条盖的是另一半：**画布根本没参与的移动** —— agent 一句 `mv`、一次
+ * 重构目录，进程重启，都在它的覆盖范围里。
+ *
+ * 跑在扫产物清单的路上（打开项目必调），所以用户看到的第一帧就是对齐过的。
+ * 没有新 commit 时是一次 rev-parse 的事。
+ *
+ * 同步位点存在 `.nd/board-sync.json`：`.nd/` 是 gitignore 的，这个位点记的是
+ * "我的画布追到哪了"，属于本地状态，不该进项目历史被别的会话读到。
+ */
+const SYNC_FILE = 'board-sync.json';
+
+function syncPath(pid) {
+  return path.join(getSharedDir(pid), '.nd', SYNC_FILE);
+}
+
+export async function reconcileBoardRenames(pid) {
+  let seen = null;
+  try { seen = JSON.parse(await fs.readFile(syncPath(pid), 'utf8'))?.commit || null; } catch { /* 首次 */ }
+
+  const { head, renames } = await gitRenamesSince(pid, seen);
+  if (!head) return { renamed: 0 };
+
+  let renamed = 0;
+  if (renames.length) {
+    ({ renamed } = await renameBoardPaths(pid, renames));
+    if (renamed) console.log(`[board] ${pid} 跟上 ${renames.length} 个改名，改了 ${renamed} 条画布条目`);
+  }
+  // 位点无条件推进（哪怕这次没有改名）——否则每次都要重算同一段 diff。
+  // 首次跑时 seen 是 null，gitRenamesSince 直接返回空，等于"从现在开始跟"，
+  // 不去回放整段历史：历史里的改名早就体现在当前 board.json 里了。
+  if (seen !== head) {
+    try {
+      await fs.mkdir(path.dirname(syncPath(pid)), { recursive: true });
+      await fs.writeFile(syncPath(pid), JSON.stringify({ commit: head }), 'utf8');
+    } catch { /* 写不了位点：下次重算，不影响正确性 */ }
+  }
+  return { renamed };
 }
 
 function nextZoneRect(board) {

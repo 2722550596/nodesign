@@ -430,6 +430,7 @@ export async function flattenWorkspace(projectId) {
         if (await pathExists(dest)) await mergeDir(src, dest, log);
         else await fs.rename(src, dest);
         await retireTaskMarker(dest, log);
+        await fixEscapingRelativePaths(dest, log);
         renames.set(`tasks/${name}/`, `${name}/`);
         renames.set(`task/${name}`, name);
       }
@@ -530,6 +531,47 @@ async function retireTaskMarker(dir, log) {
     log.push(`${path.basename(dir)}/.nd-task.json → .nd-project.json（留下 ${Object.keys(keep).join('+')}，去掉会话归属）`);
   }
   await fs.rm(old, { force: true });
+}
+
+/**
+ * 文件夹上移一层之后，修 HTML/CSS 里**爬出文件夹**的相对路径。
+ *
+ * 这是这次迁移唯一会**静默损坏内容**的地方，实测抓到的：
+ *   `tasks/Space-Colony/_drafts/proto.html` 里写着 `../../../assets/generated/x.webp`
+ *   —— 老位置深三层，爬三下正好到 `shared/assets/`。上移之后只剩两层，
+ *   同样爬三下就爬到工作区外面，图全部 404，而页面照常渲染，没有任何报错。
+ *
+ * 判据是「这条引用有没有爬出它自己那个文件夹」：
+ *   文件在文件夹内的深度 d（`<T>/f.html` → 0，`<T>/_drafts/f.html` → 1）
+ *   引用的 `../` 个数 k
+ *   k > d  = 爬出去了 → 少爬一层（文件夹整体上移了一层，外面的东西近了一层）
+ *   k ≤ d  = 还在文件夹里面 → 一个字节都不动（文件和目标一起搬的，相对关系没变）
+ */
+async function fixEscapingRelativePaths(dir, log, depth = 0) {
+  let entries = [];
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return 0; }
+  let fixed = 0;
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+      fixed += await fixEscapingRelativePaths(p, log, depth + 1);
+      continue;
+    }
+    if (!/\.(html?|css|js)$/i.test(e.name)) continue;
+    let src;
+    try { src = await fs.readFile(p, 'utf8'); } catch { continue; }
+    // 只认跟在引号 / url( / 空白后面的那种，避免动到正文里偶然出现的 "../"
+    const next = src.replace(/(["'(\s=])((?:\.\.\/)+)/g, (m, lead, dots) => {
+      const k = dots.length / 3;
+      if (k <= depth) return m;                       // 没爬出这个文件夹
+      return lead + '../'.repeat(k - 1);
+    });
+    if (next === src) continue;
+    try { await fs.writeFile(p, next, 'utf8'); fixed += 1; } catch { /* 只读文件，跳过 */ }
+  }
+  if (fixed && depth === 0) log.push(`${path.basename(dir)}/ 里 ${fixed} 个文件的相对路径少爬了一层`);
+  return fixed;
 }
 
 async function sameFile(a, b) {
@@ -819,6 +861,57 @@ export async function commitWorkspace(projectId, sessionId, message, { author = 
     ]);
     const { stdout: hash } = await runGit(sessionRoot, ['rev-parse', 'HEAD'], { capture: true });
     return hash.trim();
+  });
+}
+
+/**
+ * 从某个 commit 到 HEAD 之间，git 认出来的**改名**。
+ *
+ * 画布物件的 id 就是工作区相对路径，所以 agent 在画布背后 `mv` 一个文件，
+ * 画布上那张卡的身份就断了：坐标丢、关系线指向虚空、挂在它上面的批注成孤儿。
+ * 而且**清理不掉** —— board.objects 是故意稀疏的（没被摆过的产物压根没有条目），
+ * 所以"在 board 里但磁盘上没有"跟"agent 正在写、这一瞬读不到"没法区分，
+ * 死 id 只能一直攒着。
+ *
+ * 靠 git 来认这件事，是因为它已经是这个工作区的历史，而且**自带内容相似度
+ * 匹配** —— 一个文件被 mv 的同时改了几行，`-M` 照样认得出来，这是任何
+ * 自建的路径比对做不到的。前提是每轮 turn 之后真的落了 commit
+ * （2026-08-08 之前只有"用户直接编辑 HTML"那一条路会提交）。
+ *
+ * @returns {Promise<{ head: string|null, renames: Array<[string,string]> }>}
+ */
+export async function gitRenamesSince(projectId, fromCommit) {
+  const root = getWorkspaceRoot(projectId);
+  if (!(await fileExists(path.join(root, '.git')))) return { head: null, renames: [] };
+  return mutex(`git:${root}`, async () => {
+    let head = null;
+    try {
+      const { stdout } = await runGit(root, ['rev-parse', 'HEAD'], { capture: true });
+      head = stdout.trim();
+    } catch { return { head: null, renames: [] }; }
+    if (!head || !fromCommit || fromCommit === head) return { head, renames: [] };
+
+    let out = '';
+    try {
+      // -M50% 比默认宽松些：改名的同时顺手改几行内容是常态（重命名一份 deck
+      // 往往连标题一起改）。太严的话这类改名认不出来，退化成"删一个加一个"。
+      const r = await runGit(root, [
+        'diff', '--name-status', '--find-renames=50%', '-z', fromCommit, head,
+      ], { capture: true });
+      out = r.stdout;
+    } catch { return { head, renames: [] }; }
+
+    // -z 的格式：状态 \0 旧路径 \0 新路径 \0（改名/复制是三段，其余两段）。
+    // 用 -z 而不是换行分隔，是因为产物名里有中文和空格，默认输出会加引号转义。
+    const parts = out.split('\0');
+    const renames = [];
+    for (let i = 0; i < parts.length; i++) {
+      const st = parts[i];
+      if (!st) continue;
+      if (st[0] === 'R') { renames.push([parts[i + 1], parts[i + 2]]); i += 2; }
+      else i += 1;                       // 其余状态只跟一个路径
+    }
+    return { head, renames: renames.filter(([a, b]) => a && b) };
   });
 }
 

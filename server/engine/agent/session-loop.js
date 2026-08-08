@@ -68,7 +68,7 @@ import {
   detectArtifact,
 } from './agent-shared.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
-import { commitTaskWorkspace } from '../../projects/workspace.js';
+import { commitTaskWorkspace, commitWorkspace } from '../../projects/workspace.js';
 import { taskManifest } from '../../lib/artifact-target.js';
 
 /**
@@ -840,6 +840,20 @@ export async function runSession({
         (err) => console.warn('[world/git] commit failed:', err.message),
       );
     }
+
+    // 工作区一轮一条 commit（2026-08-08）。
+    //
+    // 在这之前**只有"用户在画布上直接编辑 HTML"那一条路会提交**（canvas.js 的
+    // PUT），agent 写文件、mv 文件一次 commit 都不产生 —— 项目仓里基本只有一条
+    // init。现在它承担一件具体的活：画布物件的 id 就是工作区相对路径，agent
+    // 背着画布 `mv` 一个文件，那张卡的坐标 / 关系线 / 批注全断，而且因为
+    // board.objects 是稀疏的，断掉的条目**清都清不掉**。git 的改名检测是唯一
+    // 不用引入第二个真相源就能认出"这是同一个东西换了位置"的办法
+    // （见 board-store.js 的 reconcileBoardRenames），而它需要有 commit 可比。
+    //
+    // 失败只 warn：一个 commit 落不下不该让已经跑完的 turn 变成失败。
+    commitWorkspace(projectId, sessionId, `turn ${status}: ${new Date().toISOString()}`, { author: 'agent' })
+      .catch((err) => console.warn('[git] turn commit failed:', err.message));
 
     activeTurnRunId = null;
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置

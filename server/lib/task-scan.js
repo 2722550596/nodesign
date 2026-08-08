@@ -30,12 +30,27 @@ import fs from 'node:fs/promises';
  *
  * 点开头的（.claude / .nd / .git）扫描器本来就跳，不用列。
  */
-export const RESERVED_DIRS = new Set(['assets', 'exports', 'notes', 'node_modules']);
+// `agent-memory` 是老符号链接时代的残骸目录名（正规位置是 .claude/agent-memory/），
+// 留在这里是为了它万一还在也不会作为一张文件夹卡出现在桌面上。
+export const RESERVED_DIRS = new Set(['assets', 'exports', 'notes', 'node_modules', 'agent-memory']);
 
 /** 不当产物看的文件：起手模板（写出来是给 agent 改的，不是成品） */
 export function isReservedFile(name) {
-  return /\.template\.(html?|css)$/i.test(name);
+  return /\.template\.(html?|css)$/i.test(name) || RESERVED_FILES.has(name);
 }
+
+/**
+ * 基础设施文件：住在工作区里，但**不是用户的东西**，不该在桌面上出现。
+ *
+ * 2026-08-08 加。在这之前只挡起手模板，于是 `board.json`（画布自己的布局档）
+ * 会作为一张 .json 文件卡上墙 —— 画布把自己的存档画在自己身上。
+ */
+export const RESERVED_FILES = new Set([
+  'board.json',        // 画布布局，画布自己的存档
+  '.nd-project.json',  // 产物标记（形态兜底）
+  '.gitignore',
+  '.ndignore',
+]);
 
 /** 永远不扫的目录名（任何深度命中即剪枝） */
 export const HARD_IGNORE_DIRS = new Set([

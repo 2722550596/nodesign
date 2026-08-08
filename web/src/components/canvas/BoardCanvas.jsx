@@ -105,7 +105,9 @@ export default function BoardCanvas({
 
   // 数据源
   const [artifacts, setArtifacts] = useState([]);
-  const [tasks, setTasks] = useState([]);         // 任务=shared/tasks/ 目录（任务模型）
+  const [tasks, setTasks] = useState([]);         // 有产物的文件夹（含工作区根，id=''）
+  // 磁盘上全部文件夹的相对路径（含空文件夹）。文件夹卡的权威来源。
+  const [folders, setFolders] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [memoryDocs, setMemoryDocs] = useState([]);
   // 布局（saved + 本地改动合一）：{ [id]: {x,y,z,expanded} }；zones：{ [sid]: {x,y,w,h,title} }
@@ -202,6 +204,7 @@ export default function BoardCanvas({
     Assets.list(projectId).then(r => setFileCount((r?.files || r?.assets || []).length)).catch(() => {});
     if (Array.isArray(a?.artifacts)) setArtifacts(a.artifacts);
     if (Array.isArray(a?.tasks)) setTasks(a.tasks);
+    if (Array.isArray(a?.folders)) setFolders(a.folders);
     if (Array.isArray(s?.sessions)) setSessions(s.sessions);
     if (Array.isArray(m?.memory)) setMemoryDocs(m.memory);
     if (b?.board && !layoutLoadedRef.current) {
@@ -257,18 +260,13 @@ export default function BoardCanvas({
     scheduleSave();
   }, [scheduleSave]);
 
-  // 任务=会话一对一（2026-07-28）：两张对照表
-  //   zoneSession  工作区 → 它属于哪个会话（进这块区 = 进那个会话）
-  //   sessionZone  会话 → 它的任务区（会话的产出全归到任务区，不再单开会话区）
-  const { zoneSession, sessionZone } = useMemo(() => {
-    const z2s = new Map(); const s2z = new Map();
-    for (const t of tasks) {
-      if (!t.sessionId) continue;
-      z2s.set(`task/${t.id}`, t.sessionId);
-      if (!s2z.has(t.sessionId)) s2z.set(t.sessionId, `task/${t.id}`);
-    }
-    return { zoneSession: z2s, sessionZone: s2z };
-  }, [tasks]);
+  // ⚠️ 这里曾经有 zoneSession / sessionZone 两张对照表（工作区 ↔ 会话）。
+  //
+  // 它们服务的是「任务=会话一对一」：点进一个任务就是回到那次对话，一个会话
+  // 只服务一个任务。2026-08-08 那条绑定整个废掉了 —— 会话现在归项目，所有会话
+  // 面对同一个工作区、同一批文件。跟着没有意义的还有：会话 deck 卡（一个会话
+  // 自带一张卡）、「会话分区」（没有文件夹撑着的那种）、以及「进文件夹 = 切
+  // 会话」这条导航。文件夹就是文件夹，对话就是对话。
 
   // ── 物件派生（数据源 → 物件列表；布局只管摆放）──
   //
@@ -284,35 +282,37 @@ export default function BoardCanvas({
     }
     // 项目级文档（记忆 / 品牌）不再当画布物件 —— 2026-07-28 起由桌面顶带
     // 顶栏「⋯」里的四件套之一（2026-08-07 从画布顶带搬过去），跟指引、文件一起构成"项目区"。
-    for (const s of sessions) {
-      const sid = s.sessionId || s.id;
-      // 一对一：会话已经有任务了，它的 deck 就是任务 deck，不再单开一张会话 deck 卡
-      if (sessionZone.has(sid)) continue;
-      out.push({
-        id: `deck:${sid}`, type: 'deck', sid,
-        title: s.customTitle || s.title || s.summary || s.firstPrompt || '未命名 deck',
-        mtime: s.lastModified || s.mtime,
-      });
-    }
-    // 任务 deck（任务模型 2026-07-28）：tasks/<任务>/canvas.html 存在才有 deck 物件；
-    // 任务工作区分区本身由 zone 派生 effect 建（无产物的任务也有分区）
-    // 多产物平权（2026-07-29）：tasks[].artifacts 一条一卡，没有主/试作等级。
+    //
+    // 会话不再产生画布物件（2026-08-08）：以前每个会话自带一张 deck 卡，那是
+    // 「一个会话一份产出」时代的形状。现在产出是文件、会话是对话线程，桌面上
+    // 该有的是文件，不是对话。对话在左栏和聊天栏里。
+    //
+    // 产物卡（多产物平权 2026-07-29）：tasks[].artifacts 一条一卡，没有主/试作等级。
     // 站点子页和样式表仍不各自上墙（用户要的是"我那个网站"，不是
-    // index/about/style 三张互不相干的卡）。id 沿用旧格式，存过的布局不丢：
-    //   deck: canvas.html → `deck:task/<t>`，其余 → `deck:task/<t>/<文件>`
-    //   根站 → `site:task/<t>`；子目录站 → `site:task/<t>/<目录>`；
-    //   单页（原 _drafts 试作）→ `site:task/<t>/_drafts/<文件>.html`
+    // index/about/style 三张互不相干的卡）。
+    //
+    // **id = kind 前缀 + 工作区相对路径**（2026-08-08）：
+    //   deck   `deck:主稿.html`、`deck:鉴赏页/初稿/主稿.html`
+    //   站点   `site:伊蕾娜手账研究站`；单页 `site:鉴赏页/_drafts/试作.html`
+    //   世界   `world:雾都`
+    //   文件夹 就是路径本身，`鉴赏页/初稿`
+    //
+    // 画布上的身份和磁盘上的位置是**同一个字符串**。代价是"移动 = 换身份"，
+    // 所以改名必须是一等公民：拖拽走 renameBoardPaths（不是删+插，否则挂在
+    // 卡上的批注会被端点清理连坐删掉），agent 背着画布 mv 的由 git 改名检测
+    // 对账（board-store 的 reconcileBoardRenames），迟到的防抖写入由转发表
+    // 接住。这三条缺一个，症状都是"摆好的版面偶尔自己回到默认位置"。
     for (const t of tasks) {
       for (const a of (t.artifacts || [])) {
         if (a.kind === 'world') {
-          // 一个任务一个世界（world 命中即独占，见 kinds/index.js），所以 id
+          // 一个文件夹一个世界（world 命中即独占，见 kinds/index.js），所以 id
           // 不带产物后缀。nodes 是地图本身，不是布局属性 —— 它描述的是磁盘上
           // 的文件夹树，画布只负责把它画出来。
           out.push({
-            id: `world:task/${t.id}`,
+            id: `world:${a.root || t.id}`,
             type: 'world',
             task: t.id,
-            base: a.base || `tasks/${t.id}`,
+            base: a.base || a.root || t.id,
             entry: a.entryRel || '世界.md',
             nodes: a.nodes || [],
             exports: a.exports,
@@ -321,13 +321,11 @@ export default function BoardCanvas({
           });
         } else if (a.kind === 'site') {
           out.push({
-            id: a.single
-              ? `site:task/${t.id}/${a.entryRel}`
-              : (a.title ? `site:task/${t.id}/${a.root}` : `site:task/${t.id}`),
+            id: `site:${a.single ? a.entryRel : (a.root || t.id)}`,
             type: 'site',
             single: !!a.single,
             task: t.id,
-            base: a.base || `tasks/${t.id}`,
+            base: a.base || a.root || t.id,
             entry: a.entry || 'index.html',
             pages: a.pages || [],
             root: a.root || '',
@@ -337,9 +335,8 @@ export default function BoardCanvas({
             mtime: t.mtime,
           });
         } else {
-          const isCanvas = a.file === 'canvas.html';
           out.push({
-            id: isCanvas ? `deck:task/${t.id}` : `deck:task/${t.id}/${a.file}`,
+            id: `deck:${a.file}`,
             type: 'deck',
             task: t.id,
             deckFile: a.file,
@@ -365,7 +362,7 @@ export default function BoardCanvas({
       else out.push({ id: a.path, type: 'file', sid, ...a });
     }
     return out;
-  }, [sessions, tasks, artifacts, sessionZone, layout]);
+  }, [tasks, artifacts, layout]);
 
   // 顶带四张卡的一行摘要
   const bandSummaries = useMemo(() => {
@@ -388,19 +385,29 @@ export default function BoardCanvas({
     return map;
   }, [sessions]);
 
-  // 任务工作区标题：zone id 'task/<目录名>' → 目录名即标题
+  // 文件夹标题：zone id 就是工作区相对路径，末段即标题
   const taskTitles = useMemo(
-    () => new Map(tasks.map(t => [`task/${t.id}`, t.title])), [tasks]);
+    () => new Map(tasks.filter(t => t.id).map(t => [t.id, t.title])), [tasks]);
 
-
-  // 真工作区 + 影子工作区（影子只活在内存里，真的一出现就退场）
+  /**
+   * 真文件夹 + 影子文件夹（影子只活在内存里，真的一出现就退场）。
+   *
+   * **磁盘是权威**：board.json 里的文件夹条目只有在 `folders` 里还找得到才渲染。
+   * 服务端也会剪一遍，但光靠那边不够 —— 前端手上有自己那份 `/board` 数据，剪枝
+   * 跟它是两条并发的路，而且任何一次 patchZone 都会把手上这份写回去，剪了又活。
+   * 所以判据要放在**渲染这一层**：画不出来的东西写不回去。
+   *
+   * 这么剪是安全的，因为文件夹有权威清单（磁盘扫描），物件没有 —— 物件那边
+   * board.json 是稀疏的，"不在里面"是常态，不能反过来当"已经没了"。
+   */
   const zonesEff = useMemo(() => {
-    const ghosts = Object.entries(ghostZones).filter(([zid]) => !zones[zid]);
-    if (!ghosts.length) return zones;
-    const out = { ...zones };
-    for (const [zid, g] of ghosts) out[zid] = g;
+    const live = new Set(folders);
+    const out = {};
+    for (const [zid, z] of Object.entries(zones)) if (live.has(zid)) out[zid] = z;
+    // 影子：agent 刚 mkdir 出来、这一轮扫描还没看到的那个，先占个位
+    for (const [zid, g] of Object.entries(ghostZones)) if (!out[zid]) out[zid] = g;
     return out;
-  }, [zones, ghostZones]);
+  }, [zones, ghostZones, folders]);
   const zonesEffRef = useRef(zonesEff); zonesEffRef.current = zonesEff;
 
   // 刚被用户删掉的 zone 墓碑：删任务后 tasks 列表要等 reload 才更新，这个
@@ -409,15 +416,13 @@ export default function BoardCanvas({
   // （同名新任务照常建区）
   const removedZonesRef = useRef(new Set());
 
-  // ── 工作区派生：当前 session + 有产物的 session 各一块，缺的建出来并持久化 ──
+  // ── 文件夹派生：磁盘上每个文件夹在画布上有一张卡，缺的建出来并持久化 ──
+  //
+  // 权威是**磁盘**（服务端扫出来的 `folders`，工作区相对路径），不是会话，也不是
+  // 产物。空文件夹也算 —— 你刚建的那个还没往里放东西的，不该等有了产物才显形。
   useEffect(() => {
     if (!layoutLoadedRef.current) return;
-    const needed = new Set();
-    if (currentSessionId && !sessionZone.has(currentSessionId)) needed.add(currentSessionId);
-    for (const o of objects) {
-      if (o.sid && o.type !== 'deck' && !sessionZone.has(o.sid)) needed.add(o.sid);
-    }
-    for (const t of tasks) needed.add(`task/${t.id}`);   // 每个任务一块工作区
+    const needed = new Set(folders);
     for (const zid of [...removedZonesRef.current]) {
       if (!needed.has(zid)) removedZonesRef.current.delete(zid);
     }
@@ -430,14 +435,14 @@ export default function BoardCanvas({
         // 影子区已经占过位就沿用它的矩形（真区接管时画面不跳）
         next[zid] = {
           ...(ghostZones[zid] || newStackedZoneRect(next)),
-          ...((sessionTitles.get(zid) || taskTitles.get(zid)) ? { title: sessionTitles.get(zid) || taskTitles.get(zid) } : {}),
+          title: taskTitles.get(zid) || zid.split('/').pop(),
         };
         dirtyRef.current.zones.add(zid);
       }
       scheduleSave();
       return next;
     });
-  }, [objects, tasks, currentSessionId, zones, ghostZones, sessionTitles, taskTitles, sessionZone, scheduleSave]);
+  }, [folders, zones, ghostZones, taskTitles, scheduleSave]);
 
   // 影子退场：对应的真工作区已经建出来了就删掉影子
   useEffect(() => {
@@ -458,7 +463,7 @@ export default function BoardCanvas({
     const zid = zoneOfObjectId(objectId, currentSessionId);
     if (!zid) return;
     if (zonesRef.current[zid] || ghostZones[zid]) return;
-    const title = zid.startsWith('task/') ? zid.slice(5) : '工作区';
+    const title = zid.split('/').pop() || '文件夹';
     setGhostZones(prev => (prev[zid] ? prev : {
       ...prev,
       [zid]: { ...newStackedZoneRect({ ...zonesRef.current, ...prev }), title },
@@ -511,17 +516,19 @@ export default function BoardCanvas({
       g.bottom = Math.max(g.bottom, y + h + ZONE.pad);
     };
 
-    // 自然归属派生：任务物件按路径（tasks/<任务>/…）、deck 按 task/sid 字段、
-    // 其余按 meta.sessionId。显式 layout.zone 字段永远优先（'' = 明确无归属）。
+    // 自然归属 = **它在磁盘上的上级目录**（2026-08-08）。
+    //
+    // id 就是 kind 前缀 + 工作区相对路径，所以这件事退化成一次 lastIndexOf('/')：
+    //   `deck:鉴赏页/初稿/主稿.html` → 归 `鉴赏页/初稿`
+    //   `site:伊蕾娜手账研究站`      → 上级是根，散在桌面上（站点目录**就是**
+    //                                 那件产物，它不住在一个同名文件夹里）
+    // 在这之前这里是三条并列的猜法（task 字段 / tasks/ 路径前缀 / 会话归属），
+    // 因为那时"东西在哪"和"东西属于谁"是两套账。现在只有一套。
+    // 显式 layout.zone 字段仍然优先（'' = 用户明确把它拖出来了）。
     const naturalZoneOf = (o) => {
-      if (o.task) return `task/${o.task}`;
-      if (typeof o.id === 'string' && o.id.startsWith('tasks/')) {
-        const parts = o.id.split('/');
-        if (parts.length >= 3) return `task/${parts[1]}`;
-      }
-      // 会话已经有任务区了就归到任务区（一个会话一块地方，不再会话区/任务区两开）
-      if (o.sid && sessionZone.has(o.sid)) return sessionZone.get(o.sid);
-      return o.sid || null;
+      const p = typeof o.id === 'string' ? o.id.slice(o.id.indexOf(':') + 1) : '';
+      const i = p.lastIndexOf('/');
+      return i > 0 ? p.slice(0, i) : null;
     };
     const effZoneOf = (o) => {
       const stored = layout[o.id];
@@ -629,11 +636,9 @@ export default function BoardCanvas({
       // 虚拟分组 —— 这跟「文件系统即真相」是同一条规矩。
       const groupOf = (it) => {
         const p = it.path || it.id;
-        const m = typeof p === 'string' && p.startsWith(`${zid.startsWith('task/') ? `tasks/${zid.slice(5)}` : zid}/`)
-          ? p.slice((zid.startsWith('task/') ? `tasks/${zid.slice(5)}` : zid).length + 1)
-          : '';
+        const m = typeof p === 'string' && p.startsWith(`${zid}/`) ? p.slice(zid.length + 1) : '';
         const seg = m.split('/');
-        // 只认一层：`笔记/a.md` → 「笔记」；`a.md` → 无分组（散在任务根）
+        // 只认一层：`笔记/a.md` → 「笔记」；`a.md` → 无分组（散在文件夹根）
         return seg.length > 1 ? seg[0] : '';
       };
       const byGroup = new Map();
@@ -693,7 +698,7 @@ export default function BoardCanvas({
     }
 
     // zone 视图（有效高度随内容生长，含避让后被挤出来的新底边）
-    const zv = Object.entries(grids).filter(([zid]) => !sessionZone.has(zid)).map(([zid, g]) => ({
+    const zv = Object.entries(grids).map(([zid, g]) => ({
       id: zid,
       x: g.rect.x, y: g.rect.y, w: g.rect.w,
       // 高度：贴内容（ZONE_MIN_H 起），超出再向下生长；取景交给相机；
@@ -712,7 +717,7 @@ export default function BoardCanvas({
       bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     }
     return { positioned: items, zoneView: zv, contentBottom: bottom, overlapFixes, groupBands };
-  }, [objects, layout, zonesEff, sessionTitles, taskTitles, sessionZone, dragActive,
+  }, [objects, layout, zonesEff, taskTitles, dragActive,
     viewMode, focusZoneId, currentSessionId]);
   positionedRef.current = positioned;
   zoneViewRef.current = zoneView;
@@ -874,14 +879,14 @@ export default function BoardCanvas({
   /** 写一段字 → 落成 .md（走便签那条路，agent 读得到） */
   const handleCreateText = useCallback(async (text, at) => {
     const zid = zoneAtPoint(at);
-    const task = zid && zid.startsWith('task/') ? zid.slice(5) : null;
+    const folder = zid || null;
     try {
       let file;
-      if (task) {
-        // 任务内 → 任务便利贴（agent 下一轮从注入清单就看得到）
+      if (folder) {
+        // 落在文件夹里 → 工作区便利贴（agent 下一轮从注入清单就看得到）
         const name = `${Date.now().toString(36)}.md`;
-        await Assets.putTaskNote(projectId, task, name, text);
-        file = `tasks/${task}/notes/${name}`;
+        await Assets.putTaskNote(projectId, name, text);
+        file = `notes/${name}`;
       } else {
         const r = await Assets.createNote(projectId, { text, sessionId: currentSessionId });
         file = r?.path || null;
@@ -1021,17 +1026,6 @@ export default function BoardCanvas({
     setFocusZoneId(currentSessionId || null);
     setViewMode(currentSessionId ? 'work' : 'arrange');
   }, [currentSessionId]);
-
-  // 一对一：这个会话的任务区一旦知道了，焦点从"会话自己"挪到任务区
-  // （任务区才是它的地方；产物列表比路由慢一拍，所以单独一条 effect 补位）
-  useEffect(() => {
-    if (!currentSessionId) return;
-    const zid = sessionZone.get(currentSessionId);
-    if (!zid || focusZoneId === zid) return;
-    if (focusZoneId && focusZoneId !== currentSessionId) return;   // 用户已经点去别处，不抢
-    fittedKeyRef.current = '';
-    setFocusZoneId(zid);
-  }, [sessionZone, currentSessionId, focusZoneId]);
 
   // ── 拖拽（物件 / 工作区 / 背景平移共用 pointer 流）──
   const onObjectPointerDown = (e, o) => {
@@ -1234,14 +1228,14 @@ export default function BoardCanvas({
       // 世界窗（2026-08-07）：地图 + 世界书两个视图，跟 deck / 站点同一副外壳。
       // 在这之前这里落到「开那份 .md」—— 因为当时压根没有世界窗。
       onFocusDeck?.({
-        kind: 'world', task: o.task, base: o.base || `tasks/${o.task}`,
+        kind: 'world', task: o.task, base: o.base || o.task,
         entry: o.entry || '世界.md', title: o.title, nodes: o.nodes,
       });
     } else if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
       onFocusDeck?.({
-        kind: 'site', task: o.task, base: o.base || `tasks/${o.task}`,
+        kind: 'site', task: o.task, base: o.base || o.task,
         entry: o.entry || 'index.html', title: o.title, pages: o.pages,
         // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
         built: !!(o.root && o.root !== o.srcRoot),
@@ -1331,13 +1325,12 @@ export default function BoardCanvas({
 
   exitToProjectRef.current = exitToProject;
 
+  /** 进一个文件夹 = 镜头对上它。**不再切会话** —— 文件夹和对话没有绑定关系了 */
   const enterZone = useCallback((zid) => {
-    const sid = zoneSession.get(zid) || (sessionTitles.has(zid) ? zid : null);
     setFocusZoneId(zid);
     fittedKeyRef.current = '';
     setViewMode('work');
-    if (sid && sid !== currentSessionId) navigate(`/projects/${projectId}/sessions/${sid}`);
-  }, [zoneSession, sessionTitles, currentSessionId, navigate, projectId]);
+  }, []);
   /**
    * 「整理」—— 现在是**手动**的一次动作，不再每帧自动跑（2026-08-07）。
    *
@@ -1528,32 +1521,10 @@ export default function BoardCanvas({
     }
   }, [projectId, reload]);
 
-  /**
-   * 旧式会话 zone（任务模型之前的遗产，id 是 sessionId 或历史残行）从桌面移除。
-   * 只清 board.json 里的这行，不动会话记录 —— 会话在左栏列表照旧能进。
-   * 2026-07-30 前这类 zone 没有任何删除入口，永远赖在桌面上。
-   */
-  const handleRemoveLegacyZone = useCallback(async (zid, title) => {
-    const ok = await useGlobalStore.getState().confirm({
-      title: '从桌面移除',
-      message: `把「${title || '这个工作区'}」从桌面拿掉？只移除这张卡片，不删除对话记录（左栏会话列表里还能找到）。`,
-      confirmLabel: '移除',
-      danger: false,
-    });
-    if (!ok) return;
-    try {
-      await Assets.patchBoard(projectId, { zones: { [zid]: null } });
-      removedZonesRef.current.add(zid);
-      setZones(prev => {
-        const next = { ...prev };
-        delete next[zid];
-        return next;
-      });
-      useGlobalStore.getState().showToast('已从桌面移除', 'info');
-    } catch (err) {
-      useGlobalStore.getState().showToast(`移除失败：${err.message}`, 'error');
-    }
-  }, [projectId]);
+  // ⚠️ 这里曾经有 handleRemoveLegacyZone（把"旧式会话分区"从桌面拿掉，只清
+  // board.json 不动对话）。会话不再产生分区之后，画布上每个框背后都有一个真实
+  // 目录，"只从桌面移除、文件留着"这个动作没有对应物了 —— 要么删文件夹，
+  // 要么不删。
 
   const focusZoneAction = (zid) => {
     if (zones[zid]?.collapsed) patchZone(zid, { collapsed: false });
@@ -1588,7 +1559,6 @@ export default function BoardCanvas({
 
   useEffect(() => {
     if (!currentSessionId || autoExpandedRef.current.has(currentSessionId)) return;
-    if (sessionZone.has(currentSessionId)) return;   // 有任务的会话：deck 是任务 deck
     let cancelled = false;
     fetch(Canvas.artifactUrl(projectId, currentSessionId, 0), { method: 'HEAD' })
       .then((r) => {
@@ -1597,7 +1567,7 @@ export default function BoardCanvas({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [projectId, currentSessionId, tryAutoExpand, sessionZone]);
+  }, [projectId, currentSessionId, tryAutoExpand]);
 
   // 布局每次变化把挂起的自动展开消化掉（deck 物件迟到的场景）
   useEffect(() => {
@@ -1612,7 +1582,7 @@ export default function BoardCanvas({
   // 视图把聚焦切到该任务工作区 —— 否则镜头还锁在会话工作区，产出全程不可见
   const requestAutoExpand = useCallback((key) => {
     if (!tryAutoExpand(key)) pendingExpandRef.current.add(key);
-    if (key.startsWith('task/')) {
+    if (key) {
       setFocusZoneId(prev => {
         if (prev === key) return prev;
         fittedKeyRef.current = '';
@@ -1629,7 +1599,7 @@ export default function BoardCanvas({
   const handleStageTarget = useCallback((objectId) => {
     ensureZoneForTarget(objectId);
     const zid = zoneOfObjectId(objectId, currentSessionId);
-    if (zid && zid.startsWith('task/')) requestAutoExpand(zid);
+    if (zid) requestAutoExpand(zid);
   }, [ensureZoneForTarget, currentSessionId, requestAutoExpand]);
 
   // preview_deck 工具：等价于用户双击那张 deck 卡
@@ -1717,7 +1687,7 @@ export default function BoardCanvas({
     stageCards, positioned, visibleIdSet, visibleZones, focusZone, occupancy: stageOccupancy,
     // 会话绑了任务就用任务区当落点 —— 会话区那会儿已经被任务区取代，
     // 拿 sessionId 去找区找不到，卡片会全掉进 dock 叠成一摞。
-    currentSessionId: sessionZone.get(currentSessionId) || currentSessionId,
+    currentSessionId,
   });
 
   // agent 此刻在动谁：橙色光圈套在目标外圈（物件还没上墙就套它落脚的工作区）。
@@ -1753,7 +1723,7 @@ export default function BoardCanvas({
     // artifactKind / artifactExports：当前聚焦的任务做的是什么形态、可用哪些导出
     // 格式（服务端 kinds/ 注册表吐的）—— 导出菜单据此渲染，不再在前端硬编码
     // 格式表。不上报的话顶栏只能默认按 deck 给 PDF/PPTX，用户点了拿到 400。
-    const focusTask = fz && fz.startsWith('task/') ? fz.slice(5) : null;
+    const focusTask = fz || null;
     const focusTaskObj = focusTask ? tasks.find(t => t.id === focusTask) : null;
     const ui = {
       viewMode,
@@ -1880,12 +1850,6 @@ export default function BoardCanvas({
               <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub, flexShrink: 0 }}>
                 {z.memberCount} 项
               </span>
-              {(zoneSession.get(z.id) || z.id) === currentSessionId && (
-                <span style={{
-                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-                  color: COLOR.bg, background: COLOR.text, borderRadius: 5, padding: `${GAP.xxs}px 7px`, flexShrink: 0,
-                }}>当前会话</span>
-              )}
               <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: GAP.xxs, flexShrink: 0 }}>
                 <button
                   data-zone-action title="展开"
@@ -1893,24 +1857,15 @@ export default function BoardCanvas({
                   style={zoneHeaderBtn}
                 ><ChevronsUpDown size={13} /></button>
                 <button
-                  data-zone-action title="进入任务（切到它的会话）"
+                  data-zone-action title="进入这个文件夹"
                   onClick={() => !wasDrag() && focusZoneAction(z.id)}
                   style={zoneHeaderBtn}
                 ><FolderOpen size={13} /></button>
-                {z.id.startsWith('task/') ? (
-                  <button
-                    data-zone-action title="删除任务（连同它的对话）"
-                    onClick={() => !wasDrag() && handleDeleteFolder(z.id, z.title)}
-                    style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                  ><Trash2 size={13} /></button>
-                ) : (zoneSession.get(z.id) || z.id) !== currentSessionId && z.memberCount === 0 && (
-                  /* 只给空区：非空的删了会被"有产物的 session 自动建区"效应立刻重建 */
-                  <button
-                    data-zone-action title="从桌面移除（不删对话记录）"
-                    onClick={() => !wasDrag() && handleRemoveLegacyZone(z.id, z.title)}
-                    style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                  ><Trash2 size={13} /></button>
-                )}
+                <button
+                  data-zone-action title="删除文件夹（连同里面的内容；不影响对话）"
+                  onClick={() => !wasDrag() && handleDeleteFolder(z.id, z.title)}
+                  style={{ ...zoneHeaderBtn, color: COLOR.error }}
+                ><Trash2 size={13} /></button>
               </span>
             </div>
           ) : (
@@ -1964,12 +1919,6 @@ export default function BoardCanvas({
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                 }}>{z.title}</span>
                 <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>{z.memberCount} 项</span>
-                {(zoneSession.get(z.id) || z.id) === currentSessionId && (
-                  <span style={{
-                    fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-                    color: COLOR.bg, background: COLOR.text, borderRadius: 5, padding: `${GAP.xxs}px 7px`,
-                  }}>当前会话</span>
-                )}
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.xxs }}>
                   {focusZone === z.id && z.memberCount > 0 && (
                     <button
@@ -1983,8 +1932,8 @@ export default function BoardCanvas({
                       style={zoneHeaderBtn}
                     ><Plus size={12} /></button>
                   )}
-                  {/* 收起（只在项目区给）：把这个任务折成一张文件夹卡，
-                      点卡片再展开。在任务里面时不给 —— 你正站在里面 */}
+                  {/* 收起（只在项目区给）：把这个文件夹折成一张卡，
+                      点卡片再展开。站在里面时不给 —— 你正在它内部 */}
                   {viewMode === 'arrange' && (
                     <button
                       data-zone-action title="收起成文件夹卡"
@@ -1992,20 +1941,11 @@ export default function BoardCanvas({
                       style={zoneHeaderBtn}
                     ><FolderInput size={13} /></button>
                   )}
-                  {z.id.startsWith('task/') ? (
-                    <button
-                      data-zone-action title="删除任务（连同它的对话）"
-                      onClick={() => { if (!wasDrag()) handleDeleteFolder(z.id, z.title); }}
-                      style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                    ><Trash2 size={13} /></button>
-                  ) : (zoneSession.get(z.id) || z.id) !== currentSessionId && z.memberCount === 0 && (
-                    /* 只给空区：非空的删了会被"有产物的 session 自动建区"效应立刻重建 */
-                    <button
-                      data-zone-action title="从桌面移除（不删对话记录）"
-                      onClick={() => { if (!wasDrag()) handleRemoveLegacyZone(z.id, z.title); }}
-                      style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                    ><Trash2 size={13} /></button>
-                  )}
+                  <button
+                    data-zone-action title="删除文件夹（连同里面的内容；不影响对话）"
+                    onClick={() => { if (!wasDrag()) handleDeleteFolder(z.id, z.title); }}
+                    style={{ ...zoneHeaderBtn, color: COLOR.error }}
+                  ><Trash2 size={13} /></button>
                 </span>
               </div>
               {z.memberCount === 0 && (
@@ -2013,7 +1953,7 @@ export default function BoardCanvas({
                   position: 'absolute', top: '50%', left: 0, right: 0, textAlign: 'center',
                   fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, opacity: 0.7,
                 }}>
-                  本任务的产物会自动出现在这里 · 也可以把画布上的内容拖进来
+                  这个文件夹还是空的 · 把画布上的东西拖进来，或者让 agent 往里做
                 </div>
               )}
             </div>
@@ -2452,7 +2392,7 @@ function BoardObject({
             <LiveFrame
               title={`deck-${o.task ? `task-${o.task}${o.deckFile && o.deckFile !== 'canvas.html' ? `-${o.deckFile}` : ''}` : o.sid}`}
               src={o.task
-                ? `${Assets.artifactFileUrl(projectId, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}?v=${versionOfFile(fileVersions, `tasks/${o.task}/${o.deckFile || 'canvas.html'}`)}`
+                ? `${Assets.artifactFileUrl(projectId, o.deckFile)}?v=${versionOfFile(fileVersions, o.deckFile)}`
                 : Canvas.artifactUrl(projectId, o.sid, versionOfFile(fileVersions, 'canvas.html'))}
               style={{
                 width: 1920, height: 1080, border: 0,
@@ -2509,7 +2449,7 @@ function BoardObject({
                 时缩略图不重载；LiveFrame 双缓冲让必要的重载也不闪白 */}
             <LiveFrame
               title={`site-${o.id}`}
-              src={`${Assets.artifactFileUrl(projectId, `${o.base || `tasks/${o.task}`}/${o.entry || 'index.html'}`)}?v=${versionOfSitePage(fileVersions, o.base || `tasks/${o.task}`, o.entry || 'index.html')}`}
+              src={`${Assets.artifactFileUrl(projectId, `${o.base || o.task}/${o.entry || 'index.html'}`)}?v=${versionOfSitePage(fileVersions, o.base || o.task, o.entry || 'index.html')}`}
               style={{
                 width: SITE_VIEWPORTS[0].w,
                 height: Math.round(400 / (DECK_EMBED_W / SITE_VIEWPORTS[0].w)),
@@ -2576,7 +2516,7 @@ function BoardObject({
               background: COLOR.bg, borderRadius: '0 0 10px 10px',
             }}
           >
-            <WorldMap projectId={projectId} base={o.base || `tasks/${o.task}`} nodes={o.nodes} />
+            <WorldMap projectId={projectId} base={o.base || o.task} nodes={o.nodes} />
           </div>
         </div>
       )}
