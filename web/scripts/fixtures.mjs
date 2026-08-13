@@ -1,0 +1,127 @@
+/**
+ * 检查通道的假数据（`scripts/inspect.mjs` 用）。
+ *
+ * ## 为什么是假数据而不是连真后端
+ *
+ * 8443 有登录墙，拿 playwright 去撞登录墙意味着要处理密码 —— 那条路不走。
+ * 而且真数据每天在变，"上次看着好好的"没法复现。假数据这边：**一份固定的
+ * 桌面**，形态凑齐（deck / 站点 / 世界 / 图片 / 便签 / 普通文件 / 文件夹 /
+ * 嵌套文件夹），改完前后两张图能逐像素比。
+ *
+ * ## 怎么加
+ *
+ * 跑 inspect 时未匹配的接口会打在 `unmatched` 里（并回一个空对象兜住）。
+ * 看到它就来这儿补一条 —— **别去改前端迁就检查台**。
+ */
+
+export const PROJECT_ID = 'p_demo';
+export const SESSION_ID = 's_demo';
+
+/** 一份固定的桌面：形态凑齐，且带一层嵌套文件夹 */
+const TASKS = [
+  {
+    id: '', title: 'Demo 项目', kind: 'mixed', sessionId: null,
+    mtime: '2026-08-13T02:00:00.000Z',
+    artifacts: [
+      { kind: 'deck', file: '主稿.html', entryRel: '主稿.html', title: '主稿', exports: ['html', 'pdf', 'pptx', 'handoff'] },
+    ],
+  },
+  {
+    id: '鉴赏页', title: '鉴赏页', kind: 'mixed', sessionId: null,
+    mtime: '2026-08-13T03:00:00.000Z',
+    artifacts: [
+      { kind: 'deck', file: '鉴赏页/初稿.html', entryRel: '鉴赏页/初稿.html', title: '初稿', exports: ['html', 'pdf'] },
+      {
+        kind: 'site', root: '鉴赏页/站点', base: '鉴赏页/站点', srcRoot: '鉴赏页/站点',
+        entry: 'index.html', entryRel: '鉴赏页/站点/index.html',
+        pages: ['index.html', 'about.html'], title: '研究站', exports: ['site', 'html', 'handoff'],
+      },
+    ],
+  },
+  {
+    id: '雾都', title: '雾都', kind: 'world', sessionId: null,
+    mtime: '2026-08-13T04:00:00.000Z',
+    artifacts: [
+      {
+        kind: 'world', root: '雾都', base: '雾都', entryRel: '雾都/世界.md', title: '雾都',
+        exports: ['handoff'],
+        nodes: [
+          // 形状照 server/lib/kinds/world.js 的 nodes（type/path/name/parent/depth）
+          { type: 'place', path: '世界/旧钟酒馆', name: '旧钟酒馆', parent: null, depth: 0, file: '地点.md' },
+          { type: 'place', path: '世界/码头', name: '码头', parent: null, depth: 0, file: '地点.md' },
+          { type: 'character', path: '世界/旧钟酒馆/维克多', name: '维克多', parent: '世界/旧钟酒馆', depth: 1, file: '角色.md' },
+        ],
+      },
+    ],
+  },
+];
+
+const ARTIFACTS = [
+  { kind: 'note', path: 'notes/灵感.md', name: '灵感.md', ext: '.md', text: '# 灵感\n\n先做一版暖调的。', mtime: '2026-08-13T05:00:00.000Z' },
+  { kind: 'task-file', path: '鉴赏页/数据.csv', name: '数据.csv', ext: '.csv', size: 20480, mtime: '2026-08-13T05:10:00.000Z' },
+  { kind: 'image', path: 'assets/generated/星空.webp', name: '星空.webp', ext: '.webp', hasThumb: false, size: 149614, mtime: '2026-08-13T05:20:00.000Z' },
+];
+
+/** 文件夹清单（递归全量，含嵌套）——磁盘扫描的真相 */
+const FOLDERS = ['鉴赏页', '鉴赏页/初稿', '雾都'];
+
+const BOARD = {
+  size: { w: 4000, h: 2600 },
+  objects: {},          // 故意留空：走"首次落点"那条路，正好验自动排布
+  zones: {},
+  bindings: {},
+};
+
+const SESSIONS = [
+  { id: SESSION_ID, title: '做一版鉴赏页', updatedAt: '2026-08-13T05:30:00.000Z', createdAt: '2026-08-13T02:00:00.000Z', tag: null },
+];
+
+/** 路径 → 响应。命中返回 {status?, json|body|contentType}，没命中返回 null */
+export function resolve(pathname, method) {
+  const p = pathname.replace(/^\/api/, '');
+
+  if (p === '/me/usage') return { json: { usedToday: 0.12, limit: 50, username: 'demo', role: 'user' } };
+  if (p === '/me/showcase') return { json: { items: [] } };
+  if (p === '/auth/status') return { json: { authed: true, user: { username: 'demo', role: 'user' } } };
+  if (p === '/notices') return { json: { notices: [] } };
+  if (p === '/plugins') return { json: { plugins: [] } };
+
+  if (p === '/projects') return { json: { projects: [{ id: PROJECT_ID, name: 'Demo 项目', kind: 'project' }] } };
+  if (p === `/projects/${PROJECT_ID}`) {
+    return { json: { project: { id: PROJECT_ID, name: 'Demo 项目', kind: 'project', candidates: [], skillId: 'nodesign' } } };
+  }
+  if (p === `/projects/${PROJECT_ID}/artifacts`) {
+    return { json: { artifacts: ARTIFACTS, tasks: TASKS, folders: FOLDERS } };
+  }
+  if (p === `/projects/${PROJECT_ID}/board`) return { json: { board: BOARD } };
+  if (p === `/projects/${PROJECT_ID}/sessions`) return { json: { sessions: SESSIONS } };
+  if (p.startsWith(`/projects/${PROJECT_ID}/sessions/`)) {
+    if (p.endsWith('/context-usage')) return { json: { used: 12000, limit: 200000 } };
+    if (p.endsWith('/spec')) return { json: { spec: { decisions: [] } } };
+    if (p.endsWith('/pending-changes')) return { json: { changes: [] } };
+    if (p.endsWith('/config')) return { json: { config: {} } };
+    if (p.endsWith('/model')) return { json: { model: 'claude-sonnet-5' } };
+    return { json: {} };
+  }
+  if (p === `/projects/${PROJECT_ID}/memory`) return { json: { content: '' } };
+  if (p === `/projects/${PROJECT_ID}/instruction`) return { json: { content: '' } };
+  if (p === `/projects/${PROJECT_ID}/assets`) return { json: { assets: [] } };
+
+  // 产物文件本身：给一张能一眼认出来的占位页，别让 iframe 空着
+  if (p.includes('/artifact-file/')) {
+    const name = decodeURIComponent(p.split('/artifact-file/')[1] || '').split('?')[0];
+    if (/\.html?$/i.test(name)) {
+      return {
+        contentType: 'text/html; charset=utf-8',
+        body: `<!doctype html><meta charset="utf-8"><style>
+          body{margin:0;font:600 42px/1.4 system-ui;display:flex;align-items:center;
+          justify-content:center;height:100vh;background:#FFFEF6;color:#2B2117}
+          </style><div>${name}</div>`,
+      };
+    }
+    return { status: 404, json: { error: 'not found' } };
+  }
+
+  if (method !== 'GET') return { json: { ok: true } };
+  return null;
+}

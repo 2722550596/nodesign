@@ -2102,12 +2102,12 @@ export default function BoardCanvas({
                 style={{
                   pointerEvents: 'auto',
                   cursor: draggingZone === z.id ? 'grabbing' : 'pointer',
-                  touchAction: 'none',
                   display: 'flex', alignItems: 'center', gap: GAP.md,
                   margin: GAP.md, height: ZONE.header - 16, padding: '0 14px',
                   borderRadius: RADIUS.xl, background: 'rgba(0,0,0,0.045)',
                   userSelect: 'none', touchAction: 'none',
                   transition: 'background 0.15s',
+                  // （曾经这里写了两遍 touchAction，后一个静默覆盖前一个）
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.075)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.045)'; }}
