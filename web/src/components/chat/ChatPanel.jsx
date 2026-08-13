@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, XCircle, SquarePen, History, PanelRightClose } from 'lucide-react';
+import { ChevronDown, XCircle, SquarePen, History, PanelRightClose, Pin, PinOff } from 'lucide-react';
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ContextMeter from './ContextMeter.jsx';
@@ -39,7 +39,9 @@ export default function ChatPanel({
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
   onNewChat,                 // 开新对话（原画布工具槽的"新任务"，本质是对话通道操作）
-  onCollapse,                // 把整条对话栏收成右缘一条窄轨（ChatDock 递进来）
+  onCollapse,                // 收起悬浮卡（ChatDock 递进来；贴屏缘唤回）
+  pinned = false,            // 悬浮卡固定态（固定 = 不自动收）
+  onTogglePin,               // 切换固定（ChatDock 递进来，记 localStorage）
   hasActiveSession = false,  // 有 currentSessionId 才显示"结束会话"入口
   projectId,                   // Phase B 批次 2：rewindFiles 走 /api/projects/:pid/sessions/:sid/rewind
   sessionId,
@@ -179,13 +181,34 @@ export default function ChatPanel({
           </button>
         )}
 
-        {/* 收起整条对话栏（2026-08-08）。放在这排而不是让 ChatDock 自己画一条
-            标题栏 —— 那样一个面板上会有两条 header。"收起"是一个会话级动作，
-            它属于这里。 */}
+        {/* 图钉（2026-08-13 悬浮卡）：固定 = 不自动收；取消固定 = 鼠标离卡
+            300ms 自动收、贴屏缘唤回。状态记 localStorage，卡顶那枚装饰钉纽扣
+            跟着它出现/消失。 */}
+        {onTogglePin && (
+          <button
+            onClick={onTogglePin}
+            title={pinned ? '取消固定（鼠标离开后自动收起，贴屏幕左右边缘唤回）' : '固定（一直开着，不自动收起）'}
+            style={{
+              display: 'inline-flex', alignItems: 'center',
+              padding: `${GAP.xs}px ${GAP.xs}px`,
+              color: pinned ? COLOR.text2 : COLOR.sub,
+              background: 'transparent', border: 'none',
+              borderRadius: RADIUS.sm, cursor: 'pointer',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = CHROME.hover; e.currentTarget.style.color = COLOR.text2; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = pinned ? COLOR.text2 : COLOR.sub; }}
+          >
+            {pinned ? <Pin size={13} strokeWidth={1.75} /> : <PinOff size={13} strokeWidth={1.75} />}
+          </button>
+        )}
+
+        {/* 收起悬浮卡。放在这排而不是让 ChatDock 自己画一条标题栏 ——
+            那样一个面板上会有两条 header。"收起"是一个会话级动作，它属于这里。 */}
         {onCollapse && (
           <button
             onClick={onCollapse}
-            title="收起对话栏（点右缘那条窄轨叫回来）"
+            title="收起（鼠标贴屏幕左右边缘唤回）"
             style={{
               display: 'inline-flex', alignItems: 'center',
               padding: `${GAP.xs}px ${GAP.xs}px`,

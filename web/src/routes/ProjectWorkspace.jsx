@@ -2041,13 +2041,15 @@ export default function ProjectWorkspace() {
           />
         </FloatingPanel>
 
-        {/* 对话栏 —— 钉在右缘，不再是可以拖走的浮窗（2026-08-08）。
-            放在 canvas section **之外**、视口容器之内：它跟画布内容不共用
-            坐标系，画布怎么滚它都待在屏幕原处（这就是「跟随镜头」）。 */}
+        {/* 对话 —— 悬浮 AI 卡（2026-08-13）：关着零遮挡，鼠标贴屏缘唤出，
+            图钉固定。放在 canvas section **之外**、视口容器之内：它跟画布
+            内容不共用坐标系，画布怎么滚它都待在屏幕原处（这就是「跟随镜头」）。 */}
         <ChatDock title={currentSessionTitle || '对话'}>
-          {({ collapse }) => (
+          {({ collapse, pinned, onTogglePin }) => (
           <ChatPanel
             onCollapse={collapse}
+            pinned={pinned}
+            onTogglePin={onTogglePin}
             messages={messages}
             onSend={handleSend}
             isStreaming={isStreaming}

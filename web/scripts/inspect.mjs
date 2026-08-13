@@ -77,6 +77,16 @@ page.on('console', m => {
   errors.push(`console: ${t.slice(0, 400)}`);
 });
 
+// 预置 localStorage：`--localstorage='key={"json":true}'`（第一个 = 号分界）。
+// 验"记住的偏好"这类分支（悬浮卡固定态、面板宽度）——不预置的话每次都是
+// 全新浏览器，永远只走默认值那条路。
+const LS = opt('localstorage', null);
+if (LS) {
+  const i = LS.indexOf('=');
+  const k = LS.slice(0, i); const v = LS.slice(i + 1);
+  await page.addInitScript(([key, val]) => localStorage.setItem(key, val), [k, v]);
+}
+
 await page.route('**/api/**', async (r) => {
   const u = new URL(r.request().url());
   const method = r.request().method();
@@ -232,12 +242,15 @@ if (CLICK_TEXT) {
   else errors.push(`--click-text 没找到按钮: ${CLICK_TEXT}`);
 }
 
-for (const [flag, how] of [['click', 'click'], ['dblclick', 'dblclick']]) {
-  const sel = opt(flag, null);
-  if (!sel) continue;
-  const el = await page.$(sel);
-  if (!el) { errors.push(`--${flag} 没找到元素: ${sel}`); continue; }
-  await el[how]();
+// 可以传多个 --click / --dblclick，**按命令行顺序逐个执行** ——
+// 以前走 opt() 只认第一个，第二个静默不跑：测试脚本以为点了两下，
+// 其实第二下从没发生，测出来的是别的东西（真踩过）。
+for (const a of args) {
+  const m = a.match(/^--(click|dblclick)=(.+)$/);
+  if (!m) continue;
+  const el = await page.$(m[2]);
+  if (!el) { errors.push(`--${m[1]} 没找到元素: ${m[2]}`); continue; }
+  await el[m[1]]();
   await page.waitForTimeout(700);
 }
 
@@ -248,6 +261,18 @@ if (TYPE) {
   await page.keyboard.type(TYPE, { delay: 20 });
   await page.keyboard.press('Enter');
   await page.waitForTimeout(900);
+}
+
+// 事后移动：`--move=x,y[;x,y…]`（分号分航点，每站步进真移动 + 停 700ms）。
+// 放在所有点击之后 —— 验"鼠标离开后自动收起""贴屏缘唤出"这类位置驱动的
+// 时序，点完按钮鼠标停在原地是测不出来的。
+const MOVE = opt('move', null);
+if (MOVE) {
+  for (const wp of MOVE.split(';')) {
+    const [mx, my] = wp.split(',').map(Number);
+    await page.mouse.move(mx, my, { steps: 10 });
+    await page.waitForTimeout(700);
+  }
 }
 
 let probe = null;
