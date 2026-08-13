@@ -1,0 +1,106 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import ArtifactCard, { ARTIFACT_FACES } from './ArtifactCard.jsx';
+import { ARTIFACT_CARD } from '../../../lib/board-kinds.js';
+
+/**
+ * 统一方卡的渲染冒烟 + 三张脸的信息量不丢。
+ *
+ * ## 为什么这个测试值得存在
+ *
+ * 这张卡替掉了 BoardCanvas 里六个分支约 180 行。收成一套的风险不在"能不能
+ * 渲染"，在**把各形态的信息量弄丢** —— 站点要显示页数、世界要显示地点/角色
+ * 计数、deck 要显示时间。丢了不会报错，只会在画布上变成三张一模一样的卡。
+ *
+ * 另一半是渲染冒烟本身：这个目录下的组件因为 TDZ 白屏栽过四次，而
+ * `vite build` 和纯函数单测都照不出来。这里真的挂一次 React 树。
+ *
+ * happy-dom 没有 IntersectionObserver，所以缩略图走"还没进视口"那条分支 ——
+ * 正好是我们要的：**断言的是骨架和文案，不是 iframe 里加载了什么**。
+ */
+
+let host;
+let root;
+
+beforeEach(() => {
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  root = createRoot(host);
+});
+
+afterEach(() => {
+  act(() => root.unmount());
+  host.remove();
+});
+
+const render = (o) => {
+  act(() => root.render(
+    <ArtifactCard o={o} projectId="p1" fileVersions={{}} scale={1} />,
+  ));
+  return host.textContent;
+};
+
+const DECK = { id: 'deck:稿件/主稿.html', type: 'deck', title: '主稿', deckFile: '稿件/主稿.html', mtime: '2026-08-13T06:04:00.000Z' };
+const SITE = { id: 'site:研究站', type: 'site', title: '研究站', base: '研究站', entry: 'index.html', pages: ['index.html', 'about.html', 'posts/a.html'] };
+const WORLD = {
+  id: 'world:雾都', type: 'world', title: '雾都', base: '雾都',
+  nodes: [
+    { type: 'place', name: '旧钟酒馆' }, { type: 'place', name: '码头' },
+    { type: 'character', name: '维克多' }, { type: 'container', name: '收纳' },
+  ],
+};
+
+describe('ArtifactCard 渲染冒烟', () => {
+  it('三种产物都挂得起来，且各自的标题在卡上', () => {
+    expect(render(DECK)).toContain('主稿');
+    expect(render(SITE)).toContain('研究站');
+    expect(render(WORLD)).toContain('雾都');
+  });
+
+  it('不认识的 type 什么都不画（而不是抛错）', () => {
+    act(() => root.render(<ArtifactCard o={{ id: 'x', type: 'image' }} projectId="p1" fileVersions={{}} />));
+    expect(host.textContent).toBe('');
+  });
+
+  it('卡片高度是形态表里那个恒定值（布局按矩形排布，不能是 auto）', () => {
+    render(DECK);
+    expect(host.firstChild.style.height).toBe(`${ARTIFACT_CARD.h}px`);
+  });
+});
+
+describe('三张脸的信息量一个都不能丢', () => {
+  it('站点说得出页数；单页说得出它是单页', () => {
+    expect(ARTIFACT_FACES.site.summary(SITE)).toBe('站点 · 3 个页面');
+    expect(ARTIFACT_FACES.site.summary({ single: true })).toBe('单页');
+    // 页数缺失时退回 1，不显示 "undefined 个页面"
+    expect(ARTIFACT_FACES.site.summary({})).toBe('站点 · 1 个页面');
+  });
+
+  /**
+   * ⚠️ 计数口径必须跟服务端 `describe()` 一致：**容器不算地点**（它是收纳态，
+   * 设计上明确不是地点）。两处对不上会像 bug —— 用户在窗里看到 2 个地点，
+   * 卡片上写 3 个。
+   */
+  it('世界的地点/角色计数不把容器算进地点', () => {
+    expect(ARTIFACT_FACES.world.summary(WORLD)).toBe('世界 · 2 地点 / 1 角色');
+    expect(ARTIFACT_FACES.world.summary({ nodes: [] })).toBe('世界 · 地图还是空的');
+    expect(ARTIFACT_FACES.world.summary({})).toBe('世界 · 地图还是空的');
+  });
+
+  it('deck 说得出改动时间', () => {
+    expect(ARTIFACT_FACES.deck.summary(DECK)).toMatch(/^幻灯 · \d+\/\d+ \d{2}:\d{2}$/);
+    // 没有 mtime 时不留一条尾巴（"幻灯 · "）
+    expect(ARTIFACT_FACES.deck.summary({})).toBe('幻灯');
+  });
+
+  /**
+   * 站点和世界在 2026-08-13 之前都用 `Globe` —— 桌面上一眼分不出这张卡是
+   * 站点还是世界。收成一套之后图标是仅剩的形态标识，撞了就等于没有。
+   */
+  it('三种形态的图标互不相同', () => {
+    const icons = Object.values(ARTIFACT_FACES).map(f => f.icon);
+    expect(new Set(icons).size).toBe(icons.length);
+  });
+});

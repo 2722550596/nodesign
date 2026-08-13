@@ -46,7 +46,11 @@ export const ARTIFACT_FACES = {
   deck: {
     icon: Presentation,
     tip: '双击打开这份幻灯',
-    summary: (o) => `幻灯 · ${formatClock(o.mtime)}`,
+    // 没有 mtime 时别留一条尾巴（"幻灯 · "）—— 卡片上那种半截标点很显眼
+    summary: (o) => {
+      const t = formatClock(o.mtime);
+      return t ? `幻灯 · ${t}` : '幻灯';
+    },
     /** deck 是 16:9 的设计稿，按 1920 宽等比缩，上下留边（不裁） */
     Preview: ({ o, projectId, fileVersions, box }) => {
       const scale = box.w / 1920;
