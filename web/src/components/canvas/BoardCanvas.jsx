@@ -22,6 +22,7 @@ import {
   chromeOf, cardOf,
 } from '../../lib/board-kinds.js';
 import ArtifactCard from './cards/ArtifactCard.jsx';
+import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion, ROAM_MARGIN } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget } from '../../lib/board-presence.js';
@@ -1818,6 +1819,24 @@ export default function BoardCanvas({
     return { ringObjects: objs, ringZones: zs };
   }, [stageCards, positioned, focusZone]);
 
+  /**
+   * 小地图要画的东西：一件一个小方块（世界坐标）。
+   *
+   * 拿的是**可见**的那批，不是全部 —— 小地图该跟画布所见一致，画上一堆
+   * 当前看不到的东西只会让人对不上号。
+   */
+  const minimapItems = useMemo(() => {
+    const out = visibleZones.map(z => ({
+      id: `z:${z.id}`, x: z.x, y: z.y,
+      w: z.w, h: z.collapsed ? FOLDER_CARD_H : z.h, folder: true,
+    }));
+    for (const o of visibleObjects) {
+      const sz = sizeOf(o);
+      out.push({ id: o.id, x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h, folder: false });
+    }
+    return out;
+  }, [visibleZones, visibleObjects]);
+
   // ── 外层工具栏桥（工具栏合并：控件画在 CanvasToolbar，操作从这里走）──
   useEffect(() => {
     if (!apiRef) return;
@@ -2199,6 +2218,18 @@ export default function BoardCanvas({
             placeholder="这里想说什么…（⌘/Ctrl+Enter 贴上）"
             onCommit={commitComment}
             onCancel={() => setCommentDraft(null)}
+          />
+        )}
+
+        {/* 小地图（屏幕空间，左下角）。总览从"一种视图"变成"一个导航控件"之后
+            全貌靠它看 —— 干活始终在当前这一层。窗开着时跟工具栏一起收掉。 */}
+        {!deckOpen && (
+          <Minimap
+            bounds={camera.bounds}
+            cam={cam}
+            viewport={camera.viewport}
+            items={minimapItems}
+            onJump={(pt) => camera.flyToPoint(pt)}
           />
         )}
 
