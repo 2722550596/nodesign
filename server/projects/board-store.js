@@ -518,37 +518,51 @@ export function pinToZone(pid, { objectId, zoneId = '' }) {
     const oid = forwardId(pid, objectId, now);
     const zid = zoneId ? forwardId(pid, zoneId, now) : '';
 
-    const zone = (zid && board.zones[zid]) ? board.zones[zid] : null;
-    // 没有落脚文件夹就用整张桌面当画幅（HEADER=0：桌面没有标题栏）
-    const area = zone
-      ? { x: zone.x, y: zone.y, w: zone.w, h: zone.h, header: 40 }
-      : { x: 0, y: 0, w: board.size.w, h: board.size.h, header: 0 };
+    /**
+     * 找一个空位。
+     *
+     * ⚠️ 2026-08-13 重写。原来这里按「区矩形 1120×640 + 40px 标题栏 + 244×210
+     * 网格」算槽位 —— 那是「文件夹是版面上摊开的一块地」时代的几何，画布上
+     * 早就没有这些东西了（区内坐标系随刀 3 整段退役）。算出来的位置跟前端的
+     * 排布不在一个坐标语言里。
+     *
+     * 现在跟前端对齐成同一件事：**一层就是一片桌面，卡按格子铺**。服务端不知道
+     * 每张卡多大（那是前端形态表的事），所以取一个够大的格子（最宽的卡 640 ×
+     * 一行的常见高度 220）做保守估算 —— 宁可空一点，也不要压在别人身上。
+     *
+     * 只跟**同一层**的东西比位置：别的文件夹里的卡不在这块桌面上。
+     */
+    const CELL_W = 320; const CELL_H = 220; const PAD = 10;
+    const dirOf = (id) => {
+      if (typeof id !== 'string' || id.startsWith('doc:')) return '';
+      const c = id.indexOf(':');
+      const path = (c > 0 && /^[a-z]+$/.test(id.slice(0, c))) ? id.slice(c + 1) : id;
+      const i = path.lastIndexOf('/');
+      return i > 0 ? path.slice(0, i) : '';
+    };
+    const sameLayer = Object.entries(board.objects)
+      .filter(([id]) => id !== oid && dirOf(id) === zid)
+      .map(([, o]) => o);
 
-    const CELL_W = 244; const CELL_H = 210; const PAD = 16;
-    const members = Object.values(board.objects).filter(o =>
-      o.x >= area.x && o.x < area.x + area.w && o.y >= area.y && o.y < area.y + area.h);
-    const cols = Math.max(1, Math.floor((area.w - PAD * 2) / CELL_W));
+    const cols = 4;
     let slot = null;
-    for (let i = 0; i < 200 && !slot; i++) {
-      const cx = area.x + PAD + (i % cols) * CELL_W;
-      const cy = area.y + area.header + PAD + Math.floor(i / cols) * CELL_H;
-      if (!members.some(m => Math.abs(m.x - cx) < CELL_W / 2 && Math.abs(m.y - cy) < CELL_H / 2)) {
-        slot = { x: cx, y: cy };
-      }
+    for (let i = 0; i < 200 && !slot; i += 1) {
+      const x = PAD + (i % cols) * CELL_W;
+      const y = PAD + Math.floor(i / cols) * CELL_H;
+      const taken = sameLayer.some(o => Math.abs((o.x || 0) - x) < CELL_W / 2
+        && Math.abs((o.y || 0) - y) < CELL_H / 2);
+      if (!taken) slot = { x, y };
     }
-    if (!slot) slot = { x: area.x + PAD, y: area.y + area.header + PAD };
-    // 槽位落到文件夹框外（满了）就把它向下撑高
-    if (zone && slot.y + CELL_H > zone.y + zone.h) {
-      zone.h = Math.min(board.size.h - zone.y, slot.y + CELL_H - zone.y);
-    }
+    if (!slot) slot = { x: PAD, y: PAD };
+
     const zMax = Math.max(10, ...Object.values(board.objects).map(o => o.z || 0));
     board.objects[oid] = {
       ...(board.objects[oid] || {}),
-      x: clampNum(slot.x, 0, board.size.w, area.x),
-      y: clampNum(slot.y, 0, board.size.h, area.y),
+      x: clampNum(slot.x, 0, board.size.w, PAD),
+      y: clampNum(slot.y, 0, board.size.h, PAD),
       z: zMax + 1,
     };
     await writeBoard(pid, board);
-    return { board, zone: zone ? { id: zid, ...zone } : null, placed: board.objects[oid] };
+    return { board, zone: zid ? { id: zid } : null, placed: board.objects[oid] };
   });
 }
