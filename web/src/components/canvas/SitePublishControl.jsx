@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Rocket, ExternalLink, Copy, RefreshCw, CloudOff, Loader2 } from 'lucide-react';
 import { GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { INK_SURFACE } from '../../lib/paper.js';
+import ToolbarButton, { TOOL_BTN, toolPillStyle } from '../ui/ToolbarButton.jsx';
 import { Publish } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -123,38 +124,20 @@ export default function SitePublishControl({ projectId, task }) {
         </span>
         <ExternalLink size={10} style={{ flexShrink: 0 }} />
       </a>
-      <MiniBtn title="复制地址" onClick={copyUrl}><Copy size={11} /></MiniBtn>
-      <MiniBtn title="把当前版本重新发布（地址不变）" onClick={doPublish}><RefreshCw size={11} /></MiniBtn>
+      <ToolbarButton title="复制地址" icon={Copy} onClick={copyUrl} />
+      <ToolbarButton title="把当前版本重新发布（地址不变）" icon={RefreshCw} onClick={doPublish} />
       {confirm === 'unpublish' ? (
         <button onClick={doUnpublish} style={{ ...pill, background: '#C0504A', color: INK_SURFACE.text, border: 0, cursor: 'pointer' }}>
           确认下线？
         </button>
       ) : (
-        <MiniBtn title="下线（公网地址失效）" danger onClick={() => arm('unpublish')}><CloudOff size={11} /></MiniBtn>
+        <ToolbarButton title="下线（公网地址失效）" icon={CloudOff} danger onClick={() => arm('unpublish')} />
       )}
     </span>
   );
 }
 
-const pill = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  padding: '3px 9px', borderRadius: RADIUS.pill,
-  fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-};
+// 身位和配色全部来自 ui/ToolbarButton.jsx —— 这里一个尺寸都不自己定
+const pill = toolPillStyle;
 
-function MiniBtn({ children, title, onClick, danger }) {
-  return (
-    <button
-      title={title}
-      onClick={onClick}
-      style={{
-        width: 22, height: 22, borderRadius: RADIUS.md,
-        background: 'transparent', border: 0, cursor: 'pointer',
-        color: danger ? '#E08A82' : INK_SURFACE.text,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = INK_SURFACE.hover; }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-    >{children}</button>
-  );
-}
+// MiniBtn 退役：纯图标按钮就是 ToolbarButton 不给 label 的那一形态

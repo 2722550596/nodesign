@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { INK_SURFACE } from '../../lib/paper.js';
+import ToolbarButton from './ToolbarButton.jsx';
 import { FONT_SANS, FONT_SIZE, GAP } from '../../lib/theme.js';
 import { usePanelState } from '../layout/PanelManager.jsx';
 
@@ -379,60 +380,21 @@ function ToolGroup({ group }) {
       boxShadow: INK_SURFACE.shadow,
     }}>
       {group.items.map(it => (
-        <ToolButton
+        <ToolbarButton
           key={it.id}
-          item={it}
+          dataId={it.id}
+          btnRef={it.btnRef}
+          icon={it.icon}
+          label={it.label}
+          title={it.title}
+          disabled={it.disabled}
           boxed={boxed}
           // 模式组的选中由组的 value 定；动作组里也有"亮着"的（Tweaks 面板开着、
           // 缩放正处于自适应），那种自己报 active
           active={isMode ? group.value === it.id : !!it.active}
-          onPick={() => (isMode ? group.onChange?.(it.id) : it.onClick?.())}
+          onClick={() => (isMode ? group.onChange?.(it.id) : it.onClick?.())}
         />
       ))}
     </div>
-  );
-}
-
-function ToolButton({ item, boxed, active, onPick }) {
-  const [hover, setHover] = useState(false);
-  const Icon = item.icon;
-  const disabled = !!item.disabled;
-
-  const bg = active ? INK_SURFACE.active
-    : (hover && !disabled) ? INK_SURFACE.hover
-    : 'transparent';
-  const fg = active ? INK_SURFACE.activeText
-    : disabled ? INK_SURFACE.textDim
-    : INK_SURFACE.text;
-
-  return (
-    <button
-      ref={item.btnRef}
-      data-tool-btn={item.id}
-      title={item.title || item.label || item.id}
-      disabled={disabled}
-      onClick={(e) => { e.stopPropagation(); if (!disabled) onPick(); }}
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-        // 纯图标的做成正圆（参考图里当前工具是个实心圆），带字的做成胶囊
-        width: item.label ? 'auto' : 30,
-        height: 30,
-        padding: item.label ? `0 ${GAP.sm}px` : 0,
-        justifyContent: 'center',
-        background: bg,
-        border: boxed && item.label ? `1px solid ${active ? 'transparent' : INK_SURFACE.hair}` : 'none',
-        borderRadius: item.label ? 9 : 999,
-        color: fg,
-        fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        transition: 'background 0.14s, color 0.14s, border-color 0.14s',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {Icon && <Icon size={14} />}
-      {item.label && <span>{item.label}</span>}
-    </button>
   );
 }
