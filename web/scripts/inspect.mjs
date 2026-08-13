@@ -74,7 +74,9 @@ page.on('console', m => {
   // 兜底，真后端的 WS 问题这条通道本来就测不到）。别让它污染「errors 必须
   // 为空」这条判据 —— 判据一旦常态性带噪，就没人再看它了。
   if (/WebSocket/i.test(t)) return;
-  errors.push(`console: ${t.slice(0, 400)}`);
+  // 截断放宽到 1200：React 的「Maximum update depth exceeded」把组件栈
+  // 接在正文后面，400 字符正好把最有用的那截切掉
+  errors.push(`console: ${t.slice(0, 1200)}`);
 });
 
 // 预置 localStorage：`--localstorage='key={"json":true}'`（第一个 = 号分界）。
@@ -115,10 +117,6 @@ await page.waitForTimeout(WAIT);
 
 // 交互：--click / --dblclick 传选择器，发**真事件**（画布很多手势是自己数
 // pointerup 的，合成事件糊弄不过去）
-
-// 按一个键（其它交互之前）：切工具快捷键（V/T/P/C/H）这类
-const PRESS = opt('press', null);
-if (PRESS) { await page.keyboard.press(PRESS); await page.waitForTimeout(300); }
 
 // 滚轮：`--wheel=dx,dy`（其它交互之前，视口中心）。画布的滚轮=平移、
 // Ctrl+滚轮=缩放 —— 验"全向无限"就得能把镜头真的推出内容圈。
@@ -217,7 +215,8 @@ const doDrag = async (DRAG) => {
 /**
  * 点击族：`--click=<sel>` `--dblclick=<sel>` `--click-at=x,y` `--dblclick-at=x,y`
  * `--click-text=<文字>`（菜单项这种没有稳定选择器的）、`--rightclick[-at]=`、
- * `--drag=<sel|@x,y>|dx,dy`、`--keys=<文本>`（往聚焦的输入框打字，不回车）。
+ * `--drag=<sel|@x,y>|dx,dy`、`--keys=<文本>`（往聚焦的输入框打字，不回车）、
+ * `--press=<键>`（换工具的单键、Escape 这类）。
  *
  * 全部走**同一个按命令行顺序的循环**，写的顺序就是点的顺序
  * （`--dblclick=文件夹 --rightclick=里面那个 --click-text=移动到…`）。
@@ -260,6 +259,8 @@ for (const a of args) {
     } else errors.push(`--click-text 没找到按钮: ${txt[1]}`);
     continue;
   }
+  const prs = a.match(/^--press=(.+)$/);
+  if (prs) { await page.keyboard.press(prs[1]); await page.waitForTimeout(400); continue; }
   const kys = a.match(/^--keys=(.+)$/);
   if (kys) { await page.keyboard.type(kys[1], { delay: 15 }); await page.waitForTimeout(200); continue; }
   const dg = a.match(/^--drag=(.+)$/);

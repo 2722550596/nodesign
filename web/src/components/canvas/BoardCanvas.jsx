@@ -20,7 +20,7 @@ import {
   chromeOf, cardOf, labelOf,
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
-import FolderFace from './cards/FolderFace.jsx';
+import FolderCard from './cards/FolderCard.jsx';
 import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
@@ -36,6 +36,7 @@ import PresenceLayer from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
 import MoveToPopover from './MoveToPopover.jsx';
+import FolderWindow, { parentDir } from './FolderWindow.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 import { useBoardData } from './useBoardData.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -96,6 +97,11 @@ export default function BoardCanvas({
   apiRef, onUiState,
   /** 把画布的工具组交给外层那条常驻工具栏（2026-08-13 范式改造） */
   onToolbarGroups,
+  /**
+   * 窗的工具组走**另一条线**（CanvasFrame 里 board / win 是两个槽）。
+   * 混用一条的话，文件夹窗一开就把画布自己的工具组顶掉，关窗也回不来。
+   */
+  onWindowToolbarGroups,
   // 舞台层（2026-07-28）：ProjectWorkspace 把 run.* 事件经这个 ref 转发进来，
   // 画布把 agent 的实时动作演出来（代码直播 / 终端 / shimmer / chip / 角标）
   stageRef,
@@ -123,7 +129,7 @@ export default function BoardCanvas({
   const scrollRef = useRef(null);          // 纵向滚动容器（桌面的"视口"）
 
   // 数据层（加载 / 持有 / 落盘）—— 2026-08-13 拆进 useBoardData.js（刀 4 续）。
-  // 派生（objects/folderView）留在本组件：它跟 cwd、拖拽、影子区缠在一起。
+  // 派生（objects/folderView）留在本组件：它跟拖拽、影子区缠在一起。
   const {
     artifacts, tasks, folders, sessions, memoryDocs,
     layout, setLayout, zones, setZones, bindings, setBindings,
@@ -136,18 +142,20 @@ export default function BoardCanvas({
   // 舞台卡当场就有地方贴；真任务出现后 zone 派生 effect 接管、影子退场。
   const [ghostZones, setGhostZones] = useState({});
   /**
-   * 当前目录（2026-08-13）。`''` = 桌面根，`'鉴赏页/初稿'` = 进到那一层。
+   * 打开着的文件夹窗（`null` = 没开）。
    *
-   * ⚠️ 它替掉的是一对状态：`viewMode`（整理 / 工作两种模式）+ `focusZoneId`
-   * （聚焦哪块区）。那套的语义是"把某一块地摊开来看"，而现在文件夹是方卡、
-   * 进文件夹是**换一层桌面** —— 只剩一个状态：你在哪一层。
+   * ⚠️ 它替掉的是 `cwd`「当前目录」—— 那套的语义是**整块桌面换成某一层**，
+   * 两代之前还是 `viewMode` + `focusZoneId`（整理/工作双视图）。用户
+   * 2026-08-13 拍板改成"双击文件夹用统一那扇窗打开"：桌面永远是根，进哪一层
+   * 是**窗**的事。于是"我在第几层"这个状态从画布身上挪到了窗身上，画布本身
+   * 回到只有一层，简单了一大截（顺带删掉了 enterZone / exitToProject /
+   * 换层就 zoomToFit / ESC 退层这一整串）。
    *
-   * 看全貌不再靠切模式，靠小地图（用户 2026-08-13 拍板：总览不是一种视图，
-   * 是一个导航控件）。
+   * 顶栏面包屑照旧读它（uiState.cwd）—— 那条面包屑现在导航的是窗。
    */
-  const [cwd, setCwd] = useState('');
-  const cwdRef = useRef('');
-  cwdRef.current = cwd;
+  const [winDir, setWinDir] = useState(null);
+  const winDirRef = useRef(null);
+  winDirRef.current = winDir;
   /**
    * 正在搬家的 id。
    *
@@ -221,9 +229,8 @@ export default function BoardCanvas({
   const toolRef = useRef('select');
   toolRef.current = tool;
   const positionedRef = useRef([]);
-  const focusZoneRef = useRef(null);
+  const objectsRef = useRef([]);
   const primaryOpenRef = useRef(null);  // "双击打开"的引用（preview_deck 工具复用）
-  const exitToProjectRef = useRef(null);   // 退出任务（ESC / 面包屑 / 标题栏共用）
   const pendingPreviewRef = useRef(null);  // preview 目标还没上墙 → 等它出现
   const [addedPaths, setAddedPaths] = useState(() => new Set());
   const [detail, setDetail] = useState(null);       // 图片详情
@@ -496,16 +503,16 @@ export default function BoardCanvas({
    *
    * 落盘之后这一趟只在"真有新东西"时跑，布局对交互免疫。
    */
-  const { positioned, folderView, contentBottom, seatFixes } = useMemo(() => {
+  /**
+   * 目录索引：哪一层装了哪些文件夹、哪些物件。
+   *
+   * **桌面和文件夹窗共用这一份**（2026-08-13）。两个地方各写一套"这一层装了
+   * 什么"的判据，迟早对不上 —— 而这套判据一点都不平凡：归属要沿着祖先往上找
+   * 第一个真文件夹（`notes/` `assets/` 是基础设施目录，不是用户的层），
+   * 显式 `zone` 字段还要优先。抄一遍就是抄一个必然漂移的东西。
+   */
+  const dirIndex = useMemo(() => {
     const parentOf = (p) => { const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
-    // id 剥掉 kind 前缀就是它在磁盘上的位置；上级目录就是它住在哪一层。
-    // 判据跟 stage.js 的 zoneOfObjectId、服务端 board-store 的 mapId 是同一套。
-    const dirOfId = (id) => {
-      if (typeof id !== 'string' || id.startsWith('doc:')) return '';
-      const c = id.indexOf(':');
-      const path = (c > 0 && /^[a-z]+$/.test(id.slice(0, c))) ? id.slice(c + 1) : id;
-      return parentOf(path);
-    };
     /**
      * 它住在哪一层。
      *
@@ -535,57 +542,87 @@ export default function BoardCanvas({
       return homeOf(path);
     };
 
-    // ── 这一层有哪些文件夹（直接子级）+ 每个装了多少东西 ──
-    const allFolders = Object.keys(zonesEff);
-    const here = allFolders.filter(id => parentOf(id) === cwd);
+    const byDir = new Map();          // 目录 → 这一层的物件
+    for (const o of objects) {
+      const d = dirOf(o);
+      if (!byDir.has(d)) byDir.set(d, []);
+      byDir.get(d).push(o);
+    }
+    const subsOf = new Map();         // 目录 → 直接子文件夹
+    for (const zid of Object.keys(zonesEff)) {
+      const p = parentOf(zid);
+      if (!subsOf.has(p)) subsOf.set(p, []);
+      subsOf.get(p).push(zid);
+    }
     /**
-     * 里面装了什么。**只看直接子级**（跟"进去看到的那一层"一致）。
+     * 里面装了什么。**只看直接子级**（跟"打开它看到的那一层"一致）。
      *
-     * 2026-08-13（同日二改）：条目带上完整物件引用 `o` —— 文件夹卡面从名字
-     * 清单升级成真缩略（用户要"看一眼知道装了什么"，卡也加大到 288 宽）。
-     * 数据当场就有（`objects` 是全目录树的完整清单，过滤在 positioned 那一步
-     * 才发生），一个额外请求都不用发。iframe 的账在 FolderFace 里算：
-     * 视口门 + 缩放门 + 每卡上限，见那边的说明。
+     * 条目带完整物件引用 `o` —— 文件夹卡面是真缩略（用户要"看一眼知道装了
+     * 什么"）。数据当场就有，一个额外请求都不用发；iframe 的账在 FolderFace
+     * 里算：视口门 + 缩放门 + 每卡上限。
      */
     const peekIn = (dir) => {
-      const subs = allFolders.filter(id => parentOf(id) === dir)
+      const subs = (subsOf.get(dir) || [])
         .map(id => ({ kind: 'folder', title: id.split('/').pop(), o: null }));
-      const files = objects.filter(o => dirOf(o) === dir)
+      const files = (byDir.get(dir) || [])
         .map(o => ({ kind: o.type, title: o.title || o.name || String(o.id).split('/').pop(), o }));
       const all = [...subs, ...files];
       return { count: all.length, peek: all.slice(0, 4) };
     };
+    return { dirOf, byDir, subsOf, peekIn };
+  }, [objects, zonesEff, layout]);
 
-    const folders = here.map(id => {
+  /**
+   * 一张文件夹卡的完整描述（名字 + 装了什么）。位置由调用方给：桌面读
+   * board.json 的坐标，文件夹窗按网格算。
+   */
+  const folderCardOf = useCallback((id, pos) => ({
+    id,
+    kind: 'folder',
+    x: pos?.x ?? 0,
+    y: pos?.y ?? 0,
+    w: FOLDER_CARD.w,
+    h: FOLDER_CARD.h,
+    /**
+     * 名字**从路径读**，不读存档里的 `title`。
+     *
+     * id 就是路径，路径的最后一段就是名字 —— 再存一份 title 就是第二个真相源，
+     * 改名之后它立刻过期（实测：`鉴赏页` 改成 `作品集`，zones 行的 title 还写着
+     * 「鉴赏页」）。服务端 tasks 给的标题优先，那是它对形态的命名，不是位置的
+     * 复制品。
+     */
+    title: taskTitles.get(id) || id.split('/').pop() || '文件夹',
+    ...dirIndex.peekIn(id),
+  }), [dirIndex, taskTitles]);
+
+  /** 文件夹窗要的那一层清单（文件夹 + 物件，位置由窗自己排） */
+  const listDir = useCallback((dir) => ({
+    folders: (dirIndex.subsOf.get(dir) || []).sort().map(id => folderCardOf(id, null)),
+    items: [...(dirIndex.byDir.get(dir) || [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
+  }), [dirIndex, folderCardOf]);
+
+  const { positioned, folderView, contentBottom, seatFixes } = useMemo(() => {
+    // ── 桌面这一层（根目录）有哪些文件夹 ──
+    //
+    // 桌面**永远是根**（2026-08-13）。在这之前它是"当前目录"，双击文件夹整块
+    // 换层；现在双击开窗，桌面不动 —— 于是这里不再需要一个"我在第几层"的状态。
+    const folders = (dirIndex.subsOf.get('') || []).map((id) => {
       const z = zonesEff[id] || {};
-      return {
-        id, kind: 'folder',
+      return folderCardOf(id, {
         x: Number.isFinite(z.x) ? z.x : 0,
         y: Number.isFinite(z.y) ? z.y : 0,
-        w: FOLDER_CARD.w, h: FOLDER_CARD.h,
-        /**
-         * 名字**从路径读**，不读存档里的 `title`。
-         *
-         * id 就是路径，路径的最后一段就是名字 —— 再存一份 title 就是第二个
-         * 真相源，改名之后它立刻过期（实测：`鉴赏页` 改成 `作品集`，zones 行的
-         * title 还写着「鉴赏页」）。服务端 tasks 给的标题优先，那是它对形态的
-         * 命名，不是位置的复制品。
-         */
-        title: taskTitles.get(id) || id.split('/').pop() || '文件夹',
-        ...peekIn(id),
-      };
+      });
     });
 
-    // ── 这一层有哪些物件 ──
+    // ── 桌面上有哪些物件 ──
     const items = [];
     const fresh = [];
-    for (const o of objects) {
-      if (dirOf(o) !== cwd) continue;
+    for (const o of (dirIndex.byDir.get('') || [])) {
       const stored = layout[o.id];
       if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
-        items.push({ ...o, pos: stored, zoneId: cwd });
+        items.push({ ...o, pos: stored, zoneId: '' });
       } else {
-        const it = { ...o, pos: { x: 0, y: 0, z: 1 }, zoneId: cwd };
+        const it = { ...o, pos: { x: 0, y: 0, z: 1 }, zoneId: '' };
         items.push(it);
         fresh.push(it);
       }
@@ -624,9 +661,11 @@ export default function BoardCanvas({
       seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
     }
     return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes };
-  }, [objects, layout, zonesEff, taskTitles, cwd]);
+  }, [dirIndex, folderCardOf, layout, zonesEff]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
+  // 全目录树的物件（不止桌面这一层）—— 文件夹窗里的右键要按 id 找得到它们
+  objectsRef.current = objects;
 
 
   /**
@@ -689,7 +728,6 @@ export default function BoardCanvas({
   const draggingId = dragRef.current?.kind === 'object' ? dragRef.current.id : null;
   const visibleObjects = positioned;
   const visibleZones = folderView;
-  focusZoneRef.current = cwd;
 
   // ── 桌面高度 / 镜头裁切（2026-07-28：空白画幅自适应）──
   //
@@ -951,11 +989,10 @@ export default function BoardCanvas({
   const followToObject = useCallback((objectId) => {
     if (!followRef.current) return;
     if (Date.now() < userHoldUntilRef.current) return;
+    // 桌面上找不到 = 它在某个文件夹里（桌面只画根这一层）→ 不跟：镜头飞到
+    // 一个看不见的坐标上，用户只会看到画布莫名其妙滑走
     const o = positionedRef.current.find(it => it.id === objectId);
     if (!o) return;
-    // 工作视图里目标不在聚焦工作区 → 不跟（它根本不可见，卡会落 dock）
-    const fz = focusZoneRef.current;
-    if (fz && o.zoneId !== fz && o.id !== `deck:${fz}`) return;
     const sz = sizeOf(o);
     // 保持当前缩放，只把目标挪到视口中心 —— 跟随不该顺手改变用户的缩放，
     // 那会让"我正在看细节"突然被拉远。
@@ -963,17 +1000,21 @@ export default function BoardCanvas({
   }, []);
 
   /**
-   * 换了一层 → 把这一层框进视口（每层只飞一次，之后镜头归用户）。
+   * 开局框一次景，之后镜头永远归用户。
    *
-   * 以前这里是两条 effect：工作模式飞到聚焦区、整理模式 zoomToFit 全景。
-   * 只剩"当前目录"一个状态之后它们合成一条 —— 进哪层就框哪层的内容。
+   * 以前这条是"换一层就重新框"（cwd 变化时跑）。桌面只剩一层之后没有"换层"
+   * 这件事了，只剩挂载那一次。
+   *
+   * ⚠️ **不要改成"等内容到齐再框"**。试过，当场翻车：内容分两批到（文件夹一批、
+   * 产物一批），等第一批就框会把镜头对到只有产物的那块矩形上，文件夹卡全被顶到
+   * 视口上方看不见（检查通道量到 y=-118）。要么开局框（这时内容为空，等于不动
+   * 镜头 —— 也就是现在这样），要么老老实实等两批都到齐再框。
    */
   useEffect(() => {
-    const key = `cwd:${cwd}`;
-    if (fittedKeyRef.current === key) return;
-    fittedKeyRef.current = key;
+    if (fittedKeyRef.current === 'desktop') return;
+    fittedKeyRef.current = 'desktop';
     camApiRef.current?.zoomToFit({ force: true });
-  }, [cwd, folderView]);
+  }, [folderView]);
 
   // ⚠️ 这里曾有「切 session 就切视图」：有会话进工作模式聚焦它的区、回 /work
   // 回项目区。会话与产物 08-08 解绑、双视图 08-13 退役之后，切对话不该动你
@@ -1329,11 +1370,17 @@ export default function BoardCanvas({
    */
   const moveManyTo = useCallback(async (ids, toDir) => {
     for (const id of ids) {
-      const obj = positionedRef.current.find(o => o.id === id);
-      if (obj) {
-        const pos = layoutRef.current[id] || obj.pos;
+      /**
+       * ⚠️ 找物件要**两处都找**：`positioned` 只有桌面这一层，而「移动到…」
+       * 在文件夹窗里也能点 —— 窗里那些东西住在别的层。只查 positioned 的话，
+       * 窗里选了目标什么都不会发生，连个报错都没有（2026-08-13 真跑抓到）。
+       */
+      const raw = positionedRef.current.find(o => o.id === id)
+        || objectsRef.current.find(o => o.id === id);
+      if (raw) {
+        const pos = layoutRef.current[id] || raw.pos || { x: 0, y: 0 };
         // eslint-disable-next-line no-await-in-loop
-        await moveEntry(obj, toDir, { x: pos.x, y: pos.y });
+        await moveEntry({ ...raw, pos }, toDir, { x: pos.x, y: pos.y });
         continue;
       }
       // eslint-disable-next-line no-await-in-loop
@@ -1492,14 +1539,14 @@ export default function BoardCanvas({
         setProjectPanel(null); setViewer(null); setDetail(null);
         return;
       }
-      // 有选中先取消选中（比"退层"近一级的撤销）
-      if (selectedIdRef.current) { setSelectedId(null); return; }
-      if (!cwd) return;                       // 已经在根上，ESC 没有更上一层可退
-      exitToProjectRef.current?.();
+      // 有选中先取消选中（比"关窗"近一级的撤销）
+      if (selectedIdsRef.current.length) { setSelectedIds([]); return; }
+      // ⚠️ 文件夹窗的 ESC **不在这儿**：ArtifactWindow 自己挂了一条（escToClose），
+      // 两边都挂的话按一下会同时收选中和关窗。
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deckOpen, cwd, projectPanel, viewer, detail]);
+  }, [deckOpen, projectPanel, viewer, detail]);
 
   /**
    * 换工具的单键快捷键。
@@ -1547,25 +1594,20 @@ export default function BoardCanvas({
   }, []);
 
   /**
-   * 换层（2026-08-13）：进一个文件夹 = 桌面换成它那一层；退出 = 回上一层。
+   * 打开一个文件夹 = 开那扇窗（2026-08-13）。
    *
-   * ⚠️ 以前这对函数叫「进入 / 退出任务」，退出时还要连带退出会话（URL 回
-   * `/work`）—— 那是"任务=会话一对一"时代的绑定。产物与会话 08-08 就解绑了，
-   * **换层不该动对话**：你在文件夹之间走动的时候，正在跑的那轮对话不该被打断。
-   *
-   * 顶栏面包屑、ESC、双击文件夹卡，三个入口共用这两个函数。
+   * ⚠️ 这儿曾是 `enterZone` / `exitToProject`（换层）。它们连同「ESC 退一层」
+   * 一起删了 —— 打开和关闭现在是同一扇窗的两端，退回桌面不需要"退层"这个
+   * 概念。窗内下钻也走这个函数（同一扇窗换 dir）。
    */
-  const exitToProject = useCallback(() => {
-    setCwd(prev => {
-      const i = prev.lastIndexOf('/');
-      return i > 0 ? prev.slice(0, i) : '';      // 回上一层，而不是一步跳回根
-    });
-  }, []);
-
-  exitToProjectRef.current = exitToProject;
-
-  /** 进一个文件夹 */
-  const enterZone = useCallback((zid) => { if (zid) setCwd(zid); }, []);
+  const openFolder = useCallback((zid) => { if (zid) setWinDir(zid); }, []);
+  /**
+   * 窗里那两个回调必须是**稳定引用**：FolderWindow 拿它们 memo 工具组，而
+   * ArtifactWindow 的 effect 依赖工具组、清理函数又会清空工具组 —— 每渲染一个
+   * 新函数就等于每渲染跑一遍「清空→重设」，两次状态变更互相触发，死循环。
+   */
+  const folderGoUp = useCallback(() => setWinDir(d => parentDir(d)), []);
+  const closeFolderWindow = useCallback(() => setWinDir(null), []);
   /**
    * 「整理」—— 现在是**手动**的一次动作，不再每帧自动跑（2026-08-07）。
    *
@@ -1628,8 +1670,8 @@ export default function BoardCanvas({
       'success');
   }, [scheduleSave]);
 
-  const enterZoneRef = useRef(null);
-  enterZoneRef.current = enterZone;
+  const openFolderRef = useRef(null);
+  openFolderRef.current = openFolder;
 
   // ── 工作区操作：收纳 ↔ 展开（文件夹两态）/ 聚焦 / 自建文件夹 ──
   const patchZone = useCallback((zid, patch) => {
@@ -1720,7 +1762,7 @@ export default function BoardCanvas({
       if (zoneClickTimer.current) {
         clearTimeout(zoneClickTimer.current);
         zoneClickTimer.current = null;
-        (opts.onOpen || (() => enterZoneRef.current?.(d.id)))();
+        (opts.onOpen || (() => openFolderRef.current?.(d.id)))();
         return;
       }
       zoneClickTimer.current = setTimeout(() => { zoneClickTimer.current = null; tap(); }, ZONE_DBLCLICK_MS);
@@ -1757,8 +1799,9 @@ export default function BoardCanvas({
         delete next[zid];
         return next;
       });
-      if (focusZoneRef.current === zid) exitToProjectRef.current?.();
-      else reload();
+      // 正开着这个文件夹（或它的子层）的窗 → 关掉，别留一扇指向已删目录的窗
+      if (winDirRef.current === zid || winDirRef.current?.startsWith(`${zid}/`)) setWinDir(null);
+      reload();
       useGlobalStore.getState().showToast('文件夹已删除', 'info');
     } catch (err) {
       useGlobalStore.getState().showToast(`删除失败：${err.message}`, 'error');
@@ -1770,7 +1813,7 @@ export default function BoardCanvas({
   // 目录，"只从桌面移除、文件留着"这个动作没有对应物了 —— 要么删文件夹，
   // 要么不删。
 
-  const focusZoneAction = (zid) => enterZone(zid);
+
 
   /**
    * 右键菜单（2026-08-08，Windows 桌面语言）。
@@ -1804,6 +1847,9 @@ export default function BoardCanvas({
     }
   }, [projectId, reload, scheduleSave]);
 
+  /** 文件夹窗里的「新建文件夹」（建在窗当前那一层）—— 引用要稳，理由见 folderGoUp */
+  const createFolderIn = useCallback((d) => createFolderAt(d, null), [createFolderAt]);
+
   /**
    * 把两件东西摞在一起 = 当场建个文件夹，两个都收进去（2026-08-13，用户要的）。
    *
@@ -1820,7 +1866,7 @@ export default function BoardCanvas({
     const bothImages = a.type === 'image' && b.type === 'image';
     try {
       const r = await Assets.createFolder(projectId, {
-        parent: cwdRef.current,
+        parent: '',                       // 摞成夹永远发生在桌面这一层
         // 两张图归一起就叫「图片」，其余给通名 —— 名字是给人看的，不是 id
         name: bothImages ? '图片' : undefined,
       });
@@ -1896,14 +1942,23 @@ export default function BoardCanvas({
   const openContextMenu = useCallback((e) => {
     const mx = e.clientX; const my = e.clientY;
     const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
+    // 这一下发生在文件夹窗里吗？窗里的东西**不在桌面那一层**，所以查找和
+    // 兜底都要换一套（见下）
+    const winEl = e.target.closest?.('[data-folder-window]');
+    const winIn = winEl ? (winEl.getAttribute('data-folder-window') || '') : null;
     const objEl = e.target.closest?.('[data-board-object]');
     const objId = objEl?.getAttribute('data-board-object') || null;
-    const obj = objId ? positionedRef.current.find(o => o.id === objId) : null;
-    // 文件夹：卡片没命中时才按几何找（展开态的框是 pointerEvents:'none'）
+    // 桌面那一层找不到就去全清单里找（窗里的东西住在别的层）
+    const obj = objId
+      ? (positionedRef.current.find(o => o.id === objId) || objectsRef.current.find(o => o.id === objId))
+      : null;
+    // 文件夹：卡片没命中时才按几何找（展开态的框是 pointerEvents:'none'）。
+    // ⚠️ 窗里**不做几何兜底** —— 窗的坐标系跟画布无关，拿相机换算出来的世界点
+    // 去命中桌面上的文件夹，右键窗里的空白会弹出另一个文件夹的菜单
     const zoneId = !obj
       ? (e.target.closest?.('[data-zone-header]')?.getAttribute('data-zone-header')
         || e.target.closest?.('[data-board-zone]')?.getAttribute('data-board-zone')
-        || zoneAtPoint(at))
+        || (winIn === null ? zoneAtPoint(at) : null))
       : null;
 
     /**
@@ -1925,7 +1980,7 @@ export default function BoardCanvas({
         {
           id: 'move', icon: FolderInput, label: `移动到…`, hint: `${movable.length} 件`,
           disabled: !movable.length,
-          onClick: () => setMoveTo({ x: mx, y: my, ids: movable, current: cwdRef.current, exclude: zones }),
+          onClick: () => setMoveTo({ x: mx, y: my, ids: movable, current: '', exclude: zones }),
         },
         {
           id: 'add', icon: Plus, label: '加入上下文', hint: `${addable.length} 件`,
@@ -1965,7 +2020,8 @@ export default function BoardCanvas({
         // onPointerUp 上面那段墓志铭）。画布原生物件没有磁盘位置，不给。
         ...(isFileBacked(obj) ? [{
           id: 'move', icon: FolderInput, label: '移动到…',
-          onClick: () => setMoveTo({ x: mx, y: my, ids: [obj.id], current: obj.zoneId || '' }),
+          // 窗里的东西住在窗那一层（`zoneId` 只有桌面上的卡才带）
+          onClick: () => setMoveTo({ x: mx, y: my, ids: [obj.id], current: obj.zoneId ?? (winIn || '') }),
         }] : []),
         // E3：从「垫半句话进输入框」升级成就地标注 —— 在东西上写完一句，
         // 按发送 agent 立刻来。全类型都给（图片/文件/涂鸦/手写字也算产物）。
@@ -1998,11 +2054,17 @@ export default function BoardCanvas({
         { divider: true },
         { id: 'del', icon: Trash2, label: '删除文件夹', danger: true, onClick: () => handleDeleteFolder(zoneId, zoneId.split('/').pop()) },
       ];
+    } else if (winIn !== null) {
+      // 文件夹窗里的空白：能做的只有"在这一层新建"。写字/涂鸦/整理画布都是
+      // 桌面那一层的动作（窗里是算出来的网格，没有"摆在哪儿"这回事）
+      items = [
+        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt(winIn, null) },
+      ];
     } else {
       items = [
-        // 建在**当前这一层**，不是永远建在根上（cwd 模型下写死 '' 是个真 bug：
-        // 在文件夹里右键新建，文件夹会跑到根目录去，而且当前层还看不见它）
-        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt(cwdRef.current, at) },
+        // 桌面上右键就建在桌面上。文件夹**里面**新建走窗里那个按钮（它带着
+        // 自己的 dir）—— 桌面这一层永远是根，这里不需要再问"我在哪一层"
+        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt('', at) },
         { id: 'note', icon: StickyNote, label: '新建便利贴', hint: 'agent 能看到', onClick: () => createNoteAt(at) },
         { divider: true },
         { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ at }) },
@@ -2133,7 +2195,7 @@ export default function BoardCanvas({
     stageOccupancy.set(o.zoneId, arr);
   }
   const { anchoredCards, dockPanels, dockChips } = splitStageCards({
-    stageCards, positioned, visibleIdSet, visibleZones, focusZone: cwd, occupancy: stageOccupancy,
+    stageCards, positioned, visibleIdSet, visibleZones, focusZone: '', occupancy: stageOccupancy,
   });
 
   // agent 此刻在动谁：橙色光圈套在目标外圈（物件还没上墙就套它落脚的工作区）。
@@ -2143,11 +2205,13 @@ export default function BoardCanvas({
     for (const c of Object.values(stageCards)) {
       if (c.kind === 'chip' || c.kind === 'question' || c.status !== 'running') continue;
       if (c.objectId && positioned.some(o => o.id === c.objectId)) { objs.add(c.objectId); continue; }
-      const z = zoneOfObjectId(c.objectId) || cwd;
-      if (z) zs.add(z);
+      // 目标不在桌面上 = 它在某个文件夹里 → 光圈套在**那个文件夹卡**上
+      // （桌面只画根这一层；agent 在文件夹里干活时你看到的是那张卡在转）
+      const z = zoneOfObjectId(c.objectId);
+      if (z) zs.add(z.includes('/') ? z.split('/')[0] : z);
     }
     return { ringObjects: objs, ringZones: zs };
-  }, [stageCards, positioned, cwd]);
+  }, [stageCards, positioned]);
 
   /**
    * 小地图要画的东西：一件一个小方块（世界坐标）。
@@ -2171,9 +2235,8 @@ export default function BoardCanvas({
   useEffect(() => {
     if (!apiRef) return;
     apiRef.current = {
-      exitToProject: () => exitToProjectRef.current?.(),
-      /** 面包屑点某一级：直接跳到那一层（'' = 桌面根） */
-      goTo: (dir) => setCwd(dir || ''),
+      /** 面包屑点某一级：窗切到那一层（'' = 关窗回桌面） */
+      goTo: (dir) => setWinDir(dir || null),
       reload,
       // 项目级四件套（记忆 / 指引 / 风格 / 文件）2026-08-07 从画布顶带收进
       // 顶栏的「⋯」——它们是**设置**不是产物，占着画布最好的一条横带每天
@@ -2209,8 +2272,8 @@ export default function BoardCanvas({
     // 面包屑：当前目录一路拆到根。顶栏据此渲染「Demo 项目 / 鉴赏页 / 初稿」，
     // 每一级可点 —— 换层的第三个入口（另两个是双击文件夹卡和 ESC）。
     const crumbs = [];
-    if (cwd) {
-      const segs = cwd.split('/');
+    if (winDir) {
+      const segs = winDir.split('/');
       for (let i = 0; i < segs.length; i += 1) {
         const path = segs.slice(0, i + 1).join('/');
         crumbs.push({ id: path, title: taskTitles.get(path) || segs[i] });
@@ -2218,9 +2281,11 @@ export default function BoardCanvas({
     }
     // artifactKind / artifactExports：当前这一层做的是什么形态、可用哪些导出
     // 格式（服务端 kinds/ 注册表吐的）—— 导出菜单据此渲染，不在前端硬编码。
-    const focusTaskObj = cwd ? tasks.find(t => t.id === cwd) : null;
+    const focusTaskObj = winDir ? tasks.find(t => t.id === winDir) : null;
     const ui = {
-      cwd,
+      // 顶栏面包屑读的就是它。名字沿用 `cwd` —— 语义从"桌面在哪一层"变成
+      // "窗开在哪一层"，但对顶栏来说是同一件事：你现在看着哪儿
+      cwd: winDir || '',
       crumbs,
       artifactKind: focusTaskObj?.kind || null,
       artifactExports: focusTaskObj?.exports || null,
@@ -2233,7 +2298,7 @@ export default function BoardCanvas({
     if (key === lastUiRef.current) return;
     lastUiRef.current = key;
     onUiState?.(ui);
-  }, [onUiState, cwd, taskTitles, tasks, bandSummaries]);
+  }, [onUiState, winDir, taskTitles, tasks, bandSummaries]);
 
   /**
    * 画布的工具组。**这里不渲染工具栏** —— 全项目只有一条，活在 CanvasFrame，
@@ -2303,6 +2368,88 @@ export default function BoardCanvas({
           ]), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
 
   useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
+
+  /**
+   * 一张产物卡 / 一张文件夹卡的渲染。
+   *
+   * **桌面和文件夹窗共用这两个函数**（2026-08-13）。窗里那套要是自己抄一版
+   * 简化卡，hover 工具条、标注按钮、缩略图闸门、双击语义就得在两个地方各修
+   * 一遍 —— 这个仓库最贵的一课正是「同一件东西有多个实例」。
+   *
+   * 窗里的差别只有三处，全在 `win` 分支里：位置是算出来的（不是 board.json 的
+   * 坐标）、不参与拖拽和框选、镜头缩放固定 1（窗不跟着画布缩放）。
+   */
+  const renderObjectCard = (o, winPos = null) => {
+    const win = !!winPos;
+    const obj = win ? { ...o, pos: { ...winPos, z: 1 } } : o;
+    return (
+      <BoardObject
+        key={obj.id}
+        o={obj}
+        projectId={projectId}
+        currentSessionId={currentSessionId}
+        fileVersions={fileVersions}
+        added={addedPaths.has(obj.id)}
+        // 避让系统：拖拽中只有被拖的卡要逐帧跟手（关过渡），被避让的
+        // 邻居保持 380ms 滑动 —— 挤开和弹回都是顺滑的
+        animateLayout={!win && (!dragActive || dragRef.current?.id !== obj.id)}
+        agentActive={ringObjects.has(obj.id)}
+        groupTarget={!win && dropHint?.kind === 'group' && dropHint.id === obj.id}
+        // 单选一件墨类时选中态由变换控制器画（那圈框就是它的选中框），
+        // 别再叠一道外框
+        selected={!win && selectedIds.includes(obj.id) && !(obj.native && selectedIds.length === 1)}
+        renaming={renamingId === obj.id}
+        onRenameCommit={(v) => commitRename(obj.id, v)}
+        onRenameCancel={() => setRenamingId(null)}
+        onPointerDown={win ? undefined : (e) => onObjectPointerDown(e, obj)}
+        wasDrag={win ? () => false : wasDrag}
+        onPrimary={() => primaryOpen(obj)}
+        onAdd={() => handleAdd(obj)}
+        onOpenViewer={() => openViewer(obj)}
+        onOpenFile={() => openFile(obj)}
+        onDetail={() => setDetail(obj)}
+        onDeleteNote={() => handleDeleteNote(obj)}
+        onFocus={() => focusDeck(obj)}
+        // 标注：浮层从按钮底下长出来（at 是按钮的屏幕坐标），
+        // target 的形状跟右键菜单那条**逐字一致** —— 同一张浮层
+        onAnnotate={(at) => setAnnotate({ x: at.x, y: at.y, target: annotTargetOf(obj) })}
+        // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
+        scale={win ? 1 : scale}
+      />
+    );
+  };
+
+  const renderFolderCard = (z, winPos = null) => {
+    const win = !!winPos;
+    const card = win ? { ...z, x: winPos.x, y: winPos.y } : z;
+    return (
+      <FolderCard
+        key={card.id}
+        z={card}
+        projectId={projectId}
+        fileVersions={fileVersions}
+        scale={win ? 1 : scale}
+        dropTarget={!win && dropHint?.kind === 'folder' && dropHint.id === card.id}
+        selected={!win && selectedIds.includes(card.id)}
+        ring={ringZones.has(card.id)}
+        dragging={!win && draggingZone === card.id}
+        animate={!win && !(dragActive || draggingZone === card.id)}
+        renaming={renamingId === card.id}
+        onRenameCommit={(v) => commitRename(card.id, v)}
+        onRenameCancel={() => setRenamingId(null)}
+        onDelete={() => !wasDrag() && handleDeleteFolder(card.id, card.title)}
+        onAnnotate={(at) => setAnnotate({
+          x: at.x, y: at.y,
+          target: { kind: 'folder', id: card.id, path: card.id, title: card.title, typeLabel: '文件夹' },
+        })}
+        // 窗里没有拖拽（位置是算的），双击直接下钻到下一层
+        gestureProps={win
+          ? { onDoubleClick: () => openFolder(card.id) }
+          : zoneGestureProps(card)}
+        hint={win ? '双击进去' : '双击打开 · 拖动搬走'}
+      />
+    );
+  };
 
   // ── 渲染 ──
   return (
@@ -2406,118 +2553,10 @@ export default function BoardCanvas({
               在这之前它有两态 —— 收起是一条整宽窄条、展开是一块带标题栏的
               实体区域、成员摆在框里。那套是"分区"时代的形状：文件夹是版面上
               摊开的一块地。现在它是**桌面上的一个东西**，双击进去换一层。 */}
-          {visibleZones.map((z) => (
-            <div
-              key={z.id}
-              data-board-zone={z.id}
-              {...zoneGestureProps(z)}
-              title={`${z.title} · 双击进去 · 拖动搬走`}
-              style={{
-                position: 'absolute', left: z.x, top: z.y, width: z.w, height: z.h,
-                zIndex: draggingZone === z.id ? 20 : 1,
-                display: 'flex', flexDirection: 'column',
-                background: dropHint?.kind === 'folder' && dropHint.id === z.id
-                  ? '#fff8e8' : COLOR.bgCard,
-                border: `1px solid ${dropHint?.kind === 'folder' && dropHint.id === z.id ? CANVAS.brass : COLOR.borderLt}`,
-                borderRadius: RADIUS.xl,
-                boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
-                  ? `0 0 0 3px ${alpha(CANVAS.brass, 0.18)}, 0 8px 20px rgba(0,0,0,0.14)`
-                  : '0 1px 4px rgba(0,0,0,0.05)',
-                cursor: draggingZone === z.id ? 'grabbing' : 'grab',
-                ...(selectedIds.includes(z.id) ? { outline: `2px solid ${CANVAS.brass}`, outlineOffset: 1 } : null),
-                userSelect: 'none', touchAction: 'none',
-                transition: `background 150ms, border-color 150ms, box-shadow 150ms${(dragActive || draggingZone === z.id) ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}`}`,
-                animation: POP_IN,
-                ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite' } : null),
-              }}
-            >
-              {/* 卡面：里面前几件的真缩略（FolderFace，2026-08-13 从名字清单
-                  升级；iframe 的三道闸 —— 视口/缩放/每卡上限 —— 在那边算） */}
-              <FolderFace z={z} projectId={projectId} fileVersions={fileVersions} scale={scale} />
-
-              <div style={{
-                height: 40, flexShrink: 0,
-                display: 'flex', alignItems: 'center', gap: GAP.xs,
-                padding: `0 ${GAP.sm}px`,
-                borderTop: `1px solid ${COLOR.borderLt}`,
-              }}>
-                <FolderOpen size={12} color={COLOR.sub} style={{ flexShrink: 0 }} />
-                {renamingId === z.id ? (
-                  <input
-                    data-zone-action
-                    autoFocus
-                    defaultValue={z.title}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onFocus={(e) => e.currentTarget.select()}
-                    onKeyDown={(e) => {
-                      // Enter 提交、Esc 放弃。**都要 stopPropagation** —— 画布上
-                      // Esc 是"回上一层"、单键是换工具，不拦住的话打字就在换工具
-                      e.stopPropagation();
-                      if (e.key === 'Enter') commitRename(z.id, e.currentTarget.value);
-                      if (e.key === 'Escape') setRenamingId(null);
-                    }}
-                    onBlur={(e) => commitRename(z.id, e.currentTarget.value)}
-                    style={{
-                      flex: 1, minWidth: 0, border: `1px solid ${CANVAS.brass}`,
-                      borderRadius: RADIUS.sm, padding: '1px 4px', outline: 'none',
-                      fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600,
-                      color: COLOR.text, background: COLOR.bgWhite,
-                    }}
-                  />
-                ) : (
-                  <span style={{
-                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
-                  }}>{z.title}</span>
-                )}
-                <button
-                  data-zone-action title="删除文件夹（连同里面的内容；不影响对话）"
-                  onClick={() => !wasDrag() && handleDeleteFolder(z.id, z.title)}
-                  style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                ><Trash2 size={12} /></button>
-              </div>
-            </div>
-          ))}
+          {visibleZones.map((z) => renderFolderCard(z))}
 
           {/* 吸附预览：松手后物件将落到的格位（虚线 ghost）*/}
-          {visibleObjects.map((o) => (
-            <BoardObject
-              key={o.id}
-              o={o}
-              projectId={projectId}
-              currentSessionId={currentSessionId}
-              fileVersions={fileVersions}
-              added={addedPaths.has(o.id)}
-              // 避让系统：拖拽中只有被拖的卡要逐帧跟手（关过渡），被避让的
-              // 邻居保持 380ms 滑动 —— 挤开和弹回都是顺滑的
-              animateLayout={!dragActive || dragRef.current?.id !== o.id}
-              agentActive={ringObjects.has(o.id)}
-              groupTarget={dropHint?.kind === 'group' && dropHint.id === o.id}
-              // 单选一件墨类时选中态由变换控制器画（那圈框就是它的选中框），
-              // 别再叠一道外框
-              selected={selectedIds.includes(o.id) && !(o.native && selectedIds.length === 1)}
-              renaming={renamingId === o.id}
-              onRenameCommit={(v) => commitRename(o.id, v)}
-              onRenameCancel={() => setRenamingId(null)}
-              onPointerDown={(e) => onObjectPointerDown(e, o)}
-              wasDrag={wasDrag}
-              onPrimary={() => primaryOpen(o)}
-              onAdd={() => handleAdd(o)}
-              onOpenViewer={() => openViewer(o)}
-              onOpenFile={() => openFile(o)}
-              onDetail={() => setDetail(o)}
-              onDeleteNote={() => handleDeleteNote(o)}
-              onFocus={() => focusDeck(o)}
-              // 标注：浮层从按钮底下长出来（at 是按钮的屏幕坐标），
-              // target 的形状跟右键菜单那条**逐字一致** —— 同一张浮层
-              onAnnotate={(at) => setAnnotate({
-                x: at.x, y: at.y,
-                target: annotTargetOf(o),
-              })}
-              // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
-              scale={scale}
-            />
-          ))}
+          {visibleObjects.map((o) => renderObjectCard(o))}
 
 
           {/* 关系线（世界坐标，铺在物件之下）*/}
@@ -2631,7 +2670,7 @@ export default function BoardCanvas({
 
         {/* 小地图（屏幕空间，左下角）。总览从"一种视图"变成"一个导航控件"之后
             全貌靠它看 —— 干活始终在当前这一层。窗开着时跟工具栏一起收掉。 */}
-        {!deckOpen && (
+        {!deckOpen && !winDir && (
           <Minimap
             bounds={camera.bounds}
             cam={cam}
@@ -2661,6 +2700,22 @@ export default function BoardCanvas({
             camApiRef.current?.toWorld(annotate.x, annotate.y),
             text,
           )}
+        />
+      )}
+
+      {/* 文件夹窗（2026-08-13）：双击文件夹卡开这扇窗，桌面不动。
+          卡片用的是上面那两个 render 函数 —— 窗只负责排位置。 */}
+      {winDir && (
+        <FolderWindow
+          dir={winDir}
+          list={listDir}
+          onUp={parentDir(winDir) !== null ? folderGoUp : null}
+          onClose={closeFolderWindow}
+          onNewFolder={createFolderIn}
+          onToolbarGroups={onWindowToolbarGroups}
+          onContextMenu={openContextMenu}
+          renderObject={(o, pos) => renderObjectCard(o, pos)}
+          renderFolder={(z, pos) => renderFolderCard(z, pos)}
         />
       )}
 
@@ -2892,10 +2947,6 @@ const toolBtn = {
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
 };
 
-const zoneHeaderBtn = {
-  border: 0, background: 'transparent', cursor: 'pointer',
-  color: COLOR.text, display: 'flex', padding: GAP.xxs,
-};
 
 function formatTime(iso) {
   if (!iso) return '';

@@ -215,6 +215,7 @@ export default function CanvasFrame({
           stageRef={stageRef}
           onFocusDeck={openDeck}
           onToolbarGroups={reportBoardGroups}
+          onWindowToolbarGroups={reportWinGroups}
           // 跟顶栏收起用**同一个** windowOpen —— 以前这里是宽松版
           // （`deckOpen || site || world`），而窗真正渲染用的是严格版，两处
           // 各写一遍：deckOpen 为真但窗没渲染的那一瞬，画布工具栏和小地图
