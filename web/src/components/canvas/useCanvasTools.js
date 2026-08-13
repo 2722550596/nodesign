@@ -166,3 +166,29 @@ export function pointsBounds(points, pad = 6) {
     h: Math.max(4, Math.max(...ys) + pad - y),
   };
 }
+
+// ── 墨迹归组（2026-08-13）──
+//
+// "空间上相近、有结合点的笔画视作一个整体"（用户定）。做法是**物理合并**：
+// 新笔画提交时并进邻近的旧墨迹物件，多段子路径共存于同一个 `d`（服务端的
+// 字符白名单天然允许多个 M 命令）。合并后整组一起选中/拖动/缩放 —— 不引入
+// 组 id、不动 schema。代价是成组后拆不开，这正是"视作一个整体"的意思。
+//
+// 下面两个助手都只处理我们自己生成的路径词汇（M/L/Q/C + 数字），字符白名单
+// 之外的串根本进不了 board.json。
+
+const NUM_RE = /-?\d*\.?\d+(?:e-?\d+)?/gi;
+
+/** path 字符串里的坐标点列（M/L/Q/C 的参数全是坐标对，Z 无参数） */
+export function pathPoints(d) {
+  const ns = (String(d || '').match(NUM_RE) || []).map(Number);
+  const pts = [];
+  for (let i = 0; i + 1 < ns.length; i += 2) pts.push({ x: ns[i], y: ns[i + 1] });
+  return pts;
+}
+
+/** 整条 path 平移（换合并后的新原点用）：奇数个数字加 dx，偶数个加 dy */
+export function translatePath(d, dx, dy) {
+  let i = 0;
+  return String(d || '').replace(NUM_RE, (m) => String(Math.round(Number(m) + (i++ % 2 === 0 ? dx : dy))));
+}

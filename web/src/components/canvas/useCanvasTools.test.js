@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pointsToPath, pointsBounds } from './useCanvasTools.js';
+import { pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 
 /**
  * 涂鸦的两个纯函数。它们决定了「一笔画完落盘成什么」，而落盘的东西
@@ -77,5 +77,35 @@ describe('pointsBounds', () => {
     const d = pointsToPath(pts, b.x, b.y);
     // 第一个点在盒内的偏移应等于 pad
     expect(d.startsWith('M 6 6')).toBe(true);
+  });
+});
+
+describe('墨迹归组的两个助手（2026-08-13）', () => {
+  it('pathPoints 把 M/L/Q 的参数全解成坐标对', () => {
+    expect(pathPoints('M 8 8 Q 28 38 48 16 L 72 28')).toEqual([
+      { x: 8, y: 8 }, { x: 28, y: 38 }, { x: 48, y: 16 }, { x: 72, y: 28 },
+    ]);
+  });
+
+  it('pathPoints 认得负数和空串', () => {
+    expect(pathPoints('M -5 -20 L 10 3')).toEqual([{ x: -5, y: -20 }, { x: 10, y: 3 }]);
+    expect(pathPoints('')).toEqual([]);
+  });
+
+  it('translatePath 奇偶交替加 dx/dy，命令字母原样保留', () => {
+    expect(translatePath('M 8 8 L 72 28', 10, -3)).toBe('M 18 5 L 82 25');
+    expect(translatePath('M -5 0 Q 1 2 3 4', 5, 5)).toBe('M 0 5 Q 6 7 8 9');
+  });
+
+  it('平移后的串仍然过服务端字符白名单', () => {
+    const out = translatePath('M 8 8 Q 28 38 48 16 L 72 28', -100, -200);
+    expect(/^[\dMLQCZ ,.\-eE]+$/.test(out)).toBe(true);
+  });
+
+  it('合并语义：平移到新原点后接上新段，点列 = 两段之和', () => {
+    const merged = `${translatePath('M 8 8 L 20 20', 2, 2)} M 40 40 L 60 60`;
+    expect(pathPoints(merged)).toEqual([
+      { x: 10, y: 10 }, { x: 22, y: 22 }, { x: 40, y: 40 }, { x: 60, y: 60 },
+    ]);
   });
 });

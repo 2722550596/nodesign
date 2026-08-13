@@ -5,7 +5,7 @@ import {
   Plus, ExternalLink,
   X, Trash2, BookOpen, FolderOpen, FolderInput, LogOut,
   PencilLine, ChevronsUpDown, Focus,
-  Maximize2, Minus, MousePointer2, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
+  Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
   FolderPlus, StickyNote,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
@@ -34,7 +34,7 @@ import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
-import { useCanvasTools, pointsToPath, pointsBounds } from './useCanvasTools.js';
+import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
 import InstructionsCard from '../project/InstructionsCard.jsx';
@@ -179,6 +179,17 @@ export default function BoardCanvas({
    * 哪个一眼看得见（光标也跟着变）。空格临时抓手照旧，它是 hand 的按住版。
    */
   const [tool, setTool] = useState('select');
+  /**
+   * 涂鸦的子模式（2026-08-13 用户定的双控件）：
+   *   ink      落笔 —— 只管画，绝不触碰已有墨迹的控制
+   *   arrange  摆放 —— 挪动/缩放已有墨迹（走选中态那套手柄），绝不落笔
+   * 两件事在同一支笔下打架打过一整轮（画一笔把卡拖走、想挪笔迹却又画一笔），
+   * 拆成显式模式后各自纯粹。每次拿起笔重置回落笔 —— 选笔就是想画。
+   */
+  const [drawMode, setDrawMode] = useState('ink');
+  const drawModeRef = useRef('ink');
+  drawModeRef.current = drawMode;
+  useEffect(() => { if (tool === 'draw') setDrawMode('ink'); }, [tool]);
   /** 手写文字用什么字体（设置里选，见 globalStore.canvasFont） */
   const canvasFont = useGlobalStore(st => st.canvasFont);
   /** 镜头跟不跟 agent 跑（设置里的开关，默认开） */
@@ -875,11 +886,55 @@ export default function BoardCanvas({
     }
   }, [projectId, patchLayout, reload]);
 
-  /** 画一笔 → 画布原生物件（只活在 board.json） */
+  /** 新笔画跟旧墨迹"有结合点"的判距（世界像素）：笔尖挨着就算一伙 */
+  const MERGE_DIST = 24;
+
+  /** 画一笔 → 画布原生物件（只活在 board.json）；挨着旧墨迹就并进去成一组 */
   const handleCreateScribble = useCallback((points) => {
     const box = pointsBounds(points, 8);
     const d = pointsToPath(points, box.x, box.y);
     if (!d) return;
+
+    /**
+     * 归组（2026-08-13 用户定）：判据是**点到点的最小距离**，不是包围盒相交 ——
+     * 一条长对角线的 bbox 大得离谱，按 bbox 合并会把半屏的墨迹吸成一坨。
+     * bbox 只做快筛。已被旋转/缩放过的组不并（合并数学在变换下不成立，
+     * 且用户既然特意摆过它，新笔画多半不是它的一部分）。
+     */
+    const host = (() => {
+      for (const o of positionedRef.current) {
+        if (o.type !== 'scribble' || !o.native) continue;
+        if (o.data?.rotation || (o.data?.scale && o.data.scale !== 1)) continue;
+        const sz = sizeOf(o);
+        if (box.x > o.pos.x + sz.w + MERGE_DIST || box.x + box.w < o.pos.x - MERGE_DIST
+          || box.y > o.pos.y + sz.h + MERGE_DIST || box.y + box.h < o.pos.y - MERGE_DIST) continue;
+        const oldPts = pathPoints(o.data?.d).map(p => ({ x: p.x + o.pos.x, y: p.y + o.pos.y }));
+        for (const q of points) {
+          for (const p of oldPts) {
+            if (Math.hypot(p.x - q.x, p.y - q.y) <= MERGE_DIST) return o;
+          }
+        }
+      }
+      return null;
+    })();
+
+    if (host) {
+      const sz = sizeOf(host);
+      const nx = Math.min(host.pos.x, box.x);
+      const ny = Math.min(host.pos.y, box.y);
+      const nw = Math.max(host.pos.x + sz.w, box.x + box.w) - nx;
+      const nh = Math.max(host.pos.y + sz.h, box.y + box.h) - ny;
+      const merged = `${translatePath(host.data.d, host.pos.x - nx, host.pos.y - ny)} ${pointsToPath(points, nx, ny)}`;
+      // 服务端 8000 字符闸门：并不进去就各过各的（丢笔画是最差的结果）
+      if (merged.length < 7900) {
+        patchLayout(host.id, {
+          x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh),
+          data: { ...host.data, d: merged },
+        });
+        return;
+      }
+    }
+
     const id = `scribble:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
     const zid = zoneAtPoint({ x: box.x + box.w / 2, y: box.y + box.h / 2 });
     patchLayout(id, {
@@ -919,7 +974,9 @@ export default function BoardCanvas({
   }, [handleCreateText, projectId]);
 
   const canvasTools = useCanvasTools({
-    tool,
+    // 摆放模式下笔不落墨：喂给工具层一个它不认识的名字，所有分支自然闭合，
+    // 指针事件穿回物件拖拽/选中那条路（下面守卫只对墨类放行）
+    tool: tool === 'draw' && drawMode === 'arrange' ? 'arrange' : tool,
     toWorld: camera.toWorld,
     zoneAt: zoneAtPoint,
     // 一次性工具（one-shot）：写完一段自动回到指针。想连写的人多按一次 T 的
@@ -1004,7 +1061,11 @@ export default function BoardCanvas({
     // 标，不是要拖卡。少了这条，笔画起点落在卡上会同时武装一次物件拖拽 ——
     // 抬 z、写盘，而笔画提交又吞掉抬手，dragRef 残骸让那张卡黏住光标
     // （2026-08-13 查实的真 bug，三个症状同一根）。
-    if (toolRef.current !== 'select') return;
+    // 唯一豁免：涂鸦的摆放模式对**墨类**放行 —— 那个模式存在的意义就是挪墨迹。
+    if (toolRef.current !== 'select') {
+      const arrange = toolRef.current === 'draw' && drawModeRef.current === 'arrange';
+      if (!(arrange && o.native)) return;
+    }
     recentDragMovedRef.current = false;
     noteUserTakeover();
     setDragActive(true);
@@ -2050,7 +2111,18 @@ export default function BoardCanvas({
                 { id: 'comment', icon: MessageSquarePlus, title: '标注一个物件（C）' },
               ],
             },
-          ]), [tool, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
+            // 拿着笔时多出的子模式组：落笔 / 摆放（见 drawMode 的说明）
+            ...(tool === 'draw' ? [{
+              id: 'drawMode',
+              type: 'mode',
+              value: drawMode,
+              onChange: setDrawMode,
+              items: [
+                { id: 'ink', icon: PenLine, label: '落笔', title: '只管画 —— 不会碰到已有的墨迹' },
+                { id: 'arrange', icon: Move, label: '摆放', title: '挪动/缩放已有墨迹 —— 不会落笔' },
+              ],
+            }] : []),
+          ]), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
 
   useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
 
@@ -2126,7 +2198,7 @@ export default function BoardCanvas({
           touchAction: 'none',
           cursor: camera.panning ? 'grabbing'
             : tool === 'hand' ? 'grab'
-            : tool === 'draw' ? 'crosshair'
+            : tool === 'draw' ? (drawMode === 'arrange' ? 'default' : 'crosshair')
             : tool === 'text' ? 'text'
             : tool === 'comment' ? 'help'
             : 'default',

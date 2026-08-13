@@ -103,6 +103,10 @@ await page.waitForTimeout(WAIT);
 // 交互：--click / --dblclick 传选择器，发**真事件**（画布很多手势是自己数
 // pointerup 的，合成事件糊弄不过去）
 
+// 按一个键（其它交互之前）：切工具快捷键（V/T/P/C/H）这类
+const PRESS = opt('press', null);
+if (PRESS) { await page.keyboard.press(PRESS); await page.waitForTimeout(300); }
+
 // 滚轮：`--wheel=dx,dy`（其它交互之前，视口中心）。画布的滚轮=平移、
 // Ctrl+滚轮=缩放 —— 验"全向无限"就得能把镜头真的推出内容圈。
 const WHEEL = opt('wheel', null);
@@ -128,11 +132,18 @@ let dragEnd = null;
 if (DRAG) {
   const [sel, delta] = DRAG.split('|');
   const [dx, dy] = (delta || '0,0').split(',').map(Number);
-  const el = await page.$(sel);
-  if (!el) errors.push(`--drag 没找到元素: ${sel}`);
+  // `--drag='@x,y|dx,dy'` 按坐标起拖（画一笔涂鸦这类"从空白处开始"的手势
+  // 没有元素可选）；选择器形式照旧
+  const byCoord = sel.startsWith('@');
+  const el = byCoord ? null : await page.$(sel);
+  if (!byCoord && !el) errors.push(`--drag 没找到元素: ${sel}`);
   else {
-    const b = await el.boundingBox();
-    const sx = b.x + b.width / 2; const sy = b.y + b.height / 2;
+    let sx; let sy;
+    if (byCoord) { [sx, sy] = sel.slice(1).split(',').map(Number); }
+    else {
+      const b = await el.boundingBox();
+      sx = b.x + b.width / 2; sy = b.y + b.height / 2;
+    }
     await page.mouse.move(sx, sy);
     await page.mouse.down();
     await page.mouse.move(sx + dx * 0.3, sy + dy * 0.3, { steps: 6 });
@@ -149,7 +160,7 @@ if (DRAG) {
     await page.waitForTimeout(120);
     await page.mouse.up();
     await page.waitForTimeout(900);
-    const after = await page.$(sel);
+    const after = byCoord ? null : await page.$(sel);
     const bb = after ? await after.boundingBox() : null;
     dragEnd = { mouse: { x: sx + dx, y: sy + dy }, box: bb };
   }
