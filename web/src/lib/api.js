@@ -262,6 +262,12 @@ export const Assets = {
    */
   moveEntry: (pid, from, toDir) =>
     jsonRequest('POST', `/api/projects/${pid}/move`, { from, to: toDir }),
+  /**
+   * 改名（真 `fs.rename`，位置不变只换最后一段）。跟 moveEntry 是一对：
+   * move 换爹、rename 换名字。**扩展名不用传** —— 服务端按原文件补回去。
+   */
+  renameEntry: (pid, from, name) =>
+    jsonRequest('POST', `/api/projects/${pid}/rename`, { from, name }),
   removeFolder: (pid, rel) =>
     jsonRequest('DELETE', `/api/projects/${pid}/folders/${String(rel).split('/').map(encodeURIComponent).join('/')}`),
   /** 画布布局（空间画布，含 zones 分区）*/

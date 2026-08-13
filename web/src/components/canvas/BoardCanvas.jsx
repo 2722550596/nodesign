@@ -155,6 +155,8 @@ export default function BoardCanvas({
    * 回默认位置"的来源之一。
    */
   const movingRef = useRef(new Set());
+  /** 正在就地改名的东西（文件夹路径 / 物件 id）—— 卡上的名字换成输入框 */
+  const [renamingId, setRenamingId] = useState(null);
   const fittedKeyRef = useRef('');        // 换层之后把镜头带过去：每层只带一次
   // 交互态
   const dragRef = useRef(null);           // { kind:'object', ... }（桌面化后只剩物件拖拽）
@@ -471,7 +473,7 @@ export default function BoardCanvas({
         // 影子区已经占过位就沿用它的矩形（真区接管时画面不跳）
         next[zid] = {
           ...(ghostZones[zid] || newStackedZoneRect(next)),
-          title: taskTitles.get(zid) || zid.split('/').pop(),
+          // title 不写进 board.json：名字从路径读（见 folderView 那段）
         };
         dirtyRef.current.zones.add(zid);
       }
@@ -602,7 +604,15 @@ export default function BoardCanvas({
         x: Number.isFinite(z.x) ? z.x : 0,
         y: Number.isFinite(z.y) ? z.y : 0,
         w: FOLDER_CARD.w, h: FOLDER_CARD.h,
-        title: taskTitles.get(id) || z.title || id.split('/').pop() || '文件夹',
+        /**
+         * 名字**从路径读**，不读存档里的 `title`。
+         *
+         * id 就是路径，路径的最后一段就是名字 —— 再存一份 title 就是第二个
+         * 真相源，改名之后它立刻过期（实测：`鉴赏页` 改成 `作品集`，zones 行的
+         * title 还写着「鉴赏页」）。服务端 tasks 给的标题优先，那是它对形态的
+         * 命名，不是位置的复制品。
+         */
+        title: taskTitles.get(id) || id.split('/').pop() || '文件夹',
         count: countIn(id),
       };
     });
@@ -670,6 +680,18 @@ export default function BoardCanvas({
   useEffect(() => {
     const ids = Object.keys(seatFixes || {});
     if (!ids.length) return;
+    /**
+     * ⚠️ 有东西正在改身份（搬家 / 改名）时**一律不落位**。
+     *
+     * 改名是前缀改名：`鉴赏页` → `作品集` 之后，里面每一件的 id 都变了。产物
+     * 清单和文件夹清单不是同一拍回来的，中间那一拍里 `作品集` 还不在文件夹
+     * 清单里，于是归属规则往上走一直走到根 —— 里面的东西短暂地"出现在桌面上"，
+     * 这一趟就给它们排座并写盘。等清单追上，它们回到文件夹里，却带着一组
+     * 在根上算出来的坐标。
+     *
+     * 落位是"给新东西一个落脚点"，不是"给正在改名的东西重新安家"。等这一拍过去。
+     */
+    if (movingRef.current.size) return;
     setLayout(prev => {
       let touched = false;
       const next = { ...prev };
@@ -1533,7 +1555,7 @@ export default function BoardCanvas({
       const r = await Assets.createFolder(projectId, { parent });
       if (r?.folder && at) {
         // 落在右键处：不这么做的话它会被自动铺位丢到栈底，你得去找它
-        setZones(prev => ({ ...prev, [r.folder]: { x: Math.round(at.x), y: Math.round(at.y), w: FOLDER_CARD.w, h: FOLDER_CARD.h, title: r.folder.split('/').pop() } }));
+        setZones(prev => ({ ...prev, [r.folder]: { x: Math.round(at.x), y: Math.round(at.y), w: FOLDER_CARD.w, h: FOLDER_CARD.h } }));
         dirtyRef.current.zones.add(r.folder);
         scheduleSave();
       }
@@ -1568,7 +1590,7 @@ export default function BoardCanvas({
       // 文件夹落在被摞的那张的位置上（视觉上"它俩合成了这个"）
       setZones(prev => ({
         ...prev,
-        [folder]: { x: Math.round(b.pos.x), y: Math.round(b.pos.y), w: FOLDER_CARD.w, h: FOLDER_CARD.h, title: folder.split('/').pop() },
+        [folder]: { x: Math.round(b.pos.x), y: Math.round(b.pos.y), w: FOLDER_CARD.w, h: FOLDER_CARD.h },
       }));
       dirtyRef.current.zones.add(folder);
       const rel = (o) => String(o.id).slice(String(o.id).indexOf(':') + 1);
@@ -1584,6 +1606,38 @@ export default function BoardCanvas({
       setTimeout(() => { movingRef.current.delete(a.id); movingRef.current.delete(b.id); }, 4000);
     }
   }, [projectId, reload, scheduleSave]);
+
+  /**
+   * 就地改名（2026-08-13）。
+   *
+   * 三层传播的机器 08-08 就造好了（renameBoardPaths 独立动词 / git 对账 /
+   * 转发表），**缺的一直只是这扇门** —— 于是文件夹只能叫「新建文件夹」，
+   * 要改名得去让 agent `mv`。摞一起自动成夹上线之后这条更硌手：系统天天
+   * 给你造通名文件夹。
+   *
+   * 扩展名不用管，服务端按原文件补回去（用户改 `主稿.html` 时输入的是「定稿」，
+   * 让他自己带扩展名的话，删掉它就等于把一份 deck 变成普通文件）。
+   */
+  const commitRename = useCallback(async (id, name) => {
+    setRenamingId(null);
+    const from = String(id).slice(String(id).indexOf(':') + 1);
+    const next = String(name || '').trim();
+    if (!next || next === from.split('/').pop().replace(/\.[^.]+$/, '')) return;
+    movingRef.current.add(id);            // 改名 = 换身份，同搬家：别给旧 id 排座
+    try {
+      const r = await Assets.renameEntry(projectId, from, next);
+      if (r?.board) {
+        setZones(r.board.zones || {});
+        setBindings(r.board.bindings || {});
+        dirtyRef.current = { objects: new Set(), zones: new Set() };
+      }
+      reload();
+    } catch (err) {
+      useGlobalStore.getState().showToast(`改不了名：${err.message}`, 'error');
+    } finally {
+      setTimeout(() => movingRef.current.delete(id), 4000);
+    }
+  }, [projectId, reload]);
 
   const openContextMenu = useCallback((e) => {
     const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
@@ -1611,6 +1665,7 @@ export default function BoardCanvas({
         { id: 'enter', icon: FolderOpen, label: '进入', onClick: () => focusZoneAction(zoneId) },
         { id: 'new', icon: FolderPlus, label: '在里面新建文件夹', onClick: () => createFolderAt(zoneId, null) },
         { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ folder: zoneId }) },
+        { id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(zoneId) },
         { divider: true },
         { id: 'del', icon: Trash2, label: '删除文件夹', danger: true, onClick: () => handleDeleteFolder(zoneId, zoneId.split('/').pop()) },
       ];
@@ -2015,10 +2070,34 @@ export default function BoardCanvas({
                 borderTop: `1px solid ${COLOR.borderLt}`,
               }}>
                 <FolderOpen size={12} color={COLOR.sub} style={{ flexShrink: 0 }} />
-                <span style={{
-                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
-                }}>{z.title}</span>
+                {renamingId === z.id ? (
+                  <input
+                    data-zone-action
+                    autoFocus
+                    defaultValue={z.title}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onKeyDown={(e) => {
+                      // Enter 提交、Esc 放弃。**都要 stopPropagation** —— 画布上
+                      // Esc 是"回上一层"、单键是换工具，不拦住的话打字就在换工具
+                      e.stopPropagation();
+                      if (e.key === 'Enter') commitRename(z.id, e.currentTarget.value);
+                      if (e.key === 'Escape') setRenamingId(null);
+                    }}
+                    onBlur={(e) => commitRename(z.id, e.currentTarget.value)}
+                    style={{
+                      flex: 1, minWidth: 0, border: `1px solid ${CANVAS.brass}`,
+                      borderRadius: RADIUS.sm, padding: '1px 4px', outline: 'none',
+                      fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600,
+                      color: COLOR.text, background: COLOR.bgWhite,
+                    }}
+                  />
+                ) : (
+                  <span style={{
+                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+                  }}>{z.title}</span>
+                )}
                 <button
                   data-zone-action title="删除文件夹（连同里面的内容；不影响对话）"
                   onClick={() => !wasDrag() && handleDeleteFolder(z.id, z.title)}

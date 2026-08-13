@@ -113,6 +113,41 @@ export function resolve(pathname, method, body) {
   if (method === 'POST' && p === `/projects/${PROJECT_ID}/folders`) {
     return { status: 201, json: { ok: true, folder: createFolder(body?.parent || '', body?.name) } };
   }
+  if (method === 'POST' && p === `/projects/${PROJECT_ID}/rename`) {
+    const from = String(body?.from || '');
+    const parent = from.includes('/') ? from.slice(0, from.lastIndexOf('/')) : '';
+    const base = from.split('/').pop();
+    const ext = base.includes('.') ? base.slice(base.lastIndexOf('.')) : '';
+    const next = (parent ? `${parent}/` : '') + String(body?.name || '').trim() + ext;
+    if (!FOLDERS.includes(from) && !ARTIFACTS.some(a => a.path === from)
+        && !TASKS.some(t => (t.artifacts || []).some(a => a.file === from))) {
+      return { status: 404, json: { error: 'source not found' } };
+    }
+    // 前缀改名：它自己和它下面的一切
+    for (let i = 0; i < FOLDERS.length; i += 1) {
+      if (FOLDERS[i] === from) FOLDERS[i] = next;
+      else if (FOLDERS[i].startsWith(`${from}/`)) FOLDERS[i] = next + FOLDERS[i].slice(from.length);
+    }
+    for (const a of ARTIFACTS) {
+      if (a.path === from) { a.path = next; a.name = next.split('/').pop(); }
+      else if (a.path.startsWith(`${from}/`)) a.path = next + a.path.slice(from.length);
+    }
+    for (const t of TASKS) {
+      if (t.id === from) t.id = next;
+      else if (t.id.startsWith(`${from}/`)) t.id = next + t.id.slice(from.length);
+      // 标题从路径现算 —— 真服务端就是这么给的（assets.js: `title: rel.split('/').pop()`）。
+      // 假数据要是只改 id 不改 title，就会做出"改完名字卡上还是旧名"的假象，
+      // 而真环境里没有这回事。**假数据跟真服务端不同构，比没有假数据更坏。**
+      t.title = t.id ? t.id.split('/').pop() : t.title;
+      for (const a of (t.artifacts || [])) {
+        for (const k of ['file', 'entryRel', 'root', 'base']) {
+          if (a[k] === from) a[k] = next;
+          else if (typeof a[k] === 'string' && a[k].startsWith(`${from}/`)) a[k] = next + a[k].slice(from.length);
+        }
+      }
+    }
+    return { json: { ok: true, from, to: next, renamed: true } };
+  }
   if (method === 'POST' && p === `/projects/${PROJECT_ID}/move`) {
     const from = String(body?.from || '');
     const to = String(body?.to || '');

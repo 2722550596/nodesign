@@ -804,6 +804,61 @@ router.post('/:pid/move', express.json(), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * POST /:pid/rename —— 给一个东西改名（**真的动磁盘**，位置不变只换最后一段）。
+ *
+ * body: `{ from: '稿件/主稿.html', name: '定稿' }`
+ *
+ * 跟 `/move` 是一对：move 换爹，rename 换名字。在这之前**画布上没有任何改名
+ * 入口** —— 三层传播的机器（renameBoardPaths / git 对账 / 转发表）08-08 就造好
+ * 了，缺的只是这扇门，于是文件夹只能叫「新建文件夹」，或者让 agent 去 mv。
+ *
+ * 扩展名归系统管：改 `主稿.html` 时用户输入的是「定稿」，我们补回 `.html`。
+ * 让用户自己带扩展名的话，删掉它就等于把一份 deck 变成一个普通文件。
+ */
+router.post('/:pid/rename', express.json(), async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    const root = getSharedDir(req.params.pid);
+    const from = String(req.body?.from ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    if (!from) return res.status(400).json({ error: 'from required' });
+
+    const absFrom = path.resolve(root, from);
+    if (!absFrom.startsWith(root + path.sep)) {
+      return res.status(400).json({ error: 'path escapes workspace' });
+    }
+    const seg0 = from.split('/')[0];
+    if (RESERVED_DIRS.has(seg0) || seg0.startsWith('.')) {
+      return res.status(400).json({ error: '这个位置的东西不参与改名' });
+    }
+    const st = await fs.stat(absFrom).catch(() => null);
+    if (!st) return res.status(404).json({ error: 'source not found' });
+
+    const oldBase = path.basename(from);
+    const ext = st.isDirectory() ? '' : (path.extname(oldBase) || '');
+    // 用户输入里带的扩展名剥掉，最后统一补回原来那个
+    const wanted = sanitizeFilename(String(req.body?.name ?? ''))
+      .replace(new RegExp(`${ext.replace('.', '\\.')}$`, 'i'), '')
+      .replace(/\.+$/, '')
+      .trim();
+    if (!wanted) return res.status(400).json({ error: '名字不能为空' });
+
+    const parent = from.includes('/') ? from.slice(0, from.lastIndexOf('/')) : '';
+    const nextRel = (parent ? `${parent}/` : '') + wanted + ext;
+    if (nextRel === from) return res.json({ ok: true, from, to: from, renamed: false });
+    if (await exists(path.resolve(root, nextRel))) {
+      return res.status(409).json({ error: `「${wanted}${ext}」已经有一个了` });
+    }
+
+    // 顺序同 /move：先动磁盘，再改画布身份（物件 / 文件夹 / 归属 / 关系线端点）
+    await fs.rename(absFrom, path.resolve(root, nextRel));
+    const { board } = await renameBoardPaths(req.params.pid, [[from, nextRel]]);
+    res.json({ ok: true, from, to: nextRel, renamed: true, board });
+    commitWorkspace(req.params.pid, null, `rename: ${from} → ${nextRel}`, { author: 'user' })
+      .catch(err => console.warn('[git] rename commit failed:', err.message));
+  } catch (err) { next(err); }
+});
+
 router.delete('/:pid/folders/*subPath', async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;

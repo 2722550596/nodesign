@@ -158,6 +158,15 @@ for (const [flag, how] of [['click', 'click'], ['dblclick', 'dblclick']]) {
   await page.waitForTimeout(700);
 }
 
+// 往当前聚焦的输入框里打字并回车（就地改名这类）
+const TYPE = opt('type', null);
+if (TYPE) {
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type(TYPE, { delay: 20 });
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(900);
+}
+
 let probe = null;
 if (PROBE) {
   try { probe = await page.evaluate(`(() => (${PROBE}))()`); }
