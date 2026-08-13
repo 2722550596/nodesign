@@ -43,8 +43,23 @@ export function PanelManagerProvider({ projectId, defaultPanels, panelMeta = {},
   });
   const topZRef = useRef(Z_BASE);
 
-  // 切项目时重新 init
+  /**
+   * 切项目时重新 init。
+   *
+   * ⚠️ **挂载那一次必须跳过**（2026-08-13）。useState 的初始化函数已经读过
+   * 一模一样的东西了，这里再来一遍纯属重复 —— 但它有个不明显的副作用：
+   * React 的 effect 是**子先父后**，子组件在自己的挂载 effect 里提交的东西，
+   * 会被父组件这一发 `setPanels` 整个抹掉。
+   *
+   * 实际后果是浮动工具栏**永远落在 (24,24)**：它在挂载 effect 里量好容器、
+   * 算出锚点位置、提交，然后这里一把抹平；而它的 `anchoredRef` 已经置位，
+   * 再也不会重算。表现就是"默认位置写了 bottom-center，看到的却是左上角"，
+   * 而且改默认值怎么改都不生效 —— 查起来极费劲，因为两边代码单看都对。
+   */
+  const initedForRef = useRef(projectId);
   useEffect(() => {
+    if (initedForRef.current === projectId) return;   // 挂载那次交给 useState 初始化
+    initedForRef.current = projectId;
     const saved = loadLayout(projectId);
     setPanels(mergeLayouts(defaultPanels, saved));
     topZRef.current = Z_BASE;
