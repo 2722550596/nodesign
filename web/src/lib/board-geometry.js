@@ -2,8 +2,8 @@
  * board-geometry.js — 桌面画布的几何常量与纯函数（2026-07-28 重构 3 抽出）
  *
  * BoardCanvas（桌面）与 StageLayer（舞台）共享，避免互相 import 的循环依赖。
- * 常量语义见 BoardCanvas 顶部说明；ZONE 与 server/projects/board-store.js
- * 的 ZONE_DEFAULTS 保持一致。
+ * 常量语义见 BoardCanvas 顶部说明。（服务端 ZONE_DEFAULTS 已随 zones 瘦身
+ * 删除 —— zones 存档只剩坐标，尺寸恒为这里的 FOLDER_CARD。）
  */
 
 // 桌面逻辑宽度固定（跨端坐标稳定），视口窄时整体 fitScale 等比缩（非交互）

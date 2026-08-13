@@ -7,7 +7,7 @@
  * schema（shared/board.json）：
  *   {
  *     size: { w, h },
- *     zones: { [zoneId]: { x, y, w, h, title? } },   // zoneId 一般 = sessionId
+ *     zones: { [zoneId]: { x, y } },   // zoneId = 文件夹的工作区相对路径（#14 只剩坐标）
  *     objects: { [objectId]: { x, y, z, w?, h?, expanded? } },
  *     bindings: { [bindingId]: { type, from, to, label?, by? } }   // 关系线
  *   }
@@ -32,7 +32,8 @@ export const MAX_ZONES = 200;
 export const MAX_BINDINGS = 1000;
 
 // 分区自动铺位常数 —— 与前端 BoardCanvas 的 ZONE_* 保持一致（数值约定，非共享代码）
-export const ZONE_DEFAULTS = { w: 1120, h: 640, gap: 60, bandX: 320, bandY: 48, perRow: 3 };
+// ZONE_DEFAULTS 已删（#14）：它是"文件夹=版面上一整条带"时代的默认矩形，
+// zones 瘦身后连兜底都用不上了。前端 board-geometry.js 的注释别再指着它对齐。
 
 function boardPath(pid) {
   return path.join(getSharedDir(pid), 'board.json');
@@ -184,21 +185,24 @@ function sanitizeBinding(b) {
   };
 }
 
-function sanitizeZone(z, size) {
+/**
+ * zones 一行只剩坐标（2026-08-13 瘦身，#14）。
+ *
+ * 逐字段的下场：
+ * - `w`/`h` —— 文件夹变方卡后前端视图**强制** FOLDER_CARD 尺寸，存的数字
+ *   没人读，还会成为"画布上 288 宽、存档里 1340"那种自相矛盾的证据。
+ * - `title` —— 名字从路径读（id 就是路径），存一份就是第二个真相源，
+ *   改名后立刻过期（实测过）。
+ * - `collapsed` —— 收起/展开两态 2026-08-13 随"当前目录"模型退役。
+ * - `pinned` —— 纵向堆叠 2026-08-08 退役，字段没有了对立面。
+ * 存量数据里这些字段读进来直接丢，下次写盘自然消失。
+ */
+function sanitizeZone(z) {
   if (!z || typeof z !== 'object') return null;
   return {
     // 同 sanitizeObject：无限画布，文件夹卡也能摆在任何地方（含负坐标）
     x: clampNum(z.x, -COORD_LIMIT, COORD_LIMIT, 0),
     y: clampNum(z.y, -COORD_LIMIT, COORD_LIMIT, 0),
-    w: clampNum(z.w, 200, COORD_LIMIT, ZONE_DEFAULTS.w),
-    h: clampNum(z.h, 160, COORD_LIMIT, ZONE_DEFAULTS.h),
-    ...(typeof z.title === 'string' && z.title.trim()
-      ? { title: z.title.trim().slice(0, 120) }
-      : {}),
-    ...(z.collapsed ? { collapsed: true } : {}),   // 收纳成文件夹形态
-    // ⚠️ 这里曾有 `pinned`（"用户手动搬过这块区，从此退出自动纵向堆叠"）。
-    // 纵向堆叠 2026-08-08 整个退役 —— 文件夹是自由摆的卡，没有队列可退出，
-    // 这个字段也就没有了对立面。存量数据里的 pinned 读进来直接丢。
   };
 }
 
@@ -218,7 +222,7 @@ function sanitizeBoard(raw) {
   for (const [id, z] of Object.entries(raw?.zones && typeof raw.zones === 'object' ? raw.zones : {})) {
     if (zCount >= MAX_ZONES) break;
     if (typeof id !== 'string' || id.length > 300) continue;
-    const s = sanitizeZone(z, size);
+    const s = sanitizeZone(z);
     if (s) { zones[id] = s; zCount += 1; }
   }
   let bCount = 0;
@@ -281,7 +285,7 @@ export function patchBoard(pid, patch) {
         if (typeof rawId !== 'string' || rawId.length > 300) continue;
         const id = fwd(rawId);
         if (z === null) { delete board.zones[id]; removed.add(id); continue; }
-        const s = sanitizeZone(z, board.size);
+        const s = sanitizeZone(z);
         if (s && (board.zones[id] || Object.keys(board.zones).length < MAX_ZONES)) board.zones[id] = s;
       }
     }

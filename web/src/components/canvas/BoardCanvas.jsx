@@ -311,7 +311,13 @@ export default function BoardCanvas({
       }
       if (d.zones.size) {
         patch.zones = {};
-        for (const id of d.zones) if (zonesRef.current[id]) patch.zones[id] = zonesRef.current[id];
+        // 只发坐标：zones 存档 2026-08-13 瘦身后只剩 x/y（#14，服务端
+        // sanitizeZone 同款）。本地 state 里的 w/h 是影子区/旧数据的残留，
+        // 发出去也会被服务端丢掉，别让 PATCH 里一直背着死字段。
+        for (const id of d.zones) {
+          const z = zonesRef.current[id];
+          if (z) patch.zones[id] = { x: z.x, y: z.y };
+        }
       }
       dirtyRef.current = { objects: new Set(), zones: new Set() };
       Assets.patchBoard(projectId, patch).catch(() => {});
