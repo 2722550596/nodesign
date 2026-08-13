@@ -25,7 +25,7 @@ import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
-import { emptyPresence, reducePresence, followTarget } from '../../lib/board-presence.js';
+import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
@@ -2048,6 +2048,28 @@ export default function BoardCanvas({
       // 顶栏的「⋯」——它们是**设置**不是产物，占着画布最好的一条横带每天
       // 看却几乎不点。面板本身没动，只是换了个入口。
       openProjectPanel: (key) => setProjectPanel(key),
+      /**
+       * 就地标注发出的瞬间把精灵放到目标上（E4）：真事件（run.start /
+       * file_changed）要过服务端一圈才回来，等它们精灵才动，"收到指令立刻
+       * 飘过去"的手感就没了。这是**本地合成**的在场条目，不走 reducer ——
+       * 后续真事件来了会自然接管（run.start 幂等、file_changed 挪位置、
+       * tool_use 换那句话、run.done 收场）。
+       */
+      presenceHint: (targetId) => {
+        if (!targetId) return;
+        setPresence(prev => {
+          const cur = prev[MAIN_AGENT_ID] || {};
+          return {
+            ...prev,
+            [MAIN_AGENT_ID]: {
+              id: MAIN_AGENT_ID, kind: 'main', name: '助手', color: colorFor(0),
+              at: null,
+              ...cur,
+              active: true, targetId, zoneId: zoneOfObjectId(targetId), message: '收到，来了',
+            },
+          };
+        });
+      },
     };
     return () => { apiRef.current = null; };
   });

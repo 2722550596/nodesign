@@ -1725,6 +1725,8 @@ export default function ProjectWorkspace() {
    */
   const handleAnnotate = async ({ target, text }) => {
     useGlobalStore.getState().openChatDock();
+    // E4：发送瞬间精灵先飘到目标上（本地合成在场，真事件来了自然接管）
+    boardApiRef.current?.presenceHint?.(target.id);
     const label = `${target.typeLabel}「${target.title}」`;
     const loc = target.id && target.id !== target.title ? `（${target.id}）` : '';
     await handleSend(`【画布标注】${label}${loc}：${text}`);
