@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
-  PencilLine, ChevronsUpDown, Focus,
+  PencilLine, ChevronsUpDown, Focus, Presentation, Globe, Map as MapIcon,
   Maximize2, Minus, MousePointer2, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
   FolderPlus, StickyNote,
 } from 'lucide-react';
@@ -590,11 +590,20 @@ export default function BoardCanvas({
     // ── 这一层有哪些文件夹（直接子级）+ 每个装了多少东西 ──
     const allFolders = Object.keys(zonesEff);
     const here = allFolders.filter(id => parentOf(id) === cwd);
-    const countIn = (dir) => {
-      const under = `${dir}/`;
-      let n = allFolders.filter(id => parentOf(id) === dir).length;
-      for (const o of objects) { const d = dirOf(o); if (d === dir) n += 1; }
-      return n;
+    /**
+     * 里面装了什么。**只看直接子级**（跟"进去看到的那一层"一致）。
+     *
+     * 名字够用，不做缩略图：文件夹卡 200 宽，塞几张 iframe 缩略既看不清又要
+     * 为每个文件夹再挂一批 iframe —— 产物卡那两道限流的账会翻好几倍。
+     * 「一眼知道装了什么」靠的是名字，不是像素。
+     */
+    const peekIn = (dir) => {
+      const subs = allFolders.filter(id => parentOf(id) === dir)
+        .map(id => ({ kind: 'folder', title: id.split('/').pop() }));
+      const files = objects.filter(o => dirOf(o) === dir)
+        .map(o => ({ kind: o.type, title: o.title || o.name || String(o.id).split('/').pop() }));
+      const all = [...subs, ...files];
+      return { count: all.length, peek: all.slice(0, 4) };
     };
 
     const folders = here.map(id => {
@@ -613,7 +622,7 @@ export default function BoardCanvas({
          * 命名，不是位置的复制品。
          */
         title: taskTitles.get(id) || id.split('/').pop() || '文件夹',
-        count: countIn(id),
+        ...peekIn(id),
       };
     });
 
@@ -1655,6 +1664,8 @@ export default function BoardCanvas({
     if (obj) {
       items = [
         { id: 'open', icon: FolderOpen, label: '打开', onClick: () => primaryOpenRef.current?.(obj) },
+        // 改名只给磁盘上真有位置的（涂鸦 / 手写文字没有文件可改）
+        ...(isFileBacked(obj) ? [{ id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(obj.id) }] : []),
         ...(canAddToContext(obj) ? [{ id: 'add', icon: Plus, label: '加入上下文', onClick: () => handleAdd(obj) }] : []),
         { id: 'ask', icon: MessageSquarePlus, label: '让 agent 改它', onClick: () => onAskAgent?.({ objects: [obj.id] }) },
         { divider: true },
@@ -2054,13 +2065,42 @@ export default function BoardCanvas({
                   但那要先有缩略图管线，不在这一刀里。 */}
               <div style={{
                 flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', gap: GAP.xs,
+                gap: 3, padding: `${GAP.sm}px ${GAP.sm}px 0`,
                 background: PAPER.wall, borderRadius: `${RADIUS.xl}px ${RADIUS.xl}px 0 0`,
+                overflow: 'hidden',
               }}>
-                <Folder size={40} color={PAPER.pencil} strokeWidth={1.4} />
-                <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-                  {z.count} 项
-                </span>
+                {z.count === 0 ? (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: GAP.xs }}>
+                    <Folder size={34} color={PAPER.pencil} strokeWidth={1.4} />
+                    <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>空的</span>
+                  </div>
+                ) : (
+                  <>
+                    {z.peek.map((it, i) => {
+                      const ItemIcon = it.kind === 'folder' ? Folder
+                        : it.kind === 'image' ? ImageIcon
+                        : it.kind === 'note' ? StickyNote
+                        : it.kind === 'deck' ? Presentation
+                        : it.kind === 'site' ? Globe
+                        : it.kind === 'world' ? MapIcon
+                        : FileText;
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, minWidth: 0 }}>
+                          <ItemIcon size={11} color={PAPER.pencil} style={{ flexShrink: 0 }} />
+                          <span style={{
+                            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>{it.title}</span>
+                        </div>
+                      );
+                    })}
+                    {z.count > z.peek.length && (
+                      <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginTop: 2 }}>
+                        还有 {z.count - z.peek.length} 项
+                      </span>
+                    )}
+                  </>
+                )}
               </div>
 
               <div style={{
@@ -2121,6 +2161,9 @@ export default function BoardCanvas({
               animateLayout={!dragActive || dragRef.current?.id !== o.id}
               agentActive={ringObjects.has(o.id)}
               groupTarget={dropHint?.kind === 'group' && dropHint.id === o.id}
+              renaming={renamingId === o.id}
+              onRenameCommit={(v) => commitRename(o.id, v)}
+              onRenameCancel={() => setRenamingId(null)}
               onPointerDown={(e) => onObjectPointerDown(e, o)}
               wasDrag={wasDrag}
               onPrimary={() => primaryOpen(o)}
@@ -2350,6 +2393,7 @@ export default function BoardCanvas({
 function BoardObject({
   o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
   groupTarget = false,
+  renaming = false, onRenameCommit, onRenameCancel,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
   scale = 1,
 }) {
@@ -2463,7 +2507,10 @@ function BoardObject({
           在这之前这里是六个分支约 180 行 —— 三种形态 × 收起/展开两态，骨架
           逐字节相同，只有图标、一行小字、缩略图内容三处不一样。 */}
       {cardOf(o) === 'artifact' && (
-        <ArtifactCard o={o} projectId={projectId} fileVersions={fileVersions} scale={scale} />
+        <ArtifactCard
+          o={o} projectId={projectId} fileVersions={fileVersions} scale={scale}
+          renaming={renaming} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+        />
       )}
 
       {o.type === 'image' && (

@@ -139,7 +139,11 @@ function useInViewport(ref) {
 /** 镜头比这个还远时预览什么都看不清，挂 iframe 是纯浪费 */
 const PREVIEW_MIN_SCALE = 0.35;
 
-export default function ArtifactCard({ o, projectId, fileVersions, scale = 1 }) {
+export default function ArtifactCard({
+  o, projectId, fileVersions, scale = 1,
+  /** 就地改名：名字位换成输入框（与文件夹卡同一套交互） */
+  renaming = false, onRenameCommit, onRenameCancel,
+}) {
   const face = ARTIFACT_FACES[o.type];
   const boxRef = useRef(null);
   const inView = useInViewport(boxRef);
@@ -159,10 +163,33 @@ export default function ArtifactCard({ o, projectId, fileVersions, scale = 1 }) 
         borderBottom: `1px solid ${COLOR.borderLt}`,
       }}>
         <Icon size={12} color={COLOR.sub} style={{ flexShrink: 0 }} />
-        <span style={{
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
-        }}>{o.title}</span>
+        {renaming ? (
+          <input
+            data-board-action
+            autoFocus
+            defaultValue={o.title}
+            onPointerDown={(e) => e.stopPropagation()}
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => {
+              // 拦住：画布上 Esc 是"回上一层"、单键是换工具，不拦就变成打字换工具
+              e.stopPropagation();
+              if (e.key === 'Enter') onRenameCommit?.(e.currentTarget.value);
+              if (e.key === 'Escape') onRenameCancel?.();
+            }}
+            onBlur={(e) => onRenameCommit?.(e.currentTarget.value)}
+            style={{
+              flex: 1, minWidth: 0, border: `1px solid ${COLOR.text}`,
+              borderRadius: 2, padding: '0 4px', outline: 'none',
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600,
+              color: COLOR.text, background: COLOR.bgWhite,
+            }}
+          />
+        ) : (
+          <span style={{
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+          }}>{o.title}</span>
+        )}
         <span style={{
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub,
           whiteSpace: 'nowrap', flexShrink: 0,
