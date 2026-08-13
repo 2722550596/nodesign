@@ -2085,32 +2085,31 @@ export default function BoardCanvas({
   // agent 每存一次盘就把一扇模态窗拍在用户脸上。方卡带实时缩略图之后，
   // "工作过程当场可见"这件事缩略图自己就做到了。
   //
-  // 只留下有意义的那一半：**把视图切到 agent 正在动的那个文件夹**。
-  const requestAutoExpand = useCallback((key) => {
-    if (key == null) return;
-    setCwd(prev => (prev === key ? prev : key));
-  }, []);
+  // 只留下有意义的那一半：把视图切到 agent 正在动的那个文件夹。
+  //
+  // ⚠️ 而这半条 2026-08-13 也没了：桌面不再有"层"，切不过去。agent 在文件夹里
+  // 干活的可见性由**那张文件夹卡上的光圈 + 实时缩略**承担（ringZones 会把
+  // 目标一路归到桌面上那张卡）。这里曾经是 `setCwd(...)` —— 换层模型拆掉之后
+  // 它成了一处**悬空引用**（build 不报，真事件一来才炸），是拆全局状态之后
+  // 必须 grep 一遍 setter 的老教训。
 
   /**
-   * 舞台卡认领目标（agent 刚开始写某个文件）：
-   *   ① 目标落脚的工作区不存在就先长一块影子区（任务目录是 agent 现建的）
-   *   ② 工作视图把镜头切过去，写的过程当场可见
+   * 舞台卡认领目标（agent 刚开始写某个文件）：目标落脚的文件夹还不存在就先
+   * 长一块影子区（任务目录是 agent 现建的）。
    */
   const handleStageTarget = useCallback((objectId) => {
     ensureZoneForTarget(objectId);
-    const zid = zoneOfObjectId(objectId);
-    if (zid) requestAutoExpand(zid);
-  }, [ensureZoneForTarget, requestAutoExpand]);
+  }, [ensureZoneForTarget]);
 
-  // preview_deck 工具：等价于用户双击那张 deck 卡
+  // preview_deck 工具：等价于用户双击那张卡。
+  // **不挑层**：窗是浮在桌面之上的，被预览的东西住在哪个文件夹里都能直接开。
   const handlePreviewRequest = useCallback((objectId) => {
-    const zid = zoneOfObjectId(objectId);
-    if (zid) requestAutoExpand(zid);
-    const o = positionedRef.current.find(it => it.id === objectId);
+    const o = positionedRef.current.find(it => it.id === objectId)
+      || objectsRef.current.find(it => it.id === objectId);
     if (!o) { pendingPreviewRef.current = objectId; return; }  // 刚写出来的 deck 等产物重拉
     primaryOpenRef.current?.(o);
     followToObject?.(objectId);
-  }, [requestAutoExpand, followToObject]);
+  }, [followToObject]);
 
   // 挂起的 preview：目标物件一上墙就补开
   useEffect(() => {
