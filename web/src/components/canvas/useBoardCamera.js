@@ -275,6 +275,21 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
     flyTo(fitBox(box, vp, { maxZoom: opts.maxZoom ?? 1 }), opts);
   }, [flyTo]);
 
+  /**
+   * 保持缩放，**立刻**把一点挪到视口中心（不动画）。
+   *
+   * 小地图拖拽要的是 1:1 跟手：每一帧都 flyTo 的话，每一帧都在重启一段
+   * 380ms 缓动，手停下来镜头还在追，拖起来像在拽橡皮筋。同理它也不能吃
+   * `holdUntil` 那道门 —— 拖小地图本身就是用户在开镜头，不是别人来抢。
+   */
+  const jumpToPoint = useCallback((pt) => {
+    const vp = viewportRef.current;
+    if (!pt || !vp.w) return;
+    noteTakeover();
+    const z = camRef.current.z;
+    apply({ z, x: vp.w / 2 / z - pt.x, y: vp.h / 2 / z - pt.y });
+  }, [apply, noteTakeover]);
+
   /** 保持缩放，把一点挪到视口中心 */
   const flyToPoint = useCallback((pt, opts = {}) => {
     const vp = viewportRef.current;
@@ -318,6 +333,6 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
     isHandMode: () => spaceRef.current || handToolRef.current,
     noteTakeover,
     onPointerDown, onPointerMove, onPointerUp,
-    flyTo, flyToBox, flyToPoint, zoomToFit, zoomBy, zoomTo, toWorld,
+    flyTo, flyToBox, flyToPoint, jumpToPoint, zoomToFit, zoomBy, zoomTo, toWorld,
   };
 }

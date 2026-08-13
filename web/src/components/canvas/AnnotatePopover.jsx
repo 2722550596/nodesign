@@ -1,26 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Send } from 'lucide-react';
+import { Send, PenLine } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SANS, FONT_KAI, FONT_SIZE } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
 import { isImeEnter } from '../../lib/helpers.js';
 
 /**
- * AnnotatePopover —— 就地标注（2026-08-13，E3）。
+ * AnnotatePopover —— 就地标注（2026-08-13，E3；同日二改收成唯一入口）。
  *
- * 右键一个画布物件/文件夹 →「标注给 agent」→ 在点的位置浮出这张小纸：
- * 写一句话，按发送，agent 立刻起一轮来处理。取代旧的「让 agent 改它」
- * （那个只是往输入框里垫半句话，用户还得自己走到聊天栏把话说完 ——
- * 用户要的是"在东西上说完，agent 就来"）。
+ * 在一个画布物件/文件夹上写一句话。入口两处：**右键菜单**和**卡片右上角的
+ * 标注按钮**。写完有两个出口：
+ *
+ *   - **发给 agent**（主）：起一轮，agent 立刻来处理这句话。
+ *   - **留在画布**（次）：落成一段画布文字 + 一条 `annotates` 关系线，
+ *     agent 不知道 —— 这是给自己/给以后看的记号。
+ *
+ * ## 为什么工具栏那个「标注(C)」被删了
+ *
+ * 在这之前同一件事有两套：工具栏的 C（点物件 → 写字 → 只留在画布）和这张纸
+ * （右键 → 写字 → 只发给 agent）。两套各缺对方那一半，用户还得先知道自己
+ * 想要哪一半才能选对入口。收成一处的判据是：**标注的对象永远是一个具体的
+ * 东西**，所以它属于那个东西的菜单，而不属于「要先在空地上起手势」的工具栏。
  *
  * 位置/portal/关闭规则照 ContextMenu：屏幕坐标 fixed、portal 到 body
  * （画布 section 的 isolation 会把 z-index 关在里面）、贴边翻转、
  * Esc / 点别处关掉。
  */
 
-const POP_W = 264;
+const POP_W = 288;
 
-export default function AnnotatePopover({ x, y, target, onSubmit, onClose }) {
+export default function AnnotatePopover({ x, y, target, onSubmit, onKeep, onClose }) {
   const ref = useRef(null);
   const [text, setText] = useState('');
   const [flip, setFlip] = useState({ x: false, y: false });
@@ -46,6 +55,13 @@ export default function AnnotatePopover({ x, y, target, onSubmit, onClose }) {
     if (!t) return;
     onClose();
     onSubmit(t);
+  };
+
+  const keep = () => {
+    const t = text.trim();
+    if (!t) return;
+    onClose();
+    onKeep?.(t);
   };
 
   return createPortal((
@@ -95,10 +111,27 @@ export default function AnnotatePopover({ x, y, target, onSubmit, onClose }) {
           color: COLOR.text, background: COLOR.bgWhite,
         }}
       />
-      <div style={{ display: 'flex', alignItems: 'center', marginTop: GAP.sm, gap: GAP.sm }}>
-        <span style={{ fontFamily: FONT_KAI, fontSize: FONT_SIZE.xs, color: COLOR.sub, flex: 1 }}>
-          发送后 agent 立刻来处理
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', marginTop: GAP.sm, gap: GAP.xs, justifyContent: 'flex-end' }}>
+        {/* 次出口：写下的话不发出去，落在画布上（一段字 + 一条连到它的线）。
+            做成朴素文字按钮而不是第二个实心钮 —— 一张纸上两个同样重的按钮，
+            用户每次都要停下来读一遍才知道按哪个。 */}
+        {onKeep && (
+          <button
+            onClick={keep}
+            disabled={!text.trim()}
+            title="不发消息，只在画布上留一条连到它的标注"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              padding: `${GAP.xs}px ${GAP.sm}px`,
+              border: 'none', borderRadius: RADIUS.sm, background: 'transparent',
+              color: text.trim() ? COLOR.sub : COLOR.borderLt,
+              cursor: text.trim() ? 'pointer' : 'default',
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+            }}
+          >
+            <PenLine size={12} /> 留在画布
+          </button>
+        )}
         <button
           onClick={submit}
           disabled={!text.trim()}

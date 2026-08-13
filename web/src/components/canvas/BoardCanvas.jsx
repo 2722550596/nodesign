@@ -193,8 +193,6 @@ export default function BoardCanvas({
   const canvasFont = useGlobalStore(st => st.canvasFont);
   /** 镜头跟不跟 agent 跑（设置里的开关，默认开） */
   const followAgent = useGlobalStore(st => st.followAgent);
-  const [commentDraft, setCommentDraft] = useState(null);   // { targetId, at }
-  const commentDraftRef = useRef(null);
   /** 正在改内容的手写文字：{ id, at:{x,y}, initial }（复用 TextDraft） */
   const [editingText, setEditingText] = useState(null);
   /**
@@ -616,7 +614,6 @@ export default function BoardCanvas({
   }, [objects, layout, zonesEff, taskTitles, cwd]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
-  commentDraftRef.current = commentDraft;
 
 
   /**
@@ -863,49 +860,15 @@ export default function BoardCanvas({
     });
   }, [zoneAtPoint, patchLayout]);
 
-  /**
-   * 标注一个物件 → 一段文字 + 一条 `annotates` 关系。
-   *
-   * **批注是关系不是自由文字**：光写一段话飘在旁边，过两天就没人知道它在说谁；
-   * 存成关系之后，被批注的东西一移动，批注跟着走，线自己重画。
-   */
-  const handleComment = useCallback((targetId, at) => {
-    setCommentDraft({ targetId, at });
-  }, []);
-
-  const commitComment = useCallback(async (text) => {
-    const draft = commentDraftRef.current;
-    setCommentDraft(null);
-    const t = (text || '').trim();
-    if (!t || !draft) return;
-    const noteId = await handleCreateText(t, draft.at);
-    if (!noteId) return;
-    // 文字落好了才连线 —— 端点必须真实存在，否则画布上留一条通向虚空的线
-    const bid = `b:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
-    setBindings(prev => ({
-      ...prev,
-      [bid]: { type: 'annotates', from: noteId, to: draft.targetId, by: 'user' },
-    }));
-    Assets.patchBoard(projectId, {
-      bindings: { [bid]: { type: 'annotates', from: noteId, to: draft.targetId, by: 'user' } },
-    }).catch(() => {});
-  }, [handleCreateText, projectId]);
-
   const canvasTools = useCanvasTools({
     // 摆放模式下笔不落墨：喂给工具层一个它不认识的名字，所有分支自然闭合，
     // 指针事件穿回物件拖拽/选中那条路（下面守卫只对墨类放行）
     tool: tool === 'draw' && drawMode === 'arrange' ? 'arrange' : tool,
     toWorld: camera.toWorld,
-    zoneAt: zoneAtPoint,
     // 一次性工具（one-shot）：写完一段自动回到指针。想连写的人多按一次 T 的
     // 代价，远小于"忘了自己拿着笔，想挪字却弹出新输入框"的困惑（用户报）。
     onCreateText: (t, at) => { handleCreateText(t, at); setTool('select'); },
     onCreateScribble: handleCreateScribble,
-    onComment: handleComment,
-    onEditText: (id) => {
-      const o = positionedRef.current.find(x => x.id === id);
-      if (o) openTextEditor(o);
-    },
   });
 
   /**
@@ -920,6 +883,34 @@ export default function BoardCanvas({
     if (z) return { x: z.x, y: z.y, w: z.w, h: z.h };
     return null;
   }, []);
+
+  /**
+   * 标注的第二个出口：**留在画布** —— 一段文字 + 一条 `annotates` 关系。
+   *
+   * **批注是关系不是自由文字**：光写一段话飘在旁边，过两天就没人知道它在说谁；
+   * 存成关系之后，被批注的东西一移动，批注跟着走，线自己重画。
+   *
+   * 2026-08-13 从工具栏的「标注(C)」搬到这儿 —— 那个工具连同它的 commentDraft
+   * 输入框一起删了，两条标注路（留在画布 / 发给 agent）收成同一张浮层的两个
+   * 按钮，见 AnnotatePopover 的说明。
+   *
+   * 落点**贴着目标右边**，不落在光标处：光标可能正压在卡上（右键菜单从卡上
+   * 弹、标注按钮就长在卡的右上角），落在那儿等于把一段字盖在产物脸上。
+   */
+  const keepAnnotation = useCallback((targetId, fallbackAt, text) => {
+    const t = (text || '').trim();
+    if (!t || !targetId) return;
+    const r = rectOfId(targetId);
+    const at = r ? { x: r.x + r.w + 24, y: r.y } : fallbackAt;
+    if (!at) return;
+    const noteId = handleCreateText(t, at);
+    if (!noteId) return;
+    // 文字落好了才连线 —— 端点必须真实存在，否则画布上留一条通向虚空的线
+    const bid = `b:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
+    const link = { type: 'annotates', from: noteId, to: targetId, by: 'user' };
+    setBindings(prev => ({ ...prev, [bid]: link }));
+    Assets.patchBoard(projectId, { bindings: { [bid]: link } }).catch(() => {});
+  }, [rectOfId, handleCreateText, projectId, setBindings]);
 
   // 舞台层仍按世界坐标贴卡，夹取上界取内容外沿
   const stageBounds = {
@@ -975,12 +966,16 @@ export default function BoardCanvas({
     // 挂在外层，事件是**先卡片后画布**冒泡上去的 —— 卡片不主动让路的话，
     // 按在卡片上会同时起一个物件拖拽和一次平移，两边各拽各的。
     if (camApiRef.current?.isHandMode?.()) return;
-    // 工具在手（画笔/文字/批注）时这一下归工具：按在卡上是要在卡上画、写、
-    // 标，不是要拖卡。少了这条，笔画起点落在卡上会同时武装一次物件拖拽 ——
-    // 抬 z、写盘，而笔画提交又吞掉抬手，dragRef 残骸让那张卡黏住光标
+    // 工具在手（画笔/批注）时这一下归工具：按在卡上是要在卡上画、标，不是要
+    // 拖卡。少了这条，笔画起点落在卡上会同时武装一次物件拖拽 —— 抬 z、写盘，
+    // 而笔画提交又吞掉抬手，dragRef 残骸让那张卡黏住光标
     // （2026-08-13 查实的真 bug，三个症状同一根）。
-    // 唯一豁免：涂鸦的摆放模式对**墨类**放行 —— 那个模式存在的意义就是挪墨迹。
-    if (toolRef.current !== 'select') {
+    //
+    // 两条豁免：
+    //   - 涂鸦的**摆放模式**对墨类放行 —— 那个模式存在的意义就是挪墨迹。
+    //   - **文字工具**整个放行 —— 它 2026-08-13 起只认双击（见 useCanvasTools），
+    //     单击这一下本来就该按指针工具那套走："单击不触发，当作操作文字本身"。
+    if (toolRef.current !== 'select' && toolRef.current !== 'text') {
       const arrange = toolRef.current === 'draw' && drawModeRef.current === 'arrange';
       if (!(arrange && o.native)) return;
     }
@@ -1373,7 +1368,8 @@ export default function BoardCanvas({
    * 带修饰键的一律放行：Ctrl+V 是粘贴，不是换工具。
    */
   useEffect(() => {
-    const KEYS = { v: 'select', h: 'hand', t: 'text', p: 'draw', c: 'comment' };
+    // c（标注）2026-08-13 退役：标注不再是一种"拿在手里的工具"，见 AnnotatePopover
+    const KEYS = { v: 'select', h: 'hand', t: 'text', p: 'draw' };
     const onKey = (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
@@ -2062,9 +2058,11 @@ export default function BoardCanvas({
               items: [
                 { id: 'select', icon: MousePointer2, title: '指针：选中和挪动东西（V）' },
                 { id: 'hand', icon: Hand, title: '抓手：拖任何地方都是挪镜头（H，或按住空格）' },
-                { id: 'text', icon: Type, title: '写一段字（T）' },
+                { id: 'text', icon: Type, title: '写一段字（T）：双击空地落输入框，单击照常选中/拖动' },
                 { id: 'draw', icon: PenLine, title: '涂鸦（P）' },
-                { id: 'comment', icon: MessageSquarePlus, title: '标注一个物件（C）' },
+                // 标注 2026-08-13 从这儿撤了：它的对象永远是一个具体物件，
+                // 所以入口在物件自己身上（右键菜单 / 卡片右上角的标注按钮），
+                // 工具栏只留"要在空地上起手势"的那几种。
               ],
             },
             // 拿着笔时多出的子模式组：落笔 / 摆放（见 drawMode 的说明）
@@ -2129,6 +2127,7 @@ export default function BoardCanvas({
           if (canvasTools.onPointerDown(e)) return;
           camera.onPointerDown(e);
         }}
+        onDoubleClick={(e) => { canvasTools.onDoubleClick(e); }}
         onContextMenu={(e) => {
           if (onChrome(e)) return;                 // 工具栏上右键交给浏览器
           e.preventDefault();
@@ -2156,7 +2155,6 @@ export default function BoardCanvas({
             : tool === 'hand' ? 'grab'
             : tool === 'draw' ? (drawMode === 'arrange' ? 'default' : 'crosshair')
             : tool === 'text' ? 'text'
-            : tool === 'comment' ? 'help'
             : 'default',
           background: CANVAS.paper,
           backgroundImage: `radial-gradient(circle, ${CANVAS.grid} 1px, transparent 1px)`,
@@ -2277,6 +2275,12 @@ export default function BoardCanvas({
               onDetail={() => setDetail(o)}
               onDeleteNote={() => handleDeleteNote(o)}
               onFocus={() => focusDeck(o)}
+              // 标注：浮层从按钮底下长出来（at 是按钮的屏幕坐标），
+              // target 的形状跟右键菜单那条**逐字一致** —— 同一张浮层
+              onAnnotate={(at) => setAnnotate({
+                x: at.x, y: at.y,
+                target: { kind: 'object', id: o.id, title: o.title || o.name || o.id, typeLabel: labelOf(o) },
+              })}
               // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
               scale={scale}
             />
@@ -2374,18 +2378,9 @@ export default function BoardCanvas({
           />
         )}
 
-        {/* 批注输入框：跟文字框同一个组件，只是提交后还要连一条关系线 */}
-        {commentDraft && (
-          <TextDraft
-            screen={{
-              x: (commentDraft.at.x + cam.x) * scale,
-              y: (commentDraft.at.y + cam.y) * scale,
-            }}
-            placeholder="这里想说什么…（⌘/Ctrl+Enter 贴上）"
-            onCommit={commitComment}
-            onCancel={() => setCommentDraft(null)}
-          />
-        )}
+        {/* ⚠️ 这里曾有第三个 TextDraft：工具栏「标注(C)」的批注输入框。
+            标注 2026-08-13 收敛成 AnnotatePopover 的两个出口之后它没有入口了，
+            连同 commentDraft 状态一起删。留在画布那条路现在走 keepAnnotation。 */}
 
         {/* 小地图（屏幕空间，左下角）。总览从"一种视图"变成"一个导航控件"之后
             全貌靠它看 —— 干活始终在当前这一层。窗开着时跟工具栏一起收掉。 */}
@@ -2395,7 +2390,7 @@ export default function BoardCanvas({
             cam={cam}
             viewport={camera.viewport}
             items={minimapItems}
-            onJump={(pt) => camera.flyToPoint(pt)}
+            onJump={(pt) => camera.jumpToPoint(pt)}
           />
         )}
 
@@ -2414,6 +2409,11 @@ export default function BoardCanvas({
           x={annotate.x} y={annotate.y} target={annotate.target}
           onClose={() => setAnnotate(null)}
           onSubmit={(text) => onAnnotate?.({ target: annotate.target, text })}
+          onKeep={(text) => keepAnnotation(
+            annotate.target.id,
+            camApiRef.current?.toWorld(annotate.x, annotate.y),
+            text,
+          )}
         />
       )}
 

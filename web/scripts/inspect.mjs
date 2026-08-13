@@ -212,6 +212,12 @@ if (DRAG) {
   }
 }
 
+// 往当前聚焦的输入框里打字，**不按回车**：`--keys=<文本>`。
+// `--type` 打完就回车（改名那类"输入即提交"的场景），可浮层里回车通常绑在
+// 主按钮上 —— 要验的是次按钮那条路，就不能让回车先把浮层收掉。
+const KEYS = opt('keys', null);
+if (KEYS) { await page.keyboard.type(KEYS, { delay: 15 }); await page.waitForTimeout(200); }
+
 // 右键：先于 click 跑，这样能"右键 → 点菜单项"连成一串。
 // `--rightclick-at=x,y` 按坐标点 —— 想点**空白画布**只能这样，按选择器会
 // 落在容器中心，那儿多半压着一张卡（右键菜单是按命中对象换内容的）。
@@ -240,6 +246,17 @@ if (CLICK_TEXT) {
     else errors.push(`--click-text 量不到位置: ${CLICK_TEXT}`);
   }
   else errors.push(`--click-text 没找到按钮: ${CLICK_TEXT}`);
+}
+
+// 按坐标点 / 双击：`--click-at=x,y`、`--dblclick-at=x,y`。
+// 空白画布上的手势（文字工具双击落框、点空地取消选中）只能这么点 ——
+// 按选择器会落在容器中心，那儿多半压着一张卡。
+for (const a of args) {
+  const m = a.match(/^--(click|dblclick)-at=(-?\d+),(-?\d+)$/);
+  if (!m) continue;
+  const px = Number(m[2]); const py = Number(m[3]);
+  await page.mouse.click(px, py, { clickCount: m[1] === 'dblclick' ? 2 : 1 });
+  await page.waitForTimeout(700);
 }
 
 // 可以传多个 --click / --dblclick，**按命令行顺序逐个执行** ——

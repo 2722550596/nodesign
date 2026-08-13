@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink, BookOpen, Trash2, Film,
+  MessageSquarePlus,
 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../../lib/theme.js';
 import { PAPER, PAPER_SHADOW } from '../../../lib/paper.js';
@@ -36,6 +37,7 @@ function BoardObject({
   groupTarget = false,
   renaming = false, onRenameCommit, onRenameCancel,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
+  onAnnotate,
   scale = 1,
 }) {
   const [hover, setHover] = useState(false);
@@ -96,8 +98,6 @@ function BoardObject({
 
   // 按钮清单由形态表给（board-kinds.js 的 actions，顺序即渲染顺序），
   // 这里只把动作 id 兑换成图标和回调。
-  // deck 那条是空的：它自带常驻标题栏（编辑 / 内嵌渲染都在上面），外挂 hover
-  // 工具小标是重复的第二套按钮 —— 2026-07-28 撤掉。
   const ACTION_DEFS = {
     add: { icon: Plus, title: added ? '已在托盘' : '加入上下文', fn: onAdd },
     read: { icon: BookOpen, title: '阅读', fn: onOpenViewer },
@@ -106,7 +106,20 @@ function BoardObject({
     open: { icon: ExternalLink, title: '打开', fn: onOpenFile },
     delete: { icon: Trash2, title: '删除', fn: onDeleteNote },
   };
-  const actions = actionsOf(o).map(id => ACTION_DEFS[id]).filter(Boolean);
+  /**
+   * 标注**不在形态表里**，它排在所有形态的按钮之后无条件出现（2026-08-13）。
+   *
+   * 理由是表的意义在于记录**差异**：标注对每一种东西都成立、写法一字不差，
+   * 抄进十条形态就是把同一句话说十遍，下次加形态还得记着补第十一遍。
+   * 右键菜单那边同理 —— 它也是全类型无条件给。
+   *
+   * 位置固定在最右：那是"跟 agent 说话"的位置，deck 这种别的按钮都没有的
+   * 形态也照样有它（用户要的就是**每个**产物右上角都能标注）。
+   */
+  const actions = [
+    ...actionsOf(o).map(id => ACTION_DEFS[id]).filter(Boolean),
+    { icon: MessageSquarePlus, title: '标注（发给 agent / 留在画布）', fn: onAnnotate, anchored: true },
+  ];
 
   // 工具条挂在卡片上沿之外。这里有两个坑，都踩过：
   //
@@ -138,7 +151,16 @@ function BoardObject({
           const Icon = a.icon;
           return (
             <button key={i} title={a.title} data-board-action
-              onClick={(e) => { e.stopPropagation(); if (!wasDrag()) a.fn(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (wasDrag()) return;
+                // 带锚的动作（标注）要知道自己被按在屏幕哪儿 —— 浮层从按钮
+                // 底下长出来，而不是从卡片中心或者上次右键的位置
+                if (a.anchored) {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  a.fn?.({ x: r.left, y: r.bottom + 6 });
+                } else a.fn?.();
+              }}
               style={{ border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.text, display: 'flex', padding: 5 }}>
               <Icon size={13} />
             </button>

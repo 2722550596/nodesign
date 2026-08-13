@@ -10,13 +10,16 @@ import { onChrome } from '../../lib/board-hit.js';
  *
  * ## 三种工具的落点语义
  *
- * - `text`    点一下 → 在那儿开一个输入框，写完落成 `.md`（走便签那条路）。
- *   **落盘不是可选项**：canvas-native 的东西 agent 读不到，而用户写字十有八九
- *   是想说给 agent 听。
+ * - `text`    **双击**空地 → 在那儿开一个输入框，写完落成一段画布文字。
+ *   单击什么都不做 —— 这一下交回给物件本身（选中、拖动、双击改字）。
+ *   2026-08-13 用户定：「单击不触发，当作操作文字本身」。原来是单击即开框，
+ *   于是拿着这支笔就没法碰画布上任何东西，挪一个字都会在旁边叠一段新的。
  * - `draw`    按住拖 → 一条涂鸦。只活在 board.json（agent 读不到，这是取舍：
  *   涂鸦是给自己做的记号）。
- * - `comment` 点一个物件 → 给它挂一条批注。批注是**关系**不是自由文字，
- *   所以它落成一条 `annotates` 线 + 一段文字，两头都有。
+ *
+ * ⚠️ 这里曾有第三种：`comment`（点一个物件给它挂批注）。2026-08-13 撤掉 ——
+ * 标注的对象永远是一个具体物件，那属于物件自己的菜单，不属于"要先在空地上
+ * 起手势"的工具栏。两条标注路收进了 AnnotatePopover 的两个按钮。
  *
  * ## 为什么工具态下要挡住平移
  *
@@ -29,7 +32,7 @@ const MIN_SAMPLE_DIST = 3;
 /** 单条涂鸦最多这么多点（服务端还有 8000 字符的硬闸门兜底） */
 const MAX_POINTS = 600;
 
-export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateScribble, onComment, onEditText }) {
+export function useCanvasTools({ tool, toWorld, onCreateText, onCreateScribble }) {
   const [draft, setDraft] = useState(null);      // 正在画的那条：{ points: [{x,y}] }
   const [textAt, setTextAt] = useState(null);    // 正在写的那段：{ x, y }
   const drawRef = useRef(null);
@@ -43,54 +46,34 @@ export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateSc
 
   /** 工具是否接管左键（接管了相机就不许平移） */
   const capturesDrag = tool === 'draw';
-  const capturesClick = tool === 'text' || tool === 'comment';
 
   const onPointerDown = useCallback((e) => {
-    if (tool === 'select') return false;
+    if (tool !== 'draw') return false;
     if (e.button !== 0) return false;
-    // 只躲**界面控件**（工具栏、按钮），不躲画布物件 —— 工具本来就该能在
-    // 卡片上落笔：在图上画个圈、给某张卡写批注，那正是它的用途。
-    // 躲过头的后果实测过：评论工具点不了卡片，而点卡片是它的全部意义。
+    // 只躲**界面控件**（工具栏、按钮），不躲画布物件 —— 笔本来就该能在
+    // 卡片上落笔（在图上画个圈，那正是它的用途）。
     if (onChrome(e)) return false;
 
-    if (tool === 'draw') {
-      const w = toWorld(e.clientX, e.clientY);
-      drawRef.current = { points: [w] };
-      setDraft({ points: [w] });
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-      return true;
-    }
+    const w = toWorld(e.clientX, e.clientY);
+    drawRef.current = { points: [w] };
+    setDraft({ points: [w] });
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    return true;
+  }, [tool, toWorld]);
 
-    if (tool === 'text') {
-      // 已经开着一个输入框时，这一下是"点别处收工"，交给输入框自己处理
-      if (textAt) return false;
-      // 点在已有的字上 = 改那段字，不是叠一段新的。"想挪个字它却弹新输入框"
-      // 是用户明确不要的行为（2026-08-13）—— 编辑入口交回 BoardCanvas。
-      const hit = e.target.closest?.('[data-board-object]');
-      if (hit?.dataset.boardType === 'text') {
-        onEditText?.(hit.getAttribute('data-board-object'));
-        return true;
-      }
-      const w = toWorld(e.clientX, e.clientY);
-      setTextAt(w);
-      return true;
-    }
-
-    if (tool === 'comment') {
-      const w = toWorld(e.clientX, e.clientY);
-      // 物件走 DOM 命中；**工作区只能走几何命中** —— 展开态的工作区框是
-      // `pointerEvents:'none'`（它是画在物件下层的背景框，不该吃事件），
-      // 所以 closest() 永远找不到它。这不是可以顺手改的：把它改成吃事件，
-      // 工作区里的空地就再也拖不动画布了。
-      const el = e.target.closest?.('[data-board-object]');
-      const targetId = el?.getAttribute('data-board-object') || zoneAt?.(w) || null;
-      // 点在空地上 = 没有批注对象。批注是关系，必须有另一头。
-      if (!targetId) return true;
-      onComment?.(targetId, w);
-      return true;
-    }
-    return false;
-  }, [tool, textAt, toWorld, zoneAt, onComment, onEditText]);
+  /**
+   * 双击落框（只有文字工具用）。
+   *
+   * 双击到**物件**上不归这里 —— 物件自己的双击有语义（文字=改这段字、
+   * 产物=开那扇窗），抢过来就等于拿着笔时那些语义全没了。
+   */
+  const onDoubleClick = useCallback((e) => {
+    if (tool !== 'text') return false;
+    if (onChrome(e)) return false;
+    if (e.target.closest?.('[data-board-object]')) return false;
+    setTextAt(toWorld(e.clientX, e.clientY));
+    return true;
+  }, [tool, toWorld]);
 
   const onPointerMove = useCallback((e) => {
     const d = drawRef.current;
@@ -124,8 +107,8 @@ export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateSc
 
   return {
     draft, textAt,
-    capturesDrag, capturesClick,
-    onPointerDown, onPointerMove, onPointerUp,
+    capturesDrag,
+    onPointerDown, onPointerMove, onPointerUp, onDoubleClick,
     commitText, cancelText: () => setTextAt(null),
   };
 }

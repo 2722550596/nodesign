@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { PAPER, PAPER_SHADOW } from '../../lib/paper.js';
 import { viewportWorldBox, boxUnion } from '../../lib/board-camera.js';
 import { GAP } from '../../lib/theme.js';
@@ -24,8 +24,16 @@ import { GAP } from '../../lib/theme.js';
  *
  * ## 交互
  *
- * 点或拖 = 把那一点挪到视口中心（`flyToPoint`，保持当前缩放）。**不做缩放**：
- * 小地图是"我现在在哪、别的东西在哪边"，不是第二套镜头控制。
+ * 两种手势，按下的位置决定是哪一种（2026-08-13 加的第二种）：
+ *
+ *   - 按在**视窗框里** → 抓着这个框走。镜头位移 = 框的位移，按下那一刻的
+ *     抓点偏移全程保持。这是用户要的那种手感："拖动小地图里面的视窗来移动镜头"。
+ *   - 按在**框外** → 把那一点挪到视口中心，然后接着拖（老行为）。
+ *
+ * 区别只在**偏移**：抓框是 `目标中心 = 光标 − 抓点偏移`，点别处是
+ * `目标中心 = 光标`。所以两条路共用一个 `moveTo`，按下时记一次偏移就够了。
+ *
+ * **不做缩放**：小地图是"我现在在哪、别的东西在哪边"，不是第二套镜头控制。
  */
 
 export const MAP_W = 168;
@@ -49,6 +57,10 @@ export function projector(bounds) {
 export default function Minimap({ bounds, cam, viewport, items = [], onJump }) {
   const hostRef = useRef(null);
   const draggingRef = useRef(false);
+  // 抓点偏移（小地图像素）：抓框时 = 光标 − 框心，点别处时 = 0。
+  // 记在 ref 上而不是 state：它每一帧都要读，但一次都不该触发重渲染。
+  const grabRef = useRef({ x: 0, y: 0 });
+  const [onView, setOnView] = useState(false);
 
   if (!bounds || !viewport?.w) return null;
   const view = viewportWorldBox(cam, viewport);
@@ -57,12 +69,22 @@ export default function Minimap({ bounds, cam, viewport, items = [], onJump }) {
   // 看得见自己和内容各在哪边，点一下就能回去。这正是撤掉硬边界的兜底。
   const p = projector(boxUnion([bounds, view]) || bounds);
   const vTL = p.toMap(view.x, view.y);
+  const vW = Math.max(6, view.w * p.k);
+  const vH = Math.max(6, view.h * p.k);
 
-  const jumpTo = (e) => {
-    const el = hostRef.current;
-    if (!el || !onJump) return;
-    const r = el.getBoundingClientRect();
-    onJump(p.toWorld(e.clientX - r.left, e.clientY - r.top));
+  /** 光标在小地图里的像素坐标 */
+  const mapPt = (e) => {
+    const r = hostRef.current.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+  /** 按下的点是不是落在视窗框里（框本身 pointerEvents:none，命中只能算几何） */
+  const inView = (m) => m.x >= vTL.x && m.x <= vTL.x + vW && m.y >= vTL.y && m.y <= vTL.y + vH;
+
+  /** 把「光标 − 抓点偏移」那一点挪到视口中心 */
+  const moveTo = (e) => {
+    if (!hostRef.current || !onJump) return;
+    const m = mapPt(e);
+    onJump(p.toWorld(m.x - grabRef.current.x, m.y - grabRef.current.y));
   };
 
   return (
@@ -73,21 +95,33 @@ export default function Minimap({ bounds, cam, viewport, items = [], onJump }) {
         e.stopPropagation();
         draggingRef.current = true;
         e.currentTarget.setPointerCapture?.(e.pointerId);
-        jumpTo(e);
+        const m = mapPt(e);
+        // 抓框：偏移 = 光标 − 框心，于是框跟着手走而不是"跳到手底下"。
+        // 点别处：偏移归零 = 那一点居中（老行为）。
+        grabRef.current = inView(m)
+          ? { x: m.x - (vTL.x + vW / 2), y: m.y - (vTL.y + vH / 2) }
+          : { x: 0, y: 0 };
+        moveTo(e);
       }}
-      onPointerMove={(e) => { if (draggingRef.current) jumpTo(e); }}
+      onPointerMove={(e) => {
+        if (draggingRef.current) { moveTo(e); return; }
+        const hit = inView(mapPt(e));
+        if (hit !== onView) setOnView(hit);        // 只在跨边界时写 state
+      }}
+      onPointerLeave={() => { if (!draggingRef.current) setOnView(false); }}
       onPointerUp={(e) => {
         draggingRef.current = false;
         e.currentTarget.releasePointerCapture?.(e.pointerId);
       }}
       onPointerCancel={() => { draggingRef.current = false; }}
-      title="点一下跳过去 · 拖着走"
+      title="拖视窗框 = 移镜头 · 点别处跳过去"
       style={{
         position: 'absolute', left: GAP.md, bottom: GAP.md, zIndex: 40,
         width: MAP_W, height: MAP_H,
         background: PAPER.paper,
         boxShadow: PAPER_SHADOW.far,
-        cursor: 'pointer', touchAction: 'none', userSelect: 'none',
+        cursor: draggingRef.current && onView ? 'grabbing' : (onView ? 'grab' : 'pointer'),
+        touchAction: 'none', userSelect: 'none',
         overflow: 'hidden',
       }}
     >
