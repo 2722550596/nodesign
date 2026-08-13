@@ -92,18 +92,17 @@ export default function SitePublishControl({ projectId, task }) {
   }
 
   if (!site) {
+    // ⚠️ 不给 `boxed`：这一颗独占一组，外面那个墨色盒子已经是它的边界了，
+    // 再描一圈就是"框里套框"。描边只属于**同组里有多颗**的情况（预览/源码
+    // 那种，边框在分隔彼此）。
     return confirm === 'publish' ? (
-      <button onClick={doPublish} style={{ ...pill, background: INK_SURFACE.active, color: INK_SURFACE.activeText, border: 0, cursor: 'pointer' }}>
-        <Rocket size={11} /> 确认发到公网？
-      </button>
+      <ToolbarButton icon={Rocket} label="确认发到公网？" active onClick={doPublish} />
     ) : (
-      <button
-        onClick={() => arm('publish')}
+      <ToolbarButton
+        icon={Rocket} label="上线"
         title="发布到 Cloudflare Pages，任何人可访问"
-        style={{ ...pill, background: 'transparent', border: `1px solid ${INK_SURFACE.hair}`, color: INK_SURFACE.text, cursor: 'pointer' }}
-      >
-        <Rocket size={11} /> 上线
-      </button>
+        onClick={() => arm('publish')}
+      />
     );
   }
 
@@ -127,9 +126,7 @@ export default function SitePublishControl({ projectId, task }) {
       <ToolbarButton title="复制地址" icon={Copy} onClick={copyUrl} />
       <ToolbarButton title="把当前版本重新发布（地址不变）" icon={RefreshCw} onClick={doPublish} />
       {confirm === 'unpublish' ? (
-        <button onClick={doUnpublish} style={{ ...pill, background: '#C0504A', color: INK_SURFACE.text, border: 0, cursor: 'pointer' }}>
-          确认下线？
-        </button>
+        <ToolbarButton label="确认下线？" danger onClick={doUnpublish} />
       ) : (
         <ToolbarButton title="下线（公网地址失效）" icon={CloudOff} danger onClick={() => arm('unpublish')} />
       )}
