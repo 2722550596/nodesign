@@ -1747,14 +1747,53 @@ export default function ProjectWorkspace() {
    * `targets`（框选之后批量标注）走同一条路：一条消息把这几件都点名，而不是
    * 发 N 条 —— 用户说的是"这几张一起改"，拆成 N 条 agent 就得猜它们之间的关系。
    */
-  const handleAnnotate = async ({ target, targets, text }) => {
+  const handleAnnotate = async ({ target, targets, text, queue }) => {
     const list = targets?.length ? targets : [target];
+    // 报**路径**不是 id：`deck:主稿.html` 这种带形态前缀的东西 agent 读不出来
+    const whereOf = (t) => t.path || t.id;
+
+    /**
+     * 「攒着」：进 pending-changes buffer，右下角那条「发给 agent（N 条标注）」
+     * 浮钮攒够了一次发（用户 2026-08-13 提）。
+     *
+     * **走的是元素标注那条现成的路**，不新开一条：同一个 buffer、同一条浮钮、
+     * 同一个 `get_pending_changes`。画布标注和元素标注对 agent 来说是一回事
+     * （"用户指着某个东西说了句话"），差别只在锚点粗细 —— 一个指到文件，
+     * 一个指到文件里的某个元素。
+     *
+     * 锚点写 `{ board: id, path }`：`findElementByAnchor` 解不出它，所以产物窗
+     * 里那圈橙色标记不会去画一个不存在的元素（那正是我们要的 —— 画布标注的
+     * 视觉落点是卡片上的角标，不是文档里的框）。
+     */
+    if (queue) {
+      for (const t of list) {
+        const cid = newId('cmt');
+        const item = {
+          id: cid,
+          kind: 'comment',
+          anchor: { board: t.id, label: `${t.typeLabel}「${t.title}」` },
+          path: whereOf(t),
+          text,
+        };
+        setComments(arr => [...arr, {
+          ...item, board: t.id, status: 'open', createdAt: new Date().toISOString(),
+        }]);
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await PendingChanges.push(id, item);
+        } catch (err) {
+          console.warn('[pending-changes] push board note failed:', err.message);
+        }
+      }
+      showToast(`攒下了${list.length > 1 ? ` ${list.length} 条` : ''}，从下面那条浮钮一起发`, 'info');
+      return;
+    }
+
     useGlobalStore.getState().openChatDock();
     // E4：发送瞬间精灵先飘到目标上（本地合成在场，真事件来了自然接管）
     boardApiRef.current?.presenceHint?.(list[0].id);
     const desc = list.map((t) => {
-      // 报**路径**不是 id：`deck:主稿.html` 这种带形态前缀的东西 agent 读不出来
-      const where = t.path || t.id;
+      const where = whereOf(t);
       const loc = where && where !== t.title ? `（${where}）` : '';
       return `${t.typeLabel}「${t.title}」${loc}`;
     }).join('、');
@@ -1766,14 +1805,29 @@ export default function ProjectWorkspace() {
    * 消息只写一句指路 —— 内容和锚点 agent 自己去 pending changes 拉。
    */
   const unsentComments = comments.filter(c => c.status === 'open' && !c.sentAt);
+  /**
+   * 画布上每件东西攒了几条待发标注 → 卡片角标。
+   *
+   * 没有角标的话，「攒着」之后画布上一点痕迹都没有，只有右下角一个数字 ——
+   * 走查到第五张时你已经不记得前面标过哪几张了。
+   */
+  // ⚠️ 不用 useMemo：这一段在**早退之后**（`unsentComments` 也是），加个 hook
+  // 就等于"这次渲染比上次多调了一个 hook"，React 直接崩。一次遍历几条评论，
+  // memo 省不出什么（2026-08-13 真跑撞到）。
+  const boardNoteCounts = {};
+  for (const c of unsentComments) if (c.board) boardNoteCounts[c.board] = (boardNoteCounts[c.board] || 0) + 1;
   const handleSendAnnotations = async () => {
     const n = unsentComments.length;
     if (!n) return;
     const paths = [...new Set(unsentComments.map(c => c.path).filter(Boolean))];
     const where = paths.length ? paths.join('、') : '打开的产物';
+    // 措辞不写死"元素标注"：这条 buffer 现在同时装画布标注（指到一件东西）和
+    // 元素标注（指到文档里的某个元素），说成一种会让 agent 去找不存在的元素
+    const kindWord = unsentComments.every(c => c.board) ? '标注'
+      : (unsentComments.some(c => c.board) ? '标注（有的指着画布上的东西，有的指着页面元素）' : '元素标注');
     useGlobalStore.getState().openChatDock();
     // sentAt 标记在 handleSend 开头统一做
-    await handleSend(`我在 ${where} 上留了 ${n} 条元素标注，内容和锚点都在 pending changes 里，逐条处理一下。`);
+    await handleSend(`我在 ${where} 上留了 ${n} 条${kindWord}，内容和锚点都在 pending changes 里，逐条处理一下。`);
   };
 
   const handleJumpToComment = (comment) => {
@@ -2045,7 +2099,12 @@ export default function ProjectWorkspace() {
             projectId={id}
             sessionId={currentSessionId}
             decisionsReloadKey={decisionsReloadKey}
-            comments={comments}
+            // 产物窗只吃**元素标注**：画布标注的锚点是一件东西不是一个元素，
+            // 混进去会让窗里的「评论 (N)」多算，也会让标记层拿着 {board:…}
+            // 去 querySelector（anchor.path 那一支正好是选择器串，`鉴赏页` 这种
+            // 路径进去就是个无效选择器）。它们的视觉落点是卡片角标，见 NoteBadge
+            comments={comments.filter(c => !c.board)}
+            boardNoteCounts={boardNoteCounts}
             onAnnotate={handleAnnotate}
             onAddComment={handleAddComment}
             onResolveComment={handleResolveComment}

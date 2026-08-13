@@ -102,6 +102,8 @@ export default function BoardCanvas({
    * 混用一条的话，文件夹窗一开就把画布自己的工具组顶掉，关窗也回不来。
    */
   onWindowToolbarGroups,
+  /** 每件东西攒了几条待发标注：{ [id]: n } —— 卡片左上角那枚角标 */
+  noteCounts = {},
   // 舞台层（2026-07-28）：ProjectWorkspace 把 run.* 事件经这个 ref 转发进来，
   // 画布把 agent 的实时动作演出来（代码直播 / 终端 / shimmer / chip / 角标）
   stageRef,
@@ -2412,6 +2414,7 @@ export default function BoardCanvas({
         // 标注：浮层从按钮底下长出来（at 是按钮的屏幕坐标），
         // target 的形状跟右键菜单那条**逐字一致** —— 同一张浮层
         onAnnotate={(at) => setAnnotate({ x: at.x, y: at.y, target: annotTargetOf(obj) })}
+        noteCount={noteCounts[obj.id] || 0}
         // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
         scale={win ? 1 : scale}
       />
@@ -2441,6 +2444,7 @@ export default function BoardCanvas({
           x: at.x, y: at.y,
           target: { kind: 'folder', id: card.id, path: card.id, title: card.title, typeLabel: '文件夹' },
         })}
+        noteCount={noteCounts[card.id] || 0}
         // 窗里没有拖拽（位置是算的），双击直接下钻到下一层
         gestureProps={win
           ? { onDoubleClick: () => openFolder(card.id) }
@@ -2694,6 +2698,9 @@ export default function BoardCanvas({
           x={annotate.x} y={annotate.y} target={annotate.target}
           onClose={() => setAnnotate(null)}
           onSubmit={(text) => onAnnotate?.({ target: annotate.target, targets: annotate.targets, text })}
+          // 攒着：同一条回调，多一个 queue 标记 —— 落点在 ProjectWorkspace
+          // （pending-changes buffer 和那条浮钮都住在那儿）
+          onQueue={(text) => onAnnotate?.({ target: annotate.target, targets: annotate.targets, text, queue: true })}
           onKeep={(text) => keepAnnotation(
             annotate.targets?.length ? annotate.targets.map(t => t.id) : [annotate.target.id],
             camApiRef.current?.toWorld(annotate.x, annotate.y),

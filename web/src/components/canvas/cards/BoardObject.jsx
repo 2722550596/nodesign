@@ -12,6 +12,7 @@ import { splitNoteFaces, faceParts } from '../../../lib/note-faces.js';
 import { formatSize } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
 import ArtifactCard from './ArtifactCard.jsx';
+import NoteBadge from './NoteBadge.jsx';
 
 /**
  * 画布物件的卡体 —— 从 BoardCanvas 拆出来（2026-08-13）。
@@ -34,7 +35,7 @@ const SCRIBBLE_INK = {
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
 function BoardObject({
   o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
-  groupTarget = false, selected = false,
+  groupTarget = false, selected = false, noteCount = 0,
   renaming = false, onRenameCommit, onRenameCancel,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
   onAnnotate,
@@ -190,6 +191,7 @@ function BoardObject({
       style={base}
     >
       {Actions}
+      <NoteBadge count={noteCount} />
 
       {o.type === 'doc' && (
         <div style={{ padding: GAP.md }}>

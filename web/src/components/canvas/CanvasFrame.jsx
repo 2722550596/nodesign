@@ -37,6 +37,8 @@ export default function CanvasFrame({
   onRenameCandidate,
   project, deckSpec, projectId, sessionId, decisionsReloadKey,
   comments = [],
+  /** 画布上每件东西攒了几条待发标注（卡片角标用） */
+  boardNoteCounts = {},
   onAddComment, onResolveComment, onDeleteComment,
   onRegionComment,
   onSiteDomEdit,
@@ -216,6 +218,7 @@ export default function CanvasFrame({
           onFocusDeck={openDeck}
           onToolbarGroups={reportBoardGroups}
           onWindowToolbarGroups={reportWinGroups}
+          noteCounts={boardNoteCounts}
           // 跟顶栏收起用**同一个** windowOpen —— 以前这里是宽松版
           // （`deckOpen || site || world`），而窗真正渲染用的是严格版，两处
           // 各写一遍：deckOpen 为真但窗没渲染的那一瞬，画布工具栏和小地图

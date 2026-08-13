@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Send, PenLine } from 'lucide-react';
+import { Send, PenLine, Layers } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SANS, FONT_KAI, FONT_SIZE } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
 import { isImeEnter } from '../../lib/helpers.js';
@@ -9,9 +9,12 @@ import { isImeEnter } from '../../lib/helpers.js';
  * AnnotatePopover —— 就地标注（2026-08-13，E3；同日二改收成唯一入口）。
  *
  * 在一个画布物件/文件夹上写一句话。入口两处：**右键菜单**和**卡片右上角的
- * 标注按钮**。写完有两个出口：
+ * 标注按钮**。写完有三个出口：
  *
  *   - **发给 agent**（主）：起一轮，agent 立刻来处理这句话。
+ *   - **攒着**（2026-08-13 用户提）：进 pending-changes buffer，右下角那条
+ *     「发给 agent（N 条标注）」浮钮攒够了一次发。走查画布时的真实节奏是
+ *     "这张不对、那张也不对、还有那个"，逐条起轮 = 三轮并发抢同一批文件。
  *   - **留在画布**（次）：落成一段画布文字 + 一条 `annotates` 关系线，
  *     agent 不知道 —— 这是给自己/给以后看的记号。
  *
@@ -27,9 +30,9 @@ import { isImeEnter } from '../../lib/helpers.js';
  * Esc / 点别处关掉。
  */
 
-const POP_W = 288;
+const POP_W = 320;
 
-export default function AnnotatePopover({ x, y, target, onSubmit, onKeep, onClose }) {
+export default function AnnotatePopover({ x, y, target, onSubmit, onKeep, onQueue, onClose }) {
   const ref = useRef(null);
   const [text, setText] = useState('');
   const [flip, setFlip] = useState({ x: false, y: false });
@@ -62,6 +65,13 @@ export default function AnnotatePopover({ x, y, target, onSubmit, onKeep, onClos
     if (!t) return;
     onClose();
     onKeep?.(t);
+  };
+
+  const queue = () => {
+    const t = text.trim();
+    if (!t) return;
+    onClose();
+    onQueue?.(t);
   };
 
   return createPortal((
@@ -130,6 +140,23 @@ export default function AnnotatePopover({ x, y, target, onSubmit, onKeep, onClos
             }}
           >
             <PenLine size={12} /> 留在画布
+          </button>
+        )}
+        {onQueue && (
+          <button
+            onClick={queue}
+            disabled={!text.trim()}
+            title="先记下，攒够了从右下角那条浮钮一次发给 agent"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
+              padding: `${GAP.xs}px ${GAP.sm}px`,
+              border: 'none', borderRadius: RADIUS.sm, background: 'transparent',
+              color: text.trim() ? COLOR.sub : COLOR.borderLt,
+              cursor: text.trim() ? 'pointer' : 'default',
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+            }}
+          >
+            <Layers size={12} /> 攒着
           </button>
         )}
         <button

@@ -2,6 +2,7 @@ import { FolderOpen, Trash2, MessageSquarePlus } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SANS, FONT_SIZE, CANVAS, alpha } from '../../../lib/theme.js';
 import { EASE, POP_IN } from '../../../lib/board-geometry.js';
 import FolderFace from './FolderFace.jsx';
+import NoteBadge from './NoteBadge.jsx';
 
 /**
  * FolderCard —— 文件夹的那张方卡（2026-08-13 从 BoardCanvas 拆出来）。
@@ -33,6 +34,7 @@ export default function FolderCard({
   onRenameCommit, onRenameCancel, onDelete, onAnnotate,
   gestureProps = {},
   hint = '双击打开 · 拖动搬走',
+  noteCount = 0,
 }) {
   return (
     <div
@@ -57,6 +59,8 @@ export default function FolderCard({
         animation: ring ? 'ndAgentRing 1600ms ease-in-out infinite' : POP_IN,
       }}
     >
+      <NoteBadge count={noteCount} />
+
       {/* 卡面：里面前几件的真缩略（FolderFace，2026-08-13 从名字清单
           升级；iframe 的三道闸 —— 视口/缩放/每卡上限 —— 在那边算） */}
       <FolderFace z={z} projectId={projectId} fileVersions={fileVersions} scale={scale} />
