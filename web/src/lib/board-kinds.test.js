@@ -295,7 +295,8 @@ describe('SIZES 兼容出口', () => {
 /**
  * 涂鸦墨色的两端一致性。
  *
- * 前端渲染表（BoardCanvas 的 SCRIBBLE_INK）和服务端白名单
+ * 前端渲染表（cards/BoardObject.jsx 的 SCRIBBLE_INK，2026-08-13 随卡体从
+ * BoardCanvas 搬过去）和服务端白名单
  * （board-store.js 的 sanitizeCanvasData）是两份手写的字符串列表。
  * 两边不一致的表现很隐蔽：**"我选了红色，存下来变黑"** —— 不报错、
  * 不失败，只是颜色悄悄回落成 ink。所以钉一条。
@@ -303,12 +304,14 @@ describe('SIZES 兼容出口', () => {
 describe('涂鸦墨色词汇表两端一致', () => {
   it('前端渲染的颜色键 = 服务端接受的颜色键', async () => {
     const fe = await import('fs').then(fs =>
-      fs.readFileSync(new URL('../components/canvas/BoardCanvas.jsx', import.meta.url), 'utf8'));
+      fs.readFileSync(new URL('../components/canvas/cards/BoardObject.jsx', import.meta.url), 'utf8'));
     const be = await import('fs').then(fs =>
       fs.readFileSync(new URL('../../../server/projects/board-store.js', import.meta.url), 'utf8'));
 
-    const feKeys = fe.match(/const SCRIBBLE_INK = \{([\s\S]*?)\};/)[1]
-      .match(/^\s*(\w+):/gm).map(x => x.trim().replace(':', '')).sort();
+    // 提取不依赖排版：写成一行还是一行一个键都认得（2026-08-13 栽过 ——
+    // 卡体搬文件时顺手写成一行，断言只捞到第一个键，失败信息还挺唬人）
+    const feKeys = [...fe.match(/const SCRIBBLE_INK = \{([\s\S]*?)\};/)[1]
+      .matchAll(/(\w+)\s*:/g)].map(m => m[1]).sort();
     const beKeys = JSON.parse(
       be.match(/\['ink'[^\]]*\]/)[0].replace(/'/g, '"')).sort();
 
