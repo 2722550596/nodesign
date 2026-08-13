@@ -39,6 +39,7 @@ import {
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY,
 } from '../lib/image-variant.js';
 import { sendVideo, isVideo } from '../lib/video-variant.js';
+import { readUiConfigFile, withUiDefaults, writeUiConfig } from '../projects/ui-config.js';
 
 const router = express.Router();
 
@@ -383,11 +384,14 @@ router.get(['/:pid/spec', '/:pid/sessions/:sid/spec'], async (req, res, next) =>
 // vision-checker 子代理仍可 Read design-plan.md，走子代理的 cwd Read 路径。
 
 /**
- * GET /:pid/config —— 读 session-config.json（用户/前端拥有的 session 配置）
+ * GET /:pid/config —— 读项目级 UI 配置（ui-config.json，#25 从
+ * session-config.json 改名 —— 扁平化后它就是项目级的了，旧名跟
+ * .nd/<sid>/session-config.json（模型域，session-model.js 专管）同名不同域。
+ * 读写细节和迁移策略在 projects/ui-config.js）
  *
  * 跟 spec.json 区分：
  *   - spec.json = agent 私域档案（agent 通过 record_decision/expose_tweaks/PostCompact 写）
- *   - session-config.json = 用户/前端 session 偏好（前端 toggle 状态、UI 偏好）
+ *   - ui-config.json = 用户/前端偏好（toggle 状态、UI 偏好）
  *
  * 当前字段：
  *   - tweaks_mode_enabled: bool   是否启用 Tweaks 模式（agent 主动暴露微调参数）
@@ -398,12 +402,12 @@ router.get(['/:pid/config', '/:pid/sessions/:sid/config'], async (req, res, next
   try {
     if (!guard(req, res)) return;
     const sessionRoot = rootOf(req);
-    res.json({ config: await readSessionConfig(sessionRoot) });
+    res.json({ config: withUiDefaults(await readUiConfigFile(sessionRoot)) });
   } catch (err) { next(err); }
 });
 
 /**
- * PATCH /:pid/config —— 部分更新 session-config.json
+ * PATCH /:pid/config —— 部分更新 ui-config.json
  *
  * body: 任意 partial config（只覆盖传进来的字段）
  * 返回：merge 后的完整 config
@@ -425,31 +429,12 @@ router.patch(['/:pid/config', '/:pid/sessions/:sid/config'], async (req, res, ne
         code: 'USE_MODEL_ENDPOINT',
       });
     }
-    const current = await readSessionConfig(sessionRoot);
+    const current = withUiDefaults(await readUiConfigFile(sessionRoot));
     const merged = { ...current, ...patch, updatedAt: new Date().toISOString() };
-    await fs.writeFile(
-      path.join(sessionRoot, 'session-config.json'),
-      JSON.stringify(merged, null, 2),
-      'utf8',
-    );
+    await writeUiConfig(sessionRoot, merged);
     res.json({ config: merged });
   } catch (err) { next(err); }
 });
-
-const DEFAULT_SESSION_CONFIG = Object.freeze({
-  tweaks_mode_enabled: true,
-});
-
-async function readSessionConfig(sessionRoot) {
-  try {
-    const raw = await fs.readFile(path.join(sessionRoot, 'session-config.json'), 'utf8');
-    const cfg = JSON.parse(raw);
-    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return { ...DEFAULT_SESSION_CONFIG };
-    return { ...DEFAULT_SESSION_CONFIG, ...cfg };
-  } catch {
-    return { ...DEFAULT_SESSION_CONFIG };
-  }
-}
 
 const EMPTY_CANVAS_HTML = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><title>NoDesign canvas</title>

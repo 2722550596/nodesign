@@ -48,6 +48,7 @@ import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
+import { readUiConfigFile } from '../../projects/ui-config.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
@@ -712,15 +713,14 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         // design-plan.md 不存在：noop
       }
 
-      // 4. session-config.json：tweaks_mode_enabled 注入对应行为提示
-      // 用户在 toolbar Tweaks toggle 控制；ON / OFF 对应不同的 agent 行为
+      // 4. ui-config.json（#25 从 session-config.json 改名，读取带旧名回落，
+      // 详见 projects/ui-config.js）：tweaks_mode_enabled 注入对应行为提示。
+      // 用户在 toolbar Tweaks toggle 控制；ON / OFF 对应不同的 agent 行为。
+      // **文件不存在（用户从没碰过 toggle）= 沉默不注入** —— 这条语义靠
+      // readUiConfigFile 返回 null 表达，别用带默认值的读法糊掉它。
       try {
-        const cfgPath = path.join(workspaceRoot, 'session-config.json');
-        const stat = await fs.stat(cfgPath);
-        if (stat.size <= 8 * 1024) {
-          const raw = await fs.readFile(cfgPath, 'utf8');
-          const cfg = JSON.parse(raw);
-          // 默认 true（用户没改过 toggle 时 = 启用）
+        const cfg = await readUiConfigFile(workspaceRoot);
+        if (cfg) {
           const tweaksEnabled = cfg?.tweaks_mode_enabled !== false;
           if (tweaksEnabled) {
             parts.push(
@@ -733,7 +733,7 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
           }
         }
       } catch {
-        // session-config.json 不存在 / 解析失败：默认行为（启用），不注入
+        // 读失败：默认行为（启用），不注入
       }
 
       if (parts.length === 0) return {};
