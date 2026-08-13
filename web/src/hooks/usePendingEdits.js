@@ -33,7 +33,7 @@ export function usePendingEdits({ projectId, sessionId }) {
     setUndoStack([]);
     setRedoStack([]);
     revertersRef.current.clear();
-    if (!projectId || !sessionId) return;
+    if (!projectId) return;   // 无会话闸门 2026-08-13 撤除：buffer 已项目级
     let cancelled = false;
     PendingChanges.list(projectId, sessionId).then(({ items = [] }) => {
       if (cancelled) return;
@@ -83,7 +83,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       if (oldRevert) inheritedRevert = oldRevert;
       revertersRef.current.delete(oldEdit.id);
       // 后端 buffer 也要清掉旧 id（避免 agent 看到两条同 anchor 的 edit）
-      if (projectId && sessionId) {
+      if (projectId) {
         try { await PendingChanges.clear(projectId, sessionId, [oldEdit.id]); } catch { /* */ }
       }
     }
@@ -114,7 +114,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       revertersRef.current.set(id, inheritedRevert);
     }
 
-    if (projectId && sessionId) {
+    if (projectId) {
       try {
         await PendingChanges.push(projectId, sessionId, item);
       } catch (err) {
@@ -147,7 +147,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       invokeReverters(ids);
       setEdits(prev => prev.filter(e => !idSet.has(e.id)));
       setRedoStack(prev => [...prev, { type: 'restore', items: op.items }]);
-      if (projectId && sessionId) {
+      if (projectId) {
         try { await PendingChanges.clear(projectId, sessionId, ids); } catch { /* */ }
       }
     } else if (op.type === 'clear') {
@@ -155,7 +155,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       // 视觉还原不能"redo 上一次 clear" —— 那要求 iframe reload（agent run 后视觉跟代码一致）
       setEdits(prev => [...prev, ...op.items]);
       setRedoStack(prev => [...prev, { type: 'clear-redo', items: op.items }]);
-      if (projectId && sessionId) {
+      if (projectId) {
         for (const it of op.items) {
           try { await PendingChanges.push(projectId, sessionId, it); } catch { /* */ }
         }
@@ -172,7 +172,7 @@ export function usePendingEdits({ projectId, sessionId }) {
     if (op.type === 'restore') {
       setEdits(prev => [...prev, ...op.items]);
       setUndoStack(prev => [...prev, { type: 'push', items: op.items }]);
-      if (projectId && sessionId) {
+      if (projectId) {
         for (const it of op.items) {
           try { await PendingChanges.push(projectId, sessionId, it); } catch { /* */ }
         }
@@ -182,7 +182,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       const idSet = new Set(ids);
       setEdits(prev => prev.filter(e => !idSet.has(e.id)));
       setUndoStack(prev => [...prev, { type: 'clear', items: op.items }]);
-      if (projectId && sessionId) {
+      if (projectId) {
         try { await PendingChanges.clear(projectId, sessionId, ids); } catch { /* */ }
       }
     }
@@ -199,7 +199,7 @@ export function usePendingEdits({ projectId, sessionId }) {
     setEdits([]);
     setUndoStack(prev => [...prev, { type: 'clear', items: snapshot }]);
     setRedoStack([]);
-    if (projectId && sessionId) {
+    if (projectId) {
       try { await PendingChanges.clear(projectId, sessionId, snapshot.map(it => it.id)); } catch { /* */ }
     }
   }, [edits, projectId, sessionId, invokeReverters]);

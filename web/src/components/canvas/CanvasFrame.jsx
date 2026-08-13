@@ -78,7 +78,7 @@ export default function CanvasFrame({
   // 让人以为还有这么一条路径。
   // 会话没了（回 /work 新对话）→ 会话 deck 窗自然关掉（任务 deck 窗与会话解绑，保留）
   useEffect(() => {
-    if (!sessionId && !deckTaskSrc) setDeckOpen(false);
+    if (!deckTaskSrc && !sessionId) setDeckOpen(false);   // 旧式会话 canvas 才需要 sid，任务 deck 与会话无关
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -287,11 +287,11 @@ export default function CanvasFrame({
               fileVersions={fileVersions}
               // 直接编辑 + 评论 + 拖拽：交互组件跟 deck 同一套（SiteWindow 内部接线），
               // path 按当前页线程。改字/拖拽都走 onDomEdit 落盘（干净源码重放 + FYI 记录）
-              onAddComment={sessionId ? onAddComment : null}
+              onAddComment={onAddComment}
               onResolveComment={onResolveComment}
               onDeleteComment={onDeleteComment}
-              onDomEdit={sessionId ? onSiteDomEdit : null}
-              onRegionComment={sessionId ? onRegionComment : null}
+              onDomEdit={onSiteDomEdit}
+              onRegionComment={onRegionComment}
               comments={comments}
               isStreaming={isStreaming}
               onIframeReady={onIframeReady}

@@ -57,15 +57,24 @@ const CHAT_STREAM_EVENTS = new Set([
 import { usePendingEdits } from '../hooks/usePendingEdits.js';
 
 export default function ProjectWorkspace() {
-  // H1：URL 作为 session 唯一 source of truth
-  //   - /projects/:id/work        → 无 sid（新会话）
-  //   - /projects/:id/sessions/:sid → 带 sid（恢复某 session）
-  // 切换 session 走 navigate；run.done 后若 url 没 sid（新会话刚跑完）
-  // navigate replace 到 /sessions/<sid> 让 URL 反映真实 sid，刷新可恢复
+  // 会话真相源收敛（2026-08-13 E1b）：**服务端指针**（projects.active_session_id）
+  // 是唯一真相，URL 不再编码会话。
+  //   - /projects/:id/work           唯一入口，跟着项目指针走（刷新即恢复）
+  //   - /projects/:id/sessions/:sid  旧链接兼容：采纳该 sid 后归一到 /work
+  // 在这之前 URL 是真相源（/work=新会话、/sessions/:sid=续）。收敛动机正是
+  // 两个真相源会分叉：显式带旧 sid 的标签页与服务端指针各执一词，两个标签
+  // 静默岔成两条会话。指针变化由 project.active_session 事件广播到所有标签。
   const { id, sid: urlSid } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const currentSessionId = urlSid || null;
+  const [currentSessionId, setCurrentSessionId] = useState(() => urlSid || null);
+  // 旧式 /sessions/:sid 链接进来：采纳一次，URL 归一（会话不再进 URL）
+  useEffect(() => {
+    if (urlSid) navigate(`/projects/${id}/work`, { replace: true });
+    // 只在挂载时归一 —— urlSid 已经进了 state 初值
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const adoptedPointerRef = useRef(!!urlSid);
 
   // Phase A.1（2026-05-07）：sessionId Ref 避开 React 闭包陈旧。
   // handleSend 是 async 闭包，await Turn.send 后再读 currentSessionId 拿的是闭包
@@ -80,6 +89,17 @@ export default function ProjectWorkspace() {
 
   // ── store ──
   const project = useProjectStore(s => s.projects.find(p => p.id === id));
+  // 项目档案到位后跟指针（只在本地还没采纳过时 —— 用户点了"新对话"就别拽回去）。
+  // ⚠️ 这条 effect 必须待在 `project` 声明之后：依赖数组在**渲染时**求值，
+  // 放上面就是 TDZ 白屏（BoardCanvas 栽过四次的同一坑，2026-08-13 这里也栽了一次）。
+  useEffect(() => {
+    if (adoptedPointerRef.current || !project) return;
+    adoptedPointerRef.current = true;
+    if (project.activeSessionId) {
+      sessionIdRef.current = project.activeSessionId;
+      setCurrentSessionId(project.activeSessionId);
+    }
+  }, [project]);
   const hydrateOne = useProjectStore(s => s.hydrateOne);
   const updateProject = useProjectStore(s => s.updateProject);
   const deleteProject = useProjectStore(s => s.deleteProject);
@@ -552,18 +572,16 @@ export default function ProjectWorkspace() {
         });
         setCurrentRunId(runId);
         setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
-        // Phase A.1 对齐 handleSend：从 /work 起新 session 时立即同步 ref + navigate
-        // 到 /sessions/<sid>。否则用户在 agent 回复 H4a 首条 turn 期间追加消息，
-        // sessionIdRef.current 仍是 null，handleSend 会带 sessionId=null 再起一条
-        // 新 session，URL 跳走，原 session 脱钩——典型现象就是"在 agent 回复时追加
-        // 消息会被自动跳转然后开个新 session"。
+        // Phase A.1 对齐 handleSend：起新 session 时**立即**同步 ref + state。
+        // 否则用户在首条 turn 期间追加消息，sessionIdRef.current 仍是 null，
+        // handleSend 会带 sessionId=null 再起一条新 session 脱钩。
+        // （URL 不再动 —— 服务端已在 turn 里把指针写到这条会话）
         if (!sidForRequest && returnedSid) {
           sessionIdRef.current = returnedSid;
-          navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
-        } else {
-          // 续约场景：只清 location.state 防 navigate 后退/刷新重发
-          navigate(location.pathname, { replace: true, state: null });
+          setCurrentSessionId(returnedSid);
         }
+        // 清 location.state 防 navigate 后退/刷新重发
+        navigate(location.pathname, { replace: true, state: null });
       } catch (err) {
         setMessages((ms) => [...ms, {
           id: newId('msg'), role: 'assistant',
@@ -637,6 +655,18 @@ export default function ProjectWorkspace() {
         setMessages(prev => mergeHydrated(prev, display));
         break;
       }
+      case 'project.active_session': {
+        // 会话指针变了（别的标签页切换/新建/删除，或 turn 写回）。指针是真相源，
+        // 空闲的标签页跟着走；正在流式的标签页不动 —— 把用户正看着的对话
+        // 从脚下抽走比短暂不同步糟得多，它结束后下一次指针变化会再对齐。
+        const next = evt.activeSessionId || null;
+        if (next !== sessionIdRef.current && !currentRunIdRef.current) {
+          sessionIdRef.current = next;
+          setCurrentSessionId(next);
+        }
+        break;
+      }
+
       case 'ws.connected': {
         // ws-client 处理 lastSeq；此处按 server 报的 activeRunId 恢复/同步 streaming 状态
         // —— 抖动期间 onStatusChange 不再强制 reset isStreaming，重连后由这里权威决定。
@@ -1372,13 +1402,13 @@ export default function ProjectWorkspace() {
         arr.forEach(it => { if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); });
         return [];
       });
-      // streamInput 重构修：从 /work 路径起新 session 时立刻 navigate 到 /sessions/<sid>
-      // —— 否则用户在第一 turn 跑完前发追加，currentSessionId 还是 null 会被当新 session
-      // 起，跟原 session 脱钩（之前只在 run.done/cancelled 后 navigate，慢了一拍）
+      // 起新 session 时立刻同步 ref + state —— 否则用户在第一 turn 跑完前发追加，
+      // currentSessionId 还是 null 会被当新 session 起，跟原 session 脱钩。
+      // ref 先行：下一条极快追加的 handleSend 不等 setState 那一拍。
+      // （URL 不再动，服务端 turn 已把指针写到这条会话并广播）
       if (!sidForRequest && returnedSid) {
-        // Phase A.1：立即同步 ref，让下一条极快追加的 handleSend 拿到正确 sid（不依赖 navigate 的 useParams 异步刷新）
         sessionIdRef.current = returnedSid;
-        navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
+        setCurrentSessionId(returnedSid);
       }
     } catch (err) {
       // 429（额度用完 / 并发已满）和 451（内容外审拦截）不是故障，
@@ -1398,7 +1428,7 @@ export default function ProjectWorkspace() {
 
   /** streamInput 重构：用户主动结束当前 session（终结 query handle）
    *  - 调 close endpoint → backend inputQueue.close + abortController.abort
-   *  - navigate to /work → currentSessionId 变 null → useEffect 自动 reset 前端 state
+   *  - 本地清会话 + 清服务端指针（URL 已不承载会话，navigate 到 /work 清不掉了）
    *  - session JSONL 不删，从 SessionListModal 仍可找回（resume 走 forkSession）
    */
   const handleCloseSession = async () => {
@@ -1406,13 +1436,15 @@ export default function ProjectWorkspace() {
     try {
       await Sessions.close(id, currentSessionId);
     } catch (err) {
-      // close 失败不阻塞前端 — 仍 navigate 让用户能继续
+      // close 失败不阻塞前端 — 本地照样清，让用户能继续
       console.warn('[Project] close session failed:', err.message);
     }
     setIsStreaming(false);
     setCurrentRunId(null);
     setActiveRun(null);
-    navigate(`/projects/${id}/work`, { replace: true });
+    sessionIdRef.current = null;
+    setCurrentSessionId(null);
+    updateProject(id, { activeSessionId: null });
   };
 
   /** 手动压缩上下文：raw 模式发 /compact 斜杠命令直达 SDK（跳过消息装饰，
@@ -1544,11 +1576,9 @@ export default function ProjectWorkspace() {
       return;
     }
     try {
+      // 无会话闸门 2026-08-13 撤除：产物属于项目不属于会话，canvas 写入和
+      // pending buffer 都已是项目级路由 —— 编辑不再要求先开一轮对话
       const html = '<!doctype html>\n' + iframeDoc.documentElement.outerHTML;
-      if (!currentSessionId) {
-        showToast('请先开始一个会话再编辑 canvas', 'error');
-        return;
-      }
       await Canvas.write(id, currentSessionId, html, 'user', info.deckPath || null);
       showToast(`已保存：「${info.newText.slice(0, 20)}」`, 'success');
 
@@ -1581,10 +1611,7 @@ export default function ProjectWorkspace() {
    * persist=false = React mount 区（运行时 DOM 动不得），照旧推 pending-* 等 agent 改 JSX。
    */
   const handleSiteDomEdit = async ({ path, html, summary, records = [], persist = true }) => {
-    if (!currentSessionId) {
-      showToast('请先开始一个会话再编辑', 'error');
-      return;
-    }
+    // （无会话闸门 2026-08-13 撤除 —— 理由见 handleTextEdit）
     try {
       if (persist) {
         if (!html) { showToast('页面未就绪，改动没保存', 'error'); return; }
@@ -1637,20 +1664,20 @@ export default function ProjectWorkspace() {
       status: 'open',
       createdAt: new Date().toISOString(),
     }]);
-    // C4：push 进 pending-changes buffer
-    if (currentSessionId) {
-      try {
-        await PendingChanges.push(id, currentSessionId, {
-          id: cid,
-          kind: 'comment',
-          anchor: ctx.anchor,
-          aiContext: ctx.aiContext,
-          ...(ctx.path ? { path: ctx.path } : {}),
-          text: trimmed,
-        });
-      } catch (err) {
-        console.warn('[pending-changes] push comment failed:', err.message);
-      }
+    // C4：push 进 pending-changes buffer。原来包着 `if (currentSessionId)` ——
+    // 无会话时评论只剩本地橙框、agent 永远收不到（**静默丢失**）。buffer 已是
+    // 项目级（2026-08-13），无条件推：第一条消息一发 agent 就能拉到。
+    try {
+      await PendingChanges.push(id, currentSessionId, {
+        id: cid,
+        kind: 'comment',
+        anchor: ctx.anchor,
+        aiContext: ctx.aiContext,
+        ...(ctx.path ? { path: ctx.path } : {}),
+        text: trimmed,
+      });
+    } catch (err) {
+      console.warn('[pending-changes] push comment failed:', err.message);
     }
   };
   /**
@@ -1663,10 +1690,7 @@ export default function ProjectWorkspace() {
    * get_pending_changes 拉 —— 那边有图有元素清单，比塞进聊天里省得多。
    */
   const handleRegionComment = async ({ region, viewport, container, elements, text, path }) => {
-    if (!currentSessionId) {
-      showToast('先开一个会话才能把圈选交给 agent', 'error');
-      return;
-    }
+    // 无会话闸门 2026-08-13 撤除：没有会话时 handleSend 自己会起一条新的
     if (!path) {
       showToast('这份产物没有任务路径，圈选暂时用不了', 'error');
       return;
@@ -1801,10 +1825,7 @@ export default function ProjectWorkspace() {
    */
   const handleExport = async (format) => {
     try {
-      if (!currentSessionId) {
-        showToast('请先选中一个会话再导出', 'error');
-        return;
-      }
+      // （无会话闸门 2026-08-13 撤除 —— 导出的是项目的产物，路由已项目级）
       const { blob, filename } = await Exports.download(id, currentSessionId, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -2046,7 +2067,12 @@ export default function ProjectWorkspace() {
             subagents={subagents}
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
-            onNewChat={() => navigate(`/projects/${id}/work`)}
+            onNewChat={() => {
+              // 新对话 = 清指针（本地即时 + 服务端广播，别的标签页跟着走）
+              sessionIdRef.current = null;
+              setCurrentSessionId(null);
+              updateProject(id, { activeSessionId: null });
+            }}
             hasActiveSession={!!currentSessionId}
             systemInfo={systemInfo}
             contextUsage={contextUsage}
@@ -2097,10 +2123,11 @@ export default function ProjectWorkspace() {
         projectId={id}
         currentSessionId={currentSessionId}
         onSwitch={(sid) => {
-          // H1：切换 session 走 URL navigate（URL 是 sid 唯一 source of
-          // truth），useEffect 会自动重 hydrate messages。
-          // sid=null → 新会话路径 /work；有 sid → /sessions/<sid>
-          navigate(sid ? `/projects/${id}/sessions/${sid}` : `/projects/${id}/work`);
+          // 切会话 = 改服务端指针（唯一真相源），本地先行、WS 重连自动重 hydrate。
+          // 以前这里 navigate 到 /sessions/:sid —— URL 真相源时代的舞蹈，已收敛。
+          sessionIdRef.current = sid || null;
+          setCurrentSessionId(sid || null);
+          updateProject(id, { activeSessionId: sid || null });
         }}
       />
       {elicitRequest && (
