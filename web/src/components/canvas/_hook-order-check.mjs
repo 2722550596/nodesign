@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 // ProjectWorkspace 2026-08-13 加入：会话收敛把 effect 放到了 `project` 声明
 // 之前，真栽了第五次 —— 这份名单该覆盖所有"hook 密集"的大文件
-const FILES = ['BoardCanvas.jsx', 'StageLayer.jsx', 'CanvasFrame.jsx', 'useBoardCamera.js', 'useCanvasTools.js', '../../routes/ProjectWorkspace.jsx'];
+const FILES = ['BoardCanvas.jsx', 'StageLayer.jsx', 'CanvasFrame.jsx', 'useBoardCamera.js', 'useCanvasTools.js', 'useBoardData.js', '../../routes/ProjectWorkspace.jsx'];
 
 /** 组件体那一层的 `const x` / `let x` / `const { a, b } =` → { 名字: 行号 } */
 function declLines(lines) {

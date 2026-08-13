@@ -8,7 +8,7 @@ import {
   Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
   FolderPlus, StickyNote,
 } from 'lucide-react';
-import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
+import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -36,6 +36,7 @@ import PresenceLayer from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
+import { useBoardData } from './useBoardData.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
 import InstructionsCard from '../project/InstructionsCard.jsx';
@@ -120,23 +121,19 @@ export default function BoardCanvas({
   const navigate = useNavigate();
   const scrollRef = useRef(null);          // 纵向滚动容器（桌面的"视口"）
 
-  // 数据源
-  const [artifacts, setArtifacts] = useState([]);
-  const [tasks, setTasks] = useState([]);         // 有产物的文件夹（含工作区根，id=''）
-  // 磁盘上全部文件夹的相对路径（含空文件夹）。文件夹卡的权威来源。
-  const [folders, setFolders] = useState([]);
-  const [sessions, setSessions] = useState([]);
-  const [memoryDocs, setMemoryDocs] = useState([]);
-  // 布局（saved + 本地改动合一）：{ [id]: {x,y,z} }；zones：{ [路径]: {x,y,w,h,title} }
-  // （存量数据里还有 expanded 字段，展开态 2026-08-13 退役后**读都不读**，见 board-kinds）
-  const [layout, setLayout] = useState({});
-  const [zones, setZones] = useState({});
+  // 数据层（加载 / 持有 / 落盘）—— 2026-08-13 拆进 useBoardData.js（刀 4 续）。
+  // 派生（objects/folderView）留在本组件：它跟 cwd、拖拽、影子区缠在一起。
+  const {
+    artifacts, tasks, folders, sessions, memoryDocs,
+    layout, setLayout, zones, setZones, bindings, setBindings,
+    guideText, fileCount,
+    reload, scheduleSave, patchLayout,
+    layoutRef, zonesRef, dirtyRef, layoutLoadedRef, zMaxRef,
+  } = useBoardData({ projectId, listVersion, boardVersion });
   // 影子工作区（2026-07-28）：agent 正在往一个还不存在的任务目录里写，产物列表
   // 要等这次写完才知道它存在。先在桌面上把这块区长出来（只在内存里，不落盘），
   // 舞台卡当场就有地方贴；真任务出现后 zone 派生 effect 接管、影子退场。
   const [ghostZones, setGhostZones] = useState({});
-  const layoutLoadedRef = useRef(false);
-  const zMaxRef = useRef(10);
   /**
    * 当前目录（2026-08-13）。`''` = 桌面根，`'鉴赏页/初稿'` = 进到那一层。
    *
@@ -165,11 +162,6 @@ export default function BoardCanvas({
   const fittedKeyRef = useRef('');        // 换层之后把镜头带过去：每层只带一次
   // 交互态
   const dragRef = useRef(null);           // { kind:'object', ... }（桌面化后只剩物件拖拽）
-  const saveTimerRef = useRef(null);
-  const dirtyRef = useRef({ objects: new Set(), zones: new Set() });
-  const layoutRef = useRef(layout); layoutRef.current = layout;
-  const zonesRef = useRef(zones); zonesRef.current = zones;
-  // 舞台/滚动要在事件回调里读最新布局 —— 状态镜像
   const scaleRef = useRef(1);
   const folderViewRef = useRef([]);
   const camApiRef = useRef(null);   // 相机 API（hook 在下方才调用，用 ref 让上面的回调也够得着）
@@ -213,7 +205,6 @@ export default function BoardCanvas({
   const selectedIdRef = useRef(null);
   selectedIdRef.current = selectedId;
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
-  const [bindings, setBindings] = useState({});   // board.json 的关系表
   const [hoveredBinding, setHoveredBinding] = useState(null);
   const [presence, setPresence] = useState(emptyPresence);
   const toolRef = useRef('select');
@@ -228,8 +219,6 @@ export default function BoardCanvas({
   const [viewer, setViewer] = useState(null);       // { title, content, note? } markdown 阅读；note = 可编辑的任务便利贴
   const [viewerEdit, setViewerEdit] = useState(null); // null = 阅读态；string = 编辑中的草稿
   const [projectPanel, setProjectPanel] = useState(null);   // 'memory'|'guide'|'brand'|'files'
-  const [guideText, setGuideText] = useState('');           // 顶带「项目指引」摘要
-  const [fileCount, setFileCount] = useState(null);         // 顶带「项目文件」计数
   // 拖拽实时落点提示：{ kind:'zone'|'folder', id, ghost?:{x,y,w,h} }（ghost=吸附预览格）
   const [dropHint, setDropHint] = useState(null);
   const dropHintRef = useRef(null);
@@ -242,93 +231,8 @@ export default function BoardCanvas({
   // 拖拽期间关掉物件/工作区的 left/top 过渡（拖拽要逐帧跟手；agent 改布局要动画）
   const [dragActive, setDragActive] = useState(false);
 
-  // ── 数据加载 ──
-  /**
-   * 重拉产物清单。
-   *
-   * 两条铁律（2026-07-28 加，都是真出过事的）：
-   *   **失败保留旧值。** 原来是 `.catch(() => ({ artifacts: [] }))` —— 任何一次
-   *   瞬时失败都会把画布清空，用户看到的是"所有内容突然消失，必须刷新整页"。
-   *   拉不到就维持现状，宁可显示旧的也不能显示空的。
-   *
-   *   **过期响应丢弃。** 连续重载时先发的请求可能后到，回来就把新数据覆盖成旧的。
-   */
-  const reloadSeqRef = useRef(0);
-  const reload = useCallback(async () => {
-    const seq = ++reloadSeqRef.current;
-    const [a, s, m, b] = await Promise.all([
-      Assets.artifacts(projectId).catch(() => null),
-      Sessions.list(projectId, { limit: 30 }).catch(() => null),
-      Memory.list(projectId).catch(() => null),
-      layoutLoadedRef.current ? Promise.resolve(null) : Assets.getBoard(projectId).catch(() => null),
-    ]);
-    if (seq !== reloadSeqRef.current) return;   // 已经有更新的一轮在跑，这份作废
-    // 项目区顶带的摘要（指引全文 / 文件数）—— 卡片本体点开时才加载完整数据
-    Instruction.read(projectId).then(r => setGuideText(r?.content || '')).catch(() => {});
-    Assets.list(projectId).then(r => setFileCount((r?.files || r?.assets || []).length)).catch(() => {});
-    if (Array.isArray(a?.artifacts)) setArtifacts(a.artifacts);
-    if (Array.isArray(a?.tasks)) setTasks(a.tasks);
-    if (Array.isArray(a?.folders)) setFolders(a.folders);
-    if (Array.isArray(s?.sessions)) setSessions(s.sessions);
-    if (Array.isArray(m?.memory)) setMemoryDocs(m.memory);
-    if (b?.board && !layoutLoadedRef.current) {
-      layoutLoadedRef.current = true;
-      setLayout(b.board.objects || {});
-      setBindings(b.board.bindings || {});
-      setZones(b.board.zones || {});
-      // 桌面化：board.json 的 size 不再决定画布大小 —— 桌面宽度固定、高度随内容
-      const zs = Object.values(b.board.objects || {}).map(o => o.z || 0);
-      zMaxRef.current = Math.max(10, ...zs);
-    }
-  }, [projectId]);
-
-  // listVersion 是**去抖后**的清单版本（不是每笔工具调用都涨）。iframe 的重载
-  // 跟它无关 —— 那走各卡自己的 fileVersions，两件事从此分开。
-  useEffect(() => { reload(); }, [reload, listVersion]);
-
-  // agent 改过画布（board.updated）→ 整份布局重拉，服务端为准
-  useEffect(() => {
-    if (!boardVersion) return;
-    layoutLoadedRef.current = false;
-    reload();
-  }, [boardVersion, reload]);
-
-  // ── 布局持久化（diff 式 PATCH，只发脏条目）──
-  const scheduleSave = useCallback(() => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      const d = dirtyRef.current;
-      if (!d.objects.size && !d.zones.size) return;
-      const patch = {};
-      if (d.objects.size) {
-        patch.objects = {};
-        for (const id of d.objects) {
-          // 没有坐标了 = 明确删掉这条（服务端 null 即删）。原来这里是
-          // `if (layoutRef.current[id])` 直接跳过，于是「整理」清掉的坐标
-          // 只清在内存里，刷新一次全回来了
-          patch.objects[id] = layoutRef.current[id] || null;
-        }
-      }
-      if (d.zones.size) {
-        patch.zones = {};
-        // 只发坐标：zones 存档 2026-08-13 瘦身后只剩 x/y（#14，服务端
-        // sanitizeZone 同款）。本地 state 里的 w/h 是影子区/旧数据的残留，
-        // 发出去也会被服务端丢掉，别让 PATCH 里一直背着死字段。
-        for (const id of d.zones) {
-          const z = zonesRef.current[id];
-          if (z) patch.zones[id] = { x: z.x, y: z.y };
-        }
-      }
-      dirtyRef.current = { objects: new Set(), zones: new Set() };
-      Assets.patchBoard(projectId, patch).catch(() => {});
-    }, 800);
-  }, [projectId]);
-
-  const patchLayout = useCallback((id, patch) => {
-    setLayout(prev => ({ ...prev, [id]: { x: 0, y: 0, z: 1, ...prev[id], ...patch } }));
-    dirtyRef.current.objects.add(id);
-    scheduleSave();
-  }, [scheduleSave]);
+  // ──（数据加载 reload / 布局持久化 scheduleSave·patchLayout：2026-08-13
+  //    随数据层一起搬进 useBoardData.js —— 两条铁律的注释也在那边）──
 
   // ⚠️ 这里曾经有 zoneSession / sessionZone 两张对照表（工作区 ↔ 会话）。
   //
