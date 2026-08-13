@@ -253,8 +253,15 @@ export const Assets = {
   /** 新建文件夹；parent 为空 = 建在工作区根。重名自动加序号，返回真实落名 */
   createFolder: (pid, { parent = '', name } = {}) =>
     jsonRequest('POST', `/api/projects/${pid}/folders`, { parent, ...(name ? { name } : {}) }),
-  moveEntry: (pid, from, to) =>
-    jsonRequest('POST', `/api/projects/${pid}/move`, { from, to }),
+  /**
+   * 搬家（真 `fs.rename`）。
+   *
+   * ⚠️ `toDir` 是**目标目录**不是新路径：`moveEntry(pid, '稿件/主稿.html', '定稿')`
+   * → 落到 `定稿/主稿.html`；`''` = 工作区根。传新路径的话服务端 stat 不到目录，
+   * 回 404 `target folder not found`（2026-08-13 真栽过：拖进任何文件夹都失败）。
+   */
+  moveEntry: (pid, from, toDir) =>
+    jsonRequest('POST', `/api/projects/${pid}/move`, { from, to: toDir }),
   removeFolder: (pid, rel) =>
     jsonRequest('DELETE', `/api/projects/${pid}/folders/${String(rel).split('/').map(encodeURIComponent).join('/')}`),
   /** 画布布局（空间画布，含 zones 分区）*/

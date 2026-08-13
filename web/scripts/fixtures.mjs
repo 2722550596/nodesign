@@ -116,7 +116,13 @@ export function resolve(pathname, method, body) {
   if (method === 'POST' && p === `/projects/${PROJECT_ID}/move`) {
     const from = String(body?.from || '');
     const to = String(body?.to || '');
-    // 照服务端那条判据：目标目录必须真的在清单里（'' = 根，永远在）
+    /**
+     * 照服务端那条判据：`to` 是**目标目录**，必须真的在清单里（'' = 根，永远在）。
+     *
+     * ⚠️ 这条校验一开始没写，POST 一律回 `{ok:true}` —— 于是 2026-08-13 那次
+     * "拖进文件夹"的验证**假通过**了：客户端把新文件路径当目录发过去，真服务端
+     * 回 404，而检查台照单全收。**假数据比真服务端宽松，等于把 bug 盖住。**
+     */
     if (to && !FOLDERS.includes(to)) {
       return { status: 404, json: { error: 'target folder not found' } };
     }

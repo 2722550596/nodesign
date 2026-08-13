@@ -145,6 +145,16 @@ export default function BoardCanvas({
   const [cwd, setCwd] = useState('');
   const cwdRef = useRef('');
   cwdRef.current = cwd;
+  /**
+   * 正在搬家的 id。
+   *
+   * 搬家是乐观更新：先把坐标记到**新 id** 上、旧 id 撤掉，再等服务端。那一拍里
+   * 产物清单还没重拉，旧 id 还在 `objects` 里而 `layout` 里已经没有它的坐标 ——
+   * 于是首次落位那一趟把它当成"新来的"，给它排个座并**写进 board.json**，
+   * 留下一条指向已经不存在的路径的死行。这类幽灵条目正是"摆好的版面偶尔自己
+   * 回默认位置"的来源之一。
+   */
+  const movingRef = useRef(new Set());
   const fittedKeyRef = useRef('');        // 换层之后把镜头带过去：每层只带一次
   // 交互态
   const dragRef = useRef(null);           // { kind:'object', ... }（桌面化后只剩物件拖拽）
@@ -640,7 +650,10 @@ export default function BoardCanvas({
     for (const it of items) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     // 新算出来的落点交给下面那条 effect 落盘（不落的话布局会跟着交互抖，见上）
     const seatFixes = {};
-    for (const it of fresh) seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
+    for (const it of fresh) {
+      if (movingRef.current.has(it.id)) continue;   // 正在搬家，别给旧 id 排座
+      seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
+    }
     return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes };
   }, [objects, layout, zonesEff, taskTitles, cwd]);
   positionedRef.current = positioned;
@@ -1045,8 +1058,22 @@ export default function BoardCanvas({
   const moveEntry = useCallback(async (obj, toFolder, at) => {
     const from = String(obj.id).slice(String(obj.id).indexOf(':') + 1);
     const base = from.split('/').pop();
-    const to = toFolder ? `${toFolder}/${base}` : base;
+    /**
+     * ⚠️ `POST /move` 的 `to` 是**目标目录**，不是目标文件路径
+     * （`{ from:'稿件/主稿.html', to:'定稿' }`，`''` = 工作区根）。
+     *
+     * 这里一直传的是拼好的新路径（`定稿/主稿.html`），服务端拿它去 stat 目录 →
+     * 不是目录 → 404 `target folder not found`。也就是用户看到的"目标文件夹
+     * 不存在"：**拖进任何文件夹都失败，而摞两件成夹反倒能成** —— 因为成夹那条
+     * 路传的正好是目录本身。
+     *
+     * 新路径仍然要在本地算一份：id 就是路径，搬完这张卡换身份，乐观更新得先
+     * 把坐标记到**新 id** 上。
+     */
+    const toDir = toFolder || '';
+    const to = toDir ? `${toDir}/${base}` : base;
     if (to === from) return;
+    movingRef.current.add(obj.id);
     const nextId = obj.id.includes(':') ? `${obj.id.split(':')[0]}:${to}` : to;
 
     // 乐观更新：新 id 上先摆好，旧 id 撤掉。不这么做的话下一帧产物清单还没刷新，
@@ -1058,7 +1085,7 @@ export default function BoardCanvas({
       return next;
     });
     try {
-      const r = await Assets.moveEntry(projectId, from, to);
+      const r = await Assets.moveEntry(projectId, from, toDir);   // ← 目录，不是新路径
       if (r?.board) {
         // 服务端已经把身份都改好了 —— 以它为准，别让本地的旧条目再写回去
         setZones(r.board.zones || {});
@@ -1074,6 +1101,9 @@ export default function BoardCanvas({
         return next;
       });
       useGlobalStore.getState().showToast(`搬不过去：${err.message}`, 'error');
+    } finally {
+      // 产物清单重拉之后旧 id 才会真正消失，这之前一直挡着别给它排座
+      setTimeout(() => movingRef.current.delete(obj.id), 4000);
     }
   }, [projectId, reload]);
 
@@ -1542,6 +1572,7 @@ export default function BoardCanvas({
       }));
       dirtyRef.current.zones.add(folder);
       const rel = (o) => String(o.id).slice(String(o.id).indexOf(':') + 1);
+      movingRef.current.add(a.id); movingRef.current.add(b.id);
       await Assets.moveEntry(projectId, rel(b), folder);
       await Assets.moveEntry(projectId, rel(a), folder);
       scheduleSave();
@@ -1549,6 +1580,8 @@ export default function BoardCanvas({
     } catch (err) {
       useGlobalStore.getState().showToast(`归不到一起：${err.message}`, 'error');
       reload();
+    } finally {
+      setTimeout(() => { movingRef.current.delete(a.id); movingRef.current.delete(b.id); }, 4000);
     }
   }, [projectId, reload, scheduleSave]);
 
