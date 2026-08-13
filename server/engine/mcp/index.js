@@ -53,6 +53,8 @@ import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 import { makePublishSiteTool } from './tools/publish-site.js';
 import { makeReportIssueTool } from './tools/report-issue.js';
+import { makeRollFilmTool } from './tools/roll-film.js';
+import { makePaintStillTool } from './tools/paint-still.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -116,6 +118,17 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // publish_site — 站点一键上线 Cloudflare Pages（2026-08-02）。用户明确要求
       // 才调（发公网是外发动作）；额度按项目 owner 算，与站点窗按钮共用一套闸门。
       makePublishSiteTool({ projectId }),
+
+      // roll_film — 自部署 MiniMax-H3 视频产线（2026-08-08）。默认走站主 5090
+      // 盒子（h3box over SSH；Modal 余额告急降备用档，NODESIGN_FILM_BACKEND=modal
+      // 显式才走，绝不自动回退烧余额）；配方恒定 Turbo8步 ≤12.25s；试用号拒
+      // （owner 闸门同 publish_site）。视觉 QC 归用户，工具只回文本路径。
+      makeRollFilmTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
+
+      // paint_still — 站主本地 GPU 盒子生图（NoobAI/Anima，2026-08-08）。盒子
+      // 在线才可用（NODESIGN_H3BOX_SSH）；动漫向/视频关键帧首选，通用生图仍走
+      // generate_image。视觉 QC 归用户。
+      makePaintStillTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
 
       // report_issue — agent 给维护者写信（08-02 由 report_friction 扩容改名）：
       // bug / friction / idea 三类走同一张 issues 表。跟 PostToolUseFailure 的

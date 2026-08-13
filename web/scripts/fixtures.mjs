@@ -63,6 +63,8 @@ const ARTIFACTS = [
   // 真服务端每条产物都带（assets.js 按扩展名算）。这里漏掉过一次 ——
   // 图片在检查通道里静默降级成 file 卡，而真站没病。假数据不同构比没有更坏。
   { kind: 'image', path: 'assets/generated/星空.webp', name: '星空.webp', ext: '.webp', isImage: true, hasThumb: false, size: 149614, mtime: '2026-08-13T05:20:00.000Z' },
+  // isVideo 同 isImage：真服务端按扩展名给（assets.js VIDEO_EXTS），前端据此渲 16:9 播放器卡
+  { kind: 'video', path: 'assets/generated/片段.mp4', name: '片段.mp4', ext: '.mp4', isVideo: true, size: 2400000, mtime: '2026-08-13T05:25:00.000Z' },
 ];
 
 /** 文件夹清单（递归全量，含嵌套）——磁盘扫描的真相 */
@@ -225,6 +227,11 @@ export function resolve(pathname, method, body) {
         contentType: 'image/png',
         body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'),
       };
+    }
+    // 视频给 200 空体：假 mp4 解不出画面（媒体错误不进 console），但 404 会 ——
+    // 判据零噪音比画面重要（这里只验"渲成了播放器卡"，不验播放）
+    if (/\.(mp4|webm)$/i.test(name)) {
+      return { contentType: 'video/mp4', body: Buffer.alloc(0) };
     }
     return { status: 404, json: { error: 'not found' } };
   }

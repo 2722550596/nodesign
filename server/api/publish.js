@@ -28,7 +28,9 @@ router.post('/:pid/publish/:task', async (req, res) => {
   if (!guardProject(req, res)) return;
   try {
     const { site, warning } = await publishSite({
-      projectId: req.params.pid, task: req.params.task, user: req.user,
+      projectId: req.params.pid, task: req.params.task,
+      root: typeof req.body?.root === 'string' ? req.body.root : undefined,
+      user: req.user,
     });
     res.json({ site, warning });
   } catch (err) {

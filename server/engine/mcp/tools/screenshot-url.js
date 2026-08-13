@@ -18,7 +18,7 @@
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { attachPageDiagnostics, runBeforeShot, normalizeShot } from './screenshot.js';
+import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './screenshot.js';
 
 const RASTER_SCALE = 0.6;
 const DEVICE_VIEWPORTS = {
@@ -98,9 +98,9 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
       let browser;
       try {
         const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true });
+        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
-        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale });
+        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale, colorScheme: 'light' });
         const diag = attachPageDiagnostics(page);
 
         let gotoNote = null;
@@ -132,6 +132,7 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
           });
         } catch { /* emit fail-safe */ }
 
+        const paintNote = await detectPaintTransform(page);
         const shot = await normalizeShot(buf);
         const title = await page.title().catch(() => '');
         const finalUrl = page.url();
@@ -140,6 +141,7 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
         ];
         if (shot.note) captionParts.push(shot.note);
         if (gotoNote) captionParts.push(gotoNote);
+        if (paintNote) captionParts.push(paintNote);
         captionParts.push(diag.summary());
 
         return {

@@ -333,6 +333,7 @@ export default function BoardCanvas({
         });
       }
       else if (a.isImage) out.push({ id: a.path, type: 'image', sid, ...a });
+      else if (a.isVideo) out.push({ id: a.path, type: 'video', sid, ...a });
       else out.push({ id: a.path, type: 'file', sid, ...a });
     }
     return out;

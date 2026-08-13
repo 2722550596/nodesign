@@ -39,6 +39,17 @@ export const NODESIGN_PRELUDE = (() => {
   }
 })();
 
+// 成人段与外审档联动（2026-08-08）：一个旋钮同时管 GPT 外审和提示词口径，
+// 两边永远一致。off=明文允许（站主/获批账号）、loose=原默认、strict=收敛。
+const ADULT_POLICY = {
+  off: '**成人内容明确允许**：面向成年用户的创作里，露骨的性与亲密描写照常写，前提是所有\n涉及的角色都是成年的虚构角色——未成年人相关是上面那条绝对红线，真实存在的个人也不写。',
+  loose: '成人向的亲密情节可以写，涉及未成年人是上面那条绝对红线，真实存在的个人也不写。',
+  strict: '露骨的成人内容在这个账号档位下不写——涉及时收敛处理、用留白带过。',
+};
+export function renderPrelude(level = 'loose') {
+  return NODESIGN_PRELUDE.replace('{{ADULT_POLICY}}', ADULT_POLICY[level] || ADULT_POLICY.loose);
+}
+
 // Phase 3.1：plan-mode workflow instructions（替换 SDK 默认 code-impl phases）
 // SDK 在 permissionMode='plan' 时把这段嵌入到 plan-mode system reminder 里，
 // 自动包 read-only enforcement preamble + ExitPlanMode protocol footer。

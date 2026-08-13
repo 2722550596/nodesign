@@ -596,7 +596,7 @@ export default function SiteWindow({
     // 「上线」是外发动作，跟旁边那些"看/改"的工具不是一类 —— 单独一组，
     // 排在最后（2026-08-13 从窗口头部的名牌条挪进来）
     exportToolGroup({ kind: 'site', exports: artifactExports, onExport }),
-    { id: 'publish', node: <SitePublishControl projectId={projectId} task={task} /> },
+    { id: 'publish', node: <SitePublishControl projectId={projectId} task={task} root={base || '.'} /> },
     {
       id: 'actions',
       items: [

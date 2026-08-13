@@ -46,6 +46,53 @@ const RASTER_SCALE = 0.6;
 const API_LONG_EDGE = 1568;
 const API_MAX_PIXELS = 1_150_000;
 
+// ── 渲染层保真（2026-08-07）──
+// 2026-08-05 事故：一次 screenshot_canvas 的位图整体呈暗色反转（深棕底米白字），
+// 同一 page 里 beforeShot 读的 getComputedStyle 却全程浅色真值，内联 #ff0000
+// 还原样出红——computed style 不动、paint 被变换、高饱和色豁免，指纹指向
+// Chromium 的强制暗色（Auto Dark）。事后无法稳定复现，但这一类"渲染层替页面
+// 做主"的来源可以确定性关掉，launch 参数全局带上：
+export const FIDELITY_LAUNCH_ARGS = [
+  '--disable-features=WebContentsForceDark',  // 自动暗色：paint 层反转，页面自己测不到
+  '--force-color-profile=srgb',               // 色彩配置固定 srgb，排除 ICC 差异
+];
+
+/**
+ * 渲染保真探针：主图截完后，往页面塞一块已知色 (#f5f0e4) 的 16px 方块单截，
+ * 看栅格出来的像素还认不认账。位图和 computed style 是两条独立感知通道——
+ * 渲染层若在做颜色变换，页面内任何 JS 读数都测不到，只有这种"已知输入对
+ * 已知输出"的探针测得到。亮度掉一半才报警（抗锯齿/有损压缩的小偏差不算）。
+ * 2026-08-05 那次事故 agent 连烧 8 张截图排查自己的 CSS 才怀疑到管线头上——
+ * 这个警告就是把那 8 张图省下来的。
+ */
+export async function detectPaintTransform(page) {
+  try {
+    await page.evaluate(() => {
+      const d = document.createElement('div');
+      d.id = '__nd_paint_probe__';
+      d.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:16px;'
+        + 'background:#f5f0e4;z-index:2147483647;pointer-events:none';
+      document.documentElement.appendChild(d);
+    });
+    const buf = await page.locator('#__nd_paint_probe__').screenshot({ type: 'png' });
+    await page.evaluate(() => document.getElementById('__nd_paint_probe__')?.remove());
+    const { default: sharp } = await import('sharp');
+    const stats = await sharp(buf).stats();
+    const [r, g, b] = stats.channels.map((c) => c.mean);
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;   // #f5f0e4 本色 ≈ 239
+    if (lum < 128) {
+      return '⚠ paint-layer color transform detected: a #f5f0e4 probe rasterized to '
+        + `rgb(${r | 0},${g | 0},${b | 0}). This bitmap does NOT faithfully show the page's own colors, `
+        + 'and computed styles will keep reporting the authored values — the mismatch is in the '
+        + 'rasterizer, not your CSS. Do not debug colors from this shot; report via report_issue '
+        + 'and ask the user to eyeball the page in their own browser.';
+    }
+    return null;
+  } catch {
+    return null;   // 探针挂了不挡截图
+  }
+}
+
 /** PNG buffer → { data, mimeType, note }。失败时原样回退 PNG（宁可大也别丢图）。 */
 export async function normalizeShot(buf) {
   try {
@@ -326,13 +373,14 @@ Do NOT use this tool when:
       try {
         // 动态 import：playwright 启动慢，模块顶部 import 会拖累其他工具
         const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true });
+        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
         // 位图缩放（2026-07-28 上下文瘦身）：布局仍按 deck 逻辑尺寸排（1920 宽），
         // 但光栅按 RASTER_SCALE 出图。vision token 按像素算（≈ w*h/750），
         // 1920×1080 一张 ≈1.85k tokens，0.6 倍后 ≈1.0k，排版检查完全够看。
         // 要读小字（版权行 / 数据标签）显式传 detail:'high' 走 1.0。
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
-        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale });
+        // colorScheme 显式钉死 light：默认值虽同，但这里是"截图必须可复现"的契约
+        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale, colorScheme: 'light' });
         const diag = attachPageDiagnostics(page);
 
         // 用 file:// scheme 加载 canvas.html
@@ -391,6 +439,7 @@ Do NOT use this tool when:
           });
         } catch { /* emit fail-safe */ }
 
+        const paintNote = await detectPaintTransform(page);
         const shot = await normalizeShot(buf);
 
         const captionParts = [
@@ -399,6 +448,7 @@ Do NOT use this tool when:
         if (shot.note) captionParts.push(shot.note);
         if (gotoNote) captionParts.push(gotoNote);
         if (beforeShotNote) captionParts.push(beforeShotNote);
+        if (paintNote) captionParts.push(paintNote);
         captionParts.push(diag.summary());
 
         return {

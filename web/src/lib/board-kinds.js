@@ -150,6 +150,19 @@ export const KINDS = {
     legacyBucket: 'art',
   },
 
+  // 视频（roll_film / paint_still 产线的 mp4/webm，2026-08-08 main 加、
+  // 合流时移植进形态表）：16:9 播放器卡，播放走既有 Range+派生档管线
+  video: {
+    chrome: 'card',
+    label: '视频',
+    backing: 'file',
+    size: { w: 240, h: 160 },
+    reader: null,
+    primary: 'openFile',
+    actions: ['add', 'open'],
+    legacyBucket: 'file',
+  },
+
   note: {
     chrome: 'card',
     label: '便签',

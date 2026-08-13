@@ -64,6 +64,11 @@ if (!userCols.has('moderation_level')) {
   db.exec('ALTER TABLE users ADD COLUMN moderation_level TEXT');
   console.log('[users-store] users.moderation_level column added');
 }
+// 本地产线（roll_film/paint_still）批准制：admin 天生有，其余账号站主点开才有
+if (!userCols.has('local_gen')) {
+  db.exec('ALTER TABLE users ADD COLUMN local_gen INTEGER NOT NULL DEFAULT 0');
+  console.log('[users-store] users.local_gen column added');
+}
 
 const inviteCols = new Set(db.prepare('PRAGMA table_info(invites)').all().map(c => c.name));
 if (!inviteCols.has('grant_lifetime_usd')) {
@@ -115,6 +120,7 @@ function rowToUser(row) {
     lifetimeCostLimitUsd: row.lifetime_cost_limit_usd ?? null,
     dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
     moderationLevel: row.moderation_level ?? null,    // null = 跟随默认档
+    allowLocalGen: !!row.local_gen,                   // 本地产线批准（admin 免批）
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
     createdAt: row.created_at,
@@ -155,11 +161,12 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, localGen } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
   if (moderationLevel !== undefined) { sets.push('moderation_level = ?'); args.push(moderationLevel ?? null); }
+  if (localGen !== undefined) { sets.push('local_gen = ?'); args.push(localGen ? 1 : 0); }
   if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
   if (lifetimeCostLimitUsd !== undefined) { sets.push('lifetime_cost_limit_usd = ?'); args.push(lifetimeCostLimitUsd ?? null); }
   if (dailyTokenLimit !== undefined) { sets.push('daily_token_limit = ?'); args.push(dailyTokenLimit ?? null); }

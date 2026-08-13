@@ -201,8 +201,13 @@ function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
         const n = result?.filesChanged?.length || 0;
         // iframe reload 由后端 emit 的 run.file_changed event 自动触发（ProjectWorkspace 已 case），
         // 不再依赖 onCanvasReload —— 但保留兼容调用（active query 路径同步返回时也 bump）
-        showToast(n > 0 ? `已回滚 ${n} 个文件` : '已回滚（无文件改动）', 'success');
+        const talk = result?.conversationTruncated ? '，对话已截回该处' : '';
+        showToast(n > 0 ? `已回滚 ${n} 个文件${talk}` : `已回滚${talk || '（无文件改动）'}`, 'success');
         if (onCanvasReload) onCanvasReload();
+        // 对话层已被服务端截断 → 通知 ProjectWorkspace 重拉消息（免传三层 props）
+        if (result?.conversationTruncated) {
+          window.dispatchEvent(new CustomEvent('nd-conversation-rewound', { detail: { sessionId } }));
+        }
       }
     } catch (err) {
       const msg = err?.message || String(err);

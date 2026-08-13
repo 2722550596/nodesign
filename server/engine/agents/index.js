@@ -154,9 +154,12 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
         'Read', 'Glob', 'Grep',
         'TodoWrite',
       ],
-      // maxTurns 限制：研究是有限动作。8 turn 够拆 brief → 1-3 search → ≤5 hotlink
-      // 验证 → 报告。主 agent 等子代理回应是阻塞的，太长会让用户体感"卡住"。
-      maxTurns: 8,
+      // maxTurns 限制：研究是有限动作，但 8 轮在真实多维 brief 上不够
+      // （2026-08-05 两次 16-17 次调用的研究在第 8 轮被 SDK 硬掐——超限不是
+      // 软着陆，是当场断流，没有收尾回合，报告全损只回传开场白或空）。
+      // 提到 12，同时 explorer.md 加了「随手记」纪律：每轮工具调用前先用
+      // text 记下已有发现，被掐时主 agent 至少拿到最后一段阶段性结论。
+      maxTurns: 12,
     },
 
     'vision-checker': {

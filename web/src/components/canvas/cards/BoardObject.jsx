@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
-  Image as ImageIcon, FileText, Plus, ExternalLink, BookOpen, Trash2,
+  Image as ImageIcon, FileText, Plus, ExternalLink, BookOpen, Trash2, Film,
 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../../lib/theme.js';
 import { PAPER, PAPER_SHADOW } from '../../../lib/paper.js';
@@ -251,6 +251,30 @@ function BoardObject({
       )}
 
       {o.type === 'note' && <NoteFaces o={o} />}
+
+      {o.type === 'video' && (
+        <div>
+          {/* 播放器区拦下 pointer 事件：video controls 的点击不能变成拖卡 */}
+          <div
+            data-board-action
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{ aspectRatio: '16 / 9', overflow: 'hidden', borderRadius: '10px 10px 0 0', background: '#000' }}
+          >
+            <video
+              src={Assets.artifactFileUrl(projectId, o.path)}
+              controls preload="metadata" playsInline
+              style={{ width: '100%', height: '100%', display: 'block' }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, padding: `${GAP.xs}px ${GAP.sm}px` }}>
+            <Film size={10} color={COLOR.sub} />
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {o.name}
+            </span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{formatSize(o.size)}</span>
+          </div>
+        </div>
+      )}
 
       {o.type === 'file' && (
         <div

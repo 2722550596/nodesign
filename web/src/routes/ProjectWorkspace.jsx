@@ -182,7 +182,12 @@ export default function ProjectWorkspace() {
   }, [id, currentSessionId, setProjectContextUsage]);
   // 稳定引用让 ChatPanel/MessageList 下游 React.memo 生效；之前 inline 箭头每次
   // render 都 new function，子组件 props 浅比较永不命中。
-  const handleCanvasReload = useCallback(() => setReloadToken(t => t + 1), []);
+  // 回滚（rewindFiles）改动面未知 → 已知文件全量 bump，= 旧全局 reloadToken 的等价物。
+  // （reloadToken 在 07-28 按文件版本重构时已拆除，这里曾留着悬空引用，回滚一成功就
+  // ReferenceError —— 服务端回滚其实做完了，前端在庆功那一步摔的。08-08 修。）
+  const handleCanvasReload = useCallback(() => setFileVersions(
+    prev => Object.fromEntries(Object.keys(prev).map(k => [k, (prev[k] || 0) + 1])),
+  ), []);
 
   // ── P0+ s1 C17：SDK 高频事件提升的 state（被 C18/C19/C20 各组件消费）──
   // systemInfo: SDK 'system init' 事件（model / tools / mcp_servers / agents 元信息）
@@ -399,6 +404,19 @@ export default function ProjectWorkspace() {
   // 把进行中 turn 的正文洗掉（"漏传"）。WS hydrate 已落地同一个 sid → 直接放弃。
   const prevHydrateSidRef = useRef(null);
   const wsHydratedSidRef = useRef(null);
+
+  // 回滚成功后对话层重拉（2026-08-08）：服务端已把 jsonl 截断，这里强制整体替换
+  // messages（回滚时必无进行中 turn，不存在洗掉流式正文的问题）。
+  useEffect(() => {
+    const onRewound = (e) => {
+      if (!currentSessionId || e.detail?.sessionId !== currentSessionId) return;
+      Sessions.read(id, currentSessionId)
+        .then(({ messages: m = [] }) => setMessages(sessionMessagesToDisplay(m)))
+        .catch(() => { /* 拉不到就等下次切会话自然重拉 */ });
+    };
+    window.addEventListener('nd-conversation-rewound', onRewound);
+    return () => window.removeEventListener('nd-conversation-rewound', onRewound);
+  }, [id, currentSessionId]);
   useEffect(() => {
     if (!currentSessionId) {
       // /work 路径 = 新会话 → 空 chat 让用户从头开始
@@ -1269,7 +1287,7 @@ export default function ProjectWorkspace() {
         // 生成完的图，iframe 早于图完成加载到 404 裂图；codex 生图 45-60s 让这个
         // 窗口从"碰不到"变成"必碰"。file_changed 只在 canvas.html 写入时触发，
         // 这里补上"图完成也刷"。
-        setReloadToken(t => t + 1);
+        setFileVersions(prev => bumpFileVersion(prev, evt.absPath || evt.path));
         // 产物墙也当场重拉（2026-07-30）：服务端已经补发了 file_changed，这里再兜一道。
         // 之前只 bump reloadToken（那是 deck iframe 的 token，根本没传给 BoardCanvas），
         // 产物墙要等 run.done 的收尾刷新才拉到这张图 —— 用户看到的就是"图生成完了，

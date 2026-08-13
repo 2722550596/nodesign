@@ -110,7 +110,9 @@ export const Admin = {
 // ── Publish（站点一键上线 Cloudflare Pages，task 级）──
 export const Publish = {
   get: (pid, task) => jsonRequest('GET', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
-  publish: (pid, task) => jsonRequest('POST', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  // root：多站点任务点名要发哪个（'.' = 任务根）；单站点省略
+  publish: (pid, task, root) => jsonRequest('POST', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`,
+    root != null ? { root } : undefined),
   unpublish: (pid, task) => jsonRequest('DELETE', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
 };
 
