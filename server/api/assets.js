@@ -18,7 +18,7 @@ import { guardProject } from './_guard.js';
 import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace, commitWorkspace,
 } from '../projects/workspace.js';
-import { patchBoard, readBoard, reconcileBoardRenames, forwardId, renameBoardPaths } from '../projects/board-store.js';
+import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
@@ -948,11 +948,28 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
       stat = await fs.stat(servePath);
     } catch (err) {
       if (err.code !== 'ENOENT') throw err;
-      const original = isThumbPath(servePath) ? await findOriginalForThumbnail(servePath) : null;
-      if (!original) return res.status(404).json({ error: 'file not found' });
-      servePath = original;
-      stat = await fs.stat(original);
-      servedOriginalForThumb = true;
+      // ① 改名转发（#4）：开着的窗拿的还是旧路径 —— 重命名、拖进文件夹、
+      // agent mv 之后，产物窗/图片卡的 URL 都指着旧地址。转发表（board-store）
+      // 记着最近几分钟的改名，按最长前缀换掉重试一次。安全检查跟主路径同款：
+      // 转发目标同样不许越界、不许摸基础设施目录。
+      const fwd = forwardPath(req.params.pid, subPath);
+      if (fwd !== subPath) {
+        const absFwd = path.resolve(sharedRoot, fwd);
+        const relFwd = path.relative(sharedRoot, absFwd).split(path.sep);
+        const safe = (absFwd === sharedRoot || absFwd.startsWith(sharedRoot + path.sep))
+          && !relFwd.some(seg => seg.startsWith('.') && !DOT_OK.has(seg));
+        if (safe) {
+          try { stat = await fs.stat(absFwd); servePath = absFwd; } catch { /* ② 继续走缩略图兜底 */ }
+        }
+      }
+      // ② 缩略图兜底
+      if (!stat) {
+        const original = isThumbPath(servePath) ? await findOriginalForThumbnail(servePath) : null;
+        if (!original) return res.status(404).json({ error: 'file not found' });
+        servePath = original;
+        stat = await fs.stat(original);
+        servedOriginalForThumb = true;
+      }
     }
     // 目录 → 找 index.html（站点常见的 `href="about/"` 写法；deck 场景用不到但无害）
     if (stat.isDirectory()) {

@@ -377,8 +377,36 @@ export function forwardId(pid, id, now = Date.now()) {
   return cur;
 }
 
+/**
+ * 把一个**文件路径**换成它现在的位置 —— forwardId 的前缀感知版（#4）。
+ *
+ * forwardId 只做精确匹配，够画布用（物件 id 整个换）。但 artifact-file
+ * 拿的是文件路径：文件夹 `稿件` 改成 `定稿` 之后，开着的窗还在请求
+ * `稿件/主稿.html` —— 表里只有 `稿件 → 定稿` 这一条，精确匹配永远打不中。
+ * 这里按**最长前缀**找（全路径 → 上级 → 再上级），命中就把前缀换掉接着走链。
+ */
+export function forwardPath(pid, rel, now = Date.now()) {
+  const j = renameJournal.get(pid);
+  if (!j || typeof rel !== 'string' || !rel) return rel;
+  let cur = rel;
+  for (let hop = 0; hop < 8; hop++) {
+    let next = null;
+    const segs = cur.split('/');
+    for (let i = segs.length; i > 0; i--) {
+      const prefix = segs.slice(0, i).join('/');
+      const e = j.get(prefix);
+      if (e && now - e.at <= RENAME_TTL_MS) { next = e.to + cur.slice(prefix.length); break; }
+    }
+    if (!next || next === cur) return cur;
+    cur = next;
+  }
+  return cur;
+}
+
 /** 只在测试里用：清掉转发表，免得用例之间串味 */
 export function _resetRenameJournal() { renameJournal.clear(); }
+/** 只在测试里用：往转发表里记一笔（noteRenames 不导出，真路径走 renameBoardPaths） */
+export function _noteRenamesForTest(pid, pairs, now = Date.now()) { noteRenames(pid, pairs, now); }
 
 /**
  * 一次 id 改名：物件、文件夹、以及所有关系线端点一起改。
@@ -464,9 +492,13 @@ export function renameBoardPaths(pid, pairs) {
     }
 
     if (applied.length || touchedField || touchedBinding) {
-      if (applied.length) noteRenames(pid, applied, now);
       await writeBoard(pid, board);
     }
+    // 转发表**永远**记裸路径对，不只记 applied：applied 是画布条目的改名
+    //（deck 带 `deck:` 前缀、没上画布的文件根本不在里面），而 artifact-file
+    // 的改名转发（#4）查的是文件路径 —— 只记 applied 的话，改一个 deck 或者
+    // 一个没有画布条目的文件，开着的窗照样 404。
+    noteRenames(pid, [...clean, ...applied], now);
     return { board, renamed: applied.length };
   });
 }
