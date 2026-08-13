@@ -164,7 +164,11 @@ export default function CanvasFrame({
           onUiState={onBoardUiState}
           stageRef={stageRef}
           onFocusDeck={openDeck}
-          deckOpen={deckOpen || !!siteSrc || !!worldSrc}
+          // 跟顶栏收起用**同一个** windowOpen —— 以前这里是宽松版
+          // （`deckOpen || site || world`），而窗真正渲染用的是严格版，两处
+          // 各写一遍：deckOpen 为真但窗没渲染的那一瞬，画布工具栏和小地图
+          // 都藏了、窗也没出来，屏幕上一个工具都没有。
+          deckOpen={windowOpen}
         />
 
         {deckOpen && (sessionId || deckTaskSrc) && (
