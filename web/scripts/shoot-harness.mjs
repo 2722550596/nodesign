@@ -27,7 +27,20 @@ page.on('console', m => { if (m.type() === 'error' || m.text().startsWith('[prob
 await page.goto(`http://127.0.0.1:${PORT}/harness.html?case=${CASE}`, { waitUntil: 'load' });
 // 工具栏的落点在 layout effect + rAF 里算，等一拍再截
 await page.waitForTimeout(1200);
+// 拖一把试试：dock 模式下不该动
+const before = await page.evaluate(() => { const t = document.querySelector('[data-floating-toolbar]'); const r = t.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y) }; });
+const bx = before.x + 8, by = before.y + 8;      // 避开按钮，按在条的左边缘
+await page.mouse.move(bx, by);
+await page.mouse.down();
+await page.mouse.move(bx - 260, by - 200, { steps: 12 });
+await page.mouse.up();
+await page.waitForTimeout(300);
+const after = await page.evaluate(() => { const t = document.querySelector('[data-floating-toolbar]'); const r = t.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y) }; });
+const dragged = { before, after, moved: (after.x !== before.x || after.y !== before.y) };
 await page.screenshot({ path: OUT });
+// 工具栏局部特写：整屏 1440 宽里那条只占一小截，缩略了看不出配色
+const tbEl = await page.$('[data-floating-toolbar]');
+if (tbEl) await tbEl.screenshot({ path: OUT.replace(/\.png$/, '-toolbar.png') });
 
 // 量一下工具栏到底落在哪 —— 肉眼看图容易把"差 20px"看成"对齐了"
 const box = await page.evaluate(() => {
@@ -45,4 +58,4 @@ const box = await page.evaluate(() => {
 
 await browser.close();
 await server.close();
-console.log(JSON.stringify({ out: OUT, errors: errors.slice(-8), ...box }, null, 2));
+console.log(JSON.stringify({ out: OUT, errors: errors.slice(-8), dragged, ...box }, null, 2));

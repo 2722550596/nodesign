@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { PAPER, PAPER_SHADOW, INK_SURFACE } from '../../lib/paper.js';
+import { INK_SURFACE } from '../../lib/paper.js';
 import { FONT_SANS, FONT_SIZE, GAP } from '../../lib/theme.js';
 import { usePanelState } from '../layout/PanelManager.jsx';
 
@@ -342,17 +342,20 @@ function ToolGroup({ group }) {
   /**
    * 逃生口：`node` 组直接放一段自己的 JSX（站点的「上线」控件走这条）。
    *
-   * 底色用**纸**不用墨面 —— 上线控件是个带状态的东西（未发布 / 发布中 /
-   * 已发布带地址），它本来就长在纸上，硬塞进墨色工具组里要把它整套配色
-   * 重写一遍，而它跟旁边那些"点一下就执行"的图标按钮本来也不是一类。
+   * 容器跟别的组**一模一样**（墨面 + 同样的圆角内衬）。一度给它单独套过纸色
+   * 底，想省下重写配色的功夫 —— 结果一条工具栏上两种物料，看着就是没做完。
+   * 内容自己按 INK_SURFACE 配色，这里不给它特殊待遇。
    */
   if (group.node) {
     return (
       <div style={{
         display: 'flex', alignItems: 'center',
-        background: PAPER.paper, borderRadius: 14,
-        padding: `${GAP.xxs}px ${GAP.sm}px`,
-        boxShadow: PAPER_SHADOW.far,
+        background: INK_SURFACE.bg,
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
+        borderRadius: 14,
+        padding: `${GAP.xs}px ${GAP.sm}px`,
+        boxShadow: INK_SURFACE.shadow,
       }}>
         {group.node}
       </div>
