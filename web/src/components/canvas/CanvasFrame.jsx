@@ -53,6 +53,7 @@ export default function CanvasFrame({
   isStreaming = false,
   onAddToContext,
   onAskAgent,
+  onAnnotate,
   artifactRefreshToken,
   fileVersions,
   boardVersion,
@@ -208,6 +209,7 @@ export default function CanvasFrame({
           boardVersion={boardVersion}
           onAddToContext={onAddToContext}
           onAskAgent={onAskAgent}
+          onAnnotate={onAnnotate}
           apiRef={boardApiRef}
           onUiState={onBoardUiState}
           stageRef={stageRef}

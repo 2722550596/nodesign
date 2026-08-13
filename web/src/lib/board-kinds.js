@@ -259,6 +259,11 @@ export function sizeOf(o) {
 }
 
 /** 长得像一张纸，还是画布上的一笔墨。 */
+/** 中文名（标注浮层、无障碍标签用） */
+export function labelOf(o) {
+  return traitsOf(o).label || '产物';
+}
+
 export function chromeOf(o) {
   return kindOf(o).chrome || 'card';
 }

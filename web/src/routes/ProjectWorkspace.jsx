@@ -8,7 +8,7 @@ import FloatingPanel from '../components/layout/FloatingPanel.jsx';
 import ChatDock from '../components/layout/ChatDock.jsx';
 import { PanelManagerProvider } from '../components/layout/PanelManager.jsx';
 // PanelMenu 已下架（用户反馈"面板"按钮太冗余）— 浮窗仍可通过 hooks 直接 toggle
-import { Sliders, MessageSquare } from 'lucide-react';
+import { Sliders, MessageSquare, MessageSquarePlus } from 'lucide-react';
 import ChatPanel from '../components/chat/ChatPanel.jsx';
 import CanvasFrame from '../components/canvas/CanvasFrame.jsx';
 // InspectTab 由 InspectFloatingCard 间接使用（不在此处直接 import）
@@ -29,6 +29,7 @@ import PickExportModal from '../components/project/PickExportModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
 import ElicitationModal from '../components/run/ElicitationModal.jsx';
 import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_KAI, FONT_MONO, STAGE } from '../lib/theme.js';
+import { INK_SURFACE } from '../lib/paper.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { newId } from '../lib/helpers.js';
@@ -1356,6 +1357,12 @@ export default function ProjectWorkspace() {
    */
   const handleSend = async (text) => {
     if (!text || !text.trim()) return;
+    // 任何一条消息发出去，攒着的元素评论就随行了（agent 每轮都拉 pending
+    // changes）—— 标 sentAt 只为让「发给 agent（N 条标注）」那颗浮钮的计数
+    // 归零，不影响橙色框（那个跟 status 走，agent clear 时才消）。
+    setComments(arr => arr.some(c => !c.sentAt)
+      ? arr.map(c => (c.sentAt ? c : { ...c, sentAt: Date.now() }))
+      : arr);
     // mime 字段必传：Phase 1.4 后端 image inline 检测用 mime 判断是不是图
     const attachments = inputs
       .filter(it => it.type === 'asset' && it.path)
@@ -1702,9 +1709,40 @@ export default function ProjectWorkspace() {
     const what = elements.length
       ? `${elements.slice(0, 3).map(e => `<${e.tag}>`).join('')}${elements.length > 3 ? ' 等' : ''}`
       : '一块区域';
+    useGlobalStore.getState().openChatDock();   // 对话在悬浮卡里流，收起时唤出来
     await handleSend(text
       ? `我在 ${rel} 上圈了一块（${what}）：${text}`
       : `我在 ${rel} 上圈了一块（${what}），看一下 —— 截图和框住的元素都在 pending changes 里。`);
+  };
+
+  /**
+   * 就地标注（2026-08-13，E3）：右键画布物件/文件夹 → 浮层写一句 → 直接起
+   * 一轮。样板是 handleRegionComment（"用户刚按了发送，这个动作本身就是
+   * 现在就说"），差别是它的载荷小（目标 + 一句话），直接进消息即可 ——
+   * 不过 pending buffer，零新服务端面。id 就是工作区相对路径（画布 id=路径
+   * 模型），agent 拿它能直接找到文件/文件夹；涂鸦手写这类原生物件的 id
+   * 指向 board.json 条目，agent 也认得。
+   */
+  const handleAnnotate = async ({ target, text }) => {
+    useGlobalStore.getState().openChatDock();
+    const label = `${target.typeLabel}「${target.title}」`;
+    const loc = target.id && target.id !== target.title ? `（${target.id}）` : '';
+    await handleSend(`【画布标注】${label}${loc}：${text}`);
+  };
+
+  /**
+   * 「发给 agent（N 条标注）」浮钮（E3）：元素评论攒批后的空间确认按钮。
+   * 消息只写一句指路 —— 内容和锚点 agent 自己去 pending changes 拉。
+   */
+  const unsentComments = comments.filter(c => c.status === 'open' && !c.sentAt);
+  const handleSendAnnotations = async () => {
+    const n = unsentComments.length;
+    if (!n) return;
+    const paths = [...new Set(unsentComments.map(c => c.path).filter(Boolean))];
+    const where = paths.length ? paths.join('、') : '打开的产物';
+    useGlobalStore.getState().openChatDock();
+    // sentAt 标记在 handleSend 开头统一做
+    await handleSend(`我在 ${where} 上留了 ${n} 条元素标注，内容和锚点都在 pending changes 里，逐条处理一下。`);
   };
 
   const handleJumpToComment = (comment) => {
@@ -1977,6 +2015,7 @@ export default function ProjectWorkspace() {
             sessionId={currentSessionId}
             decisionsReloadKey={decisionsReloadKey}
             comments={comments}
+            onAnnotate={handleAnnotate}
             onAddComment={handleAddComment}
             onResolveComment={handleResolveComment}
             onDeleteComment={handleDeleteComment}
@@ -2040,6 +2079,30 @@ export default function ProjectWorkspace() {
             onChat={handleSend}
           />
         </FloatingPanel>
+
+        {/* 「发给 agent（N 条标注）」—— 元素评论攒批后的空间确认按钮（E3）。
+            跟悬浮卡一样住在隔离层**外面**：标注多半是在产物窗里点的，
+            按钮被窗盖住等于没有。有未发标注才出现。 */}
+        {unsentComments.length > 0 && (
+          <button
+            onClick={handleSendAnnotations}
+            style={{
+              position: 'absolute', bottom: 64, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 130,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
+              padding: `${GAP.sm}px ${GAP.lg}px`,
+              border: 'none', borderRadius: RADIUS.md, cursor: 'pointer',
+              background: INK_SURFACE.bg, color: INK_SURFACE.text,
+              boxShadow: INK_SURFACE.shadow,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, letterSpacing: '0.04em',
+              animation: 'ndPopIn 160ms cubic-bezier(0.32, 0.72, 0, 1)',
+            }}
+            title="agent 会去 pending changes 里逐条读你的标注"
+          >
+            <MessageSquarePlus size={14} strokeWidth={1.75} />
+            发给 agent（{unsentComments.length} 条标注）
+          </button>
+        )}
 
         {/* 对话 —— 悬浮 AI 卡（2026-08-13）：关着零遮挡，鼠标贴屏缘唤出，
             图钉固定。放在 canvas section **之外**、视口容器之内：它跟画布

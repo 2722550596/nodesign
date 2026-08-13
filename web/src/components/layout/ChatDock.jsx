@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * ChatDock —— 悬浮 AI 卡（2026-08-13，第三形态）。
@@ -77,6 +78,19 @@ export default function ChatDock({ title, children }) {
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch { /* 隐私模式 */ }
   }, [cfg]);
+
+  // ── 程序化唤出：就地标注/圈选发送（openChatDock）、要把光标放进输入框
+  //   （focusComposer —— 对着收起的卡聚焦是空操作，所以它隐含"先出来"）。
+  //   首帧不触发：计数器是全局的，换项目再挂载时残值不该把卡弹出来。
+  const openTick = useGlobalStore(s => s.chatDockOpenTick);
+  const focusTick = useGlobalStore(s => s.composerFocusTick);
+  const ticksSeen = useRef(false);
+  useEffect(() => {
+    if (!ticksSeen.current) { ticksSeen.current = true; return; }
+    clearHide();
+    setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTick, focusTick]);
 
   // ── 召唤：window mousemove 热区（rAF 节流）。只在关着时监听。
   useEffect(() => {

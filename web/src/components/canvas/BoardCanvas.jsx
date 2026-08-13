@@ -17,7 +17,7 @@ import {
 } from '../../lib/board-geometry.js';
 import {
   SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, isFileBacked,
-  chromeOf, cardOf,
+  chromeOf, cardOf, labelOf,
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
 import FolderFace from './cards/FolderFace.jsx';
@@ -34,6 +34,7 @@ import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
+import AnnotatePopover from './AnnotatePopover.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import MemoryCard from '../project/MemoryCard.jsx';
@@ -109,6 +110,12 @@ export default function BoardCanvas({
    * 聊天栏长什么样。
    */
   onAskAgent,
+  /**
+   * 就地标注（2026-08-13，E3）：右键物件/文件夹 →「标注给 agent」→ 浮层里
+   * 写一句话直接发送，agent 立刻起一轮。参数 `{ target: { kind, id, title,
+   * typeLabel }, text }` —— 翻译成消息还是外层的事，同 onAskAgent。
+   */
+  onAnnotate,
 }) {
   const navigate = useNavigate();
   const scrollRef = useRef(null);          // 纵向滚动容器（桌面的"视口"）
@@ -1727,6 +1734,8 @@ export default function BoardCanvas({
    * 的地方，而菜单弹出后镜头可能已经被别的事挪过了。
    */
   const [menu, setMenu] = useState(null);   // { x, y, at:{x,y}, items }
+  // 就地标注浮层：{ x, y, target:{ kind, id, title, typeLabel } }（E3）
+  const [annotate, setAnnotate] = useState(null);
 
   const createFolderAt = useCallback(async (parent, at) => {
     try {
@@ -1818,6 +1827,7 @@ export default function BoardCanvas({
   }, [projectId, reload]);
 
   const openContextMenu = useCallback((e) => {
+    const mx = e.clientX; const my = e.clientY;
     const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
     const objEl = e.target.closest?.('[data-board-object]');
     const objId = objEl?.getAttribute('data-board-object') || null;
@@ -1836,7 +1846,12 @@ export default function BoardCanvas({
         // 改名只给磁盘上真有位置的（涂鸦 / 手写文字没有文件可改）
         ...(isFileBacked(obj) ? [{ id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(obj.id) }] : []),
         ...(canAddToContext(obj) ? [{ id: 'add', icon: Plus, label: '加入上下文', onClick: () => handleAdd(obj) }] : []),
-        { id: 'ask', icon: MessageSquarePlus, label: '让 agent 改它', onClick: () => onAskAgent?.({ objects: [obj.id] }) },
+        // E3：从「垫半句话进输入框」升级成就地标注 —— 在东西上写完一句，
+        // 按发送 agent 立刻来。全类型都给（图片/文件/涂鸦/手写字也算产物）。
+        { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
+          x: mx, y: my,
+          target: { kind: 'object', id: obj.id, title: obj.title || obj.name || obj.id, typeLabel: labelOf(obj) },
+        }) },
         { divider: true },
         { id: 'del', icon: Trash2, label: '删除', danger: true, onClick: () => handleDeleteNote(obj) },
       ];
@@ -1844,7 +1859,10 @@ export default function BoardCanvas({
       items = [
         { id: 'enter', icon: FolderOpen, label: '进入', onClick: () => focusZoneAction(zoneId) },
         { id: 'new', icon: FolderPlus, label: '在里面新建文件夹', onClick: () => createFolderAt(zoneId, null) },
-        { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ folder: zoneId }) },
+        { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
+          x: mx, y: my,
+          target: { kind: 'folder', id: zoneId, title: zoneId.split('/').pop() || zoneId, typeLabel: '文件夹' },
+        }) },
         { id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(zoneId) },
         { divider: true },
         { id: 'del', icon: Trash2, label: '删除文件夹', danger: true, onClick: () => handleDeleteFolder(zoneId, zoneId.split('/').pop()) },
@@ -2455,6 +2473,15 @@ export default function BoardCanvas({
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
+
+      {/* 就地标注（E3）：写一句话 → 发送 → agent 立刻起一轮 */}
+      {annotate && (
+        <AnnotatePopover
+          x={annotate.x} y={annotate.y} target={annotate.target}
+          onClose={() => setAnnotate(null)}
+          onSubmit={(text) => onAnnotate?.({ target: annotate.target, text })}
+        />
       )}
 
       {/* 项目区浮层：直接用原 Hub 的四张卡（编辑 / 上传 / 删除全套照旧）*/}

@@ -85,6 +85,15 @@ export const useGlobalStore = create((set) => ({
    */
   composerFocusTick: 0,
   focusComposer: () => set((st) => ({ composerFocusTick: st.composerFocusTick + 1 })),
+  /**
+   * 「唤出悬浮 AI 卡」的信号（2026-08-13，E3）。同上是计数器。
+   *
+   * 悬浮卡未固定时是收起来的（E2）——就地标注/圈选发送后对话在卡里流，
+   * 卡不出来用户就看不见 agent 的回应。focusComposer 也隐含这个语义
+   * （对着隐形输入框聚焦是空操作），ChatDock 两个 tick 都听。
+   */
+  chatDockOpenTick: 0,
+  openChatDock: () => set((st) => ({ chatDockOpenTick: st.chatDockOpenTick + 1 })),
   consumeChatDraft: () => {
     const draft = useGlobalStore.getState().chatDraft;
     set({ chatDraft: '' });
