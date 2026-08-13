@@ -35,6 +35,7 @@ import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
+import MoveToPopover from './MoveToPopover.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 import { useBoardData } from './useBoardData.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -1066,19 +1067,20 @@ export default function BoardCanvas({
   }, [cam]);
 
   /**
-   * 拖到空白处 = 把物件从工作区里摘出来（写 `zone: ''`）。
+   * ⚠️ 这里曾有「拖到空白处 = 搬出当前文件夹」（DRAG_OUT_DETACHES / DETACH_MARGIN）。
+   * **2026-08-13 删掉，因为它在当前目录模型下必然误触** —— 用户报「我总是拖一下
+   * 就把文件移出文件夹了」，查出来是判据本身错了：
    *
-   * 07-28 按用户要求停用过，**08-07 按用户要求恢复**。当时停用的两条理由里，
-   * 第二条（误触）是真的：拖着挪个位置手一滑落到区外，物件就从任务里"跑"出来。
-   * 所以这次不是简单打开，而是加了道门槛 —— 得**明确地**拖出去才算：
-   * 物件中心离开原区边界 DETACH_MARGIN 以上。挨着边扔不算，那是没摆好。
+   *   判定拿的是「物件在**这一层**的坐标」跟「`zones[当前文件夹]` 的矩形」比，
+   *   可后者是**那张文件夹卡在它父层里的位置**（288×352 的一张卡）。两个数字
+   *   活在不同的坐标空间里，比较毫无意义 —— 进了文件夹随便拖一下，中心大概率
+   *   就落在那张卡的 48px 之外，于是"明确拖出去了"，文件真的被搬回根目录。
    *
-   * 第一条理由（board.json 说不属于、磁盘说属于）依然成立，是这个功能的固有
-   * 语义：摘出来的是**画布上的归属**，文件一个字节都没动。想真的搬家要动文件。
+   * 修法不是给它换个正确的矩形（一层桌面是无限的，压根没有"这一层的边界"这种
+   * 东西），而是换成**显式动作**：右键「移动到…」挑目标（用户 2026-08-13 定）。
+   * 拖拽只剩两条语义，都要求落点上真有个东西：落在文件夹卡上=搬进去、
+   * 摞在另一件东西上=归成一夹。落在空地上就只是挪了个位置。
    */
-  const DRAG_OUT_DETACHES = true;
-  /** 中心越过原区边界这么多像素才算"真的拖出去了" */
-  const DETACH_MARGIN = 48;
 
   const onPointerUp = () => {
     const d = dragRef.current;
@@ -1094,15 +1096,14 @@ export default function BoardCanvas({
     }
     if (d?.kind === 'object') {
       // 落点判定 → **真的搬文件**（2026-08-08）：
-      //   落在文件夹上（收起态卡 / 展开态框）= 搬进那个目录
-      //   明确拖到空白 = 搬回工作区根
-      //   落在原地 = 只是挪了个位置，什么也不搬
+      //   落在文件夹卡上 = 搬进那个目录
+      //   摞在另一件东西上 = 两件归成一个新文件夹
+      //   落在空地 = 只是挪了个位置，什么也不搬（搬出去走右键「移动到…」）
       if (d.moved) {
         const obj = positioned.find(o => o.id === d.id);
         const pos = layoutRef.current[d.id];
         const hint = dropHintRef.current;
         if (obj && pos) {
-          const sz = sizeOf({ ...obj, pos });
           const prevZone = obj.zoneId || null;
           let target = null;                       // null = 不搬；字符串 = 搬到这个目录（'' = 根）
           if (hint?.kind === 'group') {
@@ -1116,14 +1117,6 @@ export default function BoardCanvas({
           }
           if (hint?.kind === 'folder' || hint?.kind === 'zone') {
             if (hint.id !== prevZone) target = hint.id;
-          } else if (prevZone && DRAG_OUT_DETACHES) {
-            // 明确拖出去才算（挨着边扔的算没摆好，留在原区）
-            const zr = zonesRef.current[prevZone];
-            const cx = pos.x + sz.w / 2;
-            const cy = pos.y + sz.h / 2;
-            const clearlyOut = !zr || cx < zr.x - DETACH_MARGIN || cx > zr.x + zr.w + DETACH_MARGIN
-              || cy < zr.y - DETACH_MARGIN || cy > zr.y + (zr.h || 0) + DETACH_MARGIN;
-            if (clearlyOut) target = '';
           }
           if (target !== null) moveEntry(obj, target, { x: pos.x, y: pos.y });
         }
@@ -1197,6 +1190,56 @@ export default function BoardCanvas({
       setTimeout(() => movingRef.current.delete(obj.id), 4000);
     }
   }, [projectId, reload]);
+
+  /**
+   * 把一个**文件夹**搬进另一个文件夹。
+   *
+   * 服务端是同一个 `/move`（它对目录和文件一视同仁，还自带"不能搬进自己肚子里"
+   * 的拦截）。分成两个函数只是因为前端这边身份不一样：文件夹住在 `zones` 里、
+   * 没有 `pos`，走不了 moveEntry 那套乐观更新（那套要把坐标记到新 id 上）。
+   * 这里干脆不做乐观更新 —— 服务端回来的 board 就是权威，reload 一次到位。
+   */
+  const moveZone = useCallback(async (zid, toDir) => {
+    const from = String(zid);
+    const base = from.split('/').pop();
+    const to = (toDir || '') ? `${toDir}/${base}` : base;
+    if (to === from) return;
+    movingRef.current.add(from);
+    try {
+      const r = await Assets.moveEntry(projectId, from, toDir || '');
+      if (r?.board) {
+        setZones(r.board.zones || {});
+        setBindings(r.board.bindings || {});
+        dirtyRef.current = { objects: new Set(), zones: new Set() };
+      }
+      reload();
+    } catch (err) {
+      useGlobalStore.getState().showToast(`搬不过去：${err.message}`, 'error');
+      reload();
+    } finally {
+      setTimeout(() => movingRef.current.delete(from), 4000);
+    }
+  }, [projectId, reload, setZones, setBindings]);
+
+  /**
+   * 「移动到…」的落点：一组 id（物件或文件夹）搬进同一个目录。
+   *
+   * **串行**跑：每一次搬家服务端都会重写一遍 board 并返回，并发发出去的话
+   * 后一个请求带的是搬家前的画布，回来直接把前一个的结果盖掉。
+   */
+  const moveManyTo = useCallback(async (ids, toDir) => {
+    for (const id of ids) {
+      const obj = positionedRef.current.find(o => o.id === id);
+      if (obj) {
+        const pos = layoutRef.current[id] || obj.pos;
+        // eslint-disable-next-line no-await-in-loop
+        await moveEntry(obj, toDir, { x: pos.x, y: pos.y });
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      if (zonesEffRef.current[id]) await moveZone(id, toDir);
+    }
+  }, [moveEntry, moveZone, layoutRef]);
 
   const recentDragMovedRef = useRef(false);
   const wasDrag = () => !!(dragRef.current?.moved || recentDragMovedRef.current);
@@ -1643,6 +1686,8 @@ export default function BoardCanvas({
   const [menu, setMenu] = useState(null);   // { x, y, at:{x,y}, items }
   // 就地标注浮层：{ x, y, target:{ kind, id, title, typeLabel } }（E3）
   const [annotate, setAnnotate] = useState(null);
+  /** 「移动到…」浮层：{ x, y, ids:[], current, exclude? } */
+  const [moveTo, setMoveTo] = useState(null);
 
   const createFolderAt = useCallback(async (parent, at) => {
     try {
@@ -1753,6 +1798,12 @@ export default function BoardCanvas({
         // 改名只给磁盘上真有位置的（涂鸦 / 手写文字没有文件可改）
         ...(isFileBacked(obj) ? [{ id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(obj.id) }] : []),
         ...(canAddToContext(obj) ? [{ id: 'add', icon: Plus, label: '加入上下文', onClick: () => handleAdd(obj) }] : []),
+        // 搬家的**唯一显式入口**（拖到空地搬出去那条 2026-08-13 撤了，见
+        // onPointerUp 上面那段墓志铭）。画布原生物件没有磁盘位置，不给。
+        ...(isFileBacked(obj) ? [{
+          id: 'move', icon: FolderInput, label: '移动到…',
+          onClick: () => setMoveTo({ x: mx, y: my, ids: [obj.id], current: obj.zoneId || '' }),
+        }] : []),
         // E3：从「垫半句话进输入框」升级成就地标注 —— 在东西上写完一句，
         // 按发送 agent 立刻来。全类型都给（图片/文件/涂鸦/手写字也算产物）。
         { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
@@ -1771,6 +1822,16 @@ export default function BoardCanvas({
           target: { kind: 'folder', id: zoneId, title: zoneId.split('/').pop() || zoneId, typeLabel: '文件夹' },
         }) },
         { id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(zoneId) },
+        // 文件夹在这之前**根本没有搬家入口**：卡片能拖，但拖只改画布坐标，
+        // 磁盘上它永远待在原地（拖到另一张文件夹卡上也不算数）。
+        {
+          id: 'move', icon: FolderInput, label: '移动到…',
+          onClick: () => setMoveTo({
+            x: mx, y: my, ids: [zoneId],
+            current: zoneId.includes('/') ? zoneId.slice(0, zoneId.lastIndexOf('/')) : '',
+            exclude: [zoneId],     // 自己和自己的子孙不能当目标
+          }),
+        },
         { divider: true },
         { id: 'del', icon: Trash2, label: '删除文件夹', danger: true, onClick: () => handleDeleteFolder(zoneId, zoneId.split('/').pop()) },
       ];
@@ -2414,6 +2475,19 @@ export default function BoardCanvas({
             camApiRef.current?.toWorld(annotate.x, annotate.y),
             text,
           )}
+        />
+      )}
+
+      {/* 「移动到…」目标选择：搬出当前文件夹的唯一显式入口 */}
+      {moveTo && (
+        <MoveToPopover
+          x={moveTo.x} y={moveTo.y}
+          folders={folders}
+          current={moveTo.current || ''}
+          exclude={moveTo.exclude || []}
+          count={moveTo.ids.length}
+          onClose={() => setMoveTo(null)}
+          onPick={(dir) => moveManyTo(moveTo.ids, dir)}
         />
       )}
 

@@ -164,6 +164,71 @@ if (HOVER) {
 }
 
 /**
+ * 点击族：`--click=<sel>` `--dblclick=<sel>` `--click-at=x,y` `--dblclick-at=x,y`
+ * `--click-text=<文字>`（菜单项这种没有稳定选择器的）、`--rightclick[-at]=`。
+ *
+ * 全部走**同一个按命令行顺序的循环**，写的顺序就是点的顺序
+ * （`--dblclick=文件夹 --rightclick=里面那个 --click-text=移动到…`）。
+ *
+ * 这条纪律是踩出来的：原来每种各占一个
+ * `opt()`，而 opt 只认第一个同名参数 —— 传两个 `--click` 时第二个静默不跑，
+ * 脚本以为点了两下，测出来的是别的东西。菜单是一层层点开的（右键 → 移动到…
+ * → 挑目标），少跑一步就等于在测一个根本没打开的界面。
+ */
+for (const a of args) {
+  const rat = a.match(/^--rightclick-at=(-?\d+),(-?\d+)$/);
+  if (rat) {
+    await page.mouse.click(Number(rat[1]), Number(rat[2]), { button: 'right' });
+    await page.waitForTimeout(500);
+    continue;
+  }
+  const rsel = a.match(/^--rightclick=(.+)$/);
+  if (rsel) {
+    const el = await page.$(rsel[1]);
+    if (!el) errors.push(`--rightclick 没找到元素: ${rsel[1]}`);
+    else { await el.click({ button: 'right' }); await page.waitForTimeout(500); }
+    continue;
+  }
+  const at = a.match(/^--(click|dblclick)-at=(-?\d+),(-?\d+)$/);
+  if (at) {
+    await page.mouse.click(Number(at[2]), Number(at[3]), { clickCount: at[1] === 'dblclick' ? 2 : 1 });
+    await page.waitForTimeout(700);
+    continue;
+  }
+  const txt = a.match(/^--click-text=(.+)$/);
+  if (txt) {
+    const btn = page.locator(`button:has-text("${txt[1]}")`).first();
+    // 用真鼠标点它的中心，而不是 locator.click —— 后者被"点别处关掉"的透明幕布
+    // 拦下时会重试到超时，而 force 又会把事件发给幕布，两种都不是用户在做的事
+    if (await btn.count()) {
+      const b = await btn.boundingBox();
+      // 点**左侧靠内**一点而不是正中：菜单右半截可能压在别的浮层底下
+      if (b) { await page.mouse.click(b.x + 16, b.y + b.height / 2); await page.waitForTimeout(900); }
+      else errors.push(`--click-text 量不到位置: ${txt[1]}`);
+    } else errors.push(`--click-text 没找到按钮: ${txt[1]}`);
+    continue;
+  }
+  const sel = a.match(/^--(click|dblclick)=(.+)$/);
+  if (!sel) continue;
+  const el = await page.$(sel[2]);
+  if (!el) { errors.push(`--${sel[1]} 没找到元素: ${sel[2]}`); continue; }
+  await el[sel[1]]();
+  await page.waitForTimeout(700);
+}
+
+// 往当前聚焦的输入框里打字并回车（就地改名这类）
+const TYPE = opt('type', null);
+if (TYPE) {
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type(TYPE, { delay: 20 });
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(900);
+}
+
+// 拖拽放在**点击族之后**：前面那几下通常是"把界面点到要测的那个状态"
+// （进文件夹、开窗、切页），拖拽是要测的那一下。放前面的话它作用在
+// 还没导航过去的界面上 —— 选择器找不到元素，报的却像是元素不存在。
+/**
  * 拖拽：`--drag=<选择器>|<dx>,<dy>`。**必须一步步发 mousemove** ——
  * 画布的拖拽是自己在 pointermove 里积位移的，一步到位的 move 它只会当成
  * 一次抖动（而且落点提示根本来不及算）。
@@ -217,68 +282,6 @@ if (DRAG) {
 // 主按钮上 —— 要验的是次按钮那条路，就不能让回车先把浮层收掉。
 const KEYS = opt('keys', null);
 if (KEYS) { await page.keyboard.type(KEYS, { delay: 15 }); await page.waitForTimeout(200); }
-
-// 右键：先于 click 跑，这样能"右键 → 点菜单项"连成一串。
-// `--rightclick-at=x,y` 按坐标点 —— 想点**空白画布**只能这样，按选择器会
-// 落在容器中心，那儿多半压着一张卡（右键菜单是按命中对象换内容的）。
-const RIGHT_AT = opt('rightclick-at', null);
-const RIGHT = opt('rightclick', null);
-if (RIGHT_AT) {
-  const [rx, ry] = RIGHT_AT.split(',').map(Number);
-  await page.mouse.click(rx, ry, { button: 'right' });
-  await page.waitForTimeout(500);
-} else if (RIGHT) {
-  const el = await page.$(RIGHT);
-  if (!el) errors.push(`--rightclick 没找到元素: ${RIGHT}`);
-  else { await el.click({ button: 'right' }); await page.waitForTimeout(500); }
-}
-
-// 按文字点按钮（菜单项这种没有稳定选择器的）
-const CLICK_TEXT = opt('click-text', null);
-if (CLICK_TEXT) {
-  const btn = page.locator(`button:has-text("${CLICK_TEXT}")`).first();
-  // 用真鼠标点它的中心，而不是 locator.click —— 后者被"点别处关掉"的透明幕布
-  // 拦下时会重试到超时，而 force 又会把事件发给幕布，两种都不是用户在做的事
-  if (await btn.count()) {
-    const b = await btn.boundingBox();
-    // 点**左侧靠内**一点而不是正中：菜单右半截可能压在别的浮层底下
-    if (b) { await page.mouse.click(b.x + 16, b.y + b.height / 2); await page.waitForTimeout(900); }
-    else errors.push(`--click-text 量不到位置: ${CLICK_TEXT}`);
-  }
-  else errors.push(`--click-text 没找到按钮: ${CLICK_TEXT}`);
-}
-
-// 按坐标点 / 双击：`--click-at=x,y`、`--dblclick-at=x,y`。
-// 空白画布上的手势（文字工具双击落框、点空地取消选中）只能这么点 ——
-// 按选择器会落在容器中心，那儿多半压着一张卡。
-for (const a of args) {
-  const m = a.match(/^--(click|dblclick)-at=(-?\d+),(-?\d+)$/);
-  if (!m) continue;
-  const px = Number(m[2]); const py = Number(m[3]);
-  await page.mouse.click(px, py, { clickCount: m[1] === 'dblclick' ? 2 : 1 });
-  await page.waitForTimeout(700);
-}
-
-// 可以传多个 --click / --dblclick，**按命令行顺序逐个执行** ——
-// 以前走 opt() 只认第一个，第二个静默不跑：测试脚本以为点了两下，
-// 其实第二下从没发生，测出来的是别的东西（真踩过）。
-for (const a of args) {
-  const m = a.match(/^--(click|dblclick)=(.+)$/);
-  if (!m) continue;
-  const el = await page.$(m[2]);
-  if (!el) { errors.push(`--${m[1]} 没找到元素: ${m[2]}`); continue; }
-  await el[m[1]]();
-  await page.waitForTimeout(700);
-}
-
-// 往当前聚焦的输入框里打字并回车（就地改名这类）
-const TYPE = opt('type', null);
-if (TYPE) {
-  await page.keyboard.press('Control+A');
-  await page.keyboard.type(TYPE, { delay: 20 });
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(900);
-}
 
 // 事后移动：`--move=x,y[;x,y…]`（分号分航点，每站步进真移动 + 停 700ms）。
 // 放在所有点击之后 —— 验"鼠标离开后自动收起""贴屏缘唤出"这类位置驱动的
