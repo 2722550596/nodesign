@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import FloatingToolbar from '../ui/FloatingToolbar.jsx';
-import { PAPER, PAPER_SHADOW, INK_SURFACE } from '../../lib/paper.js';
+import { PAPER, PAPER_SHADOW, GRAIN, INK_SURFACE } from '../../lib/paper.js';
 import { COLOR, GAP, FONT_SANS, FONT_SIZE, RADIUS } from '../../lib/theme.js';
 import { POP_IN } from '../../lib/board-geometry.js';
 
@@ -14,17 +14,16 @@ import { POP_IN } from '../../lib/board-geometry.js';
  * 同一个动作（打开一件产物看/改）长出三种外观，用户每换一种形态就要重新找
  * 一遍「关闭在哪、模式切换在哪、刷新在哪」。
  *
- * 现在的外壳：
+ * 现在的外壳 —— **一张钉在板上的大纸**，跟首页那些项目卡是同一套物料
+ * （纸色 + 颗粒 + 单光向影子 + 直角）：
  *
  *   压暗层（点=关）
- *   └ 窗框（inset 8/10，几乎铺满）
- *     ├ 订口：左缘一条竖带 + 三枚线迹
- *     └ 右半整列
- *       ├ 固定条（headerExtra / banner）
- *       └ 内容区
- *         ├ children
- *         ├ 身份牌 + 关闭（右上角浮层，不占布局高度）
- *         └ 浮动工具栏（FloatingToolbar，可拖，位置按项目记住）
+ *   └ 纸（inset 8/10，几乎铺满）
+ *     ├ 顶栏（30px）：钉纽扣 · 这是什么 · 关闭
+ *     ├ 固定条（headerExtra / banner）
+ *     └ 内容区
+ *       ├ children
+ *       └ 浮动工具栏（FloatingToolbar，可拖，位置按项目记住）
  *
  * ## 为什么工具要浮起来
  *
@@ -32,21 +31,25 @@ import { POP_IN } from '../../lib/board-geometry.js';
  * 内容区被永久切掉一条，而那些按钮大部分时候你并不在用。浮起来之后
  * 内容拿到整扇窗，工具想放哪放哪（挡住了就拖开），三种窗共用同一个容器组件。
  *
- * ## 2026-08-13：名牌条也退役了
+ * ## 2026-08-13 的两次改动，第二次推翻了第一次的一半
  *
- * 那条 34px 的横带是浏览器顶栏的思路 —— 工具搬进浮动工具栏之后它只剩身份和
- * 关闭两样东西，不值一整条。改成右上角一小片浮起来的纸，内容真正吃满；
- * 窗自己的 inset 也从 16/20 收到 8/10。
+ * 先把 34px 的名牌条整个拆了（工具搬走之后它只剩身份和关闭，不值一整条），
+ * 窗做成左缘带订口的"装订文件"。用户看完的评价是**丑，而且跟设计语言不合**
+ * —— 全站是直角纸质卡片，装订那套线迹是另一个物料世界的东西。
+ *
+ * 所以回到纸：外壳照首页项目卡那张纸做（纸色 + 颗粒 + PAPER_SHADOW + 直角），
+ * 顶上留一条**很窄**的顶栏装身份和关闭，正中钉一枚纽扣。inset 保持 8/10 ——
+ * "内容吃满"那半是对的，留下了。
  *
  * ## 关闭钮为什么不跟着工具条跑
  *
  * 它是唯一一个"必须永远在同一个地方"的控件 —— 找不到关闭的窗口是能把人
- * 困住的。所以身份与关闭是一片**位置固定**的浮层，只有工具进浮动工具栏。
+ * 困住的。所以它钉死在顶栏右端，只有工具进浮动工具栏。
  *
- * ⚠️ 从左上角挪到右上角是用户 2026-08-13 拍的板（聊天栏之后要改位置）。
- * 在聊天栏挪走之前，右上角**可能被它压住** —— ESC 和点压暗层是活的退路。
- * 原来在左的理由记在这儿备查：聊天栏默认贴右浮在窗上面，左边是唯一一块
- * 浮窗默认不去的地方。
+ * ⚠️ 放右边是用户 2026-08-13 拍的板（聊天栏之后要改位置）。在聊天栏挪走
+ * 之前，右上角**可能被它压住** —— ESC 和点压暗层是活的退路。原来在左的
+ * 理由记在这儿备查：聊天栏默认贴右浮在窗上面，左边是唯一一块浮窗默认
+ * 不去的地方。
  */
 
 /**
@@ -59,8 +62,8 @@ import { POP_IN } from '../../lib/board-geometry.js';
  */
 export const ARTIFACT_WINDOW_Z = 500;
 
-/** 订口宽度：够画三枚线迹，又不真占走内容 */
-const BINDING_W = 20;
+/** 顶栏高度。只装身份和关闭，越窄越好 —— 内容才是主角 */
+const CHROME_H = 30;
 
 export default function ArtifactWindow({
   /** 'deck' | 'site' | 'world' —— 决定工具条位置存在哪个槽位 */
@@ -85,8 +88,6 @@ export default function ArtifactWindow({
   toolbarAnchor = 'top-center',
   /** 内容区顶上的说明条：怎么用 / 警示。说明不是工具，不进工具栏 */
   banner = null,
-  /** 身份牌上跟关闭钮并排的东西（站点的上线控件） */
-  chromeExtra = null,
   /** 固定条：内容区上方那条一直在的横带（deck 的试作切换） */
   headerExtra = null,
   /**
@@ -126,94 +127,82 @@ export default function ArtifactWindow({
         }}
       />
 
-      {/* 窗 = 一份摊开的装订文件。左缘那条是订口，其余全交给内容。 */}
+      {/* 窗 = 一张钉在板上的大纸（物料同首页项目卡：纸色 + 颗粒 + 直角） */}
       <div style={{
         position: 'absolute', inset: '8px 10px',
-        background: PAPER.paper, borderRadius: 10, overflow: 'hidden',
-        boxShadow: '0 24px 80px rgba(30,22,8,0.45)',
-        display: 'flex',
+        background: PAPER.paper, backgroundImage: GRAIN,
+        borderRadius: 0, overflow: 'hidden',
+        boxShadow: PAPER_SHADOW.near,
+        display: 'flex', flexDirection: 'column',
         animation: POP_IN,
       }}>
-        {/* 订口：一条竖带 + 三枚线迹。装订在左边是因为右边归浮窗
-            （聊天栏默认贴右），左缘是这扇窗唯一能长期占住的一条边。 */}
-        <div aria-hidden style={{
-          width: BINDING_W, flexShrink: 0, position: 'relative',
-          background: PAPER.wall,
-          borderRight: `1px solid ${PAPER.hair}`,
+        {/* 顶栏：钉纽扣 · 这是什么 · 关闭。只有这三样，越窄越好。 */}
+        <div style={{
+          height: CHROME_H, flexShrink: 0, position: 'relative',
+          display: 'flex', alignItems: 'center', gap: GAP.sm,
+          padding: `0 ${GAP.xs}px 0 ${GAP.md}px`,
+          borderBottom: `1px solid ${PAPER.hair}`,
         }}>
-          {[0.28, 0.5, 0.72].map(t => (
-            <div key={t} style={{
-              position: 'absolute', left: '50%', top: `${t * 100}%`,
-              width: 2, height: 26, marginLeft: -1, marginTop: -13,
-              borderRadius: 1, background: PAPER.pencil, opacity: 0.75,
-            }} />
-          ))}
+          {/* 钉纽扣：跟首页那些卡是同一枚钉子（同一段渐变、同一个光向）。
+              纯装饰，不吃事件 —— 它说明的是"这张纸是被钉上去的"。 */}
+          <span aria-hidden style={{
+            position: 'absolute', left: '50%', top: 6, marginLeft: -4.5,
+            width: 9, height: 9, borderRadius: '50%', pointerEvents: 'none',
+            background: 'radial-gradient(circle at 35% 30%, #8a7a62, #453a2c 65%)',
+            boxShadow: '-1px 2px 3px rgba(43,33,23,0.45)',
+          }} />
+
+          <span style={{
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '32%',
+          }}>
+            {title}
+          </span>
+          {subtitle && (
+            <span style={{
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+            }}>
+              {subtitle}
+            </span>
+          )}
+
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={onClose}
+            title="关闭（Esc）"
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              width: 24, height: 24, borderRadius: RADIUS.sm, flexShrink: 0,
+              border: 'none', background: 'transparent', color: COLOR.sub, cursor: 'pointer',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            <X size={14} />
+          </button>
         </div>
 
-        {/* 右半整列。固定条在**内容区之外** —— contentRef 同时是浮动工具栏的
-            活动边界，把固定条圈进去的话工具条的默认落点（上方居中）正好压在
-            deck 的试作切换条上。 */}
-        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          {headerExtra}
-          {banner}
+        {headerExtra}
+        {banner}
 
-          <div
-            ref={contentRef}
-            style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column', ...contentStyle }}
-          >
-            {children}
+        <div
+          ref={contentRef}
+          style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column', ...contentStyle }}
+        >
+          {children}
 
-            {/* 身份牌 + 关闭（位置固定，理由见文件头） */}
-            <div style={{
-              position: 'absolute', top: GAP.sm, right: GAP.sm, zIndex: 20,
-              display: 'flex', alignItems: 'center', gap: GAP.sm,
-              padding: `${GAP.xxs}px ${GAP.xxs}px ${GAP.xxs}px ${GAP.sm}px`,
-              maxWidth: '46%',
-              background: PAPER.paper, borderRadius: RADIUS.md,
-              boxShadow: PAPER_SHADOW.far,
-            }}>
-              <span style={{
-                fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                {title}
-              </span>
-              {subtitle && (
-                <span style={{
-                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
-                }}>
-                  {subtitle}
-                </span>
-              )}
-              {chromeExtra}
-              <button
-                onClick={onClose}
-                title="关闭（Esc）"
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  width: 24, height: 24, borderRadius: RADIUS.sm, flexShrink: 0,
-                  border: 'none', background: 'transparent', color: COLOR.sub, cursor: 'pointer',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.06)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-              >
-                <X size={14} />
-              </button>
-            </div>
-
-            {/* ⚠️ 工具栏必须渲染在 contentRef **内部**：anchoredPosition 只拿
-                bounds 的宽高算落点，坐标却是相对自己 offset parent 的。渲染在
-                外面的话 `top-center` 会落到固定条上面去 —— 两者差一个固定条
-                的高度，而且只有 deck（有试作切换条）那扇窗看得出来。 */}
-            <FloatingToolbar
-              id={`win-${kind}`}
-              groups={groups}
-              boundsRef={contentRef}
-              anchor={toolbarAnchor}
-              stack={toolbarStack}
-            />
-          </div>
+          {/* ⚠️ 工具栏必须渲染在 contentRef **内部**：anchoredPosition 只拿
+              bounds 的宽高算落点，坐标却是相对自己 offset parent 的。渲染在
+              外面的话 `top-center` 会落到固定条上面去 —— 两者差一个固定条
+              的高度，而且只有 deck（有试作切换条）那扇窗看得出来。 */}
+          <FloatingToolbar
+            id={`win-${kind}`}
+            groups={groups}
+            boundsRef={contentRef}
+            anchor={toolbarAnchor}
+            stack={toolbarStack}
+          />
         </div>
       </div>
     </div>

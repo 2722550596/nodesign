@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import ArtifactCard, { ARTIFACT_FACES } from './ArtifactCard.jsx';
-import { ARTIFACT_CARD } from '../../../lib/board-kinds.js';
+import { sizeOf } from '../../../lib/board-kinds.js';
 
 /**
  * 统一方卡的渲染冒烟 + 三张脸的信息量不丢。
@@ -64,9 +64,11 @@ describe('ArtifactCard 渲染冒烟', () => {
     expect(host.textContent).toBe('');
   });
 
-  it('卡片高度是形态表里那个恒定值（布局按矩形排布，不能是 auto）', () => {
+  it('预览区高度是形态表算出来的那个恒定值（布局按矩形排布，不能是 auto）', () => {
     render(DECK);
-    expect(host.firstChild.style.height).toBe(`${ARTIFACT_CARD.h}px`);
+    // 顶栏 + 预览 = 形态表里的 size.h；预览这块自己不能是 auto
+    const preview = host.querySelector('div > div:nth-child(2)');
+    expect(preview.style.height).toBe(`${sizeOf(DECK) .h - 28}px`);
   });
 });
 

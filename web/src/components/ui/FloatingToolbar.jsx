@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { INK_SURFACE } from '../../lib/paper.js';
+import { PAPER, PAPER_SHADOW, INK_SURFACE } from '../../lib/paper.js';
 import { FONT_SANS, FONT_SIZE, GAP } from '../../lib/theme.js';
 import { usePanelState } from '../layout/PanelManager.jsx';
 
@@ -285,6 +285,26 @@ export default function FloatingToolbar({
 }
 
 function ToolGroup({ group }) {
+  /**
+   * 逃生口：`node` 组直接放一段自己的 JSX（站点的「上线」控件走这条）。
+   *
+   * 底色用**纸**不用墨面 —— 上线控件是个带状态的东西（未发布 / 发布中 /
+   * 已发布带地址），它本来就长在纸上，硬塞进墨色工具组里要把它整套配色
+   * 重写一遍，而它跟旁边那些"点一下就执行"的图标按钮本来也不是一类。
+   */
+  if (group.node) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        background: PAPER.paper, borderRadius: 14,
+        padding: `${GAP.xxs}px ${GAP.sm}px`,
+        boxShadow: PAPER_SHADOW.far,
+      }}>
+        {group.node}
+      </div>
+    );
+  }
+
   const isMode = group.type === 'mode';
   // 有文字的默认给每颗按钮描一圈（参考图上排那样），纯图标的不描
   const boxed = group.variant

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   KINDS, kindOf, traitsOf, sizeOf, actionsOf, primaryOf, readerOf,
-  chromeOf, cardOf, isFileBacked, legacyBucketOf, isMarkdown, SIZES, ARTIFACT_CARD,
+  chromeOf, cardOf, isFileBacked, legacyBucketOf, isMarkdown, SIZES,
 } from './board-kinds.js';
 
 /**
@@ -28,10 +28,12 @@ import {
  *    的噪声源，而"并排看两份 deck"本来就该由窗来做。
  *    → `sizeExpanded` 从表里删除，`isExpandable` 随之删除，`SAMPLES` 里那三个
  *      "展开"样本改成**验证展开态存量数据被忽略**（见下）。
- * 2. **收起态 240×56 → 方卡 200×200。** 一条只有一行字的窄条上看不出这是什么
- *    东西；三种产物在桌面上长得一模一样。方卡上面那块是实时缩略图。
- *    宽度取 200 跟图片卡对齐 —— 一排卡宽窄不一的话 packRow 的列宽只能取最宽
- *    那个，剩下的全在自己格子里晃。
+ * 2. **收起态 240×56 退役，卡片就长成老展开态那个样子**（一条小顶栏 + 下面
+ *    一块实时预览，尺寸也照搬）。一条只有一行字的窄条上看不出这是什么东西，
+ *    三种产物在桌面上长得一模一样。
+ *    ⚠️ 中间试过一版 200×200 的方卡（缩略图在上、名字在下），用户看完的评价
+ *    是丑 —— 200 宽的缩略图既看不清版式也看不清字，那张卡既不是图标也不是
+ *    预览。别再往那个方向回。
  * 3. **双击 `'expand'` → `'open'`。** 老的是两段式（先展开、再双击才开窗），
  *    展开态没了之后第一段没有落点。
  */
@@ -69,13 +71,20 @@ const CALIBRATED = {
 };
 const expectedSize = (k) => CALIBRATED[k] || LEGACY_SIZES[k];
 
-/** 产物三兄弟改用方卡（2026-08-13，理由见文件头第 2 条） */
-const SQUARE = { deck: ARTIFACT_CARD, site: ARTIFACT_CARD, world: ARTIFACT_CARD };
+/**
+ * 产物三兄弟只剩一种样子，取的正是**老展开态那个尺寸** —— 所以这里直接拿
+ * 基线里的 `xxxExpanded` 当预期值，等于顺带断言了"卡片形状没有另起炉灶"。
+ */
+const ONLY_SIZE = {
+  deck: LEGACY_SIZES.deckExpanded,
+  site: LEGACY_SIZES.siteExpanded,
+  world: LEGACY_SIZES.worldExpanded,
+};
 
 function legacySizeOf(o) {
-  // 展开态存量数据**必须被忽略**：还读 `pos.expanded` 的话，老卡会带着
-  // 640×388 的隐形脚印参与命中判定，渲染出来却只有 200 宽
-  if (SQUARE[o.type]) return SQUARE[o.type];
+  // 展开态存量数据**必须被忽略**：还读 `pos.expanded` 的话，收起/展开两个
+  // 尺寸就又回来了，而布局系统靠"尺寸恒定"才敢不跑避让
+  if (ONLY_SIZE[o.type]) return ONLY_SIZE[o.type];
   return expectedSize(o.type) || expectedSize('file');
 }
 
@@ -269,7 +278,7 @@ describe('SIZES 兼容出口', () => {
   it('老的尺寸逐项未变（校准见 CALIBRATED，方卡见 SQUARE）', () => {
     for (const [k, v0] of Object.entries(LEGACY_SIZES)) {
       if (k.endsWith('Expanded')) continue;            // 展开态整档退役
-      const v = SQUARE[k] || CALIBRATED[k] || v0;
+      const v = ONLY_SIZE[k] || CALIBRATED[k] || v0;
       expect(SIZES[k], `SIZES.${k}`).toEqual(v);
     }
   });

@@ -588,6 +588,9 @@ export default function SiteWindow({
         title: `${v.label} · 按 ${v.w}px 真实宽度渲染`,
       })),
     },
+    // 「上线」是外发动作，跟旁边那些"看/改"的工具不是一类 —— 单独一组，
+    // 排在最后（2026-08-13 从窗口头部的名牌条挪进来）
+    { id: 'publish', node: <SitePublishControl projectId={projectId} task={task} /> },
     {
       id: 'actions',
       items: [
@@ -602,7 +605,7 @@ export default function SiteWindow({
   ].filter(Boolean),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [tab, editable, draggable, isStreaming, pageList, current, viewport, history.length,
-    goBack, navigateTo, commitAllPending, projectId, relPath, onRegionComment]);
+    goBack, navigateTo, commitAllPending, projectId, relPath, onRegionComment, task]);
 
   // overlay 全家共用的 iframe 引用。
   //
@@ -622,7 +625,6 @@ export default function SiteWindow({
       onClose={onClose}
       escToClose={false}
       groups={groups}
-      chromeExtra={<SitePublishControl projectId={projectId} task={task} />}
       banner={(tab === 'edit' || tab === 'drag') ? (
         <WindowBanner>
           {tab === 'edit' ? (

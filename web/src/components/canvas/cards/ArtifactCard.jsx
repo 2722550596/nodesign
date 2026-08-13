@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Presentation, Globe, Map as MapIcon } from 'lucide-react';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../../lib/theme.js';
+import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../../lib/theme.js';
 import { PAPER } from '../../../lib/paper.js';
-import { SITE_VIEWPORTS } from '../../../lib/board-geometry.js';
-import { ARTIFACT_CARD, ARTIFACT_CARD_LABEL_H } from '../../../lib/board-kinds.js';
+import { SITE_VIEWPORTS, DECK_EMBED_W } from '../../../lib/board-geometry.js';
+import { ARTIFACT_HEADER_H, ARTIFACT_PREVIEW_H } from '../../../lib/board-kinds.js';
 import { versionOfFile, versionOfSitePage } from '../../../lib/file-versions.js';
 import { formatClock } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
@@ -11,7 +11,7 @@ import LiveFrame from '../LiveFrame.jsx';
 import WorldMap from '../WorldMap.jsx';
 
 /**
- * ArtifactCard —— deck / 站点 / 世界共用的那张方卡（2026-08-13）
+ * ArtifactCard —— deck / 站点 / 世界共用的那张卡（2026-08-13）
  *
  * ## 在这之前
  *
@@ -23,57 +23,58 @@ import WorldMap from '../WorldMap.jsx';
  *
  * ## 现在
  *
- * 卡片只有一种样子：**上面一块实时缩略图，下面一条名字**。双击开那扇窗
- * （ArtifactWindow），不再在画布上就地展开。
+ * 只有一种样子：**一条小顶栏 + 下面一块实时预览**，双击开那扇窗。
  *
- * 取消展开态换来的不只是少一半代码 —— **卡片尺寸变成恒定的**。一个会自己
- * 变大两倍半的卡片是所有防遮盖/落点逻辑的噪声源，而"并排看两份 deck"这件事
- * 本来就该由窗来做。
+ * 形状取的正是老"展开态"，因为那本来就是这东西该有的样子 —— 中间试过一版
+ * 200×200 的方卡（缩略图在上、名字在下），用户看完的评价是丑：200 宽的缩略图
+ * 既看不清版式也看不清字，那张卡既不是图标也不是预览，卡在中间。
  *
- * ## 缩略图为什么是 LiveFrame 而不是服务端截图
+ * 取消**两态**换来的不只是少一半代码 —— 卡片尺寸变成恒定的。一个会自己变大
+ * 两倍半的卡片是所有防遮盖/落点逻辑的噪声源，而"收起来省地方"这件事等
+ * 文件夹那一层来做（收进文件夹，而不是把卡片捏小）。
+ *
+ * ## 预览为什么是 LiveFrame 而不是服务端截图
  *
  * 服务端截图（`server/lib/cover.js`）更省浏览器，但它**串行**、冷启 ~8s，
- * 而且要等 agent 写完才有新图。画布是"agent 干活时用户在看"的地方，缩略图
+ * 而且要等 agent 写完才有新图。画布是"agent 干活时用户在看"的地方，预览
  * 跟着文件版本走才对。代价是每张卡一个 iframe，所以有下面两道闸。
  *
  * ⚠️ **两道限流缺一不可**（否则二十份产物的桌面会把风扇吹起来）：
  *   1. 进视口才挂（IntersectionObserver，预加载 240px）
- *   2. 镜头拉太远就不挂（`scale < 0.45` 时缩略图什么都看不清，纯浪费）
+ *   2. 镜头拉太远就不挂（`scale < 0.35` 时预览什么都看不清，纯浪费）
  */
 
-/** 三张脸：图标 / 一行小字 / 缩略图内容。骨架之外的差异**只有这三样**。 */
+/** 三张脸：图标 / 一行小字 / 预览内容。骨架之外的差异**只有这三样**。 */
 export const ARTIFACT_FACES = {
   deck: {
     icon: Presentation,
     tip: '双击打开这份幻灯',
-    // 没有 mtime 时别留一条尾巴（"幻灯 · "）—— 卡片上那种半截标点很显眼
     summary: (o) => {
       const t = formatClock(o.mtime);
       return t ? `幻灯 · ${t}` : '幻灯';
     },
-    /** deck 是 16:9 的设计稿，按 1920 宽等比缩，上下留边（不裁） */
-    Preview: ({ o, projectId, fileVersions, box }) => {
-      const scale = box.w / 1920;
-      return (
-        <LiveFrame
-          title={`deck-${o.id}`}
-          src={`${Assets.artifactFileUrl(projectId, o.deckFile)}?v=${versionOfFile(fileVersions, o.deckFile)}`}
-          style={{
-            width: 1920, height: 1080, border: 0,
-            transform: `scale(${scale}) translateY(${(box.h / scale - 1080) / 2}px)`,
-            transformOrigin: '0 0',
-            pointerEvents: 'none',
-          }}
-        />
-      );
-    },
+    /** 16:9 设计稿按 1920 宽等比缩：640/1920 恰好落成 360 高，不裁不留边 */
+    Preview: ({ o, projectId, fileVersions, box }) => (
+      <LiveFrame
+        title={`deck-${o.id}`}
+        src={`${Assets.artifactFileUrl(projectId, o.deckFile)}?v=${versionOfFile(fileVersions, o.deckFile)}`}
+        style={{
+          width: 1920, height: 1080, border: 0,
+          transform: `scale(${box.w / 1920})`, transformOrigin: '0 0',
+          pointerEvents: 'none',
+        }}
+      />
+    ),
   },
 
   site: {
     icon: Globe,
     tip: '双击打开这个站点',
     summary: (o) => (o.single ? '单页' : `站点 · ${o.pages?.length || 1} 个页面`),
-    /** 站点按真实设备宽渲染再等比缩，取顶部一屏 —— 版式和配色一眼可辨 */
+    /**
+     * 站点按真实设备宽渲染再等比缩，取顶部一屏。**不套 1920×1080 固定画框** ——
+     * 站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿"。
+     */
     Preview: ({ o, projectId, fileVersions, box }) => {
       const deviceW = SITE_VIEWPORTS[0].w;
       const scale = box.w / deviceW;
@@ -107,20 +108,11 @@ export const ARTIFACT_FACES = {
       const c = n.filter(x => x.type === 'character').length;
       return `世界 · ${p} 地点 / ${c} 角色`;
     },
-    /** 地图本身当缩略图：铺在一个宽画幅里等比缩，看的是形状不是字 */
-    Preview: ({ o, projectId, box }) => {
-      const MAP_W = 900;
-      const scale = box.w / MAP_W;
-      return (
-        <div style={{
-          width: MAP_W, height: Math.round(box.h / scale),
-          transform: `scale(${scale})`, transformOrigin: '0 0',
-          pointerEvents: 'none', overflow: 'hidden',
-        }}>
-          <WorldMap projectId={projectId} base={o.base || o.task} nodes={o.nodes} />
-        </div>
-      );
-    },
+    /** 地图比框高就自己滚，不去顶别人的位置（布局按固定矩形排布） */
+    scrollable: true,
+    Preview: ({ o, projectId }) => (
+      <WorldMap projectId={projectId} base={o.base || o.task} nodes={o.nodes} />
+    ),
   },
 };
 
@@ -144,8 +136,8 @@ function useInViewport(ref) {
   return inView;
 }
 
-/** 镜头比这个还远时缩略图什么都看不清，挂 iframe 是纯浪费 */
-const PREVIEW_MIN_SCALE = 0.45;
+/** 镜头比这个还远时预览什么都看不清，挂 iframe 是纯浪费 */
+const PREVIEW_MIN_SCALE = 0.35;
 
 export default function ArtifactCard({ o, projectId, fileVersions, scale = 1 }) {
   const face = ARTIFACT_FACES[o.type];
@@ -153,54 +145,58 @@ export default function ArtifactCard({ o, projectId, fileVersions, scale = 1 }) 
   const inView = useInViewport(boxRef);
   if (!face) return null;
 
-  const box = { w: ARTIFACT_CARD.w, h: ARTIFACT_CARD.h - ARTIFACT_CARD_LABEL_H };
+  const box = { w: DECK_EMBED_W, h: ARTIFACT_PREVIEW_H[o.type] };
   const Icon = face.icon;
   const live = inView && scale >= PREVIEW_MIN_SCALE;
 
   return (
-    <div title={face.tip} style={{ display: 'flex', flexDirection: 'column', height: ARTIFACT_CARD.h }}>
+    <div title={face.tip} style={{ display: 'flex', flexDirection: 'column' }}>
+      {/* 顶栏：这是什么 + 叫什么 + 一行小字。没有按钮 —— 整张卡就是"打开"。 */}
+      <div style={{
+        height: ARTIFACT_HEADER_H, flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: GAP.sm,
+        padding: `0 ${GAP.sm}px`,
+        borderBottom: `1px solid ${COLOR.borderLt}`,
+      }}>
+        <Icon size={12} color={COLOR.sub} style={{ flexShrink: 0 }} />
+        <span style={{
+          fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+        }}>{o.title}</span>
+        <span style={{
+          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub,
+          whiteSpace: 'nowrap', flexShrink: 0,
+        }}>{face.summary(o)}</span>
+      </div>
+
+      {/* 预览 = 贴在纸上的印样：自带一层薄影和一道内描边（跟首页项目卡同一套） */}
       <div
         ref={boxRef}
+        {...(face.scrollable && live
+          ? { 'data-board-action': true, onPointerDown: (e) => e.stopPropagation() }
+          : null)}
         style={{
-          width: box.w, height: box.h, overflow: 'hidden', position: 'relative',
-          background: COLOR.bgWhite, borderRadius: `${RADIUS.xl}px ${RADIUS.xl}px 0 0`,
-          borderBottom: `1px solid ${COLOR.borderLt}`,
+          width: box.w, height: box.h, position: 'relative',
+          overflowX: 'hidden', overflowY: face.scrollable && live ? 'auto' : 'hidden',
+          background: COLOR.bgWhite,
+          boxShadow: 'inset 0 0 0 1px rgba(43,33,23,0.06)',
         }}
       >
         {live
           ? <face.Preview o={o} projectId={projectId} fileVersions={fileVersions} box={box} />
           : (
-            /* 没挂缩略图时不留一块空白 —— 空白看着像"这件东西坏了"。
-               给一个安静的底纹加形态图标，明确它只是还没显影。 */
+            /* 没挂预览时不留一块空白 —— 空白看着像"这件东西坏了"。
+               给一张空白横线纸加形态图标（同首页那张 .ndd-shot.empty），
+               明确它只是还没显影。 */
             <div style={{
               width: '100%', height: '100%',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: PAPER.paper,
+              backgroundColor: PAPER.paper,
+              backgroundImage: 'repeating-linear-gradient(180deg, transparent 0 21px, rgba(43,33,23,0.05) 21px 22px)',
             }}>
-              <Icon size={22} color={PAPER.pencil} />
+              <Icon size={26} color={PAPER.pencil} />
             </div>
           )}
-      </div>
-
-      <div style={{
-        height: ARTIFACT_CARD_LABEL_H, flexShrink: 0,
-        padding: `${GAP.xs}px ${GAP.sm}px`,
-        display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2,
-        minWidth: 0,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, minWidth: 0 }}>
-          <Icon size={12} color={COLOR.sub} style={{ flexShrink: 0 }} />
-          <span style={{
-            fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>{o.title}</span>
-        </div>
-        <div style={{
-          fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}>
-          {face.summary(o)}
-        </div>
       </div>
     </div>
   );

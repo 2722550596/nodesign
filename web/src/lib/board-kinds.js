@@ -1,10 +1,21 @@
+import { DECK_EMBED_W } from './board-geometry.js';
+
 /**
- * 产物方卡的脚印。宽度跟图片卡（200）对齐 —— 桌面上一排卡宽窄不一的话，
- * packRow 的列宽只能取最宽那个，剩下的全在自己的格子里晃。
- * 高度 = 缩略图 150（4:3，与图片卡同一比例）+ 名字条 50。
+ * 产物卡的脚印。
+ *
+ * 形状 = 一条小顶栏（图标 + 名字）+ 下面一块实时预览，也就是 2026-08-13 之前
+ * 那个"展开态"的样子。中间试过 200×200 的方卡（缩略图在上、名字在下），
+ * 用户看完的评价是丑 —— 一块 200 宽的缩略图既看不清版式也看不清字，
+ * 那张卡既不是图标也不是预览，卡在中间。
+ *
+ * 现在它只有这一种样子（**没有收起态**）。取的正是老展开态的尺寸，所以
+ * 预览的缩放比例、iframe 画幅这些都跟当时一致。
  */
-export const ARTIFACT_CARD = { w: 200, h: 200 };
-export const ARTIFACT_CARD_LABEL_H = 50;
+export const ARTIFACT_HEADER_H = 28;
+const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + previewH });
+
+/** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, world: 420 };
 
 /**
  * 形态能力表 —— 每种画布物件「是什么、能做什么」写在一张表里。
@@ -96,7 +107,7 @@ export const KINDS = {
     backing: 'file',
     chrome: 'card',
     card: 'artifact',
-    size: ARTIFACT_CARD,
+    size: artifactCard(ARTIFACT_PREVIEW_H.deck),
     reader: null,
     primary: 'open',
     // 方卡整张就是"打开"的按钮（双击 / 点缩略图），不外挂 hover 工具标
@@ -109,7 +120,7 @@ export const KINDS = {
     backing: 'file',
     chrome: 'card',
     card: 'artifact',
-    size: ARTIFACT_CARD,
+    size: artifactCard(ARTIFACT_PREVIEW_H.site),
     reader: null,
     primary: 'open',
     actions: ['add'],
@@ -121,7 +132,7 @@ export const KINDS = {
     backing: 'file',
     chrome: 'card',
     card: 'artifact',
-    size: ARTIFACT_CARD,
+    size: artifactCard(ARTIFACT_PREVIEW_H.world),
     reader: null,
     primary: 'open',
     actions: ['add'],
