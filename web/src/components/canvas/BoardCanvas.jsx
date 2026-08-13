@@ -1293,6 +1293,11 @@ export default function BoardCanvas({
     if (!onAddToContext) return;
     const path = o.ctxPath || o.path;
     onAddToContext({
+      // 托盘条目的契约是**必有 id**：ComposerTray 拿它当 key，移除按
+      // `it.id !== id` 过滤。这里以前不带 —— 两个画布条目撞 undefined key，
+      // 点任何一个的 × 会把画布来的条目一次删光。path 唯一且稳定，直接当 id
+      //（上传那路的 id 是 newId('asset')，不会撞）。
+      id: path,
       type: 'asset', path,
       name: o.name || o.title,
       size: o.size || 0,

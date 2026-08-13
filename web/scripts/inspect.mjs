@@ -66,7 +66,10 @@ const calls = [];
 page.on('pageerror', e => errors.push(`pageerror: ${String(e).slice(0, 400)}`));
 page.on('console', m => {
   if (m.type() !== 'error') return;
-  const t = m.text();
+  // 资源加载失败这类消息正文里没有 URL，出处在 location —— 不带上它，
+  // 报告里就只有一句孤零零的 404，不知道是谁的
+  const loc = m.location()?.url ? ` [${m.location().url}]` : '';
+  const t = m.text() + loc;
   // vite 开发服没有 /ws 端点，WS 握手失败是通道自身的环境噪音（前端有重连
   // 兜底，真后端的 WS 问题这条通道本来就测不到）。别让它污染「errors 必须
   // 为空」这条判据 —— 判据一旦常态性带噪，就没人再看它了。

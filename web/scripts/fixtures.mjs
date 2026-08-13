@@ -59,7 +59,10 @@ const TASKS = [
 const ARTIFACTS = [
   { kind: 'note', path: 'notes/灵感.md', name: '灵感.md', ext: '.md', text: '# 灵感\n\n先做一版暖调的。', mtime: '2026-08-13T05:00:00.000Z' },
   { kind: 'task-file', path: '鉴赏页/数据.csv', name: '数据.csv', ext: '.csv', size: 20480, mtime: '2026-08-13T05:10:00.000Z' },
-  { kind: 'image', path: 'assets/generated/星空.webp', name: '星空.webp', ext: '.webp', hasThumb: false, size: 149614, mtime: '2026-08-13T05:20:00.000Z' },
+  // ⚠️ `isImage` 是前端分派图片卡的判据（BoardCanvas 只看它不看 kind），
+  // 真服务端每条产物都带（assets.js 按扩展名算）。这里漏掉过一次 ——
+  // 图片在检查通道里静默降级成 file 卡，而真站没病。假数据不同构比没有更坏。
+  { kind: 'image', path: 'assets/generated/星空.webp', name: '星空.webp', ext: '.webp', isImage: true, hasThumb: false, size: 149614, mtime: '2026-08-13T05:20:00.000Z' },
 ];
 
 /** 文件夹清单（递归全量，含嵌套）——磁盘扫描的真相 */
@@ -212,6 +215,15 @@ export function resolve(pathname, method, body) {
           body{margin:0;font:600 42px/1.4 system-ui;display:flex;align-items:center;
           justify-content:center;height:100vh;background:#FFFEF6;color:#2B2117}
           </style><div>${name}</div>`,
+      };
+    }
+    // 图片给一张 1×1 真图：图片卡上通道之后（isImage 补齐那次）<img> 会真发
+    // 请求，404 会作为 console error 落进「errors 必须为空」的判据 ——
+    // 判据一旦常态性带噪就没人看了，跟 WS 噪音同一条理由。
+    if (/\.(png|jpe?g|webp|gif|svg)$/i.test(name)) {
+      return {
+        contentType: 'image/png',
+        body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'),
       };
     }
     return { status: 404, json: { error: 'not found' } };
