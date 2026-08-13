@@ -1741,13 +1741,24 @@ export default function ProjectWorkspace() {
    * 模型），agent 拿它能直接找到文件/文件夹；涂鸦手写这类原生物件的 id
    * 指向 board.json 条目，agent 也认得。
    */
-  const handleAnnotate = async ({ target, text }) => {
+  /**
+   * 画布标注 → 直接起一轮。
+   *
+   * `targets`（框选之后批量标注）走同一条路：一条消息把这几件都点名，而不是
+   * 发 N 条 —— 用户说的是"这几张一起改"，拆成 N 条 agent 就得猜它们之间的关系。
+   */
+  const handleAnnotate = async ({ target, targets, text }) => {
+    const list = targets?.length ? targets : [target];
     useGlobalStore.getState().openChatDock();
     // E4：发送瞬间精灵先飘到目标上（本地合成在场，真事件来了自然接管）
-    boardApiRef.current?.presenceHint?.(target.id);
-    const label = `${target.typeLabel}「${target.title}」`;
-    const loc = target.id && target.id !== target.title ? `（${target.id}）` : '';
-    await handleSend(`【画布标注】${label}${loc}：${text}`);
+    boardApiRef.current?.presenceHint?.(list[0].id);
+    const desc = list.map((t) => {
+      // 报**路径**不是 id：`deck:主稿.html` 这种带形态前缀的东西 agent 读不出来
+      const where = t.path || t.id;
+      const loc = where && where !== t.title ? `（${where}）` : '';
+      return `${t.typeLabel}「${t.title}」${loc}`;
+    }).join('、');
+    await handleSend(`【画布标注】${desc}：${text}`);
   };
 
   /**

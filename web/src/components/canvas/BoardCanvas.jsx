@@ -197,12 +197,24 @@ export default function BoardCanvas({
   /** 正在改内容的手写文字：{ id, at:{x,y}, initial }（复用 TextDraft） */
   const [editingText, setEditingText] = useState(null);
   /**
-   * 选中的墨类物件（text/scribble）—— 选中后浮出变换控制器（旋转/缩放）。
-   * 只有墨类可选：产物卡的"操作"是开窗和拖动，套一层选中态纯属多余。
+   * 选中的东西（物件 id / 文件夹 id 混装）。
+   *
+   * 2026-08-13 从单选（`selectedId`，只收墨类）扩成一个集合 —— 用户要「长按
+   * 拖动大范围框选 + 右键批量操作」。**只有一份真相**：单选是"集合里正好一件"
+   * 的派生，不另开一个状态。变换控制器（旋转/缩放）照旧只认单选的墨类，
+   * 那是它的语义（转一堆东西是另一件事，没做）。
    */
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const selectedIdsRef = useRef([]);
+  selectedIdsRef.current = selectedIds;
+  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
   const selectedIdRef = useRef(null);
   selectedIdRef.current = selectedId;
+  const setSelectedId = useCallback((id) => setSelectedIds(id ? [id] : []), []);
+  /** 框选：{ a:{sx,sy,wx,wy}, b:{…} }（sx/sy 是画布视口内像素，wx/wy 是世界坐标）*/
+  const [marquee, setMarquee] = useState(null);
+  const marqueeRef = useRef(null);
+  const pressRef = useRef(null);   // 长按候选：{ timer, startX, startY, pointerId }
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [hoveredBinding, setHoveredBinding] = useState(null);
   const [presence, setPresence] = useState(emptyPresence);
@@ -897,20 +909,28 @@ export default function BoardCanvas({
    *
    * 落点**贴着目标右边**，不落在光标处：光标可能正压在卡上（右键菜单从卡上
    * 弹、标注按钮就长在卡的右上角），落在那儿等于把一段字盖在产物脸上。
+   *
+   * 批量标注（框选之后右键）落**一段字 + N 条线**：一句话说的是这一组，
+   * 抄成 N 段一样的字是把同一件事记 N 遍，改一处还得改 N 处。
    */
-  const keepAnnotation = useCallback((targetId, fallbackAt, text) => {
+  const keepAnnotation = useCallback((targetIds, fallbackAt, text) => {
     const t = (text || '').trim();
-    if (!t || !targetId) return;
-    const r = rectOfId(targetId);
-    const at = r ? { x: r.x + r.w + 24, y: r.y } : fallbackAt;
+    const ids = (Array.isArray(targetIds) ? targetIds : [targetIds]).filter(Boolean);
+    if (!t || !ids.length) return;
+    const rects = ids.map(rectOfId).filter(Boolean);
+    // 落在整组的右边（取所有目标的最右沿、最上沿）
+    const at = rects.length
+      ? { x: Math.max(...rects.map(r => r.x + r.w)) + 24, y: Math.min(...rects.map(r => r.y)) }
+      : fallbackAt;
     if (!at) return;
     const noteId = handleCreateText(t, at);
     if (!noteId) return;
     // 文字落好了才连线 —— 端点必须真实存在，否则画布上留一条通向虚空的线
-    const bid = `b:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
-    const link = { type: 'annotates', from: noteId, to: targetId, by: 'user' };
-    setBindings(prev => ({ ...prev, [bid]: link }));
-    Assets.patchBoard(projectId, { bindings: { [bid]: link } }).catch(() => {});
+    const stamp = `${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
+    const links = {};
+    ids.forEach((id, i) => { links[`b:${stamp}${i}`] = { type: 'annotates', from: noteId, to: id, by: 'user' }; });
+    setBindings(prev => ({ ...prev, ...links }));
+    Assets.patchBoard(projectId, { bindings: links }).catch(() => {});
   }, [rectOfId, handleCreateText, projectId, setBindings]);
 
   // 舞台层仍按世界坐标贴卡，夹取上界取内容外沿
@@ -1126,6 +1146,86 @@ export default function BoardCanvas({
       dirtyRef.current.objects.add(d.id);
       scheduleSave();
     }
+  };
+
+  // ── 框选（长按起手）────────────────────────────────────────────────
+  //
+  // 「选中指针控件的时候能够长按拖动以大范围框选」（用户 2026-08-13）。
+  //
+  // **长按**而不是直接拖：空白处拖拽这个手势已经归相机平移了，那是画布上用得
+  // 最多的动作，不能抢。所以按住不动 LONG_PRESS_MS 才转框选 —— 这期间手一动
+  // （>4px）就当平移，定时器作废。
+  //
+  // 转框选的那一下必须**把已经武装的相机平移撤掉**，不然一次手势同时拉框和推
+  // 镜头：框的起点钉在世界坐标上，镜头一跑，框看着就往反方向歪。
+  const LONG_PRESS_MS = 220;
+  /** 比这更小的框算"点了一下空地"（清空选中），不算框选 */
+  const MARQUEE_MIN = 6;
+
+  const armMarquee = (e) => {
+    if (toolRef.current !== 'select' || e.button !== 0) return;
+    if (onChrome(e)) return;
+    if (e.target.closest?.('[data-board-object],[data-board-zone],[data-transform-handle]')) return;
+    clearTimeout(pressRef.current?.timer);
+    const sx = e.clientX; const sy = e.clientY;
+    const { pointerId } = e;
+    pressRef.current = {
+      startX: sx, startY: sy, pointerId,
+      timer: setTimeout(() => {
+        camera.onPointerUp({ pointerId });         // 撤掉这一下已武装的平移
+        const r = scrollRef.current?.getBoundingClientRect();
+        const w = camera.toWorld(sx, sy);
+        const a = { sx: sx - (r?.left || 0), sy: sy - (r?.top || 0), wx: w.x, wy: w.y };
+        marqueeRef.current = { a, b: a };
+        setMarquee({ a, b: a });
+      }, LONG_PRESS_MS),
+    };
+  };
+
+  const moveMarquee = (e) => {
+    const p = pressRef.current;
+    if (p && !marqueeRef.current) {
+      if (Math.abs(e.clientX - p.startX) + Math.abs(e.clientY - p.startY) > 4) {
+        clearTimeout(p.timer); pressRef.current = null;    // 手动了 = 这是平移
+      }
+      return false;
+    }
+    const m = marqueeRef.current;
+    if (!m) return false;
+    const r = scrollRef.current?.getBoundingClientRect();
+    const w = camera.toWorld(e.clientX, e.clientY);
+    const b = { sx: e.clientX - (r?.left || 0), sy: e.clientY - (r?.top || 0), wx: w.x, wy: w.y };
+    marqueeRef.current = { ...m, b };
+    setMarquee({ ...m, b });
+    return true;
+  };
+
+  /** @returns 这次抬手是不是被框选吃掉了（吃掉了相机和物件都别再收尾） */
+  const endMarquee = () => {
+    clearTimeout(pressRef.current?.timer);
+    pressRef.current = null;
+    const m = marqueeRef.current;
+    marqueeRef.current = null;
+    if (!m) return false;
+    setMarquee(null);
+    if (Math.abs(m.b.sx - m.a.sx) < MARQUEE_MIN && Math.abs(m.b.sy - m.a.sy) < MARQUEE_MIN) {
+      setSelectedIds([]);           // 长按了但没拉开 = 点了一下空地
+      return true;
+    }
+    const x0 = Math.min(m.a.wx, m.b.wx); const x1 = Math.max(m.a.wx, m.b.wx);
+    const y0 = Math.min(m.a.wy, m.b.wy); const y1 = Math.max(m.a.wy, m.b.wy);
+    // 判据是**相交**不是包含：拉框的人不会去精确包住每一件，框到一半就算
+    // （访达、Figma 都是相交）
+    const hit = (x, y, w, h) => x < x1 && x + w > x0 && y < y1 && y + h > y0;
+    const ids = [];
+    for (const o of positionedRef.current) {
+      const sz = sizeOf(o);
+      if (hit(o.pos.x, o.pos.y, sz.w, sz.h)) ids.push(o.id);
+    }
+    for (const z of folderViewRef.current) if (hit(z.x, z.y, z.w, z.h)) ids.push(z.id);
+    setSelectedIds(ids);
+    recentDragMovedRef.current = true;   // 这一下不是点击，别让它把选中清掉
+    return true;
   };
 
   /**
@@ -1778,6 +1878,21 @@ export default function BoardCanvas({
     }
   }, [projectId, reload]);
 
+  /**
+   * 一件东西 → 标注浮层认的目标描述。
+   *
+   * `path` 是给 agent 的**落点**：消息里报的位置必须是它能 Read 的路径，
+   * 而 id 不是（`deck:主稿.html` 这种带形态前缀的读不出来）。剥前缀的规矩跟
+   * moveEntry 一致 —— id 就是路径，冒号前那截是形态名。
+   */
+  const annotTargetOf = useCallback((o) => ({
+    kind: 'object',
+    id: o.id,
+    path: o.path || (typeof o.id === 'string' && /^[a-z]+:/.test(o.id) ? o.id.slice(o.id.indexOf(':') + 1) : o.id),
+    title: o.title || o.name || o.id,
+    typeLabel: labelOf(o),
+  }), []);
+
   const openContextMenu = useCallback((e) => {
     const mx = e.clientX; const my = e.clientY;
     const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
@@ -1791,8 +1906,56 @@ export default function BoardCanvas({
         || zoneAtPoint(at))
       : null;
 
+    /**
+     * 右键落在**选中集里**的东西上，而且选了不止一件 → 出批量菜单。
+     *
+     * 判据是"点的这一件在选中集里"，不是"有选中集"：选了五件之后去右键第六件，
+     * 用户要的显然是对第六件动手，不是对那五件。这跟操作系统桌面一致。
+     */
+    const sel = selectedIdsRef.current;
+    const batch = sel.length > 1 && sel.includes(objId || zoneId);
+
     let items;
-    if (obj) {
+    if (batch) {
+      const objs = sel.map(id => positionedRef.current.find(o => o.id === id)).filter(Boolean);
+      const zones = sel.filter(id => zonesEffRef.current[id]);
+      const addable = objs.filter(canAddToContext);
+      const movable = [...objs.filter(isFileBacked).map(o => o.id), ...zones];
+      items = [
+        {
+          id: 'move', icon: FolderInput, label: `移动到…`, hint: `${movable.length} 件`,
+          disabled: !movable.length,
+          onClick: () => setMoveTo({ x: mx, y: my, ids: movable, current: cwdRef.current, exclude: zones }),
+        },
+        {
+          id: 'add', icon: Plus, label: '加入上下文', hint: `${addable.length} 件`,
+          disabled: !addable.length,
+          onClick: () => addable.forEach(handleAdd),
+        },
+        {
+          id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理',
+          onClick: () => setAnnotate({
+            x: mx, y: my,
+            target: { kind: 'multi', id: sel[0], title: `${sel.length} 件`, typeLabel: '选中' },
+            targets: [
+              ...objs.map(annotTargetOf),
+              ...zones.map(z => ({ kind: 'folder', id: z, path: z, title: z.split('/').pop() || z, typeLabel: '文件夹' })),
+            ],
+          }),
+        },
+        { divider: true },
+        {
+          id: 'del', icon: Trash2, label: '删除', danger: true, hint: `${sel.length} 件`,
+          // 批量删除加一道确认：单件删错了还能从 git 里捞，一次删十件是另一
+          // 个量级的事故，而这个菜单项就挨着"移动到…"
+          onClick: () => {
+            if (!window.confirm(`删掉这 ${sel.length} 件？`)) return;
+            objs.forEach(o => handleDeleteNote(o));
+            zones.forEach(z => handleDeleteFolder(z, z.split('/').pop()));
+          },
+        },
+      ];
+    } else if (obj) {
       items = [
         { id: 'open', icon: FolderOpen, label: '打开', onClick: () => primaryOpenRef.current?.(obj) },
         // 改名只给磁盘上真有位置的（涂鸦 / 手写文字没有文件可改）
@@ -1808,7 +1971,7 @@ export default function BoardCanvas({
         // 按发送 agent 立刻来。全类型都给（图片/文件/涂鸦/手写字也算产物）。
         { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
           x: mx, y: my,
-          target: { kind: 'object', id: obj.id, title: obj.title || obj.name || obj.id, typeLabel: labelOf(obj) },
+          target: annotTargetOf(obj),
         }) },
         { divider: true },
         { id: 'del', icon: Trash2, label: '删除', danger: true, onClick: () => handleDeleteNote(obj) },
@@ -1819,7 +1982,7 @@ export default function BoardCanvas({
         { id: 'new', icon: FolderPlus, label: '在里面新建文件夹', onClick: () => createFolderAt(zoneId, null) },
         { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
           x: mx, y: my,
-          target: { kind: 'folder', id: zoneId, title: zoneId.split('/').pop() || zoneId, typeLabel: '文件夹' },
+          target: { kind: 'folder', id: zoneId, path: zoneId, title: zoneId.split('/').pop() || zoneId, typeLabel: '文件夹' },
         }) },
         { id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(zoneId) },
         // 文件夹在这之前**根本没有搬家入口**：卡片能拖，但拖只改画布坐标，
@@ -2180,12 +2343,13 @@ export default function BoardCanvas({
           // 点到既不是物件也不是变换手柄的地方 → 取消选中（选中态的唯一出口
           // 之一；另一个是 Esc）。放在工具分派**之前**：不管手里拿什么，点空白
           // 都该收掉选框。
-          if (selectedIdRef.current && !e.target.closest('[data-board-object],[data-transform-handle]')) {
-            setSelectedId(null);
+          if (selectedIdsRef.current.length && !e.target.closest('[data-board-object],[data-board-zone],[data-transform-handle]')) {
+            setSelectedIds([]);
           }
           // 顺序即优先级：工具在手就归工具，工具没接才轮到相机平移。
           // 否则「拖着画一笔」和「拖空白平移」抢同一个手势，画一笔就跑镜头。
           if (canvasTools.onPointerDown(e)) return;
+          armMarquee(e);
           camera.onPointerDown(e);
         }}
         onDoubleClick={(e) => { canvasTools.onDoubleClick(e); }}
@@ -2196,6 +2360,7 @@ export default function BoardCanvas({
         }}
         onPointerMove={(e) => {
           if (canvasTools.onPointerMove(e)) return;
+          if (moveMarquee(e)) return;              // 框选中：相机和物件都不管事
           if (!camera.onPointerMove(e)) onPointerMove(e);
         }}
         onPointerUp={(e) => {
@@ -2206,9 +2371,12 @@ export default function BoardCanvas({
             if (dragRef.current) { dragRef.current = null; setDragActive(false); }
             return;
           }
+          if (endMarquee()) return;
           camera.onPointerUp(e); onPointerUp(e);
         }}
-        onPointerCancel={(e) => { canvasTools.onPointerUp(e); camera.onPointerUp(e); onPointerUp(e); }}
+        onPointerCancel={(e) => {
+          canvasTools.onPointerUp(e); endMarquee(); camera.onPointerUp(e); onPointerUp(e);
+        }}
         style={{
           position: 'absolute', inset: 0, overflow: 'hidden',
           touchAction: 'none',
@@ -2256,6 +2424,7 @@ export default function BoardCanvas({
                   ? `0 0 0 3px ${alpha(CANVAS.brass, 0.18)}, 0 8px 20px rgba(0,0,0,0.14)`
                   : '0 1px 4px rgba(0,0,0,0.05)',
                 cursor: draggingZone === z.id ? 'grabbing' : 'grab',
+                ...(selectedIds.includes(z.id) ? { outline: `2px solid ${CANVAS.brass}`, outlineOffset: 1 } : null),
                 userSelect: 'none', touchAction: 'none',
                 transition: `background 150ms, border-color 150ms, box-shadow 150ms${(dragActive || draggingZone === z.id) ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}`}`,
                 animation: POP_IN,
@@ -2324,6 +2493,9 @@ export default function BoardCanvas({
               animateLayout={!dragActive || dragRef.current?.id !== o.id}
               agentActive={ringObjects.has(o.id)}
               groupTarget={dropHint?.kind === 'group' && dropHint.id === o.id}
+              // 单选一件墨类时选中态由变换控制器画（那圈框就是它的选中框），
+              // 别再叠一道外框
+              selected={selectedIds.includes(o.id) && !(o.native && selectedIds.length === 1)}
               renaming={renamingId === o.id}
               onRenameCommit={(v) => commitRename(o.id, v)}
               onRenameCancel={() => setRenamingId(null)}
@@ -2340,7 +2512,7 @@ export default function BoardCanvas({
               // target 的形状跟右键菜单那条**逐字一致** —— 同一张浮层
               onAnnotate={(at) => setAnnotate({
                 x: at.x, y: at.y,
-                target: { kind: 'object', id: o.id, title: o.title || o.name || o.id, typeLabel: labelOf(o) },
+                target: annotTargetOf(o),
               })}
               // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
               scale={scale}
@@ -2439,6 +2611,20 @@ export default function BoardCanvas({
           />
         )}
 
+        {/* 框选的那个框：画在**视口空间**（不在世界层里），所以它的边框粗细
+            不跟着缩放变 —— 0.4 倍视图下一条 1px 的虚线会细到看不见。 */}
+        {marquee && (
+          <div style={{
+            position: 'absolute', pointerEvents: 'none', zIndex: 320,
+            left: Math.min(marquee.a.sx, marquee.b.sx),
+            top: Math.min(marquee.a.sy, marquee.b.sy),
+            width: Math.abs(marquee.b.sx - marquee.a.sx),
+            height: Math.abs(marquee.b.sy - marquee.a.sy),
+            border: `1px dashed ${CANVAS.brass}`,
+            background: alpha(CANVAS.brass, 0.08),
+          }} />
+        )}
+
         {/* ⚠️ 这里曾有第三个 TextDraft：工具栏「标注(C)」的批注输入框。
             标注 2026-08-13 收敛成 AnnotatePopover 的两个出口之后它没有入口了，
             连同 commentDraft 状态一起删。留在画布那条路现在走 keepAnnotation。 */}
@@ -2469,9 +2655,9 @@ export default function BoardCanvas({
         <AnnotatePopover
           x={annotate.x} y={annotate.y} target={annotate.target}
           onClose={() => setAnnotate(null)}
-          onSubmit={(text) => onAnnotate?.({ target: annotate.target, text })}
+          onSubmit={(text) => onAnnotate?.({ target: annotate.target, targets: annotate.targets, text })}
           onKeep={(text) => keepAnnotation(
-            annotate.target.id,
+            annotate.targets?.length ? annotate.targets.map(t => t.id) : [annotate.target.id],
             camApiRef.current?.toWorld(annotate.x, annotate.y),
             text,
           )}

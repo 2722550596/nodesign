@@ -164,8 +164,60 @@ if (HOVER) {
 }
 
 /**
+ * 拖拽：`--drag=<选择器>|<dx>,<dy>`。**必须一步步发 mousemove** ——
+ * 画布的拖拽是自己在 pointermove 里积位移的，一步到位的 move 它只会当成
+ * 一次抖动（而且落点提示根本来不及算）。
+ *
+ * `--drag-wheel=dx,dy`：拖到 70% 处滚一把滚轮再继续（验"拖拽中相机动了
+ * 卡还钉不钉在光标下"）。结束后输出 `dragEnd`：最终鼠标位置 + 目标元素的
+ * 实际矩形 —— 抓点是元素中心，钉住 = 元素中心 ≈ 最终鼠标位置。
+ */
+const DRAG_WHEEL = opt('drag-wheel', null);
+/** 按下之后先停住这么多毫秒再开始拖 —— 长按起手的手势（框选）要靠它 */
+const DRAG_HOLD = Number(opt('drag-hold', 0));
+let dragEnd = null;
+const doDrag = async (DRAG) => {
+  const [sel, delta] = DRAG.split('|');
+  const [dx, dy] = (delta || '0,0').split(',').map(Number);
+  // `--drag='@x,y|dx,dy'` 按坐标起拖（画一笔涂鸦这类"从空白处开始"的手势
+  // 没有元素可选）；选择器形式照旧
+  const byCoord = sel.startsWith('@');
+  const el = byCoord ? null : await page.$(sel);
+  if (!byCoord && !el) errors.push(`--drag 没找到元素: ${sel}`);
+  else {
+    let sx; let sy;
+    if (byCoord) { [sx, sy] = sel.slice(1).split(',').map(Number); }
+    else {
+      const b = await el.boundingBox();
+      sx = b.x + b.width / 2; sy = b.y + b.height / 2;
+    }
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    if (DRAG_HOLD) await page.waitForTimeout(DRAG_HOLD);
+    await page.mouse.move(sx + dx * 0.3, sy + dy * 0.3, { steps: 6 });
+    await page.mouse.move(sx + dx * 0.7, sy + dy * 0.7, { steps: 6 });
+    if (DRAG_WHEEL) {
+      const [a, c] = DRAG_WHEEL.split(',').map(Number);
+      await page.mouse.wheel(a, c);
+      await page.waitForTimeout(250);
+      // 滚轮不产生 pointermove —— 这里补一次 1px 的挪动再挪回来，
+      // 模拟真人手上永远存在的微动（纯滚轮期间的钉住由 cam effect 兜）
+      await page.mouse.move(sx + dx * 0.7 + 1, sy + dy * 0.7, { steps: 1 });
+    }
+    await page.mouse.move(sx + dx, sy + dy, { steps: 8 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+    const after = byCoord ? null : await page.$(sel);
+    const bb = after ? await after.boundingBox() : null;
+    dragEnd = { mouse: { x: sx + dx, y: sy + dy }, box: bb };
+  }
+};
+
+/**
  * 点击族：`--click=<sel>` `--dblclick=<sel>` `--click-at=x,y` `--dblclick-at=x,y`
- * `--click-text=<文字>`（菜单项这种没有稳定选择器的）、`--rightclick[-at]=`。
+ * `--click-text=<文字>`（菜单项这种没有稳定选择器的）、`--rightclick[-at]=`、
+ * `--drag=<sel|@x,y>|dx,dy`、`--keys=<文本>`（往聚焦的输入框打字，不回车）。
  *
  * 全部走**同一个按命令行顺序的循环**，写的顺序就是点的顺序
  * （`--dblclick=文件夹 --rightclick=里面那个 --click-text=移动到…`）。
@@ -208,6 +260,10 @@ for (const a of args) {
     } else errors.push(`--click-text 没找到按钮: ${txt[1]}`);
     continue;
   }
+  const kys = a.match(/^--keys=(.+)$/);
+  if (kys) { await page.keyboard.type(kys[1], { delay: 15 }); await page.waitForTimeout(200); continue; }
+  const dg = a.match(/^--drag=(.+)$/);
+  if (dg) { await doDrag(dg[1]); continue; }
   const sel = a.match(/^--(click|dblclick)=(.+)$/);
   if (!sel) continue;
   const el = await page.$(sel[2]);
@@ -224,64 +280,6 @@ if (TYPE) {
   await page.keyboard.press('Enter');
   await page.waitForTimeout(900);
 }
-
-// 拖拽放在**点击族之后**：前面那几下通常是"把界面点到要测的那个状态"
-// （进文件夹、开窗、切页），拖拽是要测的那一下。放前面的话它作用在
-// 还没导航过去的界面上 —— 选择器找不到元素，报的却像是元素不存在。
-/**
- * 拖拽：`--drag=<选择器>|<dx>,<dy>`。**必须一步步发 mousemove** ——
- * 画布的拖拽是自己在 pointermove 里积位移的，一步到位的 move 它只会当成
- * 一次抖动（而且落点提示根本来不及算）。
- *
- * `--drag-wheel=dx,dy`：拖到 70% 处滚一把滚轮再继续（验"拖拽中相机动了
- * 卡还钉不钉在光标下"）。结束后输出 `dragEnd`：最终鼠标位置 + 目标元素的
- * 实际矩形 —— 抓点是元素中心，钉住 = 元素中心 ≈ 最终鼠标位置。
- */
-const DRAG = opt('drag', null);
-const DRAG_WHEEL = opt('drag-wheel', null);
-let dragEnd = null;
-if (DRAG) {
-  const [sel, delta] = DRAG.split('|');
-  const [dx, dy] = (delta || '0,0').split(',').map(Number);
-  // `--drag='@x,y|dx,dy'` 按坐标起拖（画一笔涂鸦这类"从空白处开始"的手势
-  // 没有元素可选）；选择器形式照旧
-  const byCoord = sel.startsWith('@');
-  const el = byCoord ? null : await page.$(sel);
-  if (!byCoord && !el) errors.push(`--drag 没找到元素: ${sel}`);
-  else {
-    let sx; let sy;
-    if (byCoord) { [sx, sy] = sel.slice(1).split(',').map(Number); }
-    else {
-      const b = await el.boundingBox();
-      sx = b.x + b.width / 2; sy = b.y + b.height / 2;
-    }
-    await page.mouse.move(sx, sy);
-    await page.mouse.down();
-    await page.mouse.move(sx + dx * 0.3, sy + dy * 0.3, { steps: 6 });
-    await page.mouse.move(sx + dx * 0.7, sy + dy * 0.7, { steps: 6 });
-    if (DRAG_WHEEL) {
-      const [a, c] = DRAG_WHEEL.split(',').map(Number);
-      await page.mouse.wheel(a, c);
-      await page.waitForTimeout(250);
-      // 滚轮不产生 pointermove —— 这里补一次 1px 的挪动再挪回来，
-      // 模拟真人手上永远存在的微动（纯滚轮期间的钉住由 cam effect 兜）
-      await page.mouse.move(sx + dx * 0.7 + 1, sy + dy * 0.7, { steps: 1 });
-    }
-    await page.mouse.move(sx + dx, sy + dy, { steps: 8 });
-    await page.waitForTimeout(120);
-    await page.mouse.up();
-    await page.waitForTimeout(900);
-    const after = byCoord ? null : await page.$(sel);
-    const bb = after ? await after.boundingBox() : null;
-    dragEnd = { mouse: { x: sx + dx, y: sy + dy }, box: bb };
-  }
-}
-
-// 往当前聚焦的输入框里打字，**不按回车**：`--keys=<文本>`。
-// `--type` 打完就回车（改名那类"输入即提交"的场景），可浮层里回车通常绑在
-// 主按钮上 —— 要验的是次按钮那条路，就不能让回车先把浮层收掉。
-const KEYS = opt('keys', null);
-if (KEYS) { await page.keyboard.type(KEYS, { delay: 15 }); await page.waitForTimeout(200); }
 
 // 事后移动：`--move=x,y[;x,y…]`（分号分航点，每站步进真移动 + 停 700ms）。
 // 放在所有点击之后 —— 验"鼠标离开后自动收起""贴屏缘唤出"这类位置驱动的

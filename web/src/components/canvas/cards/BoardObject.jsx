@@ -34,7 +34,7 @@ const SCRIBBLE_INK = {
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
 function BoardObject({
   o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
-  groupTarget = false,
+  groupTarget = false, selected = false,
   renaming = false, onRenameCommit, onRenameCancel,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
   onAnnotate,
@@ -85,6 +85,12 @@ function BoardObject({
     ...(agentActive ? {
       animation: 'ndAgentRing 1600ms ease-in-out infinite',
       border: `1px solid ${alpha(CANVAS.brass, 0.85)}`,
+    } : null),
+    // 被框选中：一圈外框。用 outline 不用 border —— border 会挤动内容
+    // （卡里的排版按 width 算过），outline 不占布局
+    ...(selected ? {
+      outline: `2px solid ${CANVAS.brass}`,
+      outlineOffset: 1,
     } : null),
     // 有东西正摞过来 → 亮一圈，示意"松手就把你俩归到一个文件夹里"
     ...(groupTarget ? {
