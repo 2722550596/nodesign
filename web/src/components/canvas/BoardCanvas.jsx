@@ -33,7 +33,6 @@ import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
-import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds } from './useCanvasTools.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -96,6 +95,8 @@ export default function BoardCanvas({
   // 工具栏合并（2026-07-27）：画布自己不再渲工具条 —— 通过 apiRef 暴露操作、
   // onUiState 上报状态，控件统一画在外层 CanvasToolbar
   apiRef, onUiState,
+  /** 把画布的工具组交给外层那条常驻工具栏（2026-08-13 范式改造） */
+  onToolbarGroups,
   // 舞台层（2026-07-28）：ProjectWorkspace 把 run.* 事件经这个 ref 转发进来，
   // 画布把 agent 的实时动作演出来（代码直播 / 终端 / shimmer / chip / 角标）
   stageRef,
@@ -1875,6 +1876,62 @@ export default function BoardCanvas({
     onUiState?.(ui);
   }, [onUiState, viewMode, focusZoneId, currentSessionId, zoneView, sessionTitles, tasks, bandSummaries]);
 
+  /**
+   * 画布的工具组。**这里不渲染工具栏** —— 全项目只有一条，活在 CanvasFrame，
+   * 内容跟着当前焦点走（没开窗是这一份，开了窗是那扇窗的）。
+   *
+   * 2026-08-13 范式改造前：画布一条 + 每扇窗各一条，各自算落点、各自持久化
+   * 位置。用户报的「两套工具栏」「位置没对齐」「偏到右下角」是同一个结构病。
+   *
+   * 顺带退役的是 `autoHide` + `wake`（按需浮现）：既然常驻，就没有"唤出"这回事。
+   */
+  /**
+   * ⚠️ 镜头动作要用 ref 转一手，**不能直接把 `camera.zoomBy` 写进依赖**。
+   *
+   * `useBoardCamera` 每次渲染返回新对象，而它里面的 `zoomToFit` 又依赖
+   * `contentBox`，`contentBox` 依赖 `visibleObjects` —— 那是个每渲染
+   * `.filter()` 出来的新数组。整条链每帧换身份，写进依赖就是：
+   * memo 每帧重算 → 报上去一个新数组 → 外层 setState → 再渲染一帧 → **死循环**。
+   * build 和单测都照不出来，因为它要真挂起来跑才发作。
+   */
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
+  const zoomFitStable = useCallback(() => cameraRef.current.zoomToFit(), []);
+  const zoomByStable = useCallback((d) => cameraRef.current.zoomBy(d), []);
+  const zoomToStable = useCallback((z) => cameraRef.current.zoomTo(z), []);
+
+  const boardToolGroups = useMemo(() => ([
+            {
+              id: 'view',
+              items: [
+                {
+                  id: 'tidy', icon: LayoutGrid, label: '整理',
+                  title: '重排这块画布上的产物（自动排版只在新产物到货时跑一次，别的时候不动你摆的位置）',
+                  onClick: tidyBoard,
+                },
+                { id: 'fit', icon: Maximize2, label: '全部', title: '全部内容入镜（Shift+1）', onClick: zoomFitStable },
+                { id: 'zoomOut', icon: Minus, title: '缩小（Ctrl -）', onClick: () => zoomByStable(-1) },
+                { id: 'zoomLevel', icon: null, label: `${Math.round(scale * 100)}%`, title: '回到 100%（Ctrl 0）', onClick: () => zoomToStable(1) },
+                { id: 'zoomIn', icon: Plus, title: '放大（Ctrl +）', onClick: () => zoomByStable(1) },
+              ],
+            },
+            {
+              id: 'tools',
+              type: 'mode',
+              value: tool,
+              onChange: setTool,
+              items: [
+                { id: 'select', icon: MousePointer2, title: '指针：选中和挪动东西（V）' },
+                { id: 'hand', icon: Hand, title: '抓手：拖任何地方都是挪镜头（H，或按住空格）' },
+                { id: 'text', icon: Type, title: '写一段字（T）' },
+                { id: 'draw', icon: PenLine, title: '涂鸦（P）' },
+                { id: 'comment', icon: MessageSquarePlus, title: '标注一个物件（C）' },
+              ],
+            },
+          ]), [tool, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
+
+  useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
+
   // ── 渲染 ──
   return (
     <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: CANVAS.paper }}>
@@ -2233,52 +2290,6 @@ export default function BoardCanvas({
           />
         )}
 
-        {/* 浮动工具栏（屏幕空间，不进世界层 —— 缩放画布不该把工具也缩小）。
-            **窗开着的时候整条不渲染**：窗自己有一条工具栏，两条同时挂在屏幕上
-            就是"工具栏怎么有两套"（2026-08-13 用户报的）。画布这条管的是画布，
-            而窗开着时画布压根不可操作。 */}
-        {!deckOpen && (
-        <FloatingToolbar
-          id="board-tools"
-          boundsRef={scrollRef}
-          // 钉在画布底缘正中、平时收着（2026-08-07）：画布是这里唯一的内容，
-          // 一条常驻工具栏在左上角既占地方又一直在视线里。缩放 / 换工具会把它
-          // 唤出来，鼠标往底边去的路上它也会自己出来。
-          dock="bottom-center"
-          autoHide
-          wake={`${tool}|${Math.round(scale * 100)}|${Math.round(cam.x)}|${Math.round(cam.y)}`}
-          stack="row" 
-          groups={[
-            {
-              id: 'view',
-              items: [
-                {
-                  id: 'tidy', icon: LayoutGrid, label: '整理',
-                  title: '重排这块画布上的产物（自动排版只在新产物到货时跑一次，别的时候不动你摆的位置）',
-                  onClick: tidyBoard,
-                },
-                { id: 'fit', icon: Maximize2, label: '全部', title: '全部内容入镜（Shift+1）', onClick: () => camera.zoomToFit() },
-                { id: 'zoomOut', icon: Minus, title: '缩小（Ctrl -）', onClick: () => camera.zoomBy(-1) },
-                { id: 'zoomLevel', icon: null, label: `${Math.round(scale * 100)}%`, title: '回到 100%（Ctrl 0）', onClick: () => camera.zoomTo(1) },
-                { id: 'zoomIn', icon: Plus, title: '放大（Ctrl +）', onClick: () => camera.zoomBy(1) },
-              ],
-            },
-            {
-              id: 'tools',
-              type: 'mode',
-              value: tool,
-              onChange: setTool,
-              items: [
-                { id: 'select', icon: MousePointer2, title: '指针：选中和挪动东西（V）' },
-                { id: 'hand', icon: Hand, title: '抓手：拖任何地方都是挪镜头（H，或按住空格）' },
-                { id: 'text', icon: Type, title: '写一段字（T）' },
-                { id: 'draw', icon: PenLine, title: '涂鸦（P）' },
-                { id: 'comment', icon: MessageSquarePlus, title: '标注一个物件（C）' },
-              ],
-            },
-          ]}
-        />
-        )}
       </div>
 
       {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}

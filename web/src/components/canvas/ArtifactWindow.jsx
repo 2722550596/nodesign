@@ -1,6 +1,5 @@
 import { useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
-import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 import { PAPER, PAPER_SHADOW, GRAIN, INK_SURFACE } from '../../lib/paper.js';
 import { COLOR, GAP, FONT_SANS, FONT_SIZE, RADIUS } from '../../lib/theme.js';
 import { POP_IN } from '../../lib/board-geometry.js';
@@ -23,8 +22,9 @@ import { exportItemsFor } from '../../lib/export-formats.js';
  *     ├ 顶栏（30px）：钉纽扣 · 这是什么 · 关闭
  *     ├ 固定条（headerExtra / banner）
  *     └ 内容区
- *       ├ children
- *       └ 浮动工具栏（FloatingToolbar，可拖，位置按项目记住）
+ *       └ children
+ *
+ * 工具栏不在这里 —— 全项目只有一条，活在 CanvasFrame，内容跟焦点走。
  *
  * ## 为什么工具要浮起来
  *
@@ -73,23 +73,20 @@ export default function ArtifactWindow({
   /** 身份牌上标题右边的小字（站点写当前页，世界写地点/角色计数） */
   subtitle = null,
   onClose,
-  /** 浮动工具栏的组，形状见 FloatingToolbar */
+  /** 工具组（形状见 FloatingToolbar）。**这扇窗不自己渲工具栏**，见下 */
   groups = [],
   /**
-   * 窗里的工具横着排一条。画布那条是竖着堆的（那边只有两组，且左上角是
-   * 传统工具箱位置）；窗里组数多（模式 / 页面 / 视口 / 动作），竖着堆会长成
-   * 一根柱子把内容从上到下切开。
-   */
-  toolbarStack = 'row',
-  /**
-   * 默认落在**底缘居中**（2026-08-13 用户拍板）。
+   * 把工具组交给外层那条常驻工具栏（2026-08-13 范式改造）。
    *
-   * ⚠️ 这条推翻了 08-07 的取舍，原话记在这儿备查：「不要 Figma 那种底部居中
-   * —— 窗底早就住着三条别的东西（幻灯翻页 / 待应用改动 / 拖拽暂存确认），
-   * 而且这三种窗的工具本来就在顶上」。那三条**现在还在**（`bottom: 16` 那些
-   * 浮条），所以真撞上的时候是往上让一格还是让它们改位置，等看到再定。
+   * 在这之前每扇窗自己挂一条 FloatingToolbar、画布也挂一条，于是同一屏上可能
+   * 有两条、各自算落点、各自持久化位置。用户报过的三件事全出在这个结构上：
+   * 「工具栏怎么有两套」「位置没对齐」「偏到右下角」—— 修完一个又冒一个，
+   * 因为病根是**同一件东西有多个实例**，不是某一处算错。
+   *
+   * 现在只有一条：活在 CanvasFrame 里、钉底缘正中、永远显示，
+   * **内容跟着当前焦点走** —— 没开窗是画布的工具，开了窗是这扇窗的。
    */
-  toolbarAnchor = 'bottom-center',
+  onToolbarGroups,
   /** 内容区顶上的说明条：怎么用 / 警示。说明不是工具，不进工具栏 */
   banner = null,
   /** 固定条：内容区上方那条一直在的横带（deck 的试作切换） */
@@ -104,6 +101,12 @@ export default function ArtifactWindow({
   contentStyle,
 }) {
   const contentRef = useRef(null);
+
+  // 工具组交给外层那条常驻工具栏；窗一关就撤回（否则关了窗还留着这扇窗的工具）
+  useEffect(() => {
+    onToolbarGroups?.(groups);
+    return () => onToolbarGroups?.(null);
+  }, [groups, onToolbarGroups]);
 
   useEffect(() => {
     if (!onClose || !escToClose) return;
@@ -196,17 +199,6 @@ export default function ArtifactWindow({
         >
           {children}
 
-          {/* ⚠️ 工具栏必须渲染在 contentRef **内部**：anchoredPosition 只拿
-              bounds 的宽高算落点，坐标却是相对自己 offset parent 的。渲染在
-              外面的话 `top-center` 会落到固定条上面去 —— 两者差一个固定条
-              的高度，而且只有 deck（有试作切换条）那扇窗看得出来。 */}
-          <FloatingToolbar
-            id={`win-${kind}`}
-            groups={groups}
-            boundsRef={contentRef}
-            anchor={toolbarAnchor}
-            stack={toolbarStack}
-          />
         </div>
       </div>
     </div>

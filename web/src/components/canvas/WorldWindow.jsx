@@ -30,6 +30,8 @@ export default function WorldWindow({
   nodes = [],
   /** 服务端给的可导出格式 + 导出动作（2026-08-13 从顶栏搬进工具栏） */
   artifactExports = null, onExport = null,
+  /** 工具组交给外层那条常驻工具栏（窗自己不渲工具栏了） */
+  onToolbarGroups = null,
   fileVersions = null,
   onClose,
 }) {
@@ -94,6 +96,7 @@ export default function WorldWindow({
       subtitle={nodes.length ? `${counts.places} 个地点 · ${counts.chars} 个角色` : '地图还是空的'}
       onClose={onClose}
       groups={groups}
+      onToolbarGroups={onToolbarGroups}
     >
       {tab === 'map' ? (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: COLOR.bg }}>

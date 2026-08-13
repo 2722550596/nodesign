@@ -11,11 +11,12 @@
  *
  * 跑法见 scripts/shoot-harness.mjs。
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { PanelManagerProvider } from './components/layout/PanelManager.jsx';
 import SiteWindow from './components/canvas/SiteWindow.jsx';
 import ArtifactWindow from './components/canvas/ArtifactWindow.jsx';
+import FloatingToolbar from './components/ui/FloatingToolbar.jsx';
 
 /**
  * 迟到的工具组：站点窗的「上线」控件要先请求发布状态，loaded 之前整个返回
@@ -30,7 +31,7 @@ function LateGroup() {
 }
 
 const CASES = {
-  site: () => (
+  site: (onToolbarGroups) => (
     <SiteWindow
       projectId="p_demo"
       task="伊蕾娜手账研究站"
@@ -41,12 +42,13 @@ const CASES = {
       fileVersions={{}}
       artifactExports={['site', 'html', 'handoff']}
       onExport={() => {}}
+      onToolbarGroups={onToolbarGroups}
       onClose={() => {}}
     />
   ),
 };
 
-CASES.late = () => (
+CASES.late = (onToolbarGroups) => (
   <ArtifactWindow
     kind="latecase"
     title="迟到组时序"
@@ -57,18 +59,32 @@ CASES.late = () => (
       ] },
       { id: 'late', node: <LateGroup /> },
     ]}
+    onToolbarGroups={onToolbarGroups}
     onClose={() => {}}
   >
     <div style={{ flex: 1, background: '#f4f2ee' }} />
   </ArtifactWindow>
 );
 
+/**
+ * 宿主：照 CanvasFrame 的新范式来 —— 窗只把工具组报上来，**工具栏只有一条**，
+ * 钉底缘正中、永远显示、层级压过产物窗。检查台跟线上不同构的话，量出来的
+ * 位置就没有意义。
+ */
+function Host({ children: render }) {
+  const [winGroups, setWinGroups] = useState(null);
+  const hostRef = useRef(null);
+  return (
+    <div ref={hostRef} style={{ position: 'relative', height: '100%', isolation: 'isolate', background: '#F0EADB' }}>
+      {render(setWinGroups)}
+      <FloatingToolbar id="tools" boundsRef={hostRef} dock="bottom-center" stack="row" zIndex={510} groups={winGroups || []} />
+    </div>
+  );
+}
+
 const which = new URLSearchParams(location.search).get('case') || 'site';
 createRoot(document.getElementById('root')).render(
   <PanelManagerProvider projectId="p_demo" defaultPanels={{}} panelMeta={{}}>
-    {/* 画布 section 的层叠上下文：产物窗关在里面出不来（同 ProjectWorkspace） */}
-    <div style={{ position: 'relative', height: '100%', isolation: 'isolate', background: '#F0EADB' }}>
-      {(CASES[which] || CASES.site)()}
-    </div>
+    <Host>{(onToolbarGroups) => (CASES[which] || CASES.site)(onToolbarGroups)}</Host>
   </PanelManagerProvider>,
 );

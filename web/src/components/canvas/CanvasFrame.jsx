@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, lazy, Suspense } from 'react';
+import { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Assets } from '../../lib/api.js';
 import { versionOfFile, versionOfTask } from '../../lib/file-versions.js';
 import { COLOR } from '../../lib/theme.js';
 import BoardCanvas from './BoardCanvas.jsx';
+import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 
 // 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
 // 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
@@ -140,6 +141,53 @@ export default function CanvasFrame({
     ? (info) => onTextEdit({ ...info, deckPath: deckRelPath })
     : undefined;
 
+  /**
+   * 全项目**唯一**的一条工具栏（2026-08-13 范式改造，用户定的）。
+   *
+   * 在这之前：画布挂一条、每扇产物窗各挂一条。同一屏上可能有两条、各自算
+   * 落点、各自把位置持久化到 localStorage。用户连着报的三件事
+   * —— 「工具栏怎么有两套」「位置没对齐」「偏到右下角」—— 修完一个又冒一个，
+   * 因为病根是**同一件东西有多个实例**，不是某一处算错。
+   *
+   * 现在：一条，钉在底缘正中，**永远显示**，内容跟着当前焦点走。
+   * 谁在焦点谁把自己的工具组报上来（画布 / 那扇窗），这里只负责渲染。
+   *
+   * 用 `dock` 而不是 `anchor`：dock 的位置全程由容器算、随容器尺寸重算，
+   * 天然免疫"内容后到 → 落点偏了"那一类（anchor 是算一次定终身）。
+   * 代价是不能拖了 —— 常驻工具栏本来也不该让人拖丢。
+   */
+  const [winGroups, setWinGroups] = useState(null);
+  const [boardGroups, setBoardGroups] = useState([]);
+  const toolbarHostRef = useRef(null);
+
+  /**
+   * 工具组的"内容签名"。上报方每次渲染都会造一份新数组（里面全是闭包），
+   * 直接 setState 的话身份一变就再渲染一轮 —— 一旦上报方的 memo 依赖有点
+   * 不稳，两边就互相踩成**死循环**，而 build 和单测都照不出来。
+   *
+   * 所以这里按**内容**判等：id / 选中值 / 每颗按钮的 id、文案、禁用与高亮。
+   * 变的是身份不是内容 → 不重渲染；缩放百分比那种真变化在 label 里，照样过。
+   */
+  const sigOf = (gs) => (gs || []).map(g => (g
+    ? `${g.id}|${g.value ?? ''}|${g.node ? 'node' : (g.items || []).map(i => `${i.id}${i.label || ''}${i.active ? '*' : ''}${i.disabled ? '!' : ''}`).join(',')}`
+    : '')).join('~');
+
+  const boardSigRef = useRef('');
+  const reportBoardGroups = useCallback((gs) => {
+    const sig = sigOf(gs);
+    if (sig === boardSigRef.current) return;
+    boardSigRef.current = sig;
+    setBoardGroups(gs || []);
+  }, []);
+
+  const winSigRef = useRef('');
+  const reportWinGroups = useCallback((gs) => {
+    const sig = gs ? sigOf(gs) : '\u0000none';
+    if (sig === winSigRef.current) return;
+    winSigRef.current = sig;
+    setWinGroups(gs);
+  }, []);
+
   // 有窗开着 = 屏幕被一件产物占满，外层据此收掉顶栏的浮现
   const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!worldSrc;
   useEffect(() => { onWindowOpenChange?.(!!windowOpen); }, [windowOpen, onWindowOpenChange]);
@@ -151,7 +199,7 @@ export default function CanvasFrame({
       background: COLOR.bgWhite,
       overflow: 'hidden',
     }}>
-      <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
+      <div ref={toolbarHostRef} style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'column' }}>
         <BoardCanvas
           projectId={projectId}
           currentSessionId={sessionId}
@@ -164,6 +212,7 @@ export default function CanvasFrame({
           onUiState={onBoardUiState}
           stageRef={stageRef}
           onFocusDeck={openDeck}
+          onToolbarGroups={reportBoardGroups}
           // 跟顶栏收起用**同一个** windowOpen —— 以前这里是宽松版
           // （`deckOpen || site || world`），而窗真正渲染用的是严格版，两处
           // 各写一遍：deckOpen 为真但窗没渲染的那一瞬，画布工具栏和小地图
@@ -177,6 +226,7 @@ export default function CanvasFrame({
             tab={deckTab}
             onTabChange={setDeckTab}
             onClose={() => setDeckOpen(false)}
+            onToolbarGroups={reportWinGroups}
             title={deckTaskSrc?.title || project?.name || '幻灯'}
             artifactExports={deckTaskSrc?.exports}
             onExport={onExport}
@@ -246,6 +296,7 @@ export default function CanvasFrame({
               isStreaming={isStreaming}
               onIframeReady={onIframeReady}
               onClose={() => setSiteSrc(null)}
+              onToolbarGroups={reportWinGroups}
             />
           </Suspense>
         )}
@@ -263,9 +314,23 @@ export default function CanvasFrame({
               onExport={onExport}
               fileVersions={fileVersions}
               onClose={() => setWorldSrc(null)}
+              onToolbarGroups={reportWinGroups}
             />
           </Suspense>
         )}
+        {/* 全项目唯一那条工具栏。**渲染在最后 = 层级压在产物窗之上**
+            （窗是 z:500 的绝对层，工具栏得盖得住它），内容跟焦点走。 */}
+        <FloatingToolbar
+          id="tools"
+          boundsRef={toolbarHostRef}
+          dock="bottom-center"
+          stack="row"
+          // 510 = ARTIFACT_WINDOW_Z(500) + 10。写常量不 import ——
+          // ArtifactWindow 是懒加载的，为一个数字把它拖进主包不值
+          zIndex={510}
+          groups={winGroups || boardGroups}
+        />
+
       </div>
     </div>
   );

@@ -58,6 +58,8 @@ export default function DeckWindow({
   tab, onTabChange, onClose,
   /** 服务端给的可导出格式 + 导出动作（2026-08-13 从顶栏搬进工具栏） */
   artifactExports = null, onExport = null,
+  /** 工具组交给外层那条常驻工具栏（窗自己不渲工具栏了） */
+  onToolbarGroups = null,
   title = '幻灯',
   htmlSrc, htmlContent,
   selectedAnchor, onSelectChange,
@@ -355,6 +357,7 @@ export default function DeckWindow({
       onClose={onClose}
       escToClose={false}
       groups={groups}
+      onToolbarGroups={onToolbarGroups}
       headerExtra={showCandidateBar ? (
         <CanvasCandidateBar
           candidates={candidates}

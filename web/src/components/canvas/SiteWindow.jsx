@@ -66,6 +66,8 @@ export default function SiteWindow({
   /** 服务端给的可导出格式（/artifacts 的 tasks[].exports），随 focusDeck 传下来 */
   artifactExports = null,
   onExport = null,
+  /** 工具组交给外层那条常驻工具栏（窗自己不渲工具栏了） */
+  onToolbarGroups = null,
   onClose,
 }) {
   const [viewport, setViewport] = useState(SITE_VIEWPORTS[0].id);
@@ -630,6 +632,7 @@ export default function SiteWindow({
       onClose={onClose}
       escToClose={false}
       groups={groups}
+      onToolbarGroups={onToolbarGroups}
       banner={(tab === 'edit' || tab === 'drag') ? (
         <WindowBanner>
           {tab === 'edit' ? (

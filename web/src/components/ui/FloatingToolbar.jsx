@@ -92,6 +92,8 @@ export default function FloatingToolbar({
   stack = 'column',
   /** 限位容器（不传就不限位）。传 ref 或 DOM 元素都行 */
   boundsRef,
+  /** 压在谁上面。常驻工具栏要盖过产物窗（z=500），所以得能显式给 */
+  zIndex = null,
   style,
 }) {
   const panel = usePanelState(id);
@@ -312,7 +314,7 @@ export default function FloatingToolbar({
       onPointerLeave={() => { hoverRef.current = false; if (autoHide) scheduleHide(); }}
       style={{
         position: 'absolute', left: pos.x, top: pos.y,
-        zIndex: panel?.zIndex || 400,
+        zIndex: zIndex ?? (panel?.zIndex || 400),
         display: 'flex', flexDirection: stack, alignItems: 'center', gap: GAP.xs,
         cursor: dock ? 'default' : (dragging ? 'grabbing' : 'grab'),
         userSelect: 'none', touchAction: 'none',
