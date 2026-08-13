@@ -47,5 +47,9 @@
     "better-sqlite3@12.9.0": true,
     "esbuild@0.28.0": true,
     "sharp@0.34.5": true
+  },
+  "devDependencies": {
+    "happy-dom": "^20.11.2",
+    "vitest": "^4.1.10"
   }
 }
