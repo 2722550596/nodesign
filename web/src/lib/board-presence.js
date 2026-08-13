@@ -117,17 +117,27 @@ export function reducePresence(table, evt, resolve) {
     case 'run.file_changed': {
       const cur = table[who];
       if (!cur) return table;
-      const hit = resolve?.(evt.path || evt.file);
+      // ⚠️ 字段名是 `filePath`（events.js:fileChanged 的真实形状）。这里曾读
+      // `evt.path || evt.file` —— 两个都不存在，resolve(undefined) 恒 null，
+      // **在场者的位置从未被设置过**，镜头跟随和精灵定位因此整个失效；
+      // 而 19 条测试全绿，因为测试自己 mock 了一套不存在的事件形状
+      // （2026-08-13 查实）。真形状现在有 parity 断言钉在测试里。
+      const hit = resolve?.(evt.filePath);
       if (!hit) return table;
       if (cur.targetId === hit.objectId && cur.zoneId === hit.zoneId) return table;
       return { ...table, [who]: { ...cur, targetId: hit.objectId, zoneId: hit.zoneId, at: evt.at || cur.at } };
     }
 
-    case 'run.tool_use': {
+    // "正在做什么"那句话。⚠️ 事件类型是 `run.tool_use.started`（只带工具名）
+    // 和 `run.tool_use_summary`（SDK 的一句话摘要，更好读，来了就覆盖）——
+    // 这里曾监听不存在的 `run.tool_use`，message 永远是 null（同上那批测试
+    // 假形状事故）。
+    case 'run.tool_use.started':
+    case 'run.tool_use_summary': {
       const cur = table[who];
       if (!cur) return table;
       const msg = evt.summary || evt.name || null;
-      if (cur.message === msg) return table;
+      if (!msg || cur.message === msg) return table;
       return { ...table, [who]: { ...cur, message: msg } };
     }
 

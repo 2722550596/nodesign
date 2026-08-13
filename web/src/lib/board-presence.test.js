@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   emptyPresence, reducePresence, activePresences, followTarget,
@@ -77,7 +78,7 @@ describe('位置与话', () => {
   it('file_changed 更新那个人的位置', () => {
     const t = run([
       { type: 'run.start' },
-      { type: 'run.file_changed', path: 'tasks/海报/a.html' },
+      { type: 'run.file_changed', filePath: 'tasks/海报/a.html' },
     ]);
     expect(t[MAIN_AGENT_ID].targetId).toBe('tasks/海报/a.html');
     expect(t[MAIN_AGENT_ID].zoneId).toBe('task/海报');
@@ -91,7 +92,7 @@ describe('位置与话', () => {
     const t = run([
       { type: 'run.start' },
       { type: 'run.task.started', toolUseId: 'a' },
-      { type: 'run.file_changed', path: 'tasks/甲/x.md', parentToolUseId: 'a' },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md', parentToolUseId: 'a' },
     ]);
     expect(t['agent:a'].targetId).toBe('tasks/甲/x.md');
     expect(t[MAIN_AGENT_ID].targetId).toBeNull();
@@ -100,25 +101,25 @@ describe('位置与话', () => {
   it('解析不出物件就不动位置（不要指向一个不存在的东西）', () => {
     const t = run([
       { type: 'run.start' },
-      { type: 'run.file_changed', path: 'tasks/甲/x.md' },
-      { type: 'run.file_changed', path: null },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md' },
+      { type: 'run.file_changed', filePath: null },
     ], (p) => (p === 'tasks/甲/x.md' ? { objectId: p, zoneId: 'task/甲' } : null));
     expect(t[MAIN_AGENT_ID].targetId).toBe('tasks/甲/x.md');
   });
 
   it('位置没变就返回同一个引用（不制造无谓重渲染）', () => {
-    const a = run([{ type: 'run.start' }, { type: 'run.file_changed', path: 'tasks/甲/x.md' }]);
-    const b = reducePresence(a, { type: 'run.file_changed', path: 'tasks/甲/x.md' }, resolve);
+    const a = run([{ type: 'run.start' }, { type: 'run.file_changed', filePath: 'tasks/甲/x.md' }]);
+    const b = reducePresence(a, { type: 'run.file_changed', filePath: 'tasks/甲/x.md' }, resolve);
     expect(b).toBe(a);
   });
 
   it('tool_use 更新那句"正在做什么"', () => {
-    const t = run([{ type: 'run.start' }, { type: 'run.tool_use', summary: '正在写 canvas.html' }]);
+    const t = run([{ type: 'run.start' }, { type: 'run.tool_use_summary', summary: '正在写 canvas.html' }]);
     expect(t[MAIN_AGENT_ID].message).toBe('正在写 canvas.html');
   });
 
   it('没上场的人收到事件不会凭空出现', () => {
-    const t = run([{ type: 'run.file_changed', path: 'tasks/甲/x.md' }]);
+    const t = run([{ type: 'run.file_changed', filePath: 'tasks/甲/x.md' }]);
     expect(Object.keys(t)).toHaveLength(0);
   });
 
@@ -138,8 +139,8 @@ describe('镜头跟谁', () => {
     const t = run([
       { type: 'run.start' },
       { type: 'run.task.started', toolUseId: 'a' },
-      { type: 'run.file_changed', path: 'tasks/甲/x.md', parentToolUseId: 'a' },
-      { type: 'run.file_changed', path: 'tasks/乙/y.md' },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md', parentToolUseId: 'a' },
+      { type: 'run.file_changed', filePath: 'tasks/乙/y.md' },
     ]);
     expect(followTarget(t).id).toBe(MAIN_AGENT_ID);
     expect(followTarget(t).targetId).toBe('tasks/乙/y.md');
@@ -149,7 +150,7 @@ describe('镜头跟谁', () => {
     const t = run([
       { type: 'run.start' },
       { type: 'run.task.started', toolUseId: 'a' },
-      { type: 'run.file_changed', path: 'tasks/甲/x.md', parentToolUseId: 'a' },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md', parentToolUseId: 'a' },
     ]);
     expect(followTarget(t).id).toBe('agent:a');
   });
@@ -163,7 +164,7 @@ describe('镜头跟谁', () => {
     const t = run([
       { type: 'run.start' },
       { type: 'run.task.started', toolUseId: 'a' },
-      { type: 'run.file_changed', path: 'tasks/甲/x.md', parentToolUseId: 'a' },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md', parentToolUseId: 'a' },
       { type: 'run.subagent.stop', toolUseId: 'a' },
     ]);
     expect(followTarget(t)).toBeNull();
@@ -175,5 +176,31 @@ describe('颜色表', () => {
     expect(colorFor(0)).toBe(PRESENCE_COLORS[0]);
     expect(colorFor(PRESENCE_COLORS.length)).toBe(PRESENCE_COLORS[0]);
     expect(colorFor(999)).toBeTruthy();
+  });
+});
+
+describe('事件形状 parity（2026-08-13 事故的钉子）', () => {
+  // reducer 曾监听不存在的 `run.tool_use`、读不存在的 `evt.path`，而这份测试
+  // 自己 mock 了同一套假形状 —— 19 条全绿、功能全死（位置和消息从未被设置）。
+  // 从今往后**服务端源码是真相**：reducer 消费的每个事件类型、每个字段名，
+  // 必须在 events.js 的构造器里逐字存在。mock 改形状前先看这里为什么会红。
+  const eventsSrc = fs.readFileSync(
+    new URL('../../../server/engine/agent/events.js', import.meta.url), 'utf8',
+  );
+  it.each([
+    ['run.file_changed', 'filePath'],
+    ['run.tool_use.started', 'name'],
+    ['run.tool_use_summary', 'summary'],
+  ])('事件 %s 与其字段 %s 在服务端真实存在', (type, field) => {
+    expect(eventsSrc).toContain(`'${type}'`);
+    const ctor = eventsSrc.split(`'${type}'`)[1]?.split('}')[0] || '';
+    expect(ctor).toContain(field);
+  });
+
+  it('reducer 里消费的事件类型没有一个是编出来的', () => {
+    const reducerSrc = fs.readFileSync(new URL('./board-presence.js', import.meta.url), 'utf8');
+    const consumed = [...reducerSrc.matchAll(/case '(run\.[\w.]+)'/g)].map(m => m[1]);
+    expect(consumed.length).toBeGreaterThan(0);
+    for (const t of consumed) expect(eventsSrc).toContain(`'${t}'`);
   });
 });
