@@ -96,9 +96,6 @@ export default function BoardCanvas({
   // 工具栏合并（2026-07-27）：画布自己不再渲工具条 —— 通过 apiRef 暴露操作、
   // onUiState 上报状态，控件统一画在外层 CanvasToolbar
   apiRef, onUiState,
-  // ✏️ 跨会话编辑前打招呼：切会话后 CanvasFrame 直接进 Edit（唯一的自动切换意图；
-  // 工作台已是常驻默认视图，切会话本身不再离开画布）
-  onEditNav,
   // 舞台层（2026-07-28）：ProjectWorkspace 把 run.* 事件经这个 ref 转发进来，
   // 画布把 agent 的实时动作演出来（代码直播 / 终端 / shimmer / chip / 角标）
   stageRef,
@@ -1280,14 +1277,19 @@ export default function BoardCanvas({
         // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
         built: !!(o.root && o.root !== o.srcRoot),
       });
-    } else if (o.task) {
-      // 任务 deck：与会话解绑，原地开最大化编辑窗
-      onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title });
-    } else if (o.sid === currentSessionId) {
-      onFocusDeck?.({ kind: 'session' });
     } else {
-      onEditNav?.();   // 旧式会话 deck 跨会话：切会话后 CanvasFrame 直接开窗
-      navigate(`/projects/${projectId}/sessions/${o.sid}`);
+      // deck：与会话解绑，原地开最大化编辑窗。
+      //
+      // ⚠️ 判据从 `o.task` 改成走 else（2026-08-13）。`task` 是**文件夹路径**，
+      // 而住在工作区根上的 deck 路径是空串 —— 空串 falsy，于是根上的每一份
+      // deck 都掉进下面那条"旧式会话 deck"分支，`navigate` 到
+      // `/sessions/undefined`。今天双击先走展开态所以少有人踩，但产物本来就
+      // 默认摊在根上，展开态一取消这条就是每次必中。
+      //
+      // 顺带删掉的两条分支（会话 deck / 跨会话切换）是**死代码**：deck 物件
+      // 只有一处构造（本文件 `id: deck:${a.file}`），那里一律带 `task: t.id`，
+      // 所以"没有 task 的 deck"从 08-08 起就不存在了。
+      onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title });
     }
   };
 

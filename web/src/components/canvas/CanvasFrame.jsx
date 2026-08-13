@@ -19,8 +19,7 @@ const WorldWindow = lazy(() => import('./WorldWindow.jsx'));
  *   - 编辑 deck = 在桌面上开一扇最大化窗口（DeckWindow）：铺满视口绝大部分、
  *     桌面压暗在底、窗口头部自带 Edit/Drag/Preview/Code 标签 + 关闭钮，
  *     关掉落回画布的内嵌预览态
- *   - 打开窗口的入口：画布物件的 ✏️（同会话直接开；跨会话经 editNavRef，
- *     切完会话再开）
+ *   - 打开窗口的入口：画布物件的 ✏️（产物与会话解绑，原地就开）
  *
  * 原 deck 编辑内脏（iframe/bridge/overlay/Monaco 全家）整体迁去 DeckWindow.jsx。
  */
@@ -68,17 +67,10 @@ export default function CanvasFrame({
   // BoardCanvas 经 apiRef 暴露操作（顶栏面包屑 / 刷新用；外面给了就用外面那个）
   const ownBoardApiRef = useRef(null);
   const boardApiRef = boardApiRefProp || ownBoardApiRef;
-  // ✏️ 跨会话编辑：切会话后再开窗（同会话的 ✏️ 直接 openDeck）
-  const editNavRef = useRef(false);
-  useEffect(() => {
-    if (editNavRef.current) {
-      editNavRef.current = false;
-      setDeckTaskSrc(null);
-      setDeckTab('edit');
-      setDeckOpen(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  // ⚠️「✏️ 跨会话编辑」那条链（editNavRef + 切会话后自动开窗）2026-08-13 删除：
+  // 它唯一的触发点是 BoardCanvas 里"没有 task 的 deck"分支，而 deck 物件从
+  // 08-08 起一律带 task，那条分支已是死代码。留着一个永不被置位的 ref 只会
+  // 让人以为还有这么一条路径。
   // 会话没了（回 /work 新对话）→ 会话 deck 窗自然关掉（任务 deck 窗与会话解绑，保留）
   useEffect(() => {
     if (!sessionId && !deckTaskSrc) setDeckOpen(false);
@@ -114,19 +106,32 @@ export default function CanvasFrame({
     setDeckOpen(true);
   };
 
-  // 任务 deck 的 htmlSrc：直接走 artifact-file（tasks/<任务>/canvas.html）
-  // 版本按**这一份文件**取：同任务里的别的 deck 被改动时，这扇窗不该重载
-  const deckRelPathForSrc = deckTaskSrc
-    ? `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`
-    : null;
-  const deckHtmlSrc = deckRelPathForSrc
-    ? `${Assets.artifactFileUrl(projectId, deckRelPathForSrc)}?v=${versionOfFile(fileVersions, deckRelPathForSrc)}`
-    : htmlSrc;
-  // 用户在画布上直接改字时，改的是哪一份要跟着走 —— 不带路径会写回会话的
-  // canvas.html，前端显示"已保存"而用户看的那份纹丝不动（2026-07-28）
+  /**
+   * 这扇窗开的是哪一份文件（工作区相对路径）。读和写共用一份 —— 它们本来
+   * 就该是同一个值，分成两个同样的表达式只是等着哪天改一处漏一处。
+   *
+   * ⚠️ 这里曾经拼成 `tasks/<任务>/<file>`（任务模型的遗留）。08-08 扁平化之后
+   * `file` 本身**就是**工作区相对路径（`/artifacts` 的 `a.file`，assets.js:398
+   * 标着"相对工作区根"），再套一层 `tasks/` 是双重前缀。三个后果，只有第一个
+   * 是无害的：
+   *
+   *   1. 读：`artifact-file` 有兼容 shim 剥掉 `^tasks/<段>/`，**恰好**还原出
+   *      正确路径 —— 所以从画面上完全看不出错。
+   *   2. 写：`PUT /canvas` 没有 shim，`fs.mkdir(recursive)` + 写盘，会在工作区
+   *      根上**重新造出一个 `tasks/` 目录**。下一次 `/artifacts` 调
+   *      `ensureProjectWorkspace` 看到 `tasks/` 又活了 → 重跑扁平化迁移 →
+   *      同名文件字节不同 → 落一个 `<名>-任务版.html` 的副本。
+   *   3. 这个路径还会随 pending-change 传给 agent（`{ path: deckPath }`），
+   *      而它指向一个磁盘上根本不存在的位置。
+   *
+   * 版本按**这一份文件**取：同一个文件夹里别的 deck 被改动时，这扇窗不该重载。
+   */
   const deckRelPath = deckTaskSrc
-    ? `tasks/${deckTaskSrc.task}/${deckTaskSrc.file || 'canvas.html'}`
+    ? (deckTaskSrc.file || 'canvas.html')
     : null;
+  const deckHtmlSrc = deckRelPath
+    ? `${Assets.artifactFileUrl(projectId, deckRelPath)}?v=${versionOfFile(fileVersions, deckRelPath)}`
+    : htmlSrc;
   const handleTextEditWithPath = onTextEdit
     ? (info) => onTextEdit({ ...info, deckPath: deckRelPath })
     : undefined;
@@ -150,7 +155,6 @@ export default function CanvasFrame({
           apiRef={boardApiRef}
           onUiState={onBoardUiState}
           stageRef={stageRef}
-          onEditNav={() => { editNavRef.current = true; }}
           onFocusDeck={openDeck}
           deckOpen={deckOpen || !!siteSrc || !!worldSrc}
         />
