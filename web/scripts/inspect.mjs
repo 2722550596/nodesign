@@ -64,7 +64,15 @@ const unmatched = [];
 /** 前端发出去的写请求（拖拽落盘、改名这类"看不见的动作"靠它验） */
 const calls = [];
 page.on('pageerror', e => errors.push(`pageerror: ${String(e).slice(0, 400)}`));
-page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text().slice(0, 400)}`); });
+page.on('console', m => {
+  if (m.type() !== 'error') return;
+  const t = m.text();
+  // vite 开发服没有 /ws 端点，WS 握手失败是通道自身的环境噪音（前端有重连
+  // 兜底，真后端的 WS 问题这条通道本来就测不到）。别让它污染「errors 必须
+  // 为空」这条判据 —— 判据一旦常态性带噪，就没人再看它了。
+  if (/WebSocket/i.test(t)) return;
+  errors.push(`console: ${t.slice(0, 400)}`);
+});
 
 await page.route('**/api/**', async (r) => {
   const u = new URL(r.request().url());
@@ -94,12 +102,29 @@ await page.waitForTimeout(WAIT);
 
 // 交互：--click / --dblclick 传选择器，发**真事件**（画布很多手势是自己数
 // pointerup 的，合成事件糊弄不过去）
+
+// 滚轮：`--wheel=dx,dy`（其它交互之前，视口中心）。画布的滚轮=平移、
+// Ctrl+滚轮=缩放 —— 验"全向无限"就得能把镜头真的推出内容圈。
+const WHEEL = opt('wheel', null);
+if (WHEEL) {
+  const [wdx, wdy] = WHEEL.split(',').map(Number);
+  await page.mouse.move(VW / 2, VH / 2);
+  await page.mouse.wheel(wdx, wdy);
+  await page.waitForTimeout(600);
+}
+
 /**
  * 拖拽：`--drag=<选择器>|<dx>,<dy>`。**必须一步步发 mousemove** ——
  * 画布的拖拽是自己在 pointermove 里积位移的，一步到位的 move 它只会当成
  * 一次抖动（而且落点提示根本来不及算）。
+ *
+ * `--drag-wheel=dx,dy`：拖到 70% 处滚一把滚轮再继续（验"拖拽中相机动了
+ * 卡还钉不钉在光标下"）。结束后输出 `dragEnd`：最终鼠标位置 + 目标元素的
+ * 实际矩形 —— 抓点是元素中心，钉住 = 元素中心 ≈ 最终鼠标位置。
  */
 const DRAG = opt('drag', null);
+const DRAG_WHEEL = opt('drag-wheel', null);
+let dragEnd = null;
 if (DRAG) {
   const [sel, delta] = DRAG.split('|');
   const [dx, dy] = (delta || '0,0').split(',').map(Number);
@@ -112,10 +137,21 @@ if (DRAG) {
     await page.mouse.down();
     await page.mouse.move(sx + dx * 0.3, sy + dy * 0.3, { steps: 6 });
     await page.mouse.move(sx + dx * 0.7, sy + dy * 0.7, { steps: 6 });
+    if (DRAG_WHEEL) {
+      const [a, c] = DRAG_WHEEL.split(',').map(Number);
+      await page.mouse.wheel(a, c);
+      await page.waitForTimeout(250);
+      // 滚轮不产生 pointermove —— 这里补一次 1px 的挪动再挪回来，
+      // 模拟真人手上永远存在的微动（纯滚轮期间的钉住由 cam effect 兜）
+      await page.mouse.move(sx + dx * 0.7 + 1, sy + dy * 0.7, { steps: 1 });
+    }
     await page.mouse.move(sx + dx, sy + dy, { steps: 8 });
     await page.waitForTimeout(120);
     await page.mouse.up();
     await page.waitForTimeout(900);
+    const after = await page.$(sel);
+    const bb = after ? await after.boundingBox() : null;
+    dragEnd = { mouse: { x: sx + dx, y: sy + dy }, box: bb };
   }
 }
 
@@ -188,5 +224,6 @@ console.log(JSON.stringify({
   errors,
   unmatched: [...new Set(unmatched)],
   calls,
+  dragEnd,
   probe,
 }, null, 2));

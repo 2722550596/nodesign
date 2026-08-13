@@ -75,6 +75,12 @@ function sanitizeSize(raw) {
  */
 const CANVAS_NATIVE_KINDS = new Set(['scribble', 'text']);
 
+/**
+ * 坐标夹持上限。画布 2026-08-13 起全向无限，坐标不再由 board.size 夹住 ——
+ * 这个数只挡非有限值和纯属事故的数字（±100 万世界像素之外没有正常操作能到）。
+ */
+const COORD_LIMIT = 1e6;
+
 /** 涂鸦路径串上限。一条随手画的线约 300~800 字符，8000 够长且撑不爆 board.json */
 const MAX_SCRIBBLE_PATH = 8000;
 /**
@@ -119,13 +125,14 @@ function sanitizeObject(o, size) {
   // 一个看不见也删不掉的幽灵物件。
   if (kind && !data) return null;
   return {
-    // 画布原生物件可以住在负坐标（产物旁边的余白就是给它们的），
-    // 磁盘产物仍夹在正区间里。
-    x: clampNum(o.x, kind ? -size.w : 0, size.w, 0),
-    y: clampNum(o.y, kind ? -size.h : 0, size.h, 0),
+    // 画布 2026-08-13 起全向无限：坐标不再被桌面尺寸夹持（原来非 native 只许
+    // 正区间、native 也出不了 ±size）。这里只挡非有限值和纯属事故的数字 ——
+    // 夹得再紧一点都意味着"用户摆在那儿的东西刷新后跳走"，那是静默数据损坏。
+    x: clampNum(o.x, -COORD_LIMIT, COORD_LIMIT, 0),
+    y: clampNum(o.y, -COORD_LIMIT, COORD_LIMIT, 0),
     z: clampNum(o.z, 0, 1e6, 0),
-    ...(Number.isFinite(Number(o.w)) ? { w: clampNum(o.w, 4, size.w, 200) } : {}),
-    ...(Number.isFinite(Number(o.h)) ? { h: clampNum(o.h, 4, size.h, 200) } : {}),
+    ...(Number.isFinite(Number(o.w)) ? { w: clampNum(o.w, 4, COORD_LIMIT, 200) } : {}),
+    ...(Number.isFinite(Number(o.h)) ? { h: clampNum(o.h, 4, COORD_LIMIT, 200) } : {}),
     ...(o.expanded ? { expanded: true } : {}),
     // 显式归属：'' = 明确无归属（覆盖 sid 派生），非空 = 所属工作区 id
     ...(typeof o.zone === 'string' && o.zone.length <= 300 ? { zone: o.zone } : {}),
@@ -165,10 +172,11 @@ function sanitizeBinding(b) {
 function sanitizeZone(z, size) {
   if (!z || typeof z !== 'object') return null;
   return {
-    x: clampNum(z.x, 0, size.w, 0),
-    y: clampNum(z.y, 0, size.h, 0),
-    w: clampNum(z.w, 200, size.w, ZONE_DEFAULTS.w),
-    h: clampNum(z.h, 160, size.h, ZONE_DEFAULTS.h),
+    // 同 sanitizeObject：无限画布，文件夹卡也能摆在任何地方（含负坐标）
+    x: clampNum(z.x, -COORD_LIMIT, COORD_LIMIT, 0),
+    y: clampNum(z.y, -COORD_LIMIT, COORD_LIMIT, 0),
+    w: clampNum(z.w, 200, COORD_LIMIT, ZONE_DEFAULTS.w),
+    h: clampNum(z.h, 160, COORD_LIMIT, ZONE_DEFAULTS.h),
     ...(typeof z.title === 'string' && z.title.trim()
       ? { title: z.title.trim().slice(0, 120) }
       : {}),

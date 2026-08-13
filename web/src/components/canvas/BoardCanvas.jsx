@@ -22,7 +22,7 @@ import {
 import BoardObject from './cards/BoardObject.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
-import { boxUnion, ROAM_MARGIN } from '../../lib/board-camera.js';
+import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { zoneOfObjectId } from '../../lib/stage.js';
@@ -946,13 +946,25 @@ export default function BoardCanvas({
     // 挂在外层，事件是**先卡片后画布**冒泡上去的 —— 卡片不主动让路的话，
     // 按在卡片上会同时起一个物件拖拽和一次平移，两边各拽各的。
     if (camApiRef.current?.isHandMode?.()) return;
+    // 工具在手（画笔/文字/批注）时这一下归工具：按在卡上是要在卡上画、写、
+    // 标，不是要拖卡。少了这条，笔画起点落在卡上会同时武装一次物件拖拽 ——
+    // 抬 z、写盘，而笔画提交又吞掉抬手，dragRef 残骸让那张卡黏住光标
+    // （2026-08-13 查实的真 bug，三个症状同一根）。
+    if (toolRef.current !== 'select') return;
     recentDragMovedRef.current = false;
     noteUserTakeover();
     setDragActive(true);
     e.currentTarget.setPointerCapture(e.pointerId);
     const z = ++zMaxRef.current;
     patchLayout(o.id, { x: o.pos.x, y: o.pos.y, z });
-    dragRef.current = { kind: 'object', id: o.id, startX: e.clientX, startY: e.clientY, origX: o.pos.x, origY: o.pos.y, moved: false };
+    dragRef.current = {
+      kind: 'object', id: o.id, startX: e.clientX, startY: e.clientY,
+      // 抓点存**世界坐标**：move 时用「当前相机下光标处的世界点 − 抓点」求
+      // 位移。相机在拖拽中怎么动（滚轮平移、Ctrl+滚轮缩放），卡都钉在光标下。
+      grabWorld: camera.toWorld(e.clientX, e.clientY),
+      lastClientX: e.clientX, lastClientY: e.clientY,
+      origX: o.pos.x, origY: o.pos.y, moved: false,
+    };
   };
 
   const onPointerMove = (e) => {
@@ -960,15 +972,20 @@ export default function BoardCanvas({
     if (!d) return;
     const dx = e.clientX - d.startX; const dy = e.clientY - d.startY;
     if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
+    d.lastClientX = e.clientX; d.lastClientY = e.clientY;
     {
-      // 落点范围：桌面那一列之外还留一圈 ROAM_MARGIN 的空地。
+      // 位移在**世界坐标系**里算：当前相机下光标处的世界点 − 按下时的抓点。
       //
-      // 原来夹死在 `[0, DESKTOP_W-40]`，那是定宽桌面时代的约束 —— 桌面之外
-      // 根本没有画布，夹住是对的。无限画布上线后那一圈空地是真实存在的，
-      // 涂鸦和批注就该放在产物旁边的余白里，再夹死等于把新画幅锁上。
-      // 仍然给上界（不是无限）：拖到几万像素外的卡片找不回来。
-      const nx = Math.min(DESKTOP_W + ROAM_MARGIN, Math.max(-ROAM_MARGIN, d.origX + dx / scale));
-      const ny = Math.max(-ROAM_MARGIN, d.origY + dy / scale);
+      // 老算法是 `origX + 屏幕位移/scale`，公式里没有相机项 —— 拖着卡滚一格
+      // 滚轮，相机平移了，卡却按屏幕位移原地不动，光标底下的目标就这么丢了
+      // （2026-08-13 用户报）。Ctrl+滚轮缩放还会叠一个瞬间跳变（历史总位移
+      // 除以新 scale）。两次 screenToWorld 相减把相机自然消掉，怎么动都跟手。
+      //
+      // 落点不再夹范围（原来 x∈[-800,2160]、y≥-800）：画布已全向无限，
+      // "拖丢了找不回来"由小地图和 Shift+1 兜底，不由夹子兜底。
+      const w = camera.toWorld(e.clientX, e.clientY);
+      const nx = d.origX + (w.x - d.grabWorld.x);
+      const ny = d.origY + (w.y - d.grabWorld.y);
       setLayout(prev => ({ ...prev, [d.id]: { ...prev[d.id], x: nx, y: ny } }));
       // 实时落点提示：这个物件松手会归到哪（工作区高亮 / 文件夹卡高亮）。
       //
@@ -1005,6 +1022,20 @@ export default function BoardCanvas({
       }
     }
   };
+
+  // 拖拽中相机动了：滚轮不产生 pointermove，光标停着纯滚轮时上面那条换算
+  // 没机会跑，卡会在原世界坐标上"漂走"，直到鼠标动一像素才猛地追上。
+  // 这里在相机每次变化时用最后一次已知的光标位置补一帧。
+  useEffect(() => {
+    const d = dragRef.current;
+    if (!d || d.kind !== 'object' || !d.grabWorld) return;
+    const w = camera.toWorld(d.lastClientX, d.lastClientY);
+    setLayout(prev => ({
+      ...prev,
+      [d.id]: { ...prev[d.id], x: d.origX + (w.x - d.grabWorld.x), y: d.origY + (w.y - d.grabWorld.y) },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cam]);
 
   /**
    * 拖到空白处 = 把物件从工作区里摘出来（写 `zone: ''`）。
@@ -1198,6 +1229,15 @@ export default function BoardCanvas({
   };
 
   const handleDeleteNote = async (o) => {
+    // 画布原生物件（涂鸦/文字）：board.json 就是本体，删掉那一条就是删掉它。
+    // 走下面文件那条路会静默失败 —— native 物件没有 `name`，垃圾桶和右键
+    // 删除对它们从来没生效过（2026-08-13 查实）。
+    if (o.native) {
+      setLayout(prev => { const next = { ...prev }; delete next[o.id]; return next; });
+      dirtyRef.current.objects.add(o.id);   // scheduleSave 对缺席的 id 发 null = 服务端删除
+      scheduleSave();
+      return;
+    }
     try {
       // 便利贴落点从 `tasks/<任务>/notes/` 收敛成工作区的 `notes/` 之后，
       // 删除只认文件名（不再需要先知道它属于哪个任务）
@@ -1399,25 +1439,22 @@ export default function BoardCanvas({
   // 症状一律是整页白屏 + "Cannot access 'X' before initialization"，
   // 而且 build 和单测都照过不误，只有真跑才看得见。
   /**
-   * 文件夹（工作区）的三种手势 —— 2026-08-07 定的一套语义：
+   * 文件夹卡的手势 —— 2026-08-13 重做：
    *
-   *   长按（280ms）  抓起来搬。搬的是**整块区**，成员跟着走同样的位移，
-   *                  不然松手之后收容 pass 会把它们全拽回旧位置。
-   *   单击           收起 / 展开
-   *   双击           进这个任务（镜头锁到这块区 = 用户说的"全屏"）
+   *   拖动（>4px）   直接搬走，跟产物卡同一手感
+   *   单击           无语义
+   *   双击           进这个文件夹
    *
-   * 单击要等 DBLCLICK_MS 才动手：不等的话双击的第一下会先把文件夹折起来，
-   * 第二下落到一个已经变形的目标上。这点延迟换的是两个手势都可靠。
+   * 280ms 长按门撤了。它当年防的是"最大命中面积被随手误拖"，但门本身零反馈：
+   * 按下就拖的前 280ms 所有位移被吞、光标还是 pointer，松手又因为 moved 被
+   * 判"什么都不做" —— 体感就是这卡**既拖不动也点不开**（用户报）。误触之忧
+   * 由 4px 阈值 + 单击无副作用兜底，跟产物卡同一套判据。
    *
    * ⚠️ 双击**不能用 `onDoubleClick`**：这里在 pointerdown 时 setPointerCapture
-   * （长按拖拽需要），而捕获会让浏览器不再派发 click / dblclick —— 这个文件
+   * （拖拽需要），而捕获会让浏览器不再派发 click / dblclick —— 这个文件
    * 2026-07-27 就栽过同一个坑（当时是卡片双击失灵）。所以双击是自己数的：
    * 第二下 pointerup 时上一次的单击定时器还在，就判定为双击。
-   *
-   * 长按而不是"一拖就走"：拖是这块画布上最频繁的动作（拖卡片、圈选、平移），
-   * 文件夹又是最大的命中面积，随手一拖就把整块区搬走太容易误触。
    */
-  const ZONE_LONG_PRESS_MS = 280;
   const ZONE_DBLCLICK_MS = 260;
   const zoneDragRef = useRef(null);
   const zoneClickTimer = useRef(null);
@@ -1425,62 +1462,52 @@ export default function BoardCanvas({
 
   /**
    * @param z 区
-   * @param opts.onTap  单击做什么（默认收起/展开；**站在里面时是"退出"** ——
-   *                    你正在这块区里，折叠自己既没意义也没地方点回来）
-   * @param opts.onOpen 双击做什么（默认进任务；站在里面时没有"再进一次"）
+   * @param opts.onTap  单击做什么（默认无事）
+   * @param opts.onOpen 双击做什么（默认进这个文件夹；传 null 表示没有双击语义）
    */
   const zoneGestureProps = useCallback((z, opts = {}) => ({
     onPointerDown: (e) => {
       if (e.button !== 0 || e.target.closest?.('[data-zone-action]')) return;
       if (camApiRef.current?.isHandMode?.()) return;   // 抓手态归镜头（同 onObjectPointerDown）
+      if (toolRef.current !== 'select') return;        // 工具在手归工具（可以在文件夹卡上画/写）
       e.stopPropagation();
       e.currentTarget.setPointerCapture?.(e.pointerId);
-      const members = positionedRef.current
-        .filter(o => o.zoneId === z.id)
-        .map(o => ({ id: o.id, x: o.pos.x, y: o.pos.y }));
+      noteUserTakeover();   // 拖动期间 agent 跟随别抢镜头（产物卡同款，原来漏了）
       zoneDragRef.current = {
         id: z.id, startX: e.clientX, startY: e.clientY,
-        origX: z.x, origY: z.y, members, armed: false, moved: false,
-        timer: setTimeout(() => {
-          if (!zoneDragRef.current) return;
-          zoneDragRef.current.armed = true;
-          setDraggingZone(z.id);
-          // （堆叠 effect 退役之后这里不用再"抢先钉住"了 —— 没有队伍会来抢）
-        }, ZONE_LONG_PRESS_MS),
+        // 抓点世界坐标 —— 跟物件拖拽同一套换算，相机中途动了也跟手
+        grabWorld: camApiRef.current.toWorld(e.clientX, e.clientY),
+        origX: z.x, origY: z.y, moved: false,
       };
     },
     onPointerMove: (e) => {
       const d = zoneDragRef.current;
       if (!d) return;
-      const dx = (e.clientX - d.startX) / scaleRef.current;
-      const dy = (e.clientY - d.startY) / scaleRef.current;
-      if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
-      if (!d.armed) return;
+      if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) <= 4) return;
+      if (!d.moved) { d.moved = true; setDraggingZone(d.id); }
       e.stopPropagation();
-      const nx = Math.max(-ROAM_MARGIN, d.origX + dx);
-      const ny = Math.max(-ROAM_MARGIN, d.origY + dy);
-      setZones(prev => (prev[d.id] ? { ...prev, [d.id]: { ...prev[d.id], x: nx, y: ny } } : prev));
-      setLayout(prev => {
-        const next = { ...prev };
-        for (const m of d.members) next[m.id] = { ...next[m.id], x: m.x + (nx - d.origX), y: m.y + (ny - d.origY) };
-        return next;
-      });
+      const w = camApiRef.current.toWorld(e.clientX, e.clientY);
+      const nx = d.origX + (w.x - d.grabWorld.x);
+      const ny = d.origY + (w.y - d.grabWorld.y);
+      // upsert 而不是"有才改"：agent 刚 mkdir 出来的影子文件夹（ghostZones）
+      // 还没进 zones，旧写法 `prev[d.id] ? ... : prev` 对它是静默 no-op ——
+      // 卡画得出来但怎么拖都纹丝不动（2026-08-13 查实）。第一次拖动就落户。
+      setZones(prev => ({
+        ...prev,
+        [d.id]: { w: FOLDER_CARD.w, h: FOLDER_CARD.h, ...prev[d.id], x: nx, y: ny },
+      }));
     },
     onPointerUp: () => {
       const d = zoneDragRef.current;
       zoneDragRef.current = null;
       if (!d) return;
-      clearTimeout(d.timer);
-      if (d.armed) {
+      if (d.moved) {
         setDraggingZone(null);
         recentDragMovedRef.current = true;      // 别让这一下被当成点击
         dirtyRef.current.zones.add(d.id);
-        for (const m of d.members) dirtyRef.current.objects.add(m.id);
         scheduleSave();
         return;
       }
-      if (d.moved) return;                       // 动过但没到长按：什么都不做
-      // 单击不再有语义（收起态退役）；进文件夹一律双击，跟桌面一致
       const tap = opts.onTap || (() => {});
       // 没有双击语义的时候不用等 —— 那 260ms 是为了给双击让路，白等就是钝
       if (opts.onOpen === null) { clearTimeout(zoneClickTimer.current); tap(); return; }
@@ -1494,12 +1521,10 @@ export default function BoardCanvas({
       zoneClickTimer.current = setTimeout(() => { zoneClickTimer.current = null; tap(); }, ZONE_DBLCLICK_MS);
     },
     onPointerCancel: () => {
-      const d = zoneDragRef.current;
       zoneDragRef.current = null;
-      if (d) clearTimeout(d.timer);
       setDraggingZone(null);
     },
-  }), [patchZone, scheduleSave]);
+  }), [scheduleSave, noteUserTakeover]);
 
 
   /**
@@ -1998,7 +2023,13 @@ export default function BoardCanvas({
           if (!camera.onPointerMove(e)) onPointerMove(e);
         }}
         onPointerUp={(e) => {
-          if (canvasTools.onPointerUp(e)) return;
+          if (canvasTools.onPointerUp(e)) {
+            // 工具吃掉了这次抬手（一笔提交）。物件拖拽若曾误武装，这里必须
+            // 收尾 —— dragRef 残留会让那张卡黏住光标（2026-08-13 真栽过；
+            // 现在 onObjectPointerDown 有工具守卫，这条是保险丝）。
+            if (dragRef.current) { dragRef.current = null; setDragActive(false); }
+            return;
+          }
           camera.onPointerUp(e); onPointerUp(e);
         }}
         onPointerCancel={(e) => { canvasTools.onPointerUp(e); camera.onPointerUp(e); onPointerUp(e); }}
@@ -2037,7 +2068,7 @@ export default function BoardCanvas({
               key={z.id}
               data-board-zone={z.id}
               {...zoneGestureProps(z)}
-              title={`${z.title} · 双击进去 · 长按拖动`}
+              title={`${z.title} · 双击进去 · 拖动搬走`}
               style={{
                 position: 'absolute', left: z.x, top: z.y, width: z.w, height: z.h,
                 zIndex: draggingZone === z.id ? 20 : 1,
@@ -2049,7 +2080,7 @@ export default function BoardCanvas({
                 boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
                   ? `0 0 0 3px ${alpha(CANVAS.brass, 0.18)}, 0 8px 20px rgba(0,0,0,0.14)`
                   : '0 1px 4px rgba(0,0,0,0.05)',
-                cursor: draggingZone === z.id ? 'grabbing' : 'pointer',
+                cursor: draggingZone === z.id ? 'grabbing' : 'grab',
                 userSelect: 'none', touchAction: 'none',
                 transition: `background 150ms, border-color 150ms, box-shadow 150ms${(dragActive || draggingZone === z.id) ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}`}`,
                 animation: POP_IN,

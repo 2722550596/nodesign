@@ -69,8 +69,8 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
   const zoomToRef = useRef(null);
 
   /**
-   * 可漫游边界 = 内容外沿再放宽一整屏。
-   * 那一圈空地是给涂鸦和批注用的"画布外延" —— 够自由，但走不丢。
+   * 内容边界（外沿放宽一圈）。2026-08-13 起它**不再约束相机** —— 只喂给
+   * 小地图做投影范围。留着它是因为"内容聚在哪一片"这个事实本身有用。
    */
   const boundsRef = useRef(null);
   const bounds = contentBox ? boxExpand(contentBox, ROAM_MARGIN) : null;
@@ -81,7 +81,15 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
     viewport: viewportRef.current,
     padding: CAMERA_PADDING,
     origin: CAMERA_ORIGIN,
-    behavior: 'contain',
+    /**
+     * 2026-08-13：`'contain'` → `'free'`，画布本身无限。
+     *
+     * contain 的体感是三面硬墙：内容装得下的那一轴干脆**钉死不响应平移**
+     * （不是撞墙，是拖了没反应），而内容只往下长，于是左/右/上永远是墙。
+     * 用户的原话是"用起来很怪"。走丢的兜底不靠夹持：小地图的投影含视口
+     * （跑多远都看得见回去的方向），外加 Shift+1 全部内容入镜。
+     */
+    behavior: 'free',
     zoomMin: ZOOM_MIN,
     zoomMax: ZOOM_MAX,
   }), []);

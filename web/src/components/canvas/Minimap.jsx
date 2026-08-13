@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { PAPER, PAPER_SHADOW } from '../../lib/paper.js';
-import { viewportWorldBox } from '../../lib/board-camera.js';
+import { viewportWorldBox, boxUnion } from '../../lib/board-camera.js';
 import { GAP } from '../../lib/theme.js';
 
 /**
@@ -51,8 +51,11 @@ export default function Minimap({ bounds, cam, viewport, items = [], onJump }) {
   const draggingRef = useRef(false);
 
   if (!bounds || !viewport?.w) return null;
-  const p = projector(bounds);
   const view = viewportWorldBox(cam, viewport);
+  // 相机 2026-08-13 起是自由的（不再被内容边界夹住），视口可以跑到内容圈外。
+  // 投影范围取「内容 ∪ 视口」：视口框永远画在图内 —— 跑得再远，小地图上也
+  // 看得见自己和内容各在哪边，点一下就能回去。这正是撤掉硬边界的兜底。
+  const p = projector(boxUnion([bounds, view]) || bounds);
   const vTL = p.toMap(view.x, view.y);
 
   const jumpTo = (e) => {
