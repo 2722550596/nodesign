@@ -63,7 +63,9 @@ const ARTIFACTS = [
 ];
 
 /** 文件夹清单（递归全量，含嵌套）——磁盘扫描的真相 */
-const FOLDERS = ['鉴赏页', '鉴赏页/初稿', '雾都'];
+// ⚠️ 不含 '雾都'：世界目录被 manifest 认领成一件产物，服务端的 claimed 机制
+// 就不会再把它当文件夹吐出来（assets.js 里那段"它是产物，不是容器"）
+const FOLDERS = ['鉴赏页', '鉴赏页/初稿'];
 
 const BOARD = {
   size: { w: 4000, h: 2600 },

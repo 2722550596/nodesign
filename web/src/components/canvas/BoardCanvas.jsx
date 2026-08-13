@@ -12,13 +12,11 @@ import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js'
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
-  DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, ZONE, ZONE_MIN_H,
-  PROJECT_BAND_Y, PROJECT_BAND_H,
-  EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP, GROUP_LABEL_H,
-  ZONE_MIN_W, COL_W, COL_GAP,
+  DESKTOP_W, MARGIN_X, FOLDER_CARD,
+  EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, legacyBucketOf, isFileBacked,
+  SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, isFileBacked,
   chromeOf, cardOf,
 } from '../../lib/board-kinds.js';
 import ArtifactCard from './cards/ArtifactCard.jsx';
@@ -134,11 +132,18 @@ export default function BoardCanvas({
   const [ghostZones, setGhostZones] = useState({});
   const layoutLoadedRef = useRef(false);
   const zMaxRef = useRef(10);
-  // 视图模式：arrange=整理（全桌面），work=工作（只看聚焦的工作区）
-  const [viewMode, setViewMode] = useState(() => (currentSessionId ? 'work' : 'arrange'));
-  // 工作视图聚焦的工作区（默认当前 session 的；也可聚焦任意 zone / 文件夹）
-  const [focusZoneId, setFocusZoneId] = useState(currentSessionId || null);
-  const fittedKeyRef = useRef('');        // 工作视图滚到聚焦区：每个目标只滚一次
+  /**
+   * 当前目录（2026-08-13）。`''` = 桌面根，`'鉴赏页/初稿'` = 进到那一层。
+   *
+   * ⚠️ 它替掉的是一对状态：`viewMode`（整理 / 工作两种模式）+ `focusZoneId`
+   * （聚焦哪块区）。那套的语义是"把某一块地摊开来看"，而现在文件夹是方卡、
+   * 进文件夹是**换一层桌面** —— 只剩一个状态：你在哪一层。
+   *
+   * 看全貌不再靠切模式，靠小地图（用户 2026-08-13 拍板：总览不是一种视图，
+   * 是一个导航控件）。
+   */
+  const [cwd, setCwd] = useState('');
+  const fittedKeyRef = useRef('');        // 换层之后把镜头带过去：每层只带一次
   // 交互态
   const dragRef = useRef(null);           // { kind:'object', ... }（桌面化后只剩物件拖拽）
   const saveTimerRef = useRef(null);
@@ -147,7 +152,7 @@ export default function BoardCanvas({
   const zonesRef = useRef(zones); zonesRef.current = zones;
   // 舞台/滚动要在事件回调里读最新布局 —— 状态镜像
   const scaleRef = useRef(1);
-  const zoneViewRef = useRef([]);
+  const folderViewRef = useRef([]);
   const camApiRef = useRef(null);   // 相机 API（hook 在下方才调用，用 ref 让上面的回调也够得着）
 
   /**
@@ -499,286 +504,140 @@ export default function BoardCanvas({
    *   2. 其余未摆放物件 → 画布下方的收纳带（文档架 / deck 架 / 素材 / 文件）
    *   3. 归属 = 物件中心落在工作区有效矩形内（区随内容向下自然生长）
    */
-  const { positioned, zoneView, contentBottom, overlapFixes, groupBands } = useMemo(() => {
-    // 聚焦区（正在里面干活的那个任务）最小画幅 = 一屏；其余贴内容。
-    //
-    // 两轮反馈来回过一次，记下结论免得再翻烧饼：
-    //   07-29 定"聚焦区吃满一屏"
-    //   07-30 反馈"文件夹下面老吊着一块空白，难看" → 一度改成一律贴内容
-    //   07-30 再确认"工作进行时初始就该吃满一屏" → 回到一屏，改的是**空白的来源**
-    //
-    // 关键在于一屏之后别再多出边角料：桌面高度同时收敛到恰好一屏（见 boardH），
-    // 区就把整个视口占满，底下不再留一条既不属于区、也不属于内容的空画幅。
-    // 内容多于一屏时区照常往下长。
-    // 工作区高度一律贴内容（ZONE_MIN_H 起）。
-    //
-    // 2026-08-07 相机上线后，**「聚焦区吃满一屏」这条规则从几何搬到了镜头**：
-    // 以前靠把聚焦区做成一屏高来实现，代价是 viewOffsetY / oneScreenH / boardH
-    // 三个常量死死绑在一起（记忆里那条「必须一起改」的坑，来回改过三轮）。
-    // 现在聚焦 = `flyToBox(区矩形)`，镜头自己把它框满，区高不必再撒谎。
-    const zoneMinHOf = () => ZONE_MIN_H;
-
-    // 占格：placed 成员先标格子，未摆放的按空格入座
-    const grids = {};
-    for (const [zid, z] of Object.entries(zonesEff)) {
-      grids[zid] = {
-        rect: z,
-        cols: Math.max(1, Math.floor((z.w - ZONE.pad * 2) / ZONE.cellW)),
-        occ: new Set(),
-        bottom: z.y + ZONE.header + ZONE.pad,
-      };
-    }
-    const markCells = (g, x, y, w, h) => {
-      const c0 = Math.floor((x - (g.rect.x + ZONE.pad)) / ZONE.cellW);
-      const r0 = Math.floor((y - (g.rect.y + ZONE.header + ZONE.pad)) / ZONE.cellH);
-      const cw = Math.max(1, Math.ceil(w / ZONE.cellW));
-      const ch = Math.max(1, Math.ceil(h / ZONE.cellH));
-      for (let dc = 0; dc < cw; dc++) for (let dr = 0; dr < ch; dr++) {
-        if (c0 + dc >= 0 && r0 + dr >= 0) g.occ.add(`${c0 + dc},${r0 + dr}`);
-      }
-      g.bottom = Math.max(g.bottom, y + h + ZONE.pad);
+  /**
+   * 当前这一层桌面（2026-08-13：「当前目录」模型）。
+   *
+   * ## 这里替掉了什么
+   *
+   * 原来这段是 250 行的区内几何：粗网格占位（grids/markCells）、两趟入座、
+   * 区内 packRow、收纳分组带、收纳带兜底、一屏画幅、避让修正落盘。它服务的是
+   * 「严格分区」那套 —— 文件夹是版面上一块摊开的地，成员摆在框里，所以框内
+   * 需要一整套自己的排布。
+   *
+   * 现在文件夹是**方卡**，进文件夹是**换一层桌面**。于是：
+   *   - 一层里只有两种东西：文件夹卡、产物卡。**同一套排布**，不分内外
+   *   - 不需要区内坐标系（框里没有东西了），也就不需要分组带和一屏画幅
+   *   - 不需要收纳带兜底（每件东西都有它的目录，根目录也是目录）
+   *
+   * ## 只有一条自动
+   *
+   * **没有坐标的东西给个落脚点**。agent 跑的时候用户不在场，十几张图总得有人
+   * 定位置；摆过的一律不动（这条 2026-08-07 定的界线继续有效：
+   * "给新东西一个落脚点" ≠ "持续重排"）。重排是手动的一次「整理」。
+   */
+  const { positioned, folderView, contentBottom } = useMemo(() => {
+    const parentOf = (p) => { const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
+    // id 剥掉 kind 前缀就是它在磁盘上的位置；上级目录就是它住在哪一层。
+    // 判据跟 stage.js 的 zoneOfObjectId、服务端 board-store 的 mapId 是同一套。
+    const dirOfId = (id) => {
+      if (typeof id !== 'string' || id.startsWith('doc:')) return '';
+      const c = id.indexOf(':');
+      const path = (c > 0 && /^[a-z]+$/.test(id.slice(0, c))) ? id.slice(c + 1) : id;
+      return parentOf(path);
     };
-
-    // 自然归属 = **它在磁盘上的上级目录**（2026-08-08）。
-    //
-    // id 就是 kind 前缀 + 工作区相对路径，所以这件事退化成一次 lastIndexOf('/')：
-    //   `deck:鉴赏页/初稿/主稿.html` → 归 `鉴赏页/初稿`
-    //   `site:伊蕾娜手账研究站`      → 上级是根，散在桌面上（站点目录**就是**
-    //                                 那件产物，它不住在一个同名文件夹里）
-    // 在这之前这里是三条并列的猜法（task 字段 / tasks/ 路径前缀 / 会话归属），
-    // 因为那时"东西在哪"和"东西属于谁"是两套账。现在只有一套。
-    // 显式 layout.zone 字段仍然优先（'' = 用户明确把它拖出来了）。
-    const naturalZoneOf = (o) => {
-      const p = typeof o.id === 'string' ? o.id.slice(o.id.indexOf(':') + 1) : '';
-      const i = p.lastIndexOf('/');
-      return i > 0 ? p.slice(0, i) : null;
+    /**
+     * 它住在哪一层。
+     *
+     * ⚠️ **不是直接取上级目录就完事**：`notes/灵感.md`、
+     * `assets/generated/星空.webp` 的上级目录压根不是"用户的文件夹"
+     * （`notes/` `assets/` 是基础设施目录，服务端的文件夹清单里没有它们）。
+     * 直接按上级目录归属的话，这些东西会落在一个**不存在的层**上 ——
+     * 看不见，也没有任何入口能进去。
+     *
+     * 所以往上走，找到第一个真的是文件夹的祖先；一个都没有就归根。
+     * 这也顺带覆盖了"文件夹层级超过扫描深度"那种情况。
+     */
+    const knownFolders = new Set(Object.keys(zonesEff));
+    const homeOf = (path) => {
+      let d = parentOf(path);
+      while (d && !knownFolders.has(d)) d = parentOf(d);
+      return d || '';
     };
-    const effZoneOf = (o) => {
+    // 显式归属字段仍然优先（拖出来的写 ''）—— 它的去留见任务 #13
+    const dirOf = (o) => {
       const stored = layout[o.id];
-      if (stored && stored.zone !== undefined) return stored.zone || null;
-      const nz = naturalZoneOf(o);
-      return nz && grids[nz] ? nz : null;
+      if (stored && stored.zone !== undefined) return stored.zone || '';
+      if (o.native) return stored?.zone || '';        // 画布原生物件跟着字段走
+      if (typeof o.id !== 'string' || o.id.startsWith('doc:')) return '';
+      const c = o.id.indexOf(':');
+      const path = (c > 0 && /^[a-z]+$/.test(o.id.slice(0, c))) ? o.id.slice(c + 1) : o.id;
+      return homeOf(path);
     };
 
-    // pass 1：已摆放的成员 → 在所属工作区标占格
-    for (const o of objects) {
-      const pos = layout[o.id];
-      if (!pos) continue;
-      const zid = effZoneOf(o);
-      if (!zid || !grids[zid]) continue;
-      const sz = sizeOf({ ...o, pos });
-      markCells(grids[zid], pos.x, pos.y, sz.w, sz.h);
-    }
+    // ── 这一层有哪些文件夹（直接子级）+ 每个装了多少东西 ──
+    const allFolders = Object.keys(zonesEff);
+    const here = allFolders.filter(id => parentOf(id) === cwd);
+    const countIn = (dir) => {
+      const under = `${dir}/`;
+      let n = allFolders.filter(id => parentOf(id) === dir).length;
+      for (const o of objects) { const d = dirOf(o); if (d === dir) n += 1; }
+      return n;
+    };
 
-    // pass 2：未摆放物件 → 区内入座或收纳带
-    const items = [];
-    const legacy = { doc: [], deck: [], art: [], file: [] };
-    for (const o of objects) {
-      const stored = layout[o.id];
-      if (stored) { items.push({ ...o, pos: stored }); continue; }
-      const nz0 = naturalZoneOf(o);
-      const zid = nz0 && grids[nz0] ? nz0 : null;
-      if (zid) {
-        const g = grids[zid];
-        const sz = sizeOf({ ...o, pos: {} });
-        const cw = Math.min(g.cols, Math.max(1, Math.ceil(sz.w / ZONE.cellW)));
-        const ch = Math.max(1, Math.ceil(sz.h / ZONE.cellH));
-        let cell = null;
-        for (let idx = 0; idx < 400 && !cell; idx++) {
-          const c = idx % g.cols; const r = Math.floor(idx / g.cols);
-          if (c + cw > g.cols) continue;
-          let free = true;
-          for (let dc = 0; dc < cw && free; dc++) for (let dr = 0; dr < ch && free; dr++) {
-            if (g.occ.has(`${c + dc},${r + dr}`)) free = false;
-          }
-          if (free) cell = { c, r };
-        }
-        if (!cell) cell = { c: 0, r: 0 };
-        const x = Math.min(DESKTOP_W - sz.w, g.rect.x + ZONE.pad + cell.c * ZONE.cellW);
-        const y = g.rect.y + ZONE.header + ZONE.pad + cell.r * ZONE.cellH;
-        markCells(g, x, y, sz.w, sz.h);
-        items.push({ ...o, pos: { x, y, z: 1 } });
-        continue;
-      }
-      legacy[legacyBucketOf(o)].push(o);
-    }
-
-    // 收纳带（桌面底部）：文档架 / 无工作区 deck / 无主素材 / 文件，列数按桌面宽度算
-    const zoneBottom = Object.entries(grids).reduce(
-      (acc, [zid, g]) => Math.max(acc, g.rect.y + (g.rect.collapsed ? FOLDER_CARD_H : Math.max(zoneMinHOf(zid), g.bottom - g.rect.y))), ZONE.bandY);
-    const deckCols = Math.max(1, Math.floor((DESKTOP_W - MARGIN_X * 2) / 268));
-    const artCols = Math.max(1, Math.floor((DESKTOP_W - MARGIN_X * 2) / 228));
-    const docY = zoneBottom + 60;
-    legacy.doc.forEach((o, i) => items.push({ ...o, pos: { x: MARGIN_X, y: docY + i * 120, z: 1 } }));
-    const deckY = docY + legacy.doc.length * 120 + (legacy.doc.length ? 40 : 0);
-    legacy.deck.forEach((o, i) => items.push({ ...o, pos: { x: MARGIN_X + 220 + (i % deckCols) * 268, y: deckY + Math.floor(i / deckCols) * 112, z: 1 } }));
-    const artY = deckY + Math.ceil(legacy.deck.length / deckCols) * 112 + (legacy.deck.length ? 60 : 0);
-    legacy.art.forEach((o, i) => items.push({ ...o, pos: { x: MARGIN_X + (i % artCols) * 228, y: artY + Math.floor(i / artCols) * 210, z: 1 } }));
-    const fileY = artY + Math.ceil(legacy.art.length / artCols) * 210 + 40;
-    legacy.file.forEach((o, i) => items.push({ ...o, pos: { x: MARGIN_X, y: fileY + i * 52, z: 1 } }));
-
-    for (const it of items) it.zoneId = effZoneOf(it);
-
-    // pass 2.5「框内收容」**2026-08-07 撤除**。它做的是"把出框的成员硬拉回框内"，
-    // 当初是为了掩盖另一个 bug（区挪了成员没跟上）——那个 bug 现在从源头修了
-    // （拖区时成员跟着走同样的位移）。留着它的代价是：你把卡拖到区边缘外一点，
-    // 下一帧就被吸回去，而这跟"拖出任务"这条真实路径直接冲突。
-
-    // pass 3：同区避让系统（2026-07-29 重写）
-    //
-    // 旧机制（"先来后到"，后来者被传送到网格空位）的两个毛病：
-    //   1. 你拖着的卡压到别人身上，被挪走的是你手里这张——排斥手感；
-    //   2. 被挪的卡跳到网格序第一个空位，可能离原位很远——传送不是让位。
-    // 新语义：**交互中的卡有路权，别人让**。
-    //   - 路权按 z（每次 pointerdown / 展开都 zMax+1，天然是"最近摸过"序）
-    //   - 让位是最小位移：向下 / 向右 / 向左三个方向里挑挪得最少的那个，
-    //     连锁避让（被挤的再挤别人）；侧移超过 8 次防振荡，只往下走（必收敛）
-    //   - 拖拽期间只改渲染位置不落盘 —— 拖走了别人自动弹回，松手才定格
-    // ── 区内排布：顺序是权威，坐标是算出来的（2026-08-07 接线）────────────
-    //
-    // 原来是「粗网格入座 + 避让系统事后推开」两道工序叠着跑，结果是 08-01 报的
-    // 那两件事：卡高从 40 到 176 不等而格高写死 210，**一排 deck 卡下面永远吊
-    // 122px 死白**；4 列只用掉区宽的 976，右边 112px 谁都用不上。
-    //
-    // 现在改成 packRow 一趟排完：列宽取最宽的收起态卡（COL_W=240）、行高贴该行
-    // 最高的卡、整块居中。**排布本身保证数学上不可能重叠**（断言里那条「60 个
-    // 混排物件零重叠」就是拆掉区内避让的依据），所以工作区内不再跑避让 ——
-    // 避让只留给不属于任何工作区的散件。
-    //
-    // 顺序从当前坐标按**读序**推出来（先上后下、同行先左后右），所以旧数据进来
-    // 一次就自洽，不需要迁移；用户拖拽换的也是这个顺序。
-    const overlapFixes = {};
-    const groupBands = [];   // 收纳文件夹的标题带
-    for (const [zid, g] of Object.entries(grids)) {
-      if (g.rect.collapsed) continue;   // 收起的文件夹成员不渲染，摆它没意义
-      const members = items.filter(it => it.zoneId === zid);
-      if (!members.length) continue;
-
-      // 收纳文件夹（2026-08-07）：任务里的子目录各排一条带，带上有标题。
-      // 分组的真相是**磁盘路径**（agent 用 mkdir + mv 收纳），不是画布上的
-      // 虚拟分组 —— 这跟「文件系统即真相」是同一条规矩。
-      const groupOf = (it) => {
-        const p = it.path || it.id;
-        const m = typeof p === 'string' && p.startsWith(`${zid}/`) ? p.slice(zid.length + 1) : '';
-        const seg = m.split('/');
-        // 只认一层：`笔记/a.md` → 「笔记」；`a.md` → 无分组（散在文件夹根）
-        return seg.length > 1 ? seg[0] : '';
-      };
-      const byGroup = new Map();
-      for (const it of members) {
-        const gname = groupOf(it);
-        if (!byGroup.has(gname)) byGroup.set(gname, []);
-        byGroup.get(gname).push(it);
-      }
-      // 散件排最前，收纳组按名字排在后面（顺序稳定，不随 mtime 跳）
-      const groupNames = [...byGroup.keys()].sort((a, b) =>
-        (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b, 'zh')));
-
-      const slots = [];
-      const bands = [];
-      let cursorY = g.rect.y + ZONE.header + ZONE.pad;
-      for (const gname of groupNames) {
-        if (gname) {
-          bands.push({ zoneId: zid, name: gname, y: cursorY, x: g.rect.x + ZONE.pad, w: g.rect.w - ZONE.pad * 2 });
-          cursorY += GROUP_LABEL_H;
-        }
-        // 排的是**这一组里还没有坐标的那些**。已经摆过的不参与，但它们占的
-        // 地方要让开 —— 所以起排线取"这一组里已摆放成员的最低边"，新卡从
-        // 那底下开始铺，不会压到你摆好的东西上。
-        const groupItems = byGroup.get(gname);
-        const seated = groupItems.filter(it => layout[it.id]);
-        const fresh = groupItems.filter(it => !layout[it.id]);
-        const seatedBottom = seated.reduce((m, it) => Math.max(m, it.pos.y + sizeOf(it).h), 0);
-        const yTop = Math.max(cursorY, seatedBottom ? seatedBottom + ROW_GAP : 0);
-        const ordered = [...fresh].sort((a, b) =>
-          (a.pos.y - b.pos.y) || (a.pos.x - b.pos.x) || String(a.id).localeCompare(String(b.id)));
-        const packed = packRow(
-          ordered.map(it => { const sz = sizeOf(it); return { id: it.id, w: sz.w, h: sz.h }; }),
-          { width: g.rect.w - ZONE.pad * 2, xMin: g.rect.x + ZONE.pad, yTop },
-        );
-        slots.push(...packed.slots);
-        cursorY = Math.max(packed.bottom, seatedBottom) + (gname ? ZONE.pad : ROW_GAP);
-      }
-      const packedBottom = cursorY;
-      groupBands.push(...bands);
-      // **只给还没有坐标的物件入座**（2026-08-07 改）。
-      //
-      // 原来这里是"每一帧把区里所有成员重排进 packRow 算出来的槽位"——
-      // 也就是说工作区里根本没法自由摆卡：你拖到哪儿，下一帧都被流回行里，
-      // 拖拽实际改的只是顺序。那是 08-01 定的「顺序是权威，坐标是算的」，
-      // 但它跟"手摆出一个版面"是结构性冲突的（北极星恰恰是后者）。
-      //
-      // 现在：新到货的自动入座（agent 跑的时候你可能不在场，总得有人给它
-      // 定个位置），摆过的一律不动。想重排是**手动**的一次动作 → tidyBoard。
-      const slotById = new Map(slots.map(s => [s.id, s]));
-      for (const it of members) {
-        if (layout[it.id]) continue;              // 有坐标 = 你放的，不动
-        const s = slotById.get(it.id);
-        if (!s) continue;
-        it.pos = { ...it.pos, x: s.x, y: s.y };
-      }
-      g.bottom = Math.max(g.bottom, packedBottom + ZONE.pad);
-    }
-
-    // zone 视图（有效高度随内容生长，含避让后被挤出来的新底边）
-    // 文件夹的矩形**贴自己的内容**（2026-08-08），不再是整个桌面宽的一条带。
-    // 严格分区时代它是版面上的一行，所以拉满宽度是对的；现在它是桌面上的一个
-    // 东西，宽度该由里面装了什么决定 —— 空文件夹是一张小卡，装满了才铺开。
-    const zv = Object.entries(grids).map(([zid, g]) => {
-      const members = items.filter(it => it.zoneId === zid);
-      // 收起态里成员根本不渲染，"贴内容"就没有内容可贴 —— 那时以存档宽度为准
-      // （「整理」写下的那个）。不这么分的话收起之后宽度会塌回最小身位，
-      // 展开又弹回去，一收一展跳两次。
-      let right = g.rect.x + (g.rect.collapsed ? (g.rect.w || ZONE_MIN_W) : ZONE_MIN_W);
-      if (!g.rect.collapsed) {
-        for (const it of members) right = Math.max(right, it.pos.x + sizeOf(it).w + ZONE.pad);
-      }
+    const folders = here.map(id => {
+      const z = zonesEff[id] || {};
       return {
-        id: zid,
-        x: g.rect.x, y: g.rect.y,
-        // 存档矩形的 w/h 只当创建时的估算，不当地板 —— 贴内容才是真相
-        w: Math.min(DESKTOP_W - MARGIN_X * 2, Math.max(ZONE_MIN_W, right - g.rect.x)),
-        h: Math.max(zoneMinHOf(zid), g.bottom - g.rect.y),
-        title: taskTitles.get(zid) || g.rect.title || zid.split('/').pop() || '文件夹',
-        collapsed: !!g.rect.collapsed,
-        memberCount: members.length,
+        id, kind: 'folder',
+        x: Number.isFinite(z.x) ? z.x : 0,
+        y: Number.isFinite(z.y) ? z.y : 0,
+        w: FOLDER_CARD.w, h: FOLDER_CARD.h,
+        title: taskTitles.get(id) || z.title || id.split('/').pop() || '文件夹',
+        count: countIn(id),
       };
     });
 
-    // 桌面高度 = 可见内容最低点 + 余量（收纳进文件夹的成员藏着，不该撑出死滚动区）
-    const collapsedSet = new Set(zv.filter(z => z.collapsed).map(z => z.id));
-    let bottom = zoneBottom;
-    for (const it of items) {
-      if (it.zoneId && collapsedSet.has(it.zoneId)) continue;
-      bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
+    // ── 这一层有哪些物件 ──
+    const items = [];
+    const fresh = [];
+    for (const o of objects) {
+      if (dirOf(o) !== cwd) continue;
+      const stored = layout[o.id];
+      if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
+        items.push({ ...o, pos: stored, zoneId: cwd });
+      } else {
+        const it = { ...o, pos: { x: 0, y: 0, z: 1 }, zoneId: cwd };
+        items.push(it);
+        fresh.push(it);
+      }
     }
-    return { positioned: items, zoneView: zv, contentBottom: bottom, overlapFixes, groupBands };
-  }, [objects, layout, zonesEff, taskTitles, dragActive,
-    viewMode, focusZoneId, currentSessionId]);
+
+    // ── 唯一一条自动：给还没有坐标的排个落脚点 ──
+    //
+    // 起排线取"已经摆好的东西（含文件夹卡）的最低边"，新来的从那底下开始铺，
+    // 不会压到你摆好的版面上。
+    if (fresh.length) {
+      let seatedBottom = 0;
+      for (const f of folders) seatedBottom = Math.max(seatedBottom, f.y + f.h);
+      for (const it of items) {
+        if (fresh.includes(it)) continue;
+        seatedBottom = Math.max(seatedBottom, it.pos.y + sizeOf(it).h);
+      }
+      const ordered = [...fresh].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      const packed = packRow(
+        ordered.map(it => { const sz = sizeOf(it); return { id: it.id, w: sz.w, h: sz.h }; }),
+        { width: DESKTOP_W - MARGIN_X * 2, xMin: MARGIN_X, yTop: seatedBottom ? seatedBottom + ROW_GAP : MARGIN_X },
+      );
+      const slotById = new Map(packed.slots.map(s => [s.id, s]));
+      for (const it of fresh) {
+        const s = slotById.get(it.id);
+        if (s) it.pos = { ...it.pos, x: s.x, y: s.y };
+      }
+    }
+
+    let bottom = 0;
+    for (const f of folders) bottom = Math.max(bottom, f.y + f.h);
+    for (const it of items) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
+    return { positioned: items, folderView: folders, contentBottom: bottom };
+  }, [objects, layout, zonesEff, taskTitles, cwd]);
   positionedRef.current = positioned;
-  zoneViewRef.current = zoneView;
+  folderViewRef.current = folderView;
   commentDraftRef.current = commentDraft;
 
 
-  // 遮盖修正落盘：只在真被推开时写一次，之后布局稳定不再触发
-  useEffect(() => {
-    const ids = Object.keys(overlapFixes || {});
-    if (!ids.length) return;
-    setLayout(prev => {
-      let touched = false;
-      const next = { ...prev };
-      for (const id of ids) {
-        const fix = overlapFixes[id];
-        const cur = prev[id];
-        if (!cur || (Math.abs((cur.x ?? 0) - fix.x) < 1 && Math.abs((cur.y ?? 0) - fix.y) < 1)) continue;
-        next[id] = { ...cur, ...fix };
-        dirtyRef.current.objects.add(id);
-        touched = true;
-      }
-      if (touched) scheduleSave();
-      return touched ? next : prev;
-    });
-  }, [overlapFixes, scheduleSave]);
+  // ⚠️ 这里曾有「遮盖修正落盘」：区内避让把卡推开之后，把新坐标写回 board.json。
+  // 区内避让 2026-08-07 起其实就没在跑了（`resolveZoneAvoidance` 是死导入、
+  // `overlapFixes` 声明后从未被写入，这条 effect 一直在空转），2026-08-13
+  // 随区内几何一起删除。
 
   // ⚠️ 这里曾经有「工作区堆叠」：一条 effect 每帧把所有 zone 按序纵向排成一列、
   // 宽度拉成整个桌面宽，被手动搬过的靠 `pinned` 标记退出队列。
@@ -792,19 +651,15 @@ export default function BoardCanvas({
   // 给的栈底空位（agent 建的那种，用户不在场时总得有个不重叠的地方）。
 
 
-  // 可见性：工作模式只看聚焦工作区（区内成员 + 该 deck 本体）；整理模式下
-  // 收纳成文件夹的工作区内容不铺开（这就是"收纳"）。拖拽中的物件永不隐藏。
+  /**
+   * 可见性 2026-08-13 起**不再是一件事** —— `positioned` 和 `folderView` 本来
+   * 就只装当前这一层。以前要在这儿过滤两遍（聚焦模式看哪块区、收起的文件夹
+   * 内容不铺开），是因为所有层的东西都摊在同一个坐标系里。
+   */
   const draggingId = dragRef.current?.kind === 'object' ? dragRef.current.id : null;
-  const focusZone = viewMode === 'work' ? (focusZoneId || currentSessionId) : null;
-  focusZoneRef.current = focusZone;
-  const collapsedIds = useMemo(
-    () => new Set(zoneView.filter(z => z.collapsed).map(z => z.id)), [zoneView]);
-  const visibleObjects = positioned.filter(o => {
-    if (o.id === draggingId) return true;
-    if (focusZone) return o.zoneId === focusZone || o.id === `deck:${focusZone}`;
-    return !(o.zoneId && collapsedIds.has(o.zoneId));
-  });
-  const visibleZones = focusZone ? zoneView.filter(z => z.id === focusZone) : zoneView;
+  const visibleObjects = positioned;
+  const visibleZones = folderView;
+  focusZoneRef.current = cwd;
 
   // ── 桌面高度 / 镜头裁切（2026-07-28：空白画幅自适应）──
   //
@@ -824,20 +679,14 @@ export default function BoardCanvas({
   // 现在「聚焦区吃满一屏」由**镜头去框它**（flyToBox）实现：意图一模一样，
   // 但工作区的高度回归贴内容，三常量的联动整个消失。
   const contentBox = useMemo(() => {
-    const boxes = visibleZones.map(z => ({
-      x: z.x, y: z.y, w: z.w, h: z.collapsed ? FOLDER_CARD_H : z.h,
-    }));
+    const boxes = visibleZones.map(z => ({ x: z.x, y: z.y, w: z.w, h: z.h }));
     for (const o of visibleObjects) {
       const sz = sizeOf(o);
       boxes.push({ x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h });
     }
-    // 项目区顶带也算内容，否则全景 zoom-to-fit 会把它框在外面
-    if (viewMode === 'arrange') {
-      boxes.push({ x: MARGIN_X, y: PROJECT_BAND_Y, w: DESKTOP_W - MARGIN_X * 2, h: PROJECT_BAND_H });
-    }
     // 一件东西都没有时给一个桌面大小的空板，不然相机没有可约束的东西
     return boxUnion(boxes) || { x: 0, y: 0, w: DESKTOP_W, h: 600 };
-  }, [visibleZones, visibleObjects, viewMode]);
+  }, [visibleZones, visibleObjects]);
 
   const camera = useBoardCamera({ paneRef: scrollRef, contentBox, handTool: tool === 'hand' });
   const { cam } = camera;
@@ -850,11 +699,8 @@ export default function BoardCanvas({
   // 落点归属：新东西放进**当前聚焦的工作区**（有的话），否则算项目级散件。
   // 这跟拖放的归属规则是同一条 —— 谁的框套住它就是谁的。
   const zoneAtPoint = useCallback((w) => {
-    const zs = focusZoneRef.current
-      ? zoneViewRef.current.filter(z => z.id === focusZoneRef.current)
-      : zoneViewRef.current;
-    const hit = zs.find(z => !z.collapsed
-      && w.x >= z.x && w.x < z.x + z.w && w.y >= z.y && w.y < z.y + z.h);
+    const hit = folderViewRef.current.find(z =>
+      w.x >= z.x && w.x < z.x + z.w && w.y >= z.y && w.y < z.y + z.h);
     return hit?.id || null;
   }, []);
 
@@ -964,8 +810,8 @@ export default function BoardCanvas({
   const rectOfId = useCallback((id) => {
     const o = positionedRef.current.find(it => it.id === id);
     if (o) { const sz = sizeOf(o); return { x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h }; }
-    const z = zoneViewRef.current.find(zz => zz.id === id);
-    if (z) return { x: z.x, y: z.y, w: z.w, h: z.collapsed ? FOLDER_CARD_H : z.h };
+    const z = folderViewRef.current.find(zz => zz.id === id);
+    if (z) return { x: z.x, y: z.y, w: z.w, h: z.h };
     return null;
   }, []);
 
@@ -998,37 +844,22 @@ export default function BoardCanvas({
     camApiRef.current?.flyToPoint({ x: o.pos.x + sz.w / 2, y: o.pos.y + sz.h / 2 });
   }, []);
 
-  // 聚焦某块工作区 = 把它框进视口（每个目标只飞一次，之后用户自己主宰镜头）。
-  // 这就是「聚焦区吃满一屏」的新实现：镜头去框它，而不是把区做成一屏高。
+  /**
+   * 换了一层 → 把这一层框进视口（每层只飞一次，之后镜头归用户）。
+   *
+   * 以前这里是两条 effect：工作模式飞到聚焦区、整理模式 zoomToFit 全景。
+   * 只剩"当前目录"一个状态之后它们合成一条 —— 进哪层就框哪层的内容。
+   */
   useEffect(() => {
-    if (viewMode !== 'work') return;
-    const target = focusZoneId || currentSessionId;
-    if (!target) return;
-    const zv = zoneView.find(z => z.id === target);
-    if (!zv) return;
-    const key = `work:${target}`;
+    const key = `cwd:${cwd}`;
     if (fittedKeyRef.current === key) return;
     fittedKeyRef.current = key;
-    camApiRef.current?.flyToBox(
-      { x: zv.x, y: zv.y, w: zv.w, h: zv.collapsed ? FOLDER_CARD_H : zv.h },
-      { force: true },
-    );
-  }, [viewMode, focusZoneId, currentSessionId, zoneView]);
+    camApiRef.current?.zoomToFit({ force: true });
+  }, [cwd, folderView]);
 
-  // 回到项目区（全景）：把所有内容框进来
-  useEffect(() => {
-    if (viewMode !== 'arrange') return;
-    if (fittedKeyRef.current === 'arrange') return;
-    fittedKeyRef.current = 'arrange';
-    camApiRef.current?.zoomToFit();
-  }, [viewMode]);
-
-  // 切 session：有 session 默认工作模式（聚焦它的工作区），回 /work 回项目区
-  useEffect(() => {
-    fittedKeyRef.current = '';
-    setFocusZoneId(currentSessionId || null);
-    setViewMode(currentSessionId ? 'work' : 'arrange');
-  }, [currentSessionId]);
+  // ⚠️ 这里曾有「切 session 就切视图」：有会话进工作模式聚焦它的区、回 /work
+  // 回项目区。会话与产物 08-08 解绑、双视图 08-13 退役之后，切对话不该动你
+  // 站在哪一层 —— 那是两件事。
 
   // ── 拖拽（物件 / 工作区 / 背景平移共用 pointer 流）──
   const onObjectPointerDown = (e, o) => {
@@ -1072,17 +903,10 @@ export default function BoardCanvas({
       if (obj) {
         const sz = sizeOf({ ...obj, pos: layoutRef.current[d.id] || obj.pos });
         const cx = nx + sz.w / 2; const cy = ny + sz.h / 2;
-        const candidates = focusZone ? zoneView.filter(z => z.id === focusZone) : zoneView;
-        const folder = candidates.find(z => z.collapsed &&
-          cx >= z.x && cx < z.x + 210 && cy >= z.y && cy < z.y + 76);
-        const zoneHit = folder ? null : candidates.find(z => !z.collapsed &&
+        // 一层里只有文件夹方卡，判据从两条（收起态窄条 / 展开态框）收成一条
+        const folder = folderView.find(z =>
           cx >= z.x && cx < z.x + z.w && cy >= z.y && cy < z.y + z.h);
-        let hint = null;
-        if (folder) {
-          hint = { kind: 'folder', id: folder.id };
-        } else if (zoneHit) {
-          hint = { kind: 'zone', id: zoneHit.id };
-        }
+        const hint = folder ? { kind: 'folder', id: folder.id } : null;
         if (JSON.stringify(dropHintRef.current) !== JSON.stringify(hint)) {
           dropHintRef.current = hint;
           setDropHint(hint);
@@ -1327,12 +1151,12 @@ export default function BoardCanvas({
         setProjectPanel(null); setViewer(null); setDetail(null);
         return;
       }
-      if (viewMode !== 'work') return;
+      if (!cwd) return;                       // 已经在根上，ESC 没有更上一层可退
       exitToProjectRef.current?.();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deckOpen, viewMode, projectPanel, viewer, detail]);
+  }, [deckOpen, cwd, projectPanel, viewer, detail]);
 
   /**
    * 换工具的单键快捷键。
@@ -1361,29 +1185,25 @@ export default function BoardCanvas({
   }, [onAskAgent]);
 
   /**
-   * 进入 / 退出任务（2026-07-28：任务=会话一对一后唯一的一条切换路径）
+   * 换层（2026-08-13）：进一个文件夹 = 桌面换成它那一层；退出 = 回上一层。
    *
-   *   进入  焦点落到这块区；它绑着会话就连会话一起切过去
-   *   退出  回项目区全景，同时退出会话（URL 回 /work，agent 不终止，历史留着）
+   * ⚠️ 以前这对函数叫「进入 / 退出任务」，退出时还要连带退出会话（URL 回
+   * `/work`）—— 那是"任务=会话一对一"时代的绑定。产物与会话 08-08 就解绑了，
+   * **换层不该动对话**：你在文件夹之间走动的时候，正在跑的那轮对话不该被打断。
    *
-   * 顶栏面包屑、ESC、任务区标题栏点击，三个入口共用这两个函数，不各写各的。
+   * 顶栏面包屑、ESC、双击文件夹卡，三个入口共用这两个函数。
    */
   const exitToProject = useCallback(() => {
-    setViewMode('arrange');
-    setFocusZoneId(null);
-    fittedKeyRef.current = '';
-    if (currentSessionId) navigate(`/projects/${projectId}/work`);
-    else requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' }));
-  }, [currentSessionId, navigate, projectId]);
+    setCwd(prev => {
+      const i = prev.lastIndexOf('/');
+      return i > 0 ? prev.slice(0, i) : '';      // 回上一层，而不是一步跳回根
+    });
+  }, []);
 
   exitToProjectRef.current = exitToProject;
 
-  /** 进一个文件夹 = 镜头对上它。**不再切会话** —— 文件夹和对话没有绑定关系了 */
-  const enterZone = useCallback((zid) => {
-    setFocusZoneId(zid);
-    fittedKeyRef.current = '';
-    setViewMode('work');
-  }, []);
+  /** 进一个文件夹 */
+  const enterZone = useCallback((zid) => { if (zid) setCwd(zid); }, []);
   /**
    * 「整理」—— 现在是**手动**的一次动作，不再每帧自动跑（2026-08-07）。
    *
@@ -1403,7 +1223,7 @@ export default function BoardCanvas({
    */
   const tidyBoard = useCallback(() => {
     const targets = positionedRef.current.filter(o => isFileBacked(o));
-    const zv = zoneViewRef.current;
+    const zv = folderViewRef.current;
     if (!targets.length && !zv.length) return;
 
     setLayout(prev => {
@@ -1419,16 +1239,13 @@ export default function BoardCanvas({
         .sort((a, b) => a.y - b.y || a.x - b.x);
       const GAP_X = 24; const GAP_Y = 24;
       const maxW = DESKTOP_W - MARGIN_X * 2;
-      // **宽度在这一趟定死并写进去**。不定的话会自相矛盾：排布用的是排之前的
-      // 宽度，而排完之后宽度跟着内容重算（贴内容），算好的格子对不上真实占地，
-      // 相邻两个文件夹就压在一起（实测 760 宽那个被下一个从 706 处压上）。
-      // 空的给最小身位，有东西的给三列内容的宽 —— 跟桌面上一格一格的图标同理。
-      const slotW = (z) => (z.memberCount ? Math.min(maxW, COL_W * 3 + COL_GAP * 2 + ZONE.pad * 2) : ZONE_MIN_W);
-      let cx = MARGIN_X; let cy = ZONE.bandY; let rowH = 0;
+      // 文件夹是**固定尺寸的方卡**（2026-08-13），排布退化成"一行一行摆格子"。
+      // 以前这里要按内容算每块区的宽度，还得在同一趟里定死写进去 —— 那是
+      // 「贴内容宽的实体区」时代的麻烦，随区几何一起没了。
+      let cx = MARGIN_X; let cy = MARGIN_X; let rowH = 0;
       const patches = {};
       for (const z of tops) {
-        const w = slotW(z);
-        const h = z.collapsed ? FOLDER_CARD_H : z.h;
+        const { w, h } = FOLDER_CARD;
         if (cx > MARGIN_X && cx + w > MARGIN_X + maxW) { cx = MARGIN_X; cy += rowH + GAP_Y; rowH = 0; }
         patches[z.id] = { x: cx, y: cy, w };
         cx += w + GAP_X; rowH = Math.max(rowH, h);
@@ -1546,7 +1363,8 @@ export default function BoardCanvas({
         return;
       }
       if (d.moved) return;                       // 动过但没到长按：什么都不做
-      const tap = opts.onTap || (() => patchZone(d.id, { collapsed: !zonesRef.current[d.id]?.collapsed }));
+      // 单击不再有语义（收起态退役）；进文件夹一律双击，跟桌面一致
+      const tap = opts.onTap || (() => {});
       // 没有双击语义的时候不用等 —— 那 260ms 是为了给双击让路，白等就是钝
       if (opts.onOpen === null) { clearTimeout(zoneClickTimer.current); tap(); return; }
       // 第二下来了 = 双击
@@ -1605,10 +1423,7 @@ export default function BoardCanvas({
   // 目录，"只从桌面移除、文件留着"这个动作没有对应物了 —— 要么删文件夹，
   // 要么不删。
 
-  const focusZoneAction = (zid) => {
-    if (zones[zid]?.collapsed) patchZone(zid, { collapsed: false });
-    enterZone(zid);
-  };
+  const focusZoneAction = (zid) => enterZone(zid);
 
   /**
    * 右键菜单（2026-08-08，Windows 桌面语言）。
@@ -1628,7 +1443,7 @@ export default function BoardCanvas({
       const r = await Assets.createFolder(projectId, { parent });
       if (r?.folder && at) {
         // 落在右键处：不这么做的话它会被自动铺位丢到栈底，你得去找它
-        setZones(prev => ({ ...prev, [r.folder]: { x: Math.round(at.x), y: Math.round(at.y), w: 420, h: ZONE_MIN_H, title: r.folder.split('/').pop() } }));
+        setZones(prev => ({ ...prev, [r.folder]: { x: Math.round(at.x), y: Math.round(at.y), w: FOLDER_CARD.w, h: FOLDER_CARD.h, title: r.folder.split('/').pop() } }));
         dirtyRef.current.zones.add(r.folder);
         scheduleSave();
       }
@@ -1692,12 +1507,8 @@ export default function BoardCanvas({
   //
   // 只留下有意义的那一半：**把视图切到 agent 正在动的那个文件夹**。
   const requestAutoExpand = useCallback((key) => {
-    if (!key) return;
-    setFocusZoneId(prev => {
-      if (prev === key) return prev;
-      fittedKeyRef.current = '';
-      return key;
-    });
+    if (key == null) return;
+    setCwd(prev => (prev === key ? prev : key));
   }, []);
 
   /**
@@ -1804,7 +1615,7 @@ export default function BoardCanvas({
     stageOccupancy.set(o.zoneId, arr);
   }
   const { anchoredCards, dockPanels, dockChips } = splitStageCards({
-    stageCards, positioned, visibleIdSet, visibleZones, focusZone, occupancy: stageOccupancy,
+    stageCards, positioned, visibleIdSet, visibleZones, focusZone: cwd, occupancy: stageOccupancy,
   });
 
   // agent 此刻在动谁：橙色光圈套在目标外圈（物件还没上墙就套它落脚的工作区）。
@@ -1814,11 +1625,11 @@ export default function BoardCanvas({
     for (const c of Object.values(stageCards)) {
       if (c.kind === 'chip' || c.kind === 'question' || c.status !== 'running') continue;
       if (c.objectId && positioned.some(o => o.id === c.objectId)) { objs.add(c.objectId); continue; }
-      const z = zoneOfObjectId(c.objectId) || focusZone;
+      const z = zoneOfObjectId(c.objectId) || cwd;
       if (z) zs.add(z);
     }
     return { ringObjects: objs, ringZones: zs };
-  }, [stageCards, positioned, focusZone]);
+  }, [stageCards, positioned, cwd]);
 
   /**
    * 小地图要画的东西：一件一个小方块（世界坐标）。
@@ -1829,7 +1640,7 @@ export default function BoardCanvas({
   const minimapItems = useMemo(() => {
     const out = visibleZones.map(z => ({
       id: `z:${z.id}`, x: z.x, y: z.y,
-      w: z.w, h: z.collapsed ? FOLDER_CARD_H : z.h, folder: true,
+      w: z.w, h: z.h, folder: true,
     }));
     for (const o of visibleObjects) {
       const sz = sizeOf(o);
@@ -1843,6 +1654,8 @@ export default function BoardCanvas({
     if (!apiRef) return;
     apiRef.current = {
       exitToProject: () => exitToProjectRef.current?.(),
+      /** 面包屑点某一级：直接跳到那一层（'' = 桌面根） */
+      goTo: (dir) => setCwd(dir || ''),
       reload,
       // 项目级四件套（记忆 / 指引 / 风格 / 文件）2026-08-07 从画布顶带收进
       // 顶栏的「⋯」——它们是**设置**不是产物，占着画布最好的一条横带每天
@@ -1853,28 +1666,34 @@ export default function BoardCanvas({
   });
   const lastUiRef = useRef('');
   useEffect(() => {
-    const fz = viewMode === 'work' ? (focusZoneId || currentSessionId) : null;
-    const zv = fz ? zoneView.find(z => z.id === fz) : null;
-    // artifactKind / artifactExports：当前聚焦的任务做的是什么形态、可用哪些导出
-    // 格式（服务端 kinds/ 注册表吐的）—— 导出菜单据此渲染，不再在前端硬编码
-    // 格式表。不上报的话顶栏只能默认按 deck 给 PDF/PPTX，用户点了拿到 400。
-    const focusTask = fz || null;
-    const focusTaskObj = focusTask ? tasks.find(t => t.id === focusTask) : null;
+    // 面包屑：当前目录一路拆到根。顶栏据此渲染「Demo 项目 / 鉴赏页 / 初稿」，
+    // 每一级可点 —— 换层的第三个入口（另两个是双击文件夹卡和 ESC）。
+    const crumbs = [];
+    if (cwd) {
+      const segs = cwd.split('/');
+      for (let i = 0; i < segs.length; i += 1) {
+        const path = segs.slice(0, i + 1).join('/');
+        crumbs.push({ id: path, title: taskTitles.get(path) || segs[i] });
+      }
+    }
+    // artifactKind / artifactExports：当前这一层做的是什么形态、可用哪些导出
+    // 格式（服务端 kinds/ 注册表吐的）—— 导出菜单据此渲染，不在前端硬编码。
+    const focusTaskObj = cwd ? tasks.find(t => t.id === cwd) : null;
     const ui = {
-      viewMode,
-      focus: zv ? { id: zv.id, title: zv.title, count: zv.memberCount, isSession: sessionTitles.has(zv.id) } : null,
+      cwd,
+      crumbs,
       artifactKind: focusTaskObj?.kind || null,
       artifactExports: focusTaskObj?.exports || null,
       // 项目级四件套的一行摘要 —— 卡片撤出画布后，这几句话跟着入口一起
       // 搬进顶栏的「⋯」，不能因为换了个地方就把"里面有没有东西"弄丢
       projectBand: bandSummaries,
     };
-    // zoneView 每次布局变更都换新引用（拖拽期间逐帧）—— 序列化对比，内容没变不上报
+    // 布局每次变更都换新引用（拖拽期间逐帧）—— 序列化对比，内容没变不上报
     const key = JSON.stringify(ui);
     if (key === lastUiRef.current) return;
     lastUiRef.current = key;
     onUiState?.(ui);
-  }, [onUiState, viewMode, focusZoneId, currentSessionId, zoneView, sessionTitles, tasks, bandSummaries]);
+  }, [onUiState, cwd, taskTitles, tasks, bandSummaries]);
 
   /**
    * 画布的工具组。**这里不渲染工具栏** —— 全项目只有一条，活在 CanvasFrame，
@@ -2013,150 +1832,65 @@ export default function BoardCanvas({
           }}
         >
           {/* 工作区（物件下层）：展开态 = 实体区域（标题栏拖整区），收纳态 = 文件夹卡 */}
-          {visibleZones.map((z) => z.collapsed ? (
-            /* 收起态 = 一条整宽的窄条（2026-07-28 改）：跟展开态同宽同左缘，
-               像文件夹列表里的一行，不再是浮在左边的小方卡 */
+          {/* 文件夹：一张方卡（2026-08-13）。
+              在这之前它有两态 —— 收起是一条整宽窄条、展开是一块带标题栏的
+              实体区域、成员摆在框里。那套是"分区"时代的形状：文件夹是版面上
+              摊开的一块地。现在它是**桌面上的一个东西**，双击进去换一层。 */}
+          {visibleZones.map((z) => (
             <div
               key={z.id}
               data-board-zone={z.id}
               {...zoneGestureProps(z)}
-              title="单击展开 · 双击进任务 · 长按拖动"
+              title={`${z.title} · 双击进去 · 长按拖动`}
               style={{
-                position: 'absolute', left: z.x, top: z.y, width: z.w, height: FOLDER_CARD_H - 16,
-                zIndex: draggingZone === z.id ? 20 : 1, borderRadius: 14,
-                display: 'flex', alignItems: 'center', gap: GAP.lg,
-                padding: `0 ${GAP.lg}px`,
-                background: dropHint?.kind === 'folder' && dropHint.id === z.id ? '#fff8e8' : 'rgba(255,254,246,0.55)',
-                border: `1px ${dropHint?.kind === 'folder' && dropHint.id === z.id ? `solid ${CANVAS.brass}` : `dashed ${COLOR.borderLt}`}`,
+                position: 'absolute', left: z.x, top: z.y, width: z.w, height: z.h,
+                zIndex: draggingZone === z.id ? 20 : 1,
+                display: 'flex', flexDirection: 'column',
+                background: dropHint?.kind === 'folder' && dropHint.id === z.id
+                  ? '#fff8e8' : COLOR.bgCard,
+                border: `1px solid ${dropHint?.kind === 'folder' && dropHint.id === z.id ? CANVAS.brass : COLOR.borderLt}`,
+                borderRadius: RADIUS.xl,
                 boxShadow: dropHint?.kind === 'folder' && dropHint.id === z.id
-                  ? '0 0 0 3px rgba(176,140,79,0.18), 0 8px 20px rgba(0,0,0,0.14)'
-                  : 'none',
+                  ? `0 0 0 3px ${alpha(CANVAS.brass, 0.18)}, 0 8px 20px rgba(0,0,0,0.14)`
+                  : '0 1px 4px rgba(0,0,0,0.05)',
                 cursor: draggingZone === z.id ? 'grabbing' : 'pointer',
                 userSelect: 'none', touchAction: 'none',
-                transition: `background 150ms, border-color 150ms, box-shadow 150ms${(dragActive || draggingZone === z.id) ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}, width 380ms ${EASE}`}`,
+                transition: `background 150ms, border-color 150ms, box-shadow 150ms${(dragActive || draggingZone === z.id) ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}`}`,
                 animation: POP_IN,
                 ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite' } : null),
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,254,246,0.9)'; }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = dropHint?.kind === 'folder' && dropHint.id === z.id
-                  ? '#fff8e8' : 'rgba(255,254,246,0.55)';
-              }}
             >
-              <Folder size={17} color="#8a7a5c" style={{ flexShrink: 0 }} />
-              <span style={{
-                fontFamily: FONT_SANS, fontSize: FONT_SIZE.lg, fontWeight: 600, color: COLOR.text,
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '52%',
-              }}>{z.title}</span>
-              <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub, flexShrink: 0 }}>
-                {z.memberCount} 项
-              </span>
-              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: GAP.xxs, flexShrink: 0 }}>
-                <button
-                  data-zone-action title="展开"
-                  onClick={() => !wasDrag() && patchZone(z.id, { collapsed: false })}
-                  style={zoneHeaderBtn}
-                ><ChevronsUpDown size={13} /></button>
-                <button
-                  data-zone-action title="进入这个文件夹"
-                  onClick={() => !wasDrag() && focusZoneAction(z.id)}
-                  style={zoneHeaderBtn}
-                ><FolderOpen size={13} /></button>
+              {/* 卡面：一枚大文件夹图标 + 装了多少东西。
+                  这里将来该放里面前几件的缩略（"看一眼就知道装了什么"），
+                  但那要先有缩略图管线，不在这一刀里。 */}
+              <div style={{
+                flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', gap: GAP.xs,
+                background: PAPER.wall, borderRadius: `${RADIUS.xl}px ${RADIUS.xl}px 0 0`,
+              }}>
+                <Folder size={40} color={PAPER.pencil} strokeWidth={1.4} />
+                <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
+                  {z.count} 项
+                </span>
+              </div>
+
+              <div style={{
+                height: 40, flexShrink: 0,
+                display: 'flex', alignItems: 'center', gap: GAP.xs,
+                padding: `0 ${GAP.sm}px`,
+                borderTop: `1px solid ${COLOR.borderLt}`,
+              }}>
+                <FolderOpen size={12} color={COLOR.sub} style={{ flexShrink: 0 }} />
+                <span style={{
+                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 600, color: COLOR.text,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+                }}>{z.title}</span>
                 <button
                   data-zone-action title="删除文件夹（连同里面的内容；不影响对话）"
                   onClick={() => !wasDrag() && handleDeleteFolder(z.id, z.title)}
                   style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                ><Trash2 size={13} /></button>
-              </span>
-            </div>
-          ) : (
-            <div
-              key={z.id}
-              data-zone-id={z.id}
-              style={{
-                position: 'absolute', left: z.x, top: z.y, width: z.w, height: z.h,
-                borderRadius: 14, zIndex: 0, pointerEvents: 'none',
-                animation: POP_IN,
-                border: dropHint?.kind === 'zone' && dropHint.id === z.id
-                  ? `1.5px solid ${CANVAS.brass}`
-                  : `1.5px dashed ${z.id === currentSessionId ? 'rgba(60,50,30,0.35)' : 'rgba(0,0,0,0.13)'}`,
-                background: dropHint?.kind === 'zone' && dropHint.id === z.id
-                  ? 'rgba(255,246,220,0.75)'
-                  : (z.id === currentSessionId ? 'rgba(255,252,242,0.6)' : 'rgba(255,254,246,0.35)'),
-                boxShadow: dropHint?.kind === 'zone' && dropHint.id === z.id ? `0 0 0 4px ${alpha(CANVAS.brass, 0.12)}` : 'none',
-                // agent 正在这块区里动手 → 外圈橙色呼吸光圈（目标物件还没上墙时套区）
-                ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite', borderColor: alpha(CANVAS.brass, 0.75) } : null),
-                transition: `border-color 150ms, background 150ms, box-shadow 150ms${dragActive ? '' : `, left 380ms ${EASE}, top 380ms ${EASE}, width 380ms ${EASE}, height 380ms ${EASE}`}`,
-              }}
-            >
-              <div
-                data-zone-header={z.id}
-                {...zoneGestureProps(z, focusZone === z.id
-                  // 站在里面时：标题栏是出口，没有"折叠自己"也没有"再进一次"。
-                  // 长按拖动照旧 —— 在哪儿都该能把文件夹搬走。
-                  ? { onTap: () => exitToProject(), onOpen: null }
-                  : {})}
-                title={focusZone === z.id
-                  ? '单击退出任务（ESC 同效）· 长按拖动'
-                  : '单击收起 · 双击进任务 · 长按拖动'}
-                style={{
-                  pointerEvents: 'auto',
-                  cursor: draggingZone === z.id ? 'grabbing' : 'pointer',
-                  display: 'flex', alignItems: 'center', gap: GAP.md,
-                  margin: GAP.md, height: ZONE.header - 16, padding: '0 14px',
-                  borderRadius: RADIUS.xl, background: 'rgba(0,0,0,0.045)',
-                  userSelect: 'none', touchAction: 'none',
-                  transition: 'background 0.15s',
-                  // （曾经这里写了两遍 touchAction，后一个静默覆盖前一个）
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.075)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(0,0,0,0.045)'; }}
-              >
-                {focusZone === z.id
-                  ? <LogOut size={15} color={COLOR.sub} />
-                  : <FolderOpen size={15} color={COLOR.sub} />}
-                <span style={{
-                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>{z.title}</span>
-                <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.sub }}>{z.memberCount} 项</span>
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.xxs }}>
-                  {focusZone === z.id && z.memberCount > 0 && (
-                    <button
-                      data-zone-action title="把工作区内容全部加入上下文"
-                      onClick={() => {
-                        if (wasDrag()) return;
-                        // 判据跟单卡那个「＋」共用一份（board-kinds），
-                        // 免得两处各写各的 type 判断，改一处漏一处
-                        positioned.filter(o => o.zoneId === z.id && canAddToContext(o)).forEach(handleAdd);
-                      }}
-                      style={zoneHeaderBtn}
-                    ><Plus size={12} /></button>
-                  )}
-                  {/* 收起（只在项目区给）：把这个文件夹折成一张卡，
-                      点卡片再展开。站在里面时不给 —— 你正在它内部 */}
-                  {viewMode === 'arrange' && (
-                    <button
-                      data-zone-action title="收起成文件夹卡"
-                      onClick={() => { if (!wasDrag()) patchZone(z.id, { collapsed: true }); }}
-                      style={zoneHeaderBtn}
-                    ><FolderInput size={13} /></button>
-                  )}
-                  <button
-                    data-zone-action title="删除文件夹（连同里面的内容；不影响对话）"
-                    onClick={() => { if (!wasDrag()) handleDeleteFolder(z.id, z.title); }}
-                    style={{ ...zoneHeaderBtn, color: COLOR.error }}
-                  ><Trash2 size={13} /></button>
-                </span>
+                ><Trash2 size={12} /></button>
               </div>
-              {z.memberCount === 0 && (
-                <div style={{
-                  position: 'absolute', top: '50%', left: 0, right: 0, textAlign: 'center',
-                  fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, opacity: 0.7,
-                }}>
-                  这个文件夹还是空的 · 把画布上的东西拖进来，或者让 agent 往里做
-                </div>
-              )}
             </div>
           ))}
 
@@ -2187,27 +1921,6 @@ export default function BoardCanvas({
             />
           ))}
 
-          {/* 收纳文件夹的标题带：一条细线 + 文件夹名，把同主题的东西圈出来。
-              画成"带"不画成"框"是有意的 —— 框会跟工作区的框打架，而收纳组是
-              工作区**内部**的分节，视觉层级要更轻。 */}
-          {groupBands.map(band => (
-            <div
-              key={`${band.zoneId}:${band.name}`}
-              style={{
-                position: 'absolute', left: band.x, top: band.y, width: band.w,
-                height: GROUP_LABEL_H,
-                display: 'flex', alignItems: 'center', gap: GAP.xs,
-                pointerEvents: 'none', zIndex: 0,
-              }}
-            >
-              <Folder size={11} color={PAPER.pencil} />
-              <span style={{
-                fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: PAPER.ink2,
-                whiteSpace: 'nowrap',
-              }}>{FOLDER_LABEL[band.name] || band.name}</span>
-              <span style={{ flex: 1, height: 1, background: PAPER.hair, opacity: 0.5 }} />
-            </div>
-          ))}
 
           {/* 关系线（世界坐标，铺在物件之下）*/}
           <BindingLayer

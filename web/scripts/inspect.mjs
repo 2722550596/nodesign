@@ -82,6 +82,17 @@ await page.route('**/api/**', async (r) => {
 await page.goto(`http://127.0.0.1:${PORT}${route}`, { waitUntil: 'load' });
 await page.waitForTimeout(WAIT);
 
+// 交互：--click / --dblclick 传选择器，发**真事件**（画布很多手势是自己数
+// pointerup 的，合成事件糊弄不过去）
+for (const [flag, how] of [['click', 'click'], ['dblclick', 'dblclick']]) {
+  const sel = opt(flag, null);
+  if (!sel) continue;
+  const el = await page.$(sel);
+  if (!el) { errors.push(`--${flag} 没找到元素: ${sel}`); continue; }
+  await el[how]();
+  await page.waitForTimeout(700);
+}
+
 let probe = null;
 if (PROBE) {
   try { probe = await page.evaluate(`(() => (${PROBE}))()`); }

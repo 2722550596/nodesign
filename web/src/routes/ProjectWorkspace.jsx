@@ -1829,27 +1829,26 @@ export default function ProjectWorkspace() {
       // 改画布容器高度，相机可视区跟着变、contain 重算，画面会跳。
       overlayTop
       topSuppressed={artifactWindowOpen}
+      /**
+       * 面包屑 = **当前目录一路拆到根**（2026-08-13）。
+       *
+       * 以前这里最多两级（项目名 / 任务名），因为那时只有"在项目区"和"聚焦
+       * 某一块区"两种状态。现在文件夹可以套文件夹，进到第三层就得能一眼看出
+       * 自己在哪、还能点回去任意一级。
+       *
+       * 项目名那一级 = 根目录。点它回根，跟点 logo 回首页不是一回事。
+       */
       breadcrumb={[
-        // 「项目」这一级删了（2026-07-30）：左边的 logo 本来就回首页，两个入口指同一处。
-        // 面包屑最多两级 —— 项目名 / 任务名。
-        // 项目名这一级就是项目区（点它 = 退回全景），不再单列一个「项目区」——
-        // 两个标签指向同一个地方，重复。在工作区里时它可点，已经在项目区时是当前位置。
-        boardUi?.focus
-          ? {
-              label: project.name,
-              onClick: () => boardApiRef.current?.exitToProject(),
-              title: '退出任务，回到项目区（会话一起退出，ESC 同效）',
-            }
-          : { label: project.name, title: '项目区：记忆 / 指引 / 风格 / 文件 + 全部工作区' },
-        // 工作区那一级：名字跟项目名撞了就只写「工作区」——首页建的项目由会话摘要
-        // 正名，单会话项目里这两个名字天然一样，重复写两遍纯噪音。
-        ...(boardUi?.focus
-          ? [{
-              label: boardUi.focus.title === project.name ? '工作区' : boardUi.focus.title,
-              // 0 项时不写计数：为零的计数是噪音
-              ...(boardUi.focus.count > 0 ? { hint: `${boardUi.focus.count} 项` } : {}),
-            }]
-          : []),
+        {
+          label: project.name,
+          title: '回到桌面根',
+          ...(boardUi?.cwd ? { onClick: () => boardApiRef.current?.goTo?.('') } : {}),
+        },
+        ...((boardUi?.crumbs || []).map((c, i, all) => ({
+          label: c.title,
+          // 最后一级是"你现在在这儿"，不可点
+          ...(i < all.length - 1 ? { onClick: () => boardApiRef.current?.goTo?.(c.id) } : {}),
+        }))),
       ]}
       actions={
         <>

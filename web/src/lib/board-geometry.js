@@ -12,7 +12,15 @@ export const DESKTOP_W = 1360;
 // 工作区宽度由堆叠 effect 按 DESKTOP_W - MARGIN_X*2 重算，存档矩形下次渲染自动迁移。
 export const MARGIN_X = 10;               // 桌面左右留白
 export const ZONE_GAP_Y = 28;             // 堆叠工作区之间的垂直间距
-export const FOLDER_CARD_H = 84;          // 收纳态整宽窄条占用的堆叠高度
+/**
+ * 文件夹卡的脚印（2026-08-13）。**方卡**，跟桌面上别的东西一样是"一个物件"。
+ *
+ * 在这之前文件夹有两态：收起是一条整宽窄条、展开是一块带标题栏的实体区域，
+ * 成员摆在框里。那套几何（区内网格 / 区内排布 / 分组带 / 一屏画幅）随
+ * "当前目录"模型一起退役 —— 现在进文件夹是**换一层桌面**，不是把框摊开。
+ */
+export const FOLDER_CARD = { w: 200, h: 200 };
+export const FOLDER_CARD_H = FOLDER_CARD.h;
 export const DECK_EMBED_W = 640;          // deck 内嵌渲染宽度（1920 → 1/3 缩放）
 export const STAGE_CARD_W = 560;          // 舞台卡宽度（板内坐标系）
 
