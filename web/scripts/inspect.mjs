@@ -61,12 +61,20 @@ const page = await browser.newPage({ viewport: { width: VW, height: VH }, device
 
 const errors = [];
 const unmatched = [];
+/** 前端发出去的写请求（拖拽落盘、改名这类"看不见的动作"靠它验） */
+const calls = [];
 page.on('pageerror', e => errors.push(`pageerror: ${String(e).slice(0, 400)}`));
 page.on('console', m => { if (m.type() === 'error') errors.push(`console: ${m.text().slice(0, 400)}`); });
 
 await page.route('**/api/**', async (r) => {
   const u = new URL(r.request().url());
-  const hit = resolveFixture(u.pathname, r.request().method());
+  const method = r.request().method();
+  if (method !== 'GET') {
+    let body = null;
+    try { body = r.request().postDataJSON(); } catch { body = r.request().postData(); }
+    calls.push({ method, path: u.pathname, body });
+  }
+  const hit = resolveFixture(u.pathname, method);
   if (!hit) {
     unmatched.push(`${r.request().method()} ${u.pathname}`);
     // 兜一个空对象：让前端往下走，别在第一个缺的接口就停住
@@ -84,6 +92,31 @@ await page.waitForTimeout(WAIT);
 
 // 交互：--click / --dblclick 传选择器，发**真事件**（画布很多手势是自己数
 // pointerup 的，合成事件糊弄不过去）
+/**
+ * 拖拽：`--drag=<选择器>|<dx>,<dy>`。**必须一步步发 mousemove** ——
+ * 画布的拖拽是自己在 pointermove 里积位移的，一步到位的 move 它只会当成
+ * 一次抖动（而且落点提示根本来不及算）。
+ */
+const DRAG = opt('drag', null);
+if (DRAG) {
+  const [sel, delta] = DRAG.split('|');
+  const [dx, dy] = (delta || '0,0').split(',').map(Number);
+  const el = await page.$(sel);
+  if (!el) errors.push(`--drag 没找到元素: ${sel}`);
+  else {
+    const b = await el.boundingBox();
+    const sx = b.x + b.width / 2; const sy = b.y + b.height / 2;
+    await page.mouse.move(sx, sy);
+    await page.mouse.down();
+    await page.mouse.move(sx + dx * 0.3, sy + dy * 0.3, { steps: 6 });
+    await page.mouse.move(sx + dx * 0.7, sy + dy * 0.7, { steps: 6 });
+    await page.mouse.move(sx + dx, sy + dy, { steps: 8 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+  }
+}
+
 for (const [flag, how] of [['click', 'click'], ['dblclick', 'dblclick']]) {
   const sel = opt(flag, null);
   if (!sel) continue;
@@ -113,5 +146,6 @@ console.log(JSON.stringify({
   route, out: OUT, shot,
   errors,
   unmatched: [...new Set(unmatched)],
+  calls,
   probe,
 }, null, 2));

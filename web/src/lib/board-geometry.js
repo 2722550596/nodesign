@@ -211,9 +211,23 @@ export function resolveZoneAvoidance(members, { xMin, xMax, yMin }) {
 
 /** 新工作区先在现有栈底占位（用存档矩形估算），堆叠 effect 下一拍精确归位 */
 export function newStackedZoneRect(zones) {
-  let bottom = ZONE.bandY;
-  for (const z of Object.values(zones)) {
-    bottom = Math.max(bottom, (z.y || 0) + (z.collapsed ? FOLDER_CARD_H : (z.h || ZONE.h)));
-  }
-  return { x: MARGIN_X, y: bottom + ZONE_GAP_Y, w: DESKTOP_W - MARGIN_X * 2, h: ZONE.h };
+  /**
+   * 新文件夹的落脚点：从已有的最低边往下再放一行。
+   *
+   * ⚠️ 2026-08-13 尺寸改成方卡。原来返回的是 `w: 桌面宽 - 边距, h: ZONE.h`
+   * （1340×640）—— 那是"文件夹是版面上一整条带"时代的形状。文件夹变方卡之后
+   * 那两个数字没人读了，但它们**会被写进 board.json**，成为将来读代码的人
+   * 手里一份自相矛盾的证据（画布上 200 宽，存档里 1340）。
+   *
+   * 横向也换成一行一行排：一条 1340 宽的东西下面只能再放一条，而 200 的卡
+   * 一行能放六个。
+   */
+  const cols = Math.max(1, Math.floor((DESKTOP_W - MARGIN_X * 2 + COL_GAP) / (FOLDER_CARD.w + COL_GAP)));
+  const n = Object.keys(zones || {}).length;
+  return {
+    x: MARGIN_X + (n % cols) * (FOLDER_CARD.w + COL_GAP),
+    y: MARGIN_X + Math.floor(n / cols) * (FOLDER_CARD.h + ROW_GAP),
+    w: FOLDER_CARD.w,
+    h: FOLDER_CARD.h,
+  };
 }

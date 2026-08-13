@@ -742,10 +742,27 @@ router.post('/:pid/move', express.json(), async (req, res, next) => {
     if (!inside(absFrom) || absFrom === root || !inside(absToDir)) {
       return res.status(400).json({ error: 'path escapes workspace' });
     }
-    // 基础设施与语义目录不参与搬家：assets/ 是按 upload/generated/note 三种
-    // 语义单独扫的，搬出去它就不是"素材"了；.claude/.nd/.git 更不用说。
+    /**
+     * 哪些东西不许搬走。
+     *
+     * ⚠️ 2026-08-13 放开 `assets/`。原来这里挡的是整个 RESERVED_DIRS，理由是
+     * "assets/ 按 upload/generated/note 三种语义单独扫，搬出去它就不是素材了"
+     * —— 那条在「产物必须住在任务目录里」的时代成立，现在画布是一张桌面、
+     * 文件夹是收纳工具，**用户把一张生成图归到某个文件夹里是再正常不过的动作**，
+     * 拦着它才是怪的。
+     *
+     * 搬走之后它照样是图片卡：`isImage` 按扩展名算，跟它住哪儿无关。
+     * 唯一的代价是 `hasThumb` 只对 `assets/generated` 为真 —— 缩略图那条快路
+     * 用不上了，所以前端对没有缩略的图统一加 `?w=` 走响应式档（thumbSrcOf）。
+     *
+     * 仍然挡住的是**真·基础设施**：exports/（导出落点）、node_modules/、
+     * agent-memory/（记忆档）、以及点开头的 .claude / .nd / .git。
+     * notes/ 也先留着挡 —— 便签搬出 `notes/` 会从便签卡退化成普通 .md 文件卡
+     * （少了分面翻页和删除入口），那是形态变化不是位置变化，要放开得先想清楚。
+     */
+    const NO_MOVE_OUT = new Set(['exports', 'node_modules', 'agent-memory', 'notes']);
     const guardSeg = (rel) => rel.split('/')[0];
-    if (RESERVED_DIRS.has(guardSeg(from)) || guardSeg(from).startsWith('.')) {
+    if (NO_MOVE_OUT.has(guardSeg(from)) || guardSeg(from).startsWith('.')) {
       return res.status(400).json({ error: '这个位置的东西不参与搬家' });
     }
     if (to && (RESERVED_DIRS.has(guardSeg(to)) || guardSeg(to).startsWith('.'))) {

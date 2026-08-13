@@ -2465,12 +2465,21 @@ function Overlay({ children, onClose }) {
   );
 }
 
+/**
+ * 图片卡的图源。
+ *
+ * `.thumbnails/` 那条快路只对 `assets/generated` 下的生成图存在（服务端只给
+ * 那批预生成）。图片 2026-08-13 起可以被搬进文件夹，搬走之后 `hasThumb` 就是
+ * false —— 这时**不能直接发原图**：一张 149KB 的 webp 塞进 200px 宽的卡里，
+ * 二十张就是几 MB 的白烧。走 `?w=` 响应式档（服务端 imageVariant，webp 也能缩，
+ * 2026-08-01 修过），实测同一张 149KB → 12KB。
+ */
 function thumbSrcOf(projectId, item) {
   if (item.hasThumb) {
     const base = item.name.replace(/\.[^.]+$/, '');
     return Assets.artifactFileUrl(projectId, `assets/generated/.thumbnails/${base}.thumb.webp`);
   }
-  return Assets.artifactFileUrl(projectId, item.path);
+  return `${Assets.artifactFileUrl(projectId, item.path)}?w=480`;
 }
 
 const toolBtn = {
