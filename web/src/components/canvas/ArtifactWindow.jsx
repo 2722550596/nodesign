@@ -4,6 +4,7 @@ import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 import { PAPER, PAPER_SHADOW, GRAIN, INK_SURFACE } from '../../lib/paper.js';
 import { COLOR, GAP, FONT_SANS, FONT_SIZE, RADIUS } from '../../lib/theme.js';
 import { POP_IN } from '../../lib/board-geometry.js';
+import { exportItemsFor } from '../../lib/export-formats.js';
 
 /**
  * ArtifactWindow —— 三种产物共用的那扇窗（2026-08-07；2026-08-13 改成装订文件）
@@ -231,3 +232,27 @@ export const INK_READOUT = {
   fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
   color: INK_SURFACE.text,
 };
+
+/**
+ * 导出组 —— 三扇窗共用的那一小撮按钮（2026-08-13 从顶栏搬进工具栏）。
+ *
+ * 顶栏那个下拉是"对当前聚焦的任务导出"，而窗开着的时候当前上下文明明白白
+ * 就是这一件产物，还要收起窗去顶栏找一遍是绕路。
+ *
+ * 格式清单由**服务端**给（`/artifacts` 的 `tasks[].exports`，随 focusDeck 一路
+ * 传下来），前端不硬编码 —— 第三种形态上线时这里自动跟上。
+ *
+ * ⚠️ 导出路由目前仍是会话作用域的（`Exports.download(pid, sid, format)`），
+ * 没有活跃会话时点了会 toast「请先选中一个会话再导出」。那是会话耦合时代的
+ * 遗留，跟这条工具栏无关。
+ */
+export function exportToolGroup({ kind, exports: formats, onExport }) {
+  if (!onExport) return null;
+  const items = exportItemsFor(kind, formats).map(it => ({
+    id: it.id,
+    icon: it.icon,
+    title: `导出 ${it.label} —— ${it.desc}`,
+    onClick: () => onExport(it.id),
+  }));
+  return items.length ? { id: 'export', items } : null;
+}

@@ -3,7 +3,7 @@ import {
   Eye, Edit3, Move, Code2, Pin, Maximize2, Minus, Plus, SquareDashedMousePointer,
   Sliders, MessageSquare, RotateCcw, Settings,
 } from 'lucide-react';
-import ArtifactWindow from './ArtifactWindow.jsx';
+import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
 import RegionSelect from './RegionSelect.jsx';
 import HtmlIframe from './HtmlIframe.jsx';
 import EditOverlay from './EditOverlay.jsx';
@@ -56,6 +56,8 @@ function extractAspect(html) {
 
 export default function DeckWindow({
   tab, onTabChange, onClose,
+  /** 服务端给的可导出格式 + 导出动作（2026-08-13 从顶栏搬进工具栏） */
+  artifactExports = null, onExport = null,
   title = '幻灯',
   htmlSrc, htmlContent,
   selectedAnchor, onSelectChange,
@@ -260,6 +262,7 @@ export default function DeckWindow({
     : 0;
 
   const groups = useMemo(() => [
+    exportToolGroup({ kind: 'deck', exports: artifactExports, onExport }),
     {
       id: 'mode',
       type: 'mode',
@@ -341,7 +344,8 @@ export default function DeckWindow({
   ].filter(Boolean),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [tab, isStreaming, dragFreeMode, zoom, effectiveZoom, tweaksOpen, tweaksEnabled,
-    tweaksAvailable, commentOverviewOpen, systemOpen, openCommentCount, onRegionComment]);
+    tweaksAvailable, commentOverviewOpen, systemOpen, openCommentCount, onRegionComment,
+    artifactExports, onExport]);
 
   return (
     <ArtifactWindow

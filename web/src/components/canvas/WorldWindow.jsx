@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Map as MapIcon, BookOpen, RotateCw, ExternalLink } from 'lucide-react';
-import ArtifactWindow from './ArtifactWindow.jsx';
+import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
 import WorldMap from './WorldMap.jsx';
 import { Assets } from '../../lib/api.js';
 import { versionOfFile } from '../../lib/file-versions.js';
@@ -28,6 +28,8 @@ export default function WorldWindow({
   entry = '世界.md',
   title,
   nodes = [],
+  /** 服务端给的可导出格式 + 导出动作（2026-08-13 从顶栏搬进工具栏） */
+  artifactExports = null, onExport = null,
   fileVersions = null,
   onClose,
 }) {
@@ -62,6 +64,7 @@ export default function WorldWindow({
   }, [nodes]);
 
   const groups = [
+    exportToolGroup({ kind: 'world', exports: artifactExports, onExport }),
     {
       id: 'mode',
       type: 'mode',
@@ -82,7 +85,7 @@ export default function WorldWindow({
         },
       ],
     },
-  ];
+  ].filter(Boolean);   // 没有导出格式时那一组是 null
 
   return (
     <ArtifactWindow

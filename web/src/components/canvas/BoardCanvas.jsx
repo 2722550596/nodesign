@@ -1271,13 +1271,14 @@ export default function BoardCanvas({
       onFocusDeck?.({
         kind: 'world', task: o.task, base: o.base || o.task,
         entry: o.entry || '世界.md', title: o.title, nodes: o.nodes,
+        exports: o.exports,
       });
     } else if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
       onFocusDeck?.({
         kind: 'site', task: o.task, base: o.base || o.task,
-        entry: o.entry || 'index.html', title: o.title, pages: o.pages,
+        entry: o.entry || 'index.html', title: o.title, pages: o.pages, exports: o.exports,
         // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
         built: !!(o.root && o.root !== o.srcRoot),
       });
@@ -1293,7 +1294,7 @@ export default function BoardCanvas({
       // 顺带删掉的两条分支（会话 deck / 跨会话切换）是**死代码**：deck 物件
       // 只有一处构造（本文件 `id: deck:${a.file}`），那里一律带 `task: t.id`，
       // 所以"没有 task 的 deck"从 08-08 起就不存在了。
-      onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title });
+      onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title, exports: o.exports });
     }
   };
 
@@ -2201,7 +2202,11 @@ export default function BoardCanvas({
           />
         )}
 
-        {/* 浮动工具栏（屏幕空间，不进世界层 —— 缩放画布不该把工具也缩小）*/}
+        {/* 浮动工具栏（屏幕空间，不进世界层 —— 缩放画布不该把工具也缩小）。
+            **窗开着的时候整条不渲染**：窗自己有一条工具栏，两条同时挂在屏幕上
+            就是"工具栏怎么有两套"（2026-08-13 用户报的）。画布这条管的是画布，
+            而窗开着时画布压根不可操作。 */}
+        {!deckOpen && (
         <FloatingToolbar
           id="board-tools"
           boundsRef={scrollRef}
@@ -2242,6 +2247,7 @@ export default function BoardCanvas({
             },
           ]}
         />
+        )}
       </div>
 
       {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}

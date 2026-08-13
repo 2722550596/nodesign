@@ -202,6 +202,9 @@ export default function ProjectWorkspace() {
 
   const [shareOpen, setShareOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // 有产物窗铺满屏幕时收掉顶栏的浮现（它的关闭钮在右上角，鼠标够它的路上
+  // 必然扫过顶部感应带）
+  const [artifactWindowOpen, setArtifactWindowOpen] = useState(false);
   const [exportsListOpen, setExportsListOpen] = useState(false);
   const [pickExportOpen, setPickExportOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -1825,6 +1828,7 @@ export default function ProjectWorkspace() {
       // 横带越少越好。**浮起来而不是收起高度**——顶栏一参与布局，收展就会
       // 改画布容器高度，相机可视区跟着变、contain 重算，画面会跳。
       overlayTop
+      topSuppressed={artifactWindowOpen}
       breadcrumb={[
         // 「项目」这一级删了（2026-07-30）：左边的 logo 本来就回首页，两个入口指同一处。
         // 面包屑最多两级 —— 项目名 / 任务名。
@@ -1977,6 +1981,8 @@ export default function ProjectWorkspace() {
             boardUi={boardUi}
             boardApiRef={boardApiRef}
             onBoardUiState={setBoardUi}
+            onWindowOpenChange={setArtifactWindowOpen}
+            onExport={handleExport}
             stageRef={stageRef}
             onAddToContext={(item) => {
               // 工作台物件 → 上下文托盘（同上传附件语义，下一条消息带给 agent）。

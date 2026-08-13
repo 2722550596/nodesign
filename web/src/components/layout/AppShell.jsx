@@ -30,7 +30,17 @@ const REVEAL_ZONE = 10;
 /** 移开之后再等这么久才淡出（免得贴着边界抖动） */
 const HIDE_DELAY = 600;
 
-export default function AppShell({ breadcrumb, actions, children, overlayTop = false }) {
+export default function AppShell({
+  breadcrumb, actions, children, overlayTop = false,
+  /**
+   * 有东西铺满屏幕时（产物窗开着），顶栏**连浮现都不要**。
+   *
+   * 感应带只有 10px，本来不该碍事 —— 但产物窗的关闭钮就在右上角，鼠标去够它
+   * 的路上必然扫过顶部那条，顶栏浮出来正好盖住它（2026-08-13 用户报的）。
+   * 顶栏管的是"这个项目"，窗开着的时候那一层根本不是当前上下文。
+   */
+  topSuppressed = false,
+}) {
   const [revealed, setRevealed] = useState(true);
   const hostRef = useRef(null);
   const timerRef = useRef(null);
@@ -39,6 +49,7 @@ export default function AppShell({ breadcrumb, actions, children, overlayTop = f
 
   useEffect(() => {
     if (!overlayTop) return undefined;
+    if (topSuppressed) { clearTimeout(timerRef.current); setRevealed(false); return undefined; }
     const schedule = () => {
       clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
@@ -71,7 +82,7 @@ export default function AppShell({ breadcrumb, actions, children, overlayTop = f
       window.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('focusin', onFocusIn);
     };
-  }, [overlayTop]);
+  }, [overlayTop, topSuppressed]);
 
   if (!overlayTop) {
     return (
@@ -107,7 +118,7 @@ export default function AppShell({ breadcrumb, actions, children, overlayTop = f
 
       {/* 收起时贴顶的一条感应带：鼠标扫到就唤出（pointermove 已经能唤，
           这层是给"从窗口外面直接滑进来"那种不产生 move 事件的情况兜底） */}
-      {!revealed && (
+      {!revealed && !topSuppressed && (
         <div
           onPointerEnter={() => setRevealed(true)}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, height: REVEAL_ZONE, zIndex: 899 }}

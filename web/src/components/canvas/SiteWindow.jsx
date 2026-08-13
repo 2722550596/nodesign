@@ -3,7 +3,7 @@ import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, Arr
 import { Assets } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { SITE_VIEWPORTS } from '../../lib/board-geometry.js';
-import ArtifactWindow, { WindowBanner } from './ArtifactWindow.jsx';
+import ArtifactWindow, { WindowBanner, exportToolGroup } from './ArtifactWindow.jsx';
 import RegionSelect from './RegionSelect.jsx';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 import { serializeForAI } from '../../lib/element-semantics.js';
@@ -63,6 +63,9 @@ export default function SiteWindow({
   onIframeReady = null,
   isStreaming = false,
   comments = [],
+  /** 服务端给的可导出格式（/artifacts 的 tasks[].exports），随 focusDeck 传下来 */
+  artifactExports = null,
+  onExport = null,
   onClose,
 }) {
   const [viewport, setViewport] = useState(SITE_VIEWPORTS[0].id);
@@ -590,6 +593,7 @@ export default function SiteWindow({
     },
     // 「上线」是外发动作，跟旁边那些"看/改"的工具不是一类 —— 单独一组，
     // 排在最后（2026-08-13 从窗口头部的名牌条挪进来）
+    exportToolGroup({ kind: 'site', exports: artifactExports, onExport }),
     { id: 'publish', node: <SitePublishControl projectId={projectId} task={task} /> },
     {
       id: 'actions',
@@ -605,7 +609,8 @@ export default function SiteWindow({
   ].filter(Boolean),
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [tab, editable, draggable, isStreaming, pageList, current, viewport, history.length,
-    goBack, navigateTo, commitAllPending, projectId, relPath, onRegionComment, task]);
+    goBack, navigateTo, commitAllPending, projectId, relPath, onRegionComment, task,
+    artifactExports, onExport]);
 
   // overlay 全家共用的 iframe 引用。
   //

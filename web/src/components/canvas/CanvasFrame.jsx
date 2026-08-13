@@ -58,6 +58,10 @@ export default function CanvasFrame({
   boardUi = null,
   boardApiRef: boardApiRefProp = null,
   onBoardUiState,
+  /** 有产物窗开着时通知外层（顶栏据此不再浮现） */
+  onWindowOpenChange,
+  /** 导出：从顶栏搬进产物窗自己的工具栏（2026-08-13） */
+  onExport,
   stageRef = null,
 }) {
   // deck 编辑窗口：开/关 + 当前标签页 + 目标（null=当前会话的旧式 deck；{task}=任务 deck）
@@ -136,6 +140,10 @@ export default function CanvasFrame({
     ? (info) => onTextEdit({ ...info, deckPath: deckRelPath })
     : undefined;
 
+  // 有窗开着 = 屏幕被一件产物占满，外层据此收掉顶栏的浮现
+  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!worldSrc;
+  useEffect(() => { onWindowOpenChange?.(!!windowOpen); }, [windowOpen, onWindowOpenChange]);
+
   return (
     <div style={{
       flex: 1, minHeight: 0,
@@ -166,6 +174,8 @@ export default function CanvasFrame({
             onTabChange={setDeckTab}
             onClose={() => setDeckOpen(false)}
             title={deckTaskSrc?.title || project?.name || '幻灯'}
+            artifactExports={deckTaskSrc?.exports}
+            onExport={onExport}
             htmlSrc={deckHtmlSrc}
             htmlContent={htmlContent}
             selectedAnchor={selectedAnchor}
@@ -218,6 +228,8 @@ export default function CanvasFrame({
               title={siteSrc.title}
               pages={siteSrc.pages}
               built={!!siteSrc.built}
+              artifactExports={siteSrc.exports}
+              onExport={onExport}
               fileVersions={fileVersions}
               // 直接编辑 + 评论 + 拖拽：交互组件跟 deck 同一套（SiteWindow 内部接线），
               // path 按当前页线程。改字/拖拽都走 onDomEdit 落盘（干净源码重放 + FYI 记录）
@@ -243,6 +255,8 @@ export default function CanvasFrame({
               entry={worldSrc.entry}
               title={worldSrc.title}
               nodes={worldSrc.nodes}
+              artifactExports={worldSrc.exports}
+              onExport={onExport}
               fileVersions={fileVersions}
               onClose={() => setWorldSrc(null)}
             />
