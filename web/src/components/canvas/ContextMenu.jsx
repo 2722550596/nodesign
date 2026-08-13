@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { COLOR, GAP, RADIUS, FONT_SANS, FONT_SIZE, alpha } from '../../lib/theme.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -19,6 +20,14 @@ import { PAPER_SHADOW } from '../../lib/paper.js';
  *
  * 贴边翻转：靠右边不够宽就朝左展开，靠下同理。不翻的话在画布右下角右键，
  * 菜单一半在屏幕外。
+ *
+ * ## ⚠️ 必须 portal 到 body
+ *
+ * 画布 section 上有 `isolation: 'isolate'`（那是为了让产物窗关在画布里、
+ * 聊天栏永远压得住它）。副作用是**菜单的 z-index 也出不去那个层叠上下文** ——
+ * 菜单标着 9000，可它只在画布这一格里算数，聊天栏在外面照样盖住它。
+ * 表现极隐蔽：菜单看得见，右半截（压在聊天栏底下那部分）点了没反应，
+ * 菜单还开着，像是"这一项坏了"。2026-08-13 用检查通道量出来的。
  */
 
 const MENU_W = 176;
@@ -52,7 +61,7 @@ export default function ContextMenu({ x, y, items, onClose }) {
     };
   }, [onClose]);
 
-  return (
+  return createPortal((
     <div
       ref={ref}
       data-no-pan
@@ -101,5 +110,5 @@ export default function ContextMenu({ x, y, items, onClose }) {
         </button>
       )))}
     </div>
-  );
+  ), document.body);
 }

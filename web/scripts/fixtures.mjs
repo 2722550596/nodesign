@@ -65,7 +65,7 @@ const ARTIFACTS = [
 /** 文件夹清单（递归全量，含嵌套）——磁盘扫描的真相 */
 // ⚠️ 不含 '雾都'：世界目录被 manifest 认领成一件产物，服务端的 claimed 机制
 // 就不会再把它当文件夹吐出来（assets.js 里那段"它是产物，不是容器"）
-const FOLDERS = ['鉴赏页', '鉴赏页/初稿'];
+const FOLDERS = ['鉴赏页', '鉴赏页/初稿'];  // ← 会被 createFolder / moveEntry 改
 
 const BOARD = {
   size: { w: 4000, h: 2600 },
@@ -78,9 +78,50 @@ const SESSIONS = [
   { id: SESSION_ID, title: '做一版鉴赏页', updatedAt: '2026-08-13T05:30:00.000Z', createdAt: '2026-08-13T02:00:00.000Z', tag: null },
 ];
 
+/**
+ * ## 有状态
+ *
+ * 新建文件夹、搬家这类动作**必须真的改这份数据**，否则测不出"建完之后能不能
+ * 拖进去"这种跨请求的流程 —— 而 2026-08-13 用户报的「目标文件夹不存在」正是
+ * 那种：单看任何一个请求都是对的。
+ */
+function createFolder(parent, wanted = '新建文件夹') {
+  let name = wanted;
+  const full = () => (parent ? `${parent}/${name}` : name);
+  for (let n = 2; FOLDERS.includes(full()); n += 1) name = `${wanted} ${n}`;
+  FOLDERS.push(full());
+  return full();
+}
+
+function moveEntry(from, to) {
+  const base = from.split('/').pop();
+  const next = to ? `${to}/${base}` : base;
+  for (const a of ARTIFACTS) if (a.path === from) { a.path = next; a.name = base; }
+  for (const t of TASKS) for (const a of (t.artifacts || [])) {
+    if (a.file === from) a.file = next;
+    if (a.entryRel === from) a.entryRel = next;
+  }
+  const i = FOLDERS.indexOf(from);
+  if (i >= 0) FOLDERS[i] = next;
+  return next;
+}
+
 /** 路径 → 响应。命中返回 {status?, json|body|contentType}，没命中返回 null */
-export function resolve(pathname, method) {
+export function resolve(pathname, method, body) {
   const p = pathname.replace(/^\/api/, '');
+
+  if (method === 'POST' && p === `/projects/${PROJECT_ID}/folders`) {
+    return { status: 201, json: { ok: true, folder: createFolder(body?.parent || '', body?.name) } };
+  }
+  if (method === 'POST' && p === `/projects/${PROJECT_ID}/move`) {
+    const from = String(body?.from || '');
+    const to = String(body?.to || '');
+    // 照服务端那条判据：目标目录必须真的在清单里（'' = 根，永远在）
+    if (to && !FOLDERS.includes(to)) {
+      return { status: 404, json: { error: 'target folder not found' } };
+    }
+    return { json: { ok: true, from, to: moveEntry(from, to), moved: true } };
+  }
 
   if (p === '/me/usage') return { json: { usedToday: 0.12, limit: 50, username: 'demo', role: 'user' } };
   if (p === '/me/showcase') return { json: { items: [] } };

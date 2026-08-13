@@ -143,6 +143,8 @@ export default function BoardCanvas({
    * 是一个导航控件）。
    */
   const [cwd, setCwd] = useState('');
+  const cwdRef = useRef('');
+  cwdRef.current = cwd;
   const fittedKeyRef = useRef('');        // 换层之后把镜头带过去：每层只带一次
   // 交互态
   const dragRef = useRef(null);           // { kind:'object', ... }（桌面化后只剩物件拖拽）
@@ -519,13 +521,22 @@ export default function BoardCanvas({
    *   - 不需要区内坐标系（框里没有东西了），也就不需要分组带和一屏画幅
    *   - 不需要收纳带兜底（每件东西都有它的目录，根目录也是目录）
    *
-   * ## 只有一条自动
+   * ## 只有一条自动，而且**只算一次**
    *
-   * **没有坐标的东西给个落脚点**。agent 跑的时候用户不在场，十几张图总得有人
-   * 定位置；摆过的一律不动（这条 2026-08-07 定的界线继续有效：
-   * "给新东西一个落脚点" ≠ "持续重排"）。重排是手动的一次「整理」。
+   * 没有坐标的东西给个落脚点（agent 跑的时候用户不在场，十几张图总得有人定
+   * 位置），摆过的一律不动 —— 2026-08-07 定的那条界线继续有效：
+   * "给新东西一个落脚点" ≠ "持续重排"。
+   *
+   * ⚠️ **算出来的落点必须当场落盘**（下面那条 seatFixes effect），不能只活在
+   * 这个 memo 里。理由是活生生的事故：坐标不落盘的话，"谁已摆放"这件事会随
+   * 交互变化 —— 你一拖某张卡，它就有了坐标、变成"已摆放"，起排线跟着抬高，
+   * **其余没坐标的卡每一帧重新排一次**。表现是你拖着 A 想摞到 B 上，B 自己在
+   * 往下跑，怎么都对不准（2026-08-13 用检查通道逐帧量出来的：三帧里 deck 从
+   * y=434 跑到 447）。
+   *
+   * 落盘之后这一趟只在"真有新东西"时跑，布局对交互免疫。
    */
-  const { positioned, folderView, contentBottom } = useMemo(() => {
+  const { positioned, folderView, contentBottom, seatFixes } = useMemo(() => {
     const parentOf = (p) => { const i = p.lastIndexOf('/'); return i > 0 ? p.slice(0, i) : ''; };
     // id 剥掉 kind 前缀就是它在磁盘上的位置；上级目录就是它住在哪一层。
     // 判据跟 stage.js 的 zoneOfObjectId、服务端 board-store 的 mapId 是同一套。
@@ -627,12 +638,38 @@ export default function BoardCanvas({
     let bottom = 0;
     for (const f of folders) bottom = Math.max(bottom, f.y + f.h);
     for (const it of items) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
-    return { positioned: items, folderView: folders, contentBottom: bottom };
+    // 新算出来的落点交给下面那条 effect 落盘（不落的话布局会跟着交互抖，见上）
+    const seatFixes = {};
+    for (const it of fresh) seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
+    return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes };
   }, [objects, layout, zonesEff, taskTitles, cwd]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
   commentDraftRef.current = commentDraft;
 
+
+  /**
+   * 首次落点落盘。
+   *
+   * 只写"这一趟才算出来的"那些（`layout` 里没有的），所以第二帧就没得写了，
+   * 不会来回。写完之后它们在 `layout` 里，布局对拖拽这类交互免疫。
+   */
+  useEffect(() => {
+    const ids = Object.keys(seatFixes || {});
+    if (!ids.length) return;
+    setLayout(prev => {
+      let touched = false;
+      const next = { ...prev };
+      for (const id of ids) {
+        if (prev[id] && Number.isFinite(prev[id].x)) continue;   // 已经有坐标了
+        next[id] = { ...(prev[id] || {}), ...seatFixes[id], z: prev[id]?.z ?? 1 };
+        dirtyRef.current.objects.add(id);
+        touched = true;
+      }
+      if (touched) scheduleSave();
+      return touched ? next : prev;
+    });
+  }, [seatFixes, scheduleSave]);
 
   // ⚠️ 这里曾有「遮盖修正落盘」：区内避让把卡推开之后，把新坐标写回 board.json。
   // 区内避让 2026-08-07 起其实就没在跑了（`resolveZoneAvoidance` 是死导入、
@@ -906,7 +943,21 @@ export default function BoardCanvas({
         // 一层里只有文件夹方卡，判据从两条（收起态窄条 / 展开态框）收成一条
         const folder = folderView.find(z =>
           cx >= z.x && cx < z.x + z.w && cy >= z.y && cy < z.y + z.h);
-        const hint = folder ? { kind: 'folder', id: folder.id } : null;
+        /**
+         * 没落在文件夹上 → 看是不是**摞在另一件东西上**：桌面语言里这就是
+         * "把这两件归到一起"，系统当场建个文件夹把两个都收进去（2026-08-13）。
+         *
+         * 判据用**被拖那张的中心**落在对方矩形里，跟落进文件夹同一套 ——
+         * 用矩形相交会太灵敏，挨着摆一下就成夹。
+         */
+        const over = folder ? null : positioned.find(it => {
+          if (it.id === d.id || it.native) return null;     // 涂鸦/文字不成夹
+          if (!isFileBacked(it)) return null;               // doc 那类没有磁盘位置
+          const s2 = sizeOf(it);
+          return cx >= it.pos.x && cx < it.pos.x + s2.w && cy >= it.pos.y && cy < it.pos.y + s2.h;
+        });
+        const hint = folder ? { kind: 'folder', id: folder.id }
+          : over ? { kind: 'group', id: over.id } : null;
         if (JSON.stringify(dropHintRef.current) !== JSON.stringify(hint)) {
           dropHintRef.current = hint;
           setDropHint(hint);
@@ -950,6 +1001,15 @@ export default function BoardCanvas({
           const sz = sizeOf({ ...obj, pos });
           const prevZone = obj.zoneId || null;
           let target = null;                       // null = 不搬；字符串 = 搬到这个目录（'' = 根）
+          if (hint?.kind === 'group') {
+            const other = positioned.find(it => it.id === hint.id);
+            if (other) groupInto(obj, other);
+            dropHintRef.current = null;
+            setDropHint(null);
+            dirtyRef.current.objects.add(d.id);
+            scheduleSave();
+            return;
+          }
           if (hint?.kind === 'folder' || hint?.kind === 'zone') {
             if (hint.id !== prevZone) target = hint.id;
           } else if (prevZone && DRAG_OUT_DETACHES) {
@@ -1453,6 +1513,45 @@ export default function BoardCanvas({
     }
   }, [projectId, reload, scheduleSave]);
 
+  /**
+   * 把两件东西摞在一起 = 当场建个文件夹，两个都收进去（2026-08-13，用户要的）。
+   *
+   * 桌面/手机上这是最短的归类动作，比"先建夹、再拖两次"少两步。
+   *
+   * ⚠️ 顺序不能错，也不能并发：**先把文件夹建出来并拿到它的真名**（服务端会
+   * 给重名加序号，`新建文件夹` 可能变成 `新建文件夹 2`），再一件件搬。
+   * 抢跑的话第二件的 `to` 指向一个还不存在的目录 —— 服务端回
+   * `target folder not found`，用户看到的就是"目标文件夹不存在"。
+   *
+   * 两件都搬完才 reload 一次：中途刷新会让第二件在旧清单上算落点。
+   */
+  const groupInto = useCallback(async (a, b) => {
+    const bothImages = a.type === 'image' && b.type === 'image';
+    try {
+      const r = await Assets.createFolder(projectId, {
+        parent: cwdRef.current,
+        // 两张图归一起就叫「图片」，其余给通名 —— 名字是给人看的，不是 id
+        name: bothImages ? '图片' : undefined,
+      });
+      const folder = r?.folder;
+      if (!folder) throw new Error('没建成');
+      // 文件夹落在被摞的那张的位置上（视觉上"它俩合成了这个"）
+      setZones(prev => ({
+        ...prev,
+        [folder]: { x: Math.round(b.pos.x), y: Math.round(b.pos.y), w: FOLDER_CARD.w, h: FOLDER_CARD.h, title: folder.split('/').pop() },
+      }));
+      dirtyRef.current.zones.add(folder);
+      const rel = (o) => String(o.id).slice(String(o.id).indexOf(':') + 1);
+      await Assets.moveEntry(projectId, rel(b), folder);
+      await Assets.moveEntry(projectId, rel(a), folder);
+      scheduleSave();
+      reload();
+    } catch (err) {
+      useGlobalStore.getState().showToast(`归不到一起：${err.message}`, 'error');
+      reload();
+    }
+  }, [projectId, reload, scheduleSave]);
+
   const openContextMenu = useCallback((e) => {
     const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
     const objEl = e.target.closest?.('[data-board-object]');
@@ -1484,7 +1583,9 @@ export default function BoardCanvas({
       ];
     } else {
       items = [
-        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt('', at) },
+        // 建在**当前这一层**，不是永远建在根上（cwd 模型下写死 '' 是个真 bug：
+        // 在文件夹里右键新建，文件夹会跑到根目录去，而且当前层还看不见它）
+        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt(cwdRef.current, at) },
         { id: 'note', icon: StickyNote, label: '新建便利贴', hint: 'agent 能看到', onClick: () => createNoteAt(at) },
         { divider: true },
         { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ at }) },
@@ -1907,6 +2008,7 @@ export default function BoardCanvas({
               // 邻居保持 380ms 滑动 —— 挤开和弹回都是顺滑的
               animateLayout={!dragActive || dragRef.current?.id !== o.id}
               agentActive={ringObjects.has(o.id)}
+              groupTarget={dropHint?.kind === 'group' && dropHint.id === o.id}
               onPointerDown={(e) => onObjectPointerDown(e, o)}
               wasDrag={wasDrag}
               onPrimary={() => primaryOpen(o)}
@@ -2135,6 +2237,7 @@ export default function BoardCanvas({
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
 function BoardObject({
   o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
+  groupTarget = false,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
   scale = 1,
 }) {
@@ -2160,9 +2263,17 @@ function BoardObject({
     animation: POP_IN,
     // agent 此刻正在动这个物件 → 外圈光圈（放在 animation 之后才盖得住）。
     // 转动的那段亮弧画在下面的伪层里，这里只管稳的那一圈。
+    // ⚠️ 这几处都写**完整的 border 简写**，不写 borderColor：上面 base 里已经
+    // 有 `border`，简写和分写混在同一个 style 对象里，React 会在重渲染时警告
+    // 并且哪个生效取决于键序 —— 属于"改了颜色没变"那类玄学。
     ...(agentActive ? {
       animation: 'ndAgentRing 1600ms ease-in-out infinite',
-      borderColor: alpha(CANVAS.brass, 0.85),
+      border: `1px solid ${alpha(CANVAS.brass, 0.85)}`,
+    } : null),
+    // 有东西正摞过来 → 亮一圈，示意"松手就把你俩归到一个文件夹里"
+    ...(groupTarget ? {
+      border: `1px solid ${CANVAS.brass}`,
+      boxShadow: `0 0 0 3px ${alpha(CANVAS.brass, 0.22)}, 0 8px 20px rgba(0,0,0,0.14)`,
     } : null),
     // agent 改布局（pin / board.updated 重拉 / 自动入座）时位置变化以滑动呈现；
     // 用户拖拽期间关掉（要逐帧跟手）—— dragActive 经 animateLayout 传进来

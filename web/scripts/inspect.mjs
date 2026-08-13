@@ -74,7 +74,9 @@ await page.route('**/api/**', async (r) => {
     try { body = r.request().postDataJSON(); } catch { body = r.request().postData(); }
     calls.push({ method, path: u.pathname, body });
   }
-  const hit = resolveFixture(u.pathname, method);
+  let parsed = null;
+  try { parsed = r.request().postDataJSON(); } catch { /* 非 JSON */ }
+  const hit = resolveFixture(u.pathname, method, parsed);
   if (!hit) {
     unmatched.push(`${r.request().method()} ${u.pathname}`);
     // 兜一个空对象：让前端往下走，别在第一个缺的接口就停住
@@ -115,6 +117,36 @@ if (DRAG) {
     await page.mouse.up();
     await page.waitForTimeout(900);
   }
+}
+
+// 右键：先于 click 跑，这样能"右键 → 点菜单项"连成一串。
+// `--rightclick-at=x,y` 按坐标点 —— 想点**空白画布**只能这样，按选择器会
+// 落在容器中心，那儿多半压着一张卡（右键菜单是按命中对象换内容的）。
+const RIGHT_AT = opt('rightclick-at', null);
+const RIGHT = opt('rightclick', null);
+if (RIGHT_AT) {
+  const [rx, ry] = RIGHT_AT.split(',').map(Number);
+  await page.mouse.click(rx, ry, { button: 'right' });
+  await page.waitForTimeout(500);
+} else if (RIGHT) {
+  const el = await page.$(RIGHT);
+  if (!el) errors.push(`--rightclick 没找到元素: ${RIGHT}`);
+  else { await el.click({ button: 'right' }); await page.waitForTimeout(500); }
+}
+
+// 按文字点按钮（菜单项这种没有稳定选择器的）
+const CLICK_TEXT = opt('click-text', null);
+if (CLICK_TEXT) {
+  const btn = page.locator(`button:has-text("${CLICK_TEXT}")`).first();
+  // 用真鼠标点它的中心，而不是 locator.click —— 后者被"点别处关掉"的透明幕布
+  // 拦下时会重试到超时，而 force 又会把事件发给幕布，两种都不是用户在做的事
+  if (await btn.count()) {
+    const b = await btn.boundingBox();
+    // 点**左侧靠内**一点而不是正中：菜单右半截可能压在别的浮层底下
+    if (b) { await page.mouse.click(b.x + 16, b.y + b.height / 2); await page.waitForTimeout(900); }
+    else errors.push(`--click-text 量不到位置: ${CLICK_TEXT}`);
+  }
+  else errors.push(`--click-text 没找到按钮: ${CLICK_TEXT}`);
 }
 
 for (const [flag, how] of [['click', 'click'], ['dblclick', 'dblclick']]) {
