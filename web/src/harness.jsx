@@ -11,9 +11,23 @@
  *
  * 跑法见 scripts/shoot-harness.mjs。
  */
+import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { PanelManagerProvider } from './components/layout/PanelManager.jsx';
 import SiteWindow from './components/canvas/SiteWindow.jsx';
+import ArtifactWindow from './components/canvas/ArtifactWindow.jsx';
+
+/**
+ * 迟到的工具组：站点窗的「上线」控件要先请求发布状态，loaded 之前整个返回
+ * null。锚点如果只在挂载时算一次，就是按**缺一组**的宽度算的 left，控件到货
+ * 之后工具栏往右长出去 —— 表现就是"工具栏偏到右下角"。
+ */
+function LateGroup() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setReady(true), 400); return () => clearTimeout(t); }, []);
+  if (!ready) return null;
+  return <span style={{ padding: '3px 9px', fontSize: 12 }}>https://demo.share.example.com ⟳ ⊘</span>;
+}
 
 const CASES = {
   site: () => (
@@ -31,6 +45,23 @@ const CASES = {
     />
   ),
 };
+
+CASES.late = () => (
+  <ArtifactWindow
+    kind="latecase"
+    title="迟到组时序"
+    subtitle="index.html"
+    groups={[
+      { id: 'mode', type: 'mode', value: 'a', onChange: () => {}, items: [
+        { id: 'a', label: '预览' }, { id: 'b', label: '源码' },
+      ] },
+      { id: 'late', node: <LateGroup /> },
+    ]}
+    onClose={() => {}}
+  >
+    <div style={{ flex: 1, background: '#f4f2ee' }} />
+  </ArtifactWindow>
+);
 
 const which = new URLSearchParams(location.search).get('case') || 'site';
 createRoot(document.getElementById('root')).render(

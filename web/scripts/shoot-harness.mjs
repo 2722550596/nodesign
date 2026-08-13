@@ -31,15 +31,16 @@ await page.screenshot({ path: OUT });
 
 // 量一下工具栏到底落在哪 —— 肉眼看图容易把"差 20px"看成"对齐了"
 const box = await page.evaluate(() => {
-  // 工具栏没有稳定的 data 属性，按"里面有按钮的绝对定位浮层"找，并把它是谁打出来
-  const all = [...document.querySelectorAll('div')].filter(d => {
-    const st = getComputedStyle(d);
-    return st.position === 'absolute' && d.querySelector('button') && d.offsetWidth > 200 && d.offsetHeight < 80;
-  });
-  const tb = all[0] || null;
-  const host = document.querySelector('[data-site-window]')?.parentElement;
+  const tb = document.querySelector('[data-floating-toolbar]');
+  const host = tb?.offsetParent || null;          // 锚点算的就是相对它
   const r = (el) => el ? (({ x, y, width, height }) => ({ x: Math.round(x), y: Math.round(y), w: Math.round(width), h: Math.round(height) }))(el.getBoundingClientRect()) : null;
-  return { toolbar: r(tb), content: r(host), tbHtml: tb ? tb.outerHTML.slice(0, 120) : null, candidates: all.length };
+  const t = r(tb); const c = r(host);
+  return {
+    toolbar: t, content: c,
+    // 对齐判据：工具栏中心 vs 容器中心（差多少像素），以及离底缘多远
+    offCenterPx: (t && c) ? Math.round((t.x + t.w / 2) - (c.x + c.w / 2)) : null,
+    bottomGapPx: (t && c) ? Math.round((c.y + c.h) - (t.y + t.h)) : null,
+  };
 });
 
 await browser.close();

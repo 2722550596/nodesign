@@ -120,9 +120,18 @@ export default function FloatingToolbar({
    * 兜住"这一帧还没量出来"。
    */
   const anchoredRef = useRef(false);
+  /** 用户亲手拖过之后，任何自动落点都不许再动它 */
+  const userMovedRef = useRef(false);
   useEffect(() => {
     if (!anchor || anchoredRef.current) return;
-    if (panel?.position) { anchoredRef.current = true; setPlaced(true); return; }
+    if (panel?.position) {
+      // 已经有存过的位置 = 用户自己摆的，**当成拖过**：下面那套"跟着宽度
+      // 摆正"再也不许碰它。只置 anchoredRef 的话会把用户的位置改掉。
+      anchoredRef.current = true;
+      userMovedRef.current = true;
+      setPlaced(true);
+      return;
+    }
     let raf = 0;
     const tryPlace = () => {
       const bounds = boundsRef?.current;
@@ -227,8 +236,49 @@ export default function FloatingToolbar({
   }, [boundsRef, commit]);
 
   const endDrag = useCallback(() => {
+    if (dragRef.current?.moved) userMovedRef.current = true;   // 拖过就听用户的
     dragRef.current = null;
     setDragging(false);
+  }, []);
+
+  /**
+   * 落点跟着宽度走 —— **用户拖过就再也不插手**。
+   *
+   * 锚点原来只在挂载时算一次，而工具栏的内容是会**后到**的：站点窗的
+   * 「上线」控件要先请求发布状态，loaded 之前整组返回 null；导出格式、页面
+   * 列表也可能迟到一拍。按缺一组的宽度算出 left 之后，那一组到货工具栏就往
+   * 右长出去 —— 表现是"工具栏偏到右下角"，越晚到的组偏得越多。
+   *
+   * 要两条腿走路，缺一条都不够：
+   *   ① 每次渲染后对一次账（本组件因为别的原因重渲染时顺手摆正）
+   *   ② 一个**只挂一次**的尺寸观察者 —— 迟到的组是它自己内部 setState 变宽的，
+   *      工具栏根本不重渲染，光靠 ① 永远等不到
+   *
+   * ⚠️ 观察者的 effect 必须是空依赖：`commit` 依赖 `panel`，而 `usePanelState`
+   * 每次渲染返回新对象 → 带 commit 当依赖的话 effect 每渲染拆装一次，观察者
+   * 刚挂上就被拆掉。所以真正的逻辑放在一个每渲染刷新的 ref 里，effect 只负责
+   * 把观察者挂上去。
+   */
+  const reconcileRef = useRef(null);
+  reconcileRef.current = () => {
+    if (!anchor || dock || userMovedRef.current || !anchoredRef.current) return;
+    if (dragRef.current) return;                    // 正拖着，别抢
+    const bounds = boundsRef?.current;
+    const el = elRef.current;
+    if (!bounds || !el || !el.offsetWidth || !bounds.clientWidth) return;
+    const want = anchoredPosition(anchor, bounds, el);
+    // 收敛：摆正之后 want === pos，不会来回
+    if (Math.abs(want.x - pos.x) > 1 || Math.abs(want.y - pos.y) > 1) commit(want);
+  };
+
+  useEffect(() => { reconcileRef.current?.(); });
+
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => reconcileRef.current?.());
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   // 容器尺寸变了（窗口缩放 / 侧栏开合）要把跑到界外的工具条拉回来
@@ -277,7 +327,9 @@ export default function FloatingToolbar({
         ...style,
       }}
     >
-      {groups.filter(g => g && g.items?.length).map(g => (
+      {/* ⚠️ 判据要带上 `node` 组：只看 items.length 的话，`node` 逃生口
+          （站点的「上线」控件）会被整个过滤掉 —— 加了工具却不显示，不报错。 */}
+      {groups.filter(g => g && (g.node || g.items?.length)).map(g => (
         <ToolGroup key={g.id} group={g} />
       ))}
     </div>
