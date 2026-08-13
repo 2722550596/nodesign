@@ -41,10 +41,12 @@ lineage at a glance, and lets layout put related things near each other.
 Relationship types:
 ${VOCAB}
 
-Endpoints are canvas object ids OR zone (task folder) ids:
-- artifact file path, e.g. 'tasks/海报/proto-暖调.html' or 'assets/generated/x.webp'
-- 'deck:task/<task name>' for a task's main deck card
-- 'task/<task name>' for the whole task folder
+Endpoints are canvas ids — a kind prefix plus the workspace-relative path,
+exactly as the file sits on disk:
+- a file: 'assets/generated/x.webp', 'notes/灵感.md'
+- a deck: 'deck:海报/proto-暖调.html'
+- a site: 'site:伊蕾娜手账研究站'   a world: 'world:雾都'
+- a folder: just its path, '海报' or '海报/初稿'
 
 Use it right after you produce something that relates to earlier work:
 - made v2 of a poster → derives-from, from the new one to the old one
@@ -52,13 +54,13 @@ Use it right after you produce something that relates to earlier work:
 - storyboard panels in order → flow, each to the next
 - used a reference image in a deck → ref, from the deck to the image
 
-Do NOT use it for "these are all in the same task" — that is what the task
+Do NOT use it for "these are all in the same folder" — that is what the
 folder already says. Only record relationships that are not obvious from
 where the files live.`,
     {
       type: z.enum(BINDING_TYPE_IDS).describe('Relationship kind (see list above)'),
-      from: z.string().min(1).max(300).describe('Source object id / artifact path / zone id'),
-      to: z.string().min(1).max(300).describe('Target object id / artifact path / zone id'),
+      from: z.string().min(1).max(300).describe('Source canvas id — see forms above'),
+      to: z.string().min(1).max(300).describe('Target canvas id — see forms above'),
       label: z.string().max(60).optional()
         .describe('Optional short words on the line. Omit to use the default for the type.'),
     },

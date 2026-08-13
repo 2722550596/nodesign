@@ -49,6 +49,7 @@ import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
+import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
 import {
   setActiveArtifact, getActiveArtifact, listWorkspaceArtifacts,
@@ -120,7 +121,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // 声明过，所以它一次都没触发过。注册保留（将来开 watcher 可覆盖 bash/子代理
     // 写文件），实时刷新真正走下面 PostToolUse 的确定性直发。
     FileChanged: [{
-      hooks: [makeFileChangedHandler({ ctx })],
+      hooks: [makeFileChangedHandler({ ctx, workspaceRoot })],
     }],
 
     // ~~PreToolUse(Bash) 白名单~~ Phase 3d 删 —— 改用 session-loop.js sandbox option
@@ -400,11 +401,12 @@ function makePreToolUseGrepContentDefaultHandler() {
  *
  * 返回 {}：不干预 SDK，不影响 agent loop。
  */
-function makeFileChangedHandler({ ctx }) {
+function makeFileChangedHandler({ ctx, workspaceRoot }) {
   // eslint-disable-next-line no-unused-vars
   return async (input, _toolUseId, _options) => {
     try {
-      ctx.emit(Events.fileChanged(input.file_path, input.event));
+      // 同上：发工作区相对路径，前端拿它直接当物件 id 的路径部分
+      ctx.emit(Events.fileChanged(toWorkspaceRel(input.file_path, workspaceRoot), input.event));
     } catch (err) {
       console.warn(`[hooks/FileChanged] handler threw:`, err.message);
     }
@@ -798,8 +800,12 @@ function makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, ses
         // 不给 path 时默认打它，子代理不必知道任务目录长什么样（artifact-target.js）。
         // 形态（deck / site）不在这里定：resolveArtifactTarget 每次解析都按任务现状
         // 重算，免得"先写 index.html 记成 site、后来目录变了"这种陈旧状态。
-        setActiveArtifact(sessionId, toWorkspaceRel(filePath, workspaceRoot));
-        ctx.emit(Events.fileChanged(filePath, 'change'));
+        const rel = toWorkspaceRel(filePath, workspaceRoot);
+        setActiveArtifact(sessionId, rel);
+        // 发**工作区相对路径**：画布物件的 id 就是这个字符串。以前发绝对路径，
+        // 前端靠 `tasks/<任务>/` 这个特征段把相对部分抠出来 —— 那一层拆掉之后
+        // 绝对路径里再没有可锚定的标志，寻址静默失败（舞台卡掉 dock）。
+        ctx.emit(Events.fileChanged(rel, 'change'));
       }
     } catch (err) {
       console.warn('[hooks/PostToolUse:file-changed] emit failed:', err.message);
@@ -1793,14 +1799,9 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
  * 整套随任务层一起退役 —— 产物属于项目，不属于任何一次对话。
  */
 
-/** 工具入参给的可能是绝对路径，也可能是相对 cwd 的 —— 统一成 workspace 相对 */
-function toWorkspaceRel(filePath, workspaceRoot) {
-  const p = String(filePath).replace(/\\/g, '/');
-  if (!workspaceRoot) return p;
-  const root = path.resolve(workspaceRoot);
-  const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
-  return abs.startsWith(root + path.sep) ? abs.slice(root.length + 1) : p;
-}
+// `toWorkspaceRel` 2026-08-13 提到 `server/lib/workspace-path.js`：
+// 发给前端当物件寻址依据的路径全都要过它，而那些 emit 不只在这个文件里
+// （agent-shared 的流式 tool_input 也发 filePath）。
 
 /**
  * PostToolUse(record_decision) —— 锚定风格那一笔之后提醒落两处长期资产

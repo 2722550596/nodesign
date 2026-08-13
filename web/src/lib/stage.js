@@ -31,74 +31,64 @@ export function stageKindOf(toolName) {
   return 'chip';
 }
 
-// deck 主文件候选 —— 与 server agent-shared.js ARTIFACT_CANDIDATES 保持一致
-const DECK_FILES = new Set(['canvas.html', 'deck.html', 'index.html', 'output.html']);
-
 /**
- * agent 的 file_path（绝对或相对 cwd）→ 画布物件 id。
- * 归一化规则与 server/engine/mcp/tools/pin-to-board.js 一致：
- *   agent-memory/memory.md → doc:_root；agent-memory/brand/memory.md → doc:brand
- *   …/assets/(generated|notes|…)/x → 'assets/…'；deck 主文件 → deck:<当前会话>
- * 认不出的返回 null（舞台卡落 dock，不锚物件）。
+ * agent 写的文件 → 画布物件 id。
+ *
+ * ## 前提：进来的路径已经是工作区相对的
+ *
+ * 服务端在 emit 之前过 `toWorkspaceRel`（`server/lib/workspace-path.js`）。
+ * 这不是洁癖 —— **只有服务端知道工作区根在哪**。2026-08-08 之前这个函数靠
+ * `tasks/<任务>/` 这个特征段从绝对路径里抠相对部分，那一层拆掉之后绝对路径里
+ * 再没有可锚定的标志（工作区根就是一串随机 id 的目录名），前端猜不出来。
+ *
+ * ## 规则（id = kind 前缀 + 工作区相对路径）
+ *
+ *   1. 记忆 / 品牌两份文档有固定 id（它们是项目区的卡，不按路径派生）
+ *   2. 落在某件**目录型产物**（站点 / 世界）里的一切 → 贴那件产物的卡。
+ *      站点的 index / about / style.css / 图片各给一个 id 的话，agent 改一次
+ *      样式表桌面就多冒一张卡 —— 用户要的是"我那个网站"，不是三张互不相干的卡。
+ *   3. 其余 `.html` → 一份 deck（顶层也好、文件夹里也好，都是平等的一份）
+ *   4. 剩下的一切 → **路径本身**就是 id（图片卡、便签卡、文件卡都这么派生）
+ *
+ * 认不出来只有一种情况：路径为空（工作区根自己）。
+ *
+ * @param {string} filePath 工作区相对路径
+ * @param {Array<{path:string,id:string}>} artifactRoots 目录型产物的覆盖表，
+ *        **按 path 长度降序**（长的先匹配，子目录站点才不会被父站点吞掉）
  */
-export function resolveObjectId(filePath, currentSessionId, siteTasks) {
+export function resolveObjectId(filePath, artifactRoots) {
   if (!filePath || typeof filePath !== 'string') return null;
-  const p = filePath.replace(/\\/g, '/');
+  const p = filePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
+  if (!p) return null;
   if (p.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
   if (p.endsWith('agent-memory/memory.md')) return 'doc:_root';
-  // 任务模型：tasks/<任务>/canvas.html = 任务 deck；其余任务文件用完整相对路径当 id
-  const mt = p.match(/(?:^|\/)tasks\/([^/]+)\/(.+)$/);
-  if (mt) {
-    // 站点：一个站点实例的子页 / 样式表 / 图片全贴同一张卡（各给 id 的话，
-    // agent 改一次样式表桌面就多冒一张卡）。多产物平权后 siteTasks 可以是
-    // Map<任务名, 站点root[]>（'' = 根站，'v2' = 子目录站），Set 兼容旧签名。
-    // `_drafts/<名>.html` 是独立单页卡；canvas.html 永远是 deck（混合任务）。
-    if (siteTasks && siteTasks.has(mt[1])) {
-      const md = mt[2].match(/^_drafts\/([^/]+\.html?)$/i);
-      if (md) return `site:task/${mt[1]}/_drafts/${md[1]}`;
-      if (mt[2] === 'canvas.html') return `deck:task/${mt[1]}`;
-      const roots = typeof siteTasks.get === 'function' ? siteTasks.get(mt[1]) : null;
-      if (Array.isArray(roots)) {
-        const sub = roots.find(r => r && (mt[2] === r || mt[2].startsWith(`${r}/`)));
-        if (sub) return `site:task/${mt[1]}/${sub}`;
-        if (roots.includes('')) return `site:task/${mt[1]}`;
-        // 无根站且不在任何子目录站里：顶层 .html 是平等的 deck
-        if (/\.html$/i.test(mt[2]) && !mt[2].includes('/')) return `deck:task/${mt[1]}/${mt[2]}`;
-        return `tasks/${mt[1]}/${mt[2]}`;
-      }
-      return `site:task/${mt[1]}`;
-    }
-    if (mt[2] === 'canvas.html') return `deck:task/${mt[1]}`;
-    // 任务下的其他顶层 .html = 平等的 deck 物件（不是普通文件卡）
-    if (/\.html$/i.test(mt[2]) && !mt[2].includes('/')) return `deck:task/${mt[1]}/${mt[2]}`;
-    return `tasks/${mt[1]}/${mt[2]}`;
+  for (const r of (artifactRoots || [])) {
+    if (!r?.path) continue;
+    if (p === r.path || p.startsWith(`${r.path}/`)) return r.id;
   }
-  if (DECK_FILES.has(fileNameOf(p)) && currentSessionId) return `deck:${currentSessionId}`;
-  const m = p.match(/(?:^|\/)assets\/(.+)$/);
-  if (m) return `assets/${m[1]}`;
-  return null;
+  if (/\.html?$/i.test(p)) return `deck:${p}`;
+  return p;
 }
 
 /**
- * 物件 id → 它天然属于哪块工作区（与 BoardCanvas 的 naturalZoneOf 同一套规则）。
+ * 物件 id → 它住在哪个文件夹（与 BoardCanvas 的 `naturalZoneOf` 同一套规则）。
  *
  * 舞台卡的落点用它兜底：物件还没上墙（新文件正在写，产物列表下一次重拉才知道
- * 它存在）时，卡至少能贴到正确的工作区，而不是掉进屏幕底部的 dock。
+ * 它存在）时，卡至少能贴到正确的文件夹，而不是掉进屏幕底部的 dock。
+ *
+ * 返回 null = 住在工作区根上（桌面本身），没有上级文件夹。
+ * ⚠️ 不再有"回落到当前会话"这一支：会话不产生画布物件（2026-08-08），回落到
+ * sessionId 只会凭空造出一个 key 是 uuid 的影子文件夹，而它永远不会退场。
  */
-export function zoneOfObjectId(objectId, currentSessionId) {
+export function zoneOfObjectId(objectId) {
   if (!objectId || typeof objectId !== 'string') return null;
-  if (objectId.startsWith('deck:task/') || objectId.startsWith('site:task/')) {
-    // deck:task/<任务>[/<试作文件>] 或 site:task/<任务>
-    const rest = objectId.slice(10);
-    return `task/${rest.split('/')[0]}`;
-  }
-  if (objectId.startsWith('deck:')) return objectId.slice(5);
   if (objectId.startsWith('doc:')) return null;
-  if (objectId.startsWith('tasks/')) {
-    const parts = objectId.split('/');
-    return parts.length >= 3 ? `task/${parts[1]}` : null;
-  }
-  return currentSessionId || null;
+  // kind 前缀只认字母（`deck:` `site:` `world:`）—— 路径里的冒号不算前缀，
+  // 判据跟 server/projects/board-store.js 的 mapId 保持一致
+  const c = objectId.indexOf(':');
+  const p = (c > 0 && /^[a-z]+$/.test(objectId.slice(0, c))) ? objectId.slice(c + 1) : objectId;
+  const i = p.lastIndexOf('/');
+  return i > 0 ? p.slice(0, i) : null;
 }
 
 export function fileNameOf(filePath) {

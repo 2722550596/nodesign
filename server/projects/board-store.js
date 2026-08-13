@@ -491,57 +491,64 @@ export async function reconcileBoardRenames(pid) {
   return { renamed };
 }
 
-function nextZoneRect(board) {
-  const { w, h, gap, bandX, bandY, perRow } = ZONE_DEFAULTS;
-  const n = Object.keys(board.zones).length;
-  return {
-    x: Math.min(board.size.w - w, bandX + (n % perRow) * (w + gap)),
-    y: Math.min(board.size.h - h, bandY + Math.floor(n / perRow) * (h + gap)),
-    w, h,
-  };
-}
+// `nextZoneRect`（给新建的工作区自动铺位）2026-08-13 删除：服务端不再新建
+// 文件夹条目 —— 文件夹的权威是磁盘扫描，前端按 newStackedZoneRect 给它安排
+// 位置。服务端这份自动铺位是当年 pinToZone 会凭空造区留下的。
 
 /**
- * 把一个物件放进某 zone 的下一个空槽（zone 不存在则先按自动铺位创建）。
- * 单锁原子操作，供 MCP 工具（agent 协助摆放）使用。
- * 槽位按 244×210 网格估算（服务端不知道物件真实尺寸，取最大卡片脚印）。
+ * 把一个物件摆到画布上的一个空位并置顶（`pin_to_board` 用）。
+ * 单锁原子操作。槽位按 244×210 网格估算（服务端不知道物件真实尺寸，取最大卡片脚印）。
+ *
+ * ## 2026-08-13 改了三件事
+ *
+ * 1. **两个 id 都过转发表。** 以前直接 `board.objects[objectId] = …`，agent 在
+ *    改名窗口（TTL 5 分钟）里 pin 一下，就往 board.json 里插一条指向旧路径的
+ *    条目 —— 画布上多一张回到默认位置的重影，而且不报错。这正是
+ *    `renameBoardPaths` 上面那段注释拼死在防的东西，这条写入口是唯一的漏网。
+ * 2. **不再写 `zone` 显式归属字段。** id = 路径之后，"它属于哪个文件夹"由路径
+ *    回答，再写一个字段只会让画布和磁盘各执一词。
+ * 3. **不再凭空新建文件夹条目。** 文件夹的权威是磁盘扫描；board.json 里那条
+ *    只是坐标。造一条磁盘上不存在的出来，就是一块剪不掉的僵尸框。
+ *    文件夹没坐标（还没被摆过）时就摆到桌面上，前端下一轮会给它安排位置。
  */
-export function pinToZone(pid, { objectId, zoneId, zoneTitle }) {
+export function pinToZone(pid, { objectId, zoneId = '' }) {
   return withBoardLock(pid, async () => {
     const board = await readBoard(pid);
-    if (!board.zones[zoneId]) {
-      board.zones[zoneId] = {
-        ...nextZoneRect(board),
-        ...(zoneTitle ? { title: String(zoneTitle).slice(0, 120) } : {}),
-      };
-    }
-    const zone = board.zones[zoneId];
-    const CELL_W = 244; const CELL_H = 210; const PAD = 16; const HEADER = 40;
+    const now = Date.now();
+    const oid = forwardId(pid, objectId, now);
+    const zid = zoneId ? forwardId(pid, zoneId, now) : '';
+
+    const zone = (zid && board.zones[zid]) ? board.zones[zid] : null;
+    // 没有落脚文件夹就用整张桌面当画幅（HEADER=0：桌面没有标题栏）
+    const area = zone
+      ? { x: zone.x, y: zone.y, w: zone.w, h: zone.h, header: 40 }
+      : { x: 0, y: 0, w: board.size.w, h: board.size.h, header: 0 };
+
+    const CELL_W = 244; const CELL_H = 210; const PAD = 16;
     const members = Object.values(board.objects).filter(o =>
-      o.x >= zone.x && o.x < zone.x + zone.w && o.y >= zone.y && o.y < zone.y + zone.h);
-    const cols = Math.max(1, Math.floor((zone.w - PAD * 2) / CELL_W));
+      o.x >= area.x && o.x < area.x + area.w && o.y >= area.y && o.y < area.y + area.h);
+    const cols = Math.max(1, Math.floor((area.w - PAD * 2) / CELL_W));
     let slot = null;
     for (let i = 0; i < 200 && !slot; i++) {
-      const cx = zone.x + PAD + (i % cols) * CELL_W;
-      const cy = zone.y + HEADER + PAD + Math.floor(i / cols) * CELL_H;
+      const cx = area.x + PAD + (i % cols) * CELL_W;
+      const cy = area.y + area.header + PAD + Math.floor(i / cols) * CELL_H;
       if (!members.some(m => Math.abs(m.x - cx) < CELL_W / 2 && Math.abs(m.y - cy) < CELL_H / 2)) {
         slot = { x: cx, y: cy };
       }
     }
-    if (!slot) slot = { x: zone.x + PAD, y: zone.y + HEADER + PAD };
-    // 槽位落到 zone 外（满了）就把 zone 向下撑高
-    if (slot.y + CELL_H > zone.y + zone.h) {
+    if (!slot) slot = { x: area.x + PAD, y: area.y + area.header + PAD };
+    // 槽位落到文件夹框外（满了）就把它向下撑高
+    if (zone && slot.y + CELL_H > zone.y + zone.h) {
       zone.h = Math.min(board.size.h - zone.y, slot.y + CELL_H - zone.y);
     }
     const zMax = Math.max(10, ...Object.values(board.objects).map(o => o.z || 0));
-    board.objects[objectId] = {
-      ...(board.objects[objectId] || {}),
-      x: clampNum(slot.x, 0, board.size.w, zone.x),
-      y: clampNum(slot.y, 0, board.size.h, zone.y),
+    board.objects[oid] = {
+      ...(board.objects[oid] || {}),
+      x: clampNum(slot.x, 0, board.size.w, area.x),
+      y: clampNum(slot.y, 0, board.size.h, area.y),
       z: zMax + 1,
-      zone: zoneId,          // 显式归属（pin 即入册）
     };
     await writeBoard(pid, board);
-    return { board, zone: { id: zoneId, ...zone }, placed: board.objects[objectId] };
+    return { board, zone: zone ? { id: zid, ...zone } : null, placed: board.objects[oid] };
   });
 }

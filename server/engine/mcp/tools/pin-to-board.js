@@ -1,14 +1,29 @@
 /**
- * mcp/tools/pin-to-board.js — pin_to_board MCP tool（2026-07-27 分区画布）
+ * mcp/tools/pin_to_board — 把一件东西摆到用户画布上的某个位置。
  *
- * agent 协助整理工作台：把一个产物/文档/deck 摆进某个工作区（zone）。
- * 写 shared/board.json（board-store 单锁原子操作，与前端 PATCH 互不覆盖），
- * 然后广播 board.updated（sessionId: null → project 全连接都收到，前端整份重拉）。
+ * 写 board.json（board-store 单锁原子操作，与前端 PATCH 互不覆盖），然后广播
+ * board.updated（sessionId: null → project 全连接都收到，前端整份重拉）。
  *
- * 物件 id 约定（与前端 BoardCanvas 派生一致）：
- *   - 产物文件：'assets/...'（generated/ notes/ 上传件都在 shared/assets 下）
- *   - 项目文档：'doc:_root'（agent-memory/memory.md）/ 'doc:brand'
- *   - deck：'deck:<sessionId>'
+ * 物件 id 约定（与前端 BoardCanvas 派生一致）：**id = kind 前缀 + 工作区相对路径**
+ *   - 普通文件（图片 / 便签 / 数据）：路径本身，`assets/generated/a.webp`
+ *   - deck：`deck:<路径>`，如 `deck:稿件/主稿.html`
+ *   - 站点 / 世界：`site:<目录>` / `world:<目录>`
+ *   - 项目文档：`doc:_root`（记忆）/ `doc:brand`（品牌档案）
+ *
+ * ## 2026-08-13：这个工具的职权范围缩小了
+ *
+ * 以前它有个 `zone` 参数，语义是"放进哪块工作区"。**在 id = 路径的模型下这件事
+ * 不成立** —— 一个物件属于哪个文件夹，答案就写在它的路径里。让工具单独写一个
+ * "显式归属"字段，等于允许画布说"它在 A 文件夹"而磁盘说"它在 B 文件夹"，
+ * 正是 2026-07-28 把「拖出工作区解绑」停用掉的那个理由（两边对不上，且很容易
+ * 误触）。要换文件夹就 `mv` —— 那是真的搬，画布跟着走。
+ *
+ * 所以现在它只剩一件事：**给这件东西一个位置并置顶**（"把它摆到用户眼前"）。
+ *
+ * ⚠️ 顺带修掉的两个僵尸：`zone` 原来被校验成 `/^[A-Za-z0-9-]{8,64}$/`（= 一个
+ * sessionId），于是任何中文文件夹名、任何带斜杠的嵌套路径都过不了，一律静默
+ * 回落到 sessionId —— 然后在 board.json 里新建一块根本不存在的"工作区"。
+ * agent 每帮一次忙就制造一条死数据。
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
@@ -17,76 +32,77 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { pinToZone } from '../../../projects/board-store.js';
 
+/** 物件 id → 它住在哪个文件夹（与前端 stage.js 的 zoneOfObjectId 同一套规则） */
+function folderOfObjectId(objectId) {
+  if (objectId.startsWith('doc:')) return '';
+  const c = objectId.indexOf(':');
+  const p = (c > 0 && /^[a-z]+$/.test(objectId.slice(0, c))) ? objectId.slice(c + 1) : objectId;
+  const i = p.lastIndexOf('/');
+  return i > 0 ? p.slice(0, i) : '';
+}
+
 /**
  * @param {object} deps
- * @param {string} [deps.sharedRoot]   project shared/ 根（校验文件存在用）
+ * @param {string} [deps.sharedRoot]   工作区根（校验文件存在用）
  * @param {string} [deps.projectId]
- * @param {string} [deps.sessionId]    默认目标工作区
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makePinToBoardTool({ sharedRoot, projectId, sessionId, ctx }) {
+export function makePinToBoardTool({ sharedRoot, projectId, ctx }) {
   return tool(
     'pin_to_board',
-    `Place an item onto the project workbench board, inside a task zone. The
-board is the user's spatial canvas: everything you generate (images, notes)
-auto-appears in the current task's zone already — you do NOT need this tool
-for your own outputs. Use it to deliberately organize or surface content:
+    `Bring an item to the front of the user's canvas, at a free spot in whatever
+folder it lives in. The canvas is their desktop: whatever you write appears
+there automatically — you do NOT need this tool for your own outputs.
+Use it only to deliberately surface something:
 
-- Pull a reference (an uploaded asset, the brand doc, an older deck's image)
-  into the current task's zone so the user sees it alongside the work
-- Restore something the user dragged away, when they ask for it back
-- Tidy up: move an item into the zone of the session it belongs to
+- Pull a reference (an uploaded asset, the brand doc, an older image) into view
+- Restore something the user dragged off-screen, when they ask for it back
 
-Item path forms accepted:
-- 'assets/generated/<file>' / 'assets/notes/<file>.md' / 'assets/<file>' (uploads)
-- 'agent-memory/memory.md' (project memory doc) / 'agent-memory/brand/memory.md' (brand doc)
-- 'deck:<sessionId>' (a deck card)
+This does NOT change which folder the item belongs to — that is decided by
+where the file is on disk. To move it, \`mv\` the file; the canvas follows.
 
-The zone defaults to the current session's work zone (created if missing).`,
+Paths are workspace-relative, exactly as they are on disk. Accepted forms:
+- any file path: 'assets/generated/hero.webp', 'notes/灵感.md', '稿件/数据.csv'
+- a deck: 'deck:<path>.html'   a site: 'site:<dir>'   a world: 'world:<dir>'
+  (a bare '<path>.html' is read as a deck)
+- '.claude/agent-memory/memory.md' (project memory) / '.../brand/memory.md' (brand doc)`,
     {
       path: z
         .string()
         .min(1)
         .max(300)
-        .describe("Item to pin — see accepted path forms in the tool description"),
-      zone: z
-        .string()
-        .optional()
-        .describe("Target zone = a sessionId. Omit for the current session's zone."),
+        .describe('Item to surface — see accepted forms in the tool description'),
     },
-    async ({ path: rawPath, zone }) => {
+    async ({ path: rawPath }) => {
       try {
         if (!projectId) {
           return { content: [{ type: 'text', text: 'No project bound; cannot pin.' }], isError: true };
         }
-        const zoneId = (zone && /^[A-Za-z0-9-]{8,64}$/.test(zone)) ? zone : sessionId;
-        if (!zoneId) {
-          return { content: [{ type: 'text', text: 'No target zone: pass `zone` (a sessionId) — this run has no session bound.' }], isError: true };
-        }
 
-        // 归一化成前端物件 id
-        let objectId = String(rawPath).trim().replace(/^\.\//, '');
-        if (objectId === 'agent-memory/memory.md') objectId = 'doc:_root';
-        else if (objectId === 'agent-memory/brand/memory.md') objectId = 'doc:brand';
-        else if (!objectId.startsWith('deck:') && !objectId.startsWith('doc:')) {
-          if (/^(generated|notes)\//.test(objectId)) objectId = `assets/${objectId}`;
-          // tasks/<任务>/<文件> 原样通过（任务产出的物件 id 就是这个形态）
-          if (!objectId.startsWith('assets/') && !objectId.startsWith('tasks/')) objectId = `assets/${objectId}`;
-          if (objectId.includes('..')) {
-            return { content: [{ type: 'text', text: 'Invalid path.' }], isError: true };
-          }
-          // 尽力校验文件存在，防钉一个不存在的物件（前端会当孤儿布局忽略）
+        // 归一化成前端物件 id（id = kind 前缀 + 工作区相对路径）
+        let objectId = String(rawPath).trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
+        if (!objectId || objectId.includes('..')) {
+          return { content: [{ type: 'text', text: 'Invalid path.' }], isError: true };
+        }
+        if (objectId.endsWith('agent-memory/brand/memory.md')) objectId = 'doc:brand';
+        else if (objectId.endsWith('agent-memory/memory.md')) objectId = 'doc:_root';
+        else if (!/^(deck|site|world|doc):/.test(objectId)) {
+          // 裸路径：.html 是一份 deck，其余（图片 / 便签 / 数据文件）id 就是路径。
+          // 站点和世界的目录要显式写 `site:` / `world:` —— 光看路径分不出
+          // "一个收纳文件夹"和"一件目录型产物"，猜错了钉上去的是个不存在的 id。
           if (sharedRoot) {
             const abs = path.join(sharedRoot, objectId);
             try { await fs.access(abs); } catch {
               return {
-                content: [{ type: 'text', text: `File not found under shared assets: ${objectId}. Check the path (accepted forms are in the tool description).` }],
+                content: [{ type: 'text', text: `File not found: ${objectId}. Paths are workspace-relative, same as on disk.` }],
                 isError: true,
               };
             }
           }
+          if (/\.html?$/i.test(objectId)) objectId = `deck:${objectId}`;
         }
 
+        const zoneId = folderOfObjectId(objectId);
         const { zone: placedZone, placed } = await pinToZone(projectId, { objectId, zoneId });
 
         try {
@@ -95,14 +111,15 @@ The zone defaults to the current session's work zone (created if missing).`,
             sessionId: null,          // project 级广播：显式压掉 ctx 的 sessionId enrich
             objectId,
             zoneId,
-            summary: `已把 ${objectId} 放进工作区`,
+            summary: zoneId ? `已把 ${objectId} 摆到「${zoneId}」里` : `已把 ${objectId} 摆到桌面上`,
           });
         } catch { /* emit fail-safe */ }
 
+        const where = placedZone?.id ? `in ${placedZone.id}` : 'on the desktop';
         return {
           content: [{
             type: 'text',
-            text: `Pinned ${objectId} into zone ${zoneId}${placedZone.title ? ` (${placedZone.title})` : ''} at (${placed.x}, ${placed.y}). The user's board updates live.`,
+            text: `Surfaced ${objectId} ${where} at (${placed.x}, ${placed.y}). The user's canvas updates live.`,
           }],
         };
       } catch (err) {

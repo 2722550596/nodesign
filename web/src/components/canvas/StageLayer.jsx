@@ -32,7 +32,7 @@ const SHIMMER_MIN_H = 84;        // 再挤也不低于这个高度
 // ── 状态机 ──
 
 export function useStageState({
-  stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand,
+  stageRef, artifactRoots, followToObject, tryAutoExpand,
   onStageTarget, onPreviewRequest,
   /**
    * 原始事件旁路。舞台层独占 `stageRef`，别的消费者（在场层）没有第二个入口 ——
@@ -82,7 +82,7 @@ export function useStageState({
       case 'run.delta.tool_input': {
         // 真流式：append = Edit.new_string / Write.content 的纯文本增量
         if (!evt.blockId) return;
-        const oid = evt.filePath ? resolveObjectId(evt.filePath, currentSessionId, siteTasks) : null;
+        const oid = evt.filePath ? resolveObjectId(evt.filePath, artifactRoots) : null;
         setStageCards(prev => {
           const c = prev[evt.blockId] || newStageCard(evt, stageKindOf(evt.name) || 'code');
           return {
@@ -119,7 +119,7 @@ export function useStageState({
         const kind = stageKindOf(evt.name);
         if (!kind || !evt.blockId) return;
         const input = evt.input || {};
-        const oid = typeof input.file_path === 'string' ? resolveObjectId(input.file_path, currentSessionId, siteTasks) : null;
+        const oid = typeof input.file_path === 'string' ? resolveObjectId(input.file_path, artifactRoots) : null;
         setStageCards(prev => {
           const c = prev[evt.blockId] || newStageCard(evt, kind);
           const patch = {
@@ -151,7 +151,7 @@ export function useStageState({
       }
       case 'run.deck_preview': {
         // preview_deck 工具：agent 把 deck 摊到用户眼前（= 用户双击那张卡）
-        const oid = evt.path ? resolveObjectId(evt.path, currentSessionId, siteTasks) : (currentSessionId ? `deck:${currentSessionId}` : null);
+        const oid = evt.path ? resolveObjectId(evt.path, artifactRoots) : null;
         if (oid) onPreviewRequest?.(oid);
         break;
       }
@@ -178,7 +178,7 @@ export function useStageState({
       }
       case 'run.file_changed': {
         // 物件"已更新"角标（在板上才有意义）
-        const oid = resolveObjectId(evt.filePath, currentSessionId, siteTasks);
+        const oid = resolveObjectId(evt.filePath, artifactRoots);
         if (!oid) return;
         // agent 正在写 deck → 自动展开内嵌渲染，工作过程直接在画布里看
         if (oid.startsWith('deck:')) tryAutoExpand?.(oid.slice(5));
@@ -275,7 +275,7 @@ export function useStageState({
       default: break;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSessionId, siteTasks, followToObject, removeStageCardLater, tryAutoExpand, onStageTarget, onPreviewRequest]);
+  }, [artifactRoots, followToObject, removeStageCardLater, tryAutoExpand, onStageTarget, onPreviewRequest]);
 
   useEffect(() => {
     if (!stageRef) return;
@@ -351,7 +351,7 @@ function placeImageCard(zoneRect, taken) {
  *
  * occupancy：zoneId → 该区内已有物件的矩形。生图占位卡据此避开已有的图。
  */
-export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZones, currentSessionId, focusZone, occupancy }) {
+export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZones, focusZone, occupancy }) {
   const anchoredCards = [];
   const dockPanels = [];
   const dockChips = [];
@@ -382,10 +382,11 @@ export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZ
     // 物件不在（或不可见，生图更是压根还没有物件）→ 退到工作区。
     // 目标未知的（file_path 还没流出来）就贴当前工作区，反正 agent 正在这里干活。
     //
-    // 兜底顺序里 focusZone 必须排在 currentSessionId 前面（2026-07-28）：任务绑了
-    // 会话之后，会话区被任务区取代、id 是 `task/<名字>` —— 拿 sessionId 去找区永远
-    // 找不到，生图卡就全掉进屏幕底部的 dock 叠成一摞，看着像"没放进工作文件夹"。
-    const zid = zoneOfObjectId(c.objectId, currentSessionId) || focusZone || currentSessionId;
+    // ⚠️ 这里曾经还有第三级兜底"回落到当前会话区"。会话不再产生画布物件
+    // （2026-08-08）之后那一级只会指向一个不存在的 id，而它的下游
+    // （ensureZoneForTarget）会照单全收地长出一块 uuid 标题的影子文件夹。
+    // 2026-08-13 拆掉：认不出来就老实掉 dock，别猜。
+    const zid = zoneOfObjectId(c.objectId) || focusZone;
     const zr = visibleZoneOf(zid);
     if (!zr) { dockPanels.push(c); continue; }
     if (c.kind === 'image') {

@@ -477,7 +477,7 @@ export default function BoardCanvas({
    * 任务目录是 agent 现建的，产物列表这轮还看不到 —— 先用影子区占位。
    */
   const ensureZoneForTarget = useCallback((objectId) => {
-    const zid = zoneOfObjectId(objectId, currentSessionId);
+    const zid = zoneOfObjectId(objectId);
     if (!zid) return;
     if (zonesRef.current[zid] || ghostZones[zid]) return;
     const title = zid.split('/').pop() || '文件夹';
@@ -485,7 +485,11 @@ export default function BoardCanvas({
       ...prev,
       [zid]: { ...newStackedZoneRect({ ...zonesRef.current, ...prev }), title },
     }));
-  }, [currentSessionId, ghostZones]);
+    // ⚠️ 影子文件夹是**不过磁盘权威剪枝**的（zonesEff 里 ghost 无条件并入），
+    // 所以 zoneOfObjectId 一旦凭空造出一个不存在的 id，这里就会长出一块永不
+    // 退场的虚线框（退场条件是"真的出现了"，而它永远不会）。寻址回落到
+    // sessionId 那一支正是这么来的 —— 2026-08-13 已从 stage.js 拆掉。
+  }, [ghostZones]);
 
   /**
    * 自动摆位 + 归属判定：
@@ -1739,19 +1743,19 @@ export default function BoardCanvas({
    */
   const handleStageTarget = useCallback((objectId) => {
     ensureZoneForTarget(objectId);
-    const zid = zoneOfObjectId(objectId, currentSessionId);
+    const zid = zoneOfObjectId(objectId);
     if (zid) requestAutoExpand(zid);
-  }, [ensureZoneForTarget, currentSessionId, requestAutoExpand]);
+  }, [ensureZoneForTarget, requestAutoExpand]);
 
   // preview_deck 工具：等价于用户双击那张 deck 卡
   const handlePreviewRequest = useCallback((objectId) => {
-    const zid = zoneOfObjectId(objectId, currentSessionId);
+    const zid = zoneOfObjectId(objectId);
     if (zid) requestAutoExpand(zid);
     const o = positionedRef.current.find(it => it.id === objectId);
     if (!o) { pendingPreviewRef.current = objectId; return; }  // 刚写出来的 deck 等产物重拉
     primaryOpenRef.current?.(o);
     followToObject?.(objectId);
-  }, [currentSessionId, requestAutoExpand, followToObject]);
+  }, [requestAutoExpand, followToObject]);
 
   // 挂起的 preview：目标物件一上墙就补开
   useEffect(() => {
@@ -1765,17 +1769,27 @@ export default function BoardCanvas({
   }, [positioned, followToObject]);
 
   // ── 舞台层（StageLayer.jsx 自治）：事件状态机 + 跟随触发 + deck 自动展开触发 ──
-  // 哪些任务是站点 —— 舞台寻址要用它把 index/about/style.css 收敛到同一张站点卡
-  // Map<任务名, 站点root[]>（'' = 根站，'v2' = 子目录站）——舞台寻址按实例贴卡。
-  // 只有站点实例的任务才进表；纯 deck 任务走 resolveObjectId 的 deck 分支
-  const siteTasks = useMemo(() => {
-    const m = new Map();
-    for (const t of tasks) {
-      const dirSites = (t.artifacts || []).filter(a => a.kind === 'site' && !a.single);
-      if (dirSites.length) m.set(t.id, dirSites.map(a => (a.title ? a.root : '')));
-    }
-    return m;
-  }, [tasks]);
+  /**
+   * 目录型产物的覆盖表：`[{ path, id }]`，**按 path 长度降序**。
+   *
+   * 舞台寻址靠它把"落在一件产物里的一切"收敛到那一张卡：站点的
+   * index / about / style.css / 图片、世界的立绘和地点 .md 各给一个 id 的话，
+   * agent 改一次样式表桌面就多冒一张卡 —— 用户要的是"我那个网站"。
+   *
+   * 长的先匹配是必需的：子目录站 `鉴赏页/v2` 必须排在根站 `鉴赏页` 前面，
+   * 否则子目录站的文件全被父站吞掉。
+   *
+   * ⚠️ 这里以前是 `Map<任务名, 站点root[]>` —— 那是任务模型的形状，需要
+   * "先知道文件属于哪个任务，再问那个任务是不是站点"。id = 路径之后不需要
+   * 中间那一跳了：物件 id 剥掉 kind 前缀**就是**它在磁盘上占的那块地方。
+   */
+  const artifactRoots = useMemo(() => (
+    objects
+      .filter(o => o.type === 'site' || o.type === 'world')
+      .map(o => ({ path: o.id.slice(o.id.indexOf(':') + 1), id: o.id }))
+      .filter(r => r.path)
+      .sort((a, b) => b.path.length - a.path.length)
+  ), [objects]);
   // ⚠️ 下面这两个必须声明在 useStageState **之前**：它把 handlePresenceEvent
   // 当参数收走，声明在后面就是 TDZ 白屏。这个文件已经栽过三次同样的事
   // （绑定表 memo / splitStageCards / 这次），组件里 hook 参数的声明顺序
@@ -1804,12 +1818,12 @@ export default function BoardCanvas({
     setPresence(prev => reducePresence(prev, evt, (file) => {
       if (!file) return null;
       const objectId = String(file);
-      return { objectId, zoneId: zoneOfObjectId(objectId, currentSessionId) };
+      return { objectId, zoneId: zoneOfObjectId(objectId) };
     }));
-  }, [currentSessionId]);
+  }, []);
 
   const { stageCards, stageBadges, dismissStageCard } = useStageState({
-    stageRef, currentSessionId, siteTasks, followToObject, tryAutoExpand: requestAutoExpand,
+    stageRef, artifactRoots, followToObject, tryAutoExpand: requestAutoExpand,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
     onRawEvent: handlePresenceEvent,
   });
@@ -1827,9 +1841,6 @@ export default function BoardCanvas({
   }
   const { anchoredCards, dockPanels, dockChips } = splitStageCards({
     stageCards, positioned, visibleIdSet, visibleZones, focusZone, occupancy: stageOccupancy,
-    // 会话绑了任务就用任务区当落点 —— 会话区那会儿已经被任务区取代，
-    // 拿 sessionId 去找区找不到，卡片会全掉进 dock 叠成一摞。
-    currentSessionId,
   });
 
   // agent 此刻在动谁：橙色光圈套在目标外圈（物件还没上墙就套它落脚的工作区）。
@@ -1839,11 +1850,11 @@ export default function BoardCanvas({
     for (const c of Object.values(stageCards)) {
       if (c.kind === 'chip' || c.kind === 'question' || c.status !== 'running') continue;
       if (c.objectId && positioned.some(o => o.id === c.objectId)) { objs.add(c.objectId); continue; }
-      const z = zoneOfObjectId(c.objectId, currentSessionId) || focusZone || currentSessionId;
+      const z = zoneOfObjectId(c.objectId) || focusZone;
       if (z) zs.add(z);
     }
     return { ringObjects: objs, ringZones: zs };
-  }, [stageCards, positioned, currentSessionId, focusZone]);
+  }, [stageCards, positioned, focusZone]);
 
   // ── 外层工具栏桥（工具栏合并：控件画在 CanvasToolbar，操作从这里走）──
   useEffect(() => {

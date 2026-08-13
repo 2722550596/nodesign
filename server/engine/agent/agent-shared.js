@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { noteTaskStarted, noteTaskFinished } from './task-notes.js';
 import { listWorkspaceArtifacts } from '../../lib/artifact-target.js';
+import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
 
 // NoDesign agent 通用 prelude —— append 在 SDK preset 'claude_code' 之后、
@@ -472,7 +473,11 @@ function pumpToolInputStream(ctx, st, flush) {
   // 截在路径中间（e2e 撞过：抽到项目目录名 → 前端物件寻址指错）。目标字段的
   // key 出现（键序在 file_path 之后）或对象已有第二个键 = 路径已闭合。
   const pathComplete = obj[st.field] !== undefined || Object.keys(obj).length >= 2;
-  const filePath = !st.filePathSent && pathComplete && typeof obj.file_path === 'string' ? obj.file_path : null;
+  // 发**工作区相对路径**（2026-08-13）：前端拿它当画布物件 id 的路径部分，
+  // 而 id = 工作区相对路径。以前原样转发绝对路径，前端靠 `tasks/<任务>/`
+  // 这个特征段抠相对部分 —— 那一层拆掉后绝对路径里没有可锚定的标志了。
+  const rawFilePath = !st.filePathSent && pathComplete && typeof obj.file_path === 'string' ? obj.file_path : null;
+  const filePath = rawFilePath ? toWorkspaceRel(rawFilePath, ctx.workspace?.root?.()) : null;
   const append = text.length > st.sent ? text.slice(st.sent) : '';
   if (!append && !filePath && !flush) return;
   st.lastEmit = now;
