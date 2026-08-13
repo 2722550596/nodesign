@@ -380,9 +380,14 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
     // 项目，同一个项目里换条对话继续做是常态。
     await removeSessionWorkspace(req.params.pid, req.params.sid);
 
-    // 3. 清 active_session_id 如果指向被删的
+    // 3. 清 active_session_id 如果指向被删的。**要广播** —— 指针是会话真相源
+    //    （2026-08-13 收敛），别的标签页不知道指针被清就会继续往死会话里发。
+    //    为什么这条事件不带 sessionId 字段：见 events.js projectActiveSession 注释。
     if (project.activeSessionId === req.params.sid) {
-      try { setActiveSession(req.params.pid, null); } catch { /* ignore */ }
+      try {
+        setActiveSession(req.params.pid, null);
+        getProjectBus(req.params.pid).publish(Events.projectActiveSession(null));
+      } catch { /* ignore */ }
     }
 
     res.status(204).end();

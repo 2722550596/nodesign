@@ -289,7 +289,14 @@ export async function ensureProjectWorkspace(projectId) {
 
   await flattenWorkspace(projectId);
 
-  return getProjectWorkspace(projectId);
+  // 返回**工作区根**（…/shared），跟 ensureSessionWorkspace 一致（2026-08-13）。
+  // 以前返回的是项目目录（shared 的上一层）——两个 ensure 返回值差一层目录，
+  // 而 api 层的 rootOf 模式（pending-changes.js 首创）把两者当同一个 sessionRoot
+  // 用：sid 走 ensureSessionWorkspace、项目级走这里。不统一的话项目级路由会把
+  // pending-changes.json 之类写到 shared 外面，agent（读工作区根）永远看不见。
+  // 改这里而不是改每个调用方：全仓只有 rootOf 消费这个返回值，其余 10 处都是
+  // 纯 await 副作用。
+  return getWorkspaceRoot(projectId);
 }
 
 /**
@@ -1005,7 +1012,11 @@ export async function commitTaskWorkspace(taskDir, message, { author = 'agent' }
 }
 
 export async function listHistory(projectId, sessionId, { limit = 50 } = {}) {
-  const sessionRoot = getSessionWorkspace(projectId, sessionId);
+  // 同 commitWorkspace：git 仓是项目级一个，sessionId 不参与路径。这里直接取
+  // 工作区根而不是走 getSessionWorkspace —— 后者会校验 sid 形状，而项目级路由
+  // （2026-08-13 会话收敛）根本不带 sid，undefined 会被它一票否决。
+  // sid 存在与否的校验责任在路由层 guard，不在这。
+  const sessionRoot = getWorkspaceRoot(projectId);
   if (!(await fileExists(sessionRoot))) return [];
   const { stdout, code } = await runGit(
     sessionRoot,
@@ -1025,7 +1036,8 @@ export async function revertWorkspace(projectId, sessionId, commitHash) {
   if (!/^[a-f0-9]{7,40}$/i.test(commitHash)) {
     throw Object.assign(new Error(`invalid commit hash: ${commitHash}`), { code: 'INVALID_COMMIT' });
   }
-  const sessionRoot = getSessionWorkspace(projectId, sessionId);
+  // 同 listHistory：项目级一个仓，sessionId 不参与路径也不在这校验
+  const sessionRoot = getWorkspaceRoot(projectId);
   // git race guard: 同 commitWorkspace —— checkout + 后续 commit 全 wrap mutex
   // 串行。注意：内层调 commitWorkspace 也会进 mutex，async-mutex-lite 对同 key 同
   // 调用栈会按 prev Promise chain，**不会死锁**（mutex 拿到后释放 prev、await prev

@@ -1,18 +1,25 @@
 /**
- * server/api/exports.js — 用户主动导出（H3：session-scoped）
+ * server/api/exports.js — 用户主动导出
  *
- * 路径全加 sid（H3 改造）：
- *   GET /api/projects/:pid/sessions/:sid/exports                列已生成交付包
- *   GET /api/projects/:pid/sessions/:sid/exports/file/:filename 单文件下载
- *   GET /api/projects/:pid/sessions/:sid/exports/html           导出 canvas.html
- *   GET /api/projects/:pid/sessions/:sid/exports/pdf            playwright print → PDF
- *   GET /api/projects/:pid/sessions/:sid/exports/handoff        JSZip 工程交付包
+ * 路径（2026-08-13 起**项目级**，会话级留作 alias —— 同 pending-changes.js）：
+ *   GET  /api/projects/:pid/exports                列已生成交付包
+ *   GET  /api/projects/:pid/exports/file/:filename 单文件下载
+ *   GET  /api/projects/:pid/exports/items          可单独导出的东西
+ *   POST /api/projects/:pid/exports/pick           下载勾选的东西
+ *   GET  /api/projects/:pid/exports/html           导出 canvas.html
+ *   GET  /api/projects/:pid/exports/pdf            playwright print → PDF
+ *   GET  /api/projects/:pid/exports/pptx           截图 → pptxgenjs
+ *   GET  /api/projects/:pid/exports/site           整站打包
+ *   GET  /api/projects/:pid/exports/handoff        JSZip 工程交付包
+ *   （/:pid/sessions/:sid/exports/... 同 handler 双挂载。老 sid 路由**永远保留**：
+ *     jsonl 历史里持久化了绝对 URL —— export-handoff.js:104 拼出来发给用户的
+ *     下载链接就是这个形状，砍掉 alias 等于让所有历史消息里的链接变 404。）
  *
- * 文件位置：
- *   <workspace>/sessions/<sid>/exports/  ← 已生成的导出包（agent 调
- *                                            mcp__nodesign__export_handoff 也写这）
- *   <workspace>/sessions/<sid>/canvas.html, spec.json
- *   <workspace>/shared/assets/           ← handoff 打包时从这取共享 assets
+ * 文件位置（扁平化后全在项目工作区根）：
+ *   <workspace>/exports/      ← 已生成的导出包（agent 调
+ *                                 mcp__nodesign__export_handoff 也写这）
+ *   <workspace>/canvas.html, spec.json
+ *   <workspace>/assets/       ← handoff 打包时从这取共享 assets
  */
 
 import express from 'express';
@@ -23,7 +30,7 @@ import JSZip from 'jszip';
 import { validateProjectId, getProject, listRunsForProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
 import {
-  getSessionWorkspace, getSharedDir, validateSessionId,
+  getSessionWorkspace, getSharedDir, getWorkspaceRoot, validateSessionId,
 } from '../projects/workspace.js';
 import { DECK, resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
 import { fitInjectionBlock } from './standalone-fit.js';
@@ -36,14 +43,29 @@ import { walkTaskFiles, loadIgnore } from '../lib/task-scan.js';
 const router = express.Router();
 
 function guard(req, res) {
-  try {
-    validateSessionId(req.params.sid);
-  } catch (err) {
-    res.status(400).json({ error: err.message || 'invalid pid/sid' });
-    return null;
+  // sid 只在走老 alias 时存在 —— 有就校验形状，没有就是项目级路由
+  if (req.params.sid !== undefined) {
+    try {
+      validateSessionId(req.params.sid);
+    } catch (err) {
+      res.status(400).json({ error: err.message || 'invalid pid/sid' });
+      return null;
+    }
   }
   // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
   return guardProject(req, res);
+}
+
+/**
+ * 两条挂载共用：alias 带 sid 走原路，项目级直接取工作区根。
+ * 导出全是读操作，不 ensure —— 工作区还不存在的话本来也没什么可导。
+ * resolveCanvasTarget 的第三参（sid）照传 req.params.sid：undefined 时它只是
+ * 跳过"当前会话正在做哪份产物"的记忆，落回全工作区寻址，正是项目级想要的。
+ */
+function rootOf(req) {
+  return req.params.sid !== undefined
+    ? getSessionWorkspace(req.params.pid, req.params.sid)
+    : getWorkspaceRoot(req.params.pid);
 }
 
 function safeFilename(name) {
@@ -51,10 +73,10 @@ function safeFilename(name) {
 }
 
 // ── 已生成的交付包列表 ──
-router.get('/:pid/sessions/:sid/exports', async (req, res, next) => {
+router.get(['/:pid/exports', '/:pid/sessions/:sid/exports'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const exportsDir = path.join(sessionRoot, 'exports');
 
     let entries;
@@ -78,10 +100,10 @@ router.get('/:pid/sessions/:sid/exports', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/:pid/sessions/:sid/exports/file/:filename', async (req, res, next) => {
+router.get(['/:pid/exports/file/:filename', '/:pid/sessions/:sid/exports/file/:filename'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
 
     // 文件名只禁路径分隔与上跳；中文名要能下（agent 交付的包常叫「终焉之莉莉-交付.zip」）
     const filename = req.params.filename;
@@ -114,10 +136,10 @@ router.get('/:pid/sessions/:sid/exports/file/:filename', async (req, res, next) 
  * 用户视角的"这次任务做出来的内容"：任务目录下的文件 + deck 真正引用到的图。
  * 不做整包，让用户勾选（?path= 指定别的 deck；缺省走统一寻址）。
  */
-router.get('/:pid/sessions/:sid/exports/items', async (req, res, next) => {
+router.get(['/:pid/exports/items', '/:pid/sessions/:sid/exports/items'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     const items = [];
     const seen = new Set();
@@ -190,11 +212,11 @@ router.get('/:pid/sessions/:sid/exports/items', async (req, res, next) => {
  * body: { paths: string[], filename?: string }
  * 单个文件直接流回；多个打成 zip。
  */
-router.post('/:pid/sessions/:sid/exports/pick', async (req, res, next) => {
+router.post(['/:pid/exports/pick', '/:pid/sessions/:sid/exports/pick'], async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const paths = Array.isArray(req.body?.paths) ? req.body.paths.filter(p => typeof p === 'string') : [];
     if (paths.length === 0) return res.status(400).json({ error: 'paths required' });
 
@@ -247,11 +269,11 @@ router.post('/:pid/sessions/:sid/exports/pick', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
+router.get(['/:pid/exports/html', '/:pid/sessions/:sid/exports/html'], async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     // 导出哪一份走统一寻址（?path= 显式 → 本会话当前 deck → 本会话名下的任务 deck
     // → cwd/canvas.html）。任务模型下 deck 不在 cwd，写死 cwd 会永远导出空（2026-07-28）
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
@@ -319,11 +341,11 @@ router.get('/:pid/sessions/:sid/exports/html', async (req, res, next) => {
 //
 // 代价：PDF 文字不可选/不可搜索（位图）；文件略大（每页一张 PNG）。
 // 跟 PPTX 已有方案对齐——用户工作流"看完发邮件/打印"为主，可接受。
-router.get('/:pid/sessions/:sid/exports/pdf', async (req, res, next) => {
+router.get(['/:pid/exports/pdf', '/:pid/sessions/:sid/exports/pdf'], async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
     if (rejectFormat(res, target, 'pdf', 'PDF')) return;
@@ -427,11 +449,11 @@ ${slidesHtml}
 // PPTX：playwright 截每个 section[data-page] PNG → pptxgenjs 嵌图
 // MVP 位图方案：用户拿到的 PPTX 文字不可编辑（每页是图），但视觉 1:1 还原
 // 16:9 默认 layout（10" × 5.625"）匹配 deck 1920×1080 比例（pageSize.h/pageSize.w * 10 公式自动算）
-router.get('/:pid/sessions/:sid/exports/pptx', async (req, res, next) => {
+router.get(['/:pid/exports/pptx', '/:pid/sessions/:sid/exports/pptx'], async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
     if (rejectFormat(res, target, 'pptx', 'PPTX')) return;
@@ -534,11 +556,11 @@ function rejectFormat(res, target, formatId, label) {
  * `site/assets/` 并按每个文件自己的深度重写前缀 —— 子目录里的页面要 `../assets/`，
  * 写死成 `assets/` 就又裂一次。任务本地 assets/（推荐写法）本来就在包里，零改写。
  */
-router.get('/:pid/sessions/:sid/exports/site', async (req, res, next) => {
+router.get(['/:pid/exports/site', '/:pid/sessions/:sid/exports/site'], async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
     if (!target.ok) return res.status(404).json({ error: target.message });
     if (!formatAllowed(target.kind, 'site')) {
@@ -602,11 +624,11 @@ function localRefsOf(text) {
   return [...refs].filter(r => r && !/^(?:[a-z][a-z0-9+\-.]*:|\/\/)/i.test(r) && !path.isAbsolute(r));
 }
 
-router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
+router.get(['/:pid/exports/handoff', '/:pid/sessions/:sid/exports/handoff'], async (req, res, next) => {
   try {
     const project = guard(req, res);
     if (!project) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const sharedRoot = getSharedDir(req.params.pid);
     const runs = listRunsForProject(req.params.pid);
     const target = await resolveCanvasTarget(sessionRoot, req.query.path, req.params.sid);
@@ -615,7 +637,8 @@ router.get('/:pid/sessions/:sid/exports/handoff', async (req, res, next) => {
       projectId: project.id,
       projectName: project.name,
       skillId: project.skillId,
-      sessionId: req.params.sid,
+      // 项目级挂载没有 sid —— README 里那行落 null，不硬造一个
+      sessionId: req.params.sid ?? null,
       runs,
       deckPath: target.ok ? target.relPath : ENTRY_FILE.deck,
       kind: target.ok ? target.kind : null,

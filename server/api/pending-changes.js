@@ -5,12 +5,15 @@
  * 消息时，turn.js 在 composeUserMessage 里 prepend 一个 system 提示告诉 agent
  * "有 N 处变更"，agent 主动调 mcp__nodesign__get_pending_changes 拉详情。
  *
- * 路径：
- *   POST   /api/projects/:pid/sessions/:sid/pending-changes  append item
- *   GET    /api/projects/:pid/sessions/:sid/pending-changes  返 { items, count }
- *   DELETE /api/projects/:pid/sessions/:sid/pending-changes  全清（也接 ?ids=）
+ * 路径（2026-08-13 起**项目级**，会话级留作 alias）：
+ *   POST   /api/projects/:pid/pending-changes  append item
+ *   GET    /api/projects/:pid/pending-changes  返 { items, count }
+ *   DELETE /api/projects/:pid/pending-changes  全清（也接 ?ids=）
+ *   （/:pid/sessions/:sid/... 同 handler 双挂载 —— 老前端和 jsonl 里的
+ *     历史引用还打得通；sid 在扁平化后本来就只是路由上的仪式，
+ *     sessionRoot === 工作区根，这份 buffer 从来就是每项目一份）
  *
- * 文件：<sessionRoot>/pending-changes.json
+ * 文件：<工作区根>/pending-changes.json
  *   { items: [{ id, kind, anchor, aiContext?, diff?, text?, linkedToEditId?, move?, styleDelta?, reactMount?, ts }] }
  *
  * 2026-05-12 起新增 kind:
@@ -32,7 +35,9 @@ import { randomUUID } from 'crypto';
 import { mutex } from 'async-mutex-lite';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
-import { ensureSessionWorkspace, validateSessionId, getSharedDir } from '../projects/workspace.js';
+import {
+  ensureSessionWorkspace, ensureProjectWorkspace, validateSessionId, getSharedDir,
+} from '../projects/workspace.js';
 import { renderRegionShot, saveRegionShot } from '../lib/region-shot.js';
 
 const router = express.Router();
@@ -41,14 +46,24 @@ const FILE_NAME = 'pending-changes.json';
 const MAX_ITEMS = 200;
 
 function guard(req, res) {
-  try {
-    validateSessionId(req.params.sid);
-  } catch (err) {
-    res.status(400).json({ error: err.message || 'invalid pid/sid' });
-    return null;
+  // sid 只在走老 alias 时存在 —— 有就校验形状，没有就是项目级路由
+  if (req.params.sid !== undefined) {
+    try {
+      validateSessionId(req.params.sid);
+    } catch (err) {
+      res.status(400).json({ error: err.message || 'invalid pid/sid' });
+      return null;
+    }
   }
   // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
   return guardProject(req, res);
+}
+
+/** 两条挂载共用：alias 带 sid 走原路，项目级直接 ensure 工作区 */
+function rootOf(req) {
+  return req.params.sid !== undefined
+    ? ensureSessionWorkspace(req.params.pid, req.params.sid)
+    : ensureProjectWorkspace(req.params.pid);
 }
 
 async function readBuf(sessionRoot) {
@@ -67,16 +82,16 @@ async function writeBuf(file, items) {
   await fs.writeFile(file, JSON.stringify({ items }, null, 2), 'utf8');
 }
 
-router.get('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
+router.get(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await rootOf(req);
     const { items } = await readBuf(sessionRoot);
     res.json({ items, count: items.length });
   } catch (err) { next(err); }
 });
 
-router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
+router.post(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const body = req.body || {};
@@ -120,7 +135,7 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
     }
     // pending-delete 只需 anchor
 
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await rootOf(req);
 
     // 接受 body.id（前端 newId('cmt') 等）以让前后端 id 统一——agent 调
     // clear_pending_changes 时 event 带 clearedIds，前端 comments state 用同一
@@ -183,7 +198,7 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
  * 截图失败不挡下单：元素清单和那句话本身就够 agent 干活了，为了一张图把
  * 用户刚圈完的东西整个丢掉是最差的选择。
  */
-router.post('/:pid/sessions/:sid/region-comment', async (req, res, next) => {
+router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const body = req.body || {};
@@ -215,7 +230,7 @@ router.post('/:pid/sessions/:sid/region-comment', async (req, res, next) => {
 
     const elements = Array.isArray(body.elements) ? body.elements.slice(0, 12) : [];
     const itemId = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : randomUUID();
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await rootOf(req);
 
     let shot = null;
     let shotError = null;
@@ -257,10 +272,10 @@ router.post('/:pid/sessions/:sid/region-comment', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.delete('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
+router.delete(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await rootOf(req);
 
     // 同 POST：mutex 串行避免 DELETE / POST 并发互踩
     const idsParam = req.query?.ids;

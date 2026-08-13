@@ -20,9 +20,10 @@ import { guardProject } from './_guard.js';
 import { taskManifest } from '../lib/artifact-target.js';
 import { countPublishedByUser } from '../lib/publish-store.js';
 import { checkQuota } from '../lib/quota.js';
-import { ensureProjectWorkspace, removeProjectWorkspace, getSharedDir } from '../projects/workspace.js';
+import { ensureProjectWorkspace, removeProjectWorkspace, getSharedDir, validateSessionId } from '../projects/workspace.js';
 import { removeEntriesForProject } from '../lib/showcase-store.js';
-import { disposeProjectBus } from '../ws/broker.js';
+import { disposeProjectBus, getProjectBus } from '../ws/broker.js';
+import { Events } from '../engine/agent/events.js';
 
 const router = express.Router();
 
@@ -153,7 +154,33 @@ router.patch('/:pid', (req, res, next) => {
       }
       patch.kind = req.body.kind;
     }
+    // E1a（2026-08-13）：会话真相源收敛到 projects.active_session_id 之后，
+    // 前端切会话得能直接写这个指针（此前唯一的写入方是 turn.js —— 不发消息、
+    // 只是切着看，指针就不动，别的标签页也就永远对不齐）。接受 null（清空）
+    // 或合法 sid 形状；不校验会话是否真实存在 —— 跟 turn.js 对 body.sessionId
+    // 的信任口径一致（指错了顶多下次 turn 起新会话）。
+    if ('active_session_id' in (req.body || {}) || 'activeSessionId' in (req.body || {})) {
+      const v = req.body.active_session_id ?? req.body.activeSessionId ?? null;
+      if (v !== null) {
+        try { validateSessionId(v); } catch (err) {
+          return res.status(400).json({ error: err.message || 'invalid active_session_id' });
+        }
+      }
+      patch.activeSessionId = v;
+    }
     const updated = updateProject(req.params.pid, patch);
+    // 指针**实际变化**才广播（project 是 guardProject 读的更新前快照）。
+    // 为什么这条事件不带 sessionId 字段：见 events.js projectActiveSession 注释。
+    if ('activeSessionId' in patch && patch.activeSessionId !== project.activeSessionId) {
+      try {
+        getProjectBus(req.params.pid).publish({
+          ...Events.projectActiveSession(patch.activeSessionId),
+          ts: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.warn(`[projects] active_session broadcast failed: ${err.message}`);
+      }
+    }
     res.json({ project: updated });
   } catch (err) { next(err); }
 });

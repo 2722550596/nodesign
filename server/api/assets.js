@@ -18,7 +18,6 @@ import { guardProject } from './_guard.js';
 import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace, commitWorkspace,
 } from '../projects/workspace.js';
-import { setActiveSession } from '../projects/store.js';
 import { patchBoard, readBoard, reconcileBoardRenames, forwardId, renameBoardPaths } from '../projects/board-store.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';

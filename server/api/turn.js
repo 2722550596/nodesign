@@ -54,6 +54,7 @@ import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
 import { getProjectBus } from '../ws/broker.js';
+import { Events } from '../engine/agent/events.js';
 import { readPendingSummary } from './pending-changes.js';
 import { isExtractable } from '../lib/doc-extract.js';
 import { pendingRewinds } from './sessions.js';
@@ -366,8 +367,22 @@ router.post('/:pid/turn', async (req, res, next) => {
       startNewRunSession({ runId: run.id, sid, sessionRoot, blocks: sdkUserMessage, eventBus: bus, project, finalSkillId, chat, initialPermissionMode });
     }
 
-    // 写回 active_session_id（让下次不带 sessionId 的 turn fallback 续到这个）
-    try { setActiveSession(project.id, sid); } catch { /* ignore */ }
+    // 写回 active_session_id（让下次不带 sessionId 的 turn fallback 续到这个）。
+    // setActiveSession **无条件**调：它顺带 bump projects.updated_at，首页
+    // 「我的项目」按这个排序 —— 只在指针变化时才写会让"同会话继续聊"不再
+    // 把项目顶到最前。
+    //
+    // E1a（2026-08-13）：指针**实际变化**时广播 project.active_session ——
+    // 会话真相源收敛到服务端指针后，同项目其他标签页靠这条事件对齐自己。
+    // project 是本请求开头 guardProject 读的库快照，拿它比对够准（写这个
+    // 字段的只有 turn 和删会话两条路，都走 HTTP 串行到达）。
+    try {
+      const pointerChanged = project.activeSessionId !== sid;
+      setActiveSession(project.id, sid);
+      if (pointerChanged) {
+        bus.publish({ ...Events.projectActiveSession(sid), ts: new Date().toISOString() });
+      }
+    } catch { /* ignore */ }
   } catch (err) {
     // 处理失败时通知正在 await in-flight 的并发同 requestId POST：reject + 清 entry
     // 让它们 fallthrough 自己跑（subagent 提的 race 修复完整闭环）。

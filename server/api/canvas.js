@@ -1,18 +1,24 @@
 /**
- * server/api/canvas.js — Canvas + Spec read/write/history/revert（H3：session-scoped）
+ * server/api/canvas.js — Canvas + Spec read/write/history/revert
  *
- * 路径全加 sid（H3 改造）：
- *   GET    /api/projects/:pid/sessions/:sid/canvas              → text/html
- *   PUT    /api/projects/:pid/sessions/:sid/canvas              { html, source? }
- *   GET    /api/projects/:pid/sessions/:sid/canvas/history      git log
- *   POST   /api/projects/:pid/sessions/:sid/canvas/revert       { commit }
- *   POST   /api/projects/:pid/sessions/:sid/canvas/undo
- *   GET    /api/projects/:pid/sessions/:sid/spec                spec.json（agent 私域档案）
+ * 路径（2026-08-13 起**项目级**，会话级留作 alias —— 同 pending-changes.js）：
+ *   GET    /api/projects/:pid/assets/*subPath      单文件（iframe 内相对资源）
+ *   GET    /api/projects/:pid/canvas               → text/html
+ *   GET    /api/projects/:pid/canvas/deck-meta     deck 比例信息
+ *   PUT    /api/projects/:pid/canvas               { html, source?, path? }
+ *   GET    /api/projects/:pid/canvas/history       git log
+ *   POST   /api/projects/:pid/canvas/revert        { commit }
+ *   POST   /api/projects/:pid/canvas/undo
+ *   GET    /api/projects/:pid/spec                 spec.json（agent 私域档案）
+ *   GET    /api/projects/:pid/config               session-config.json
+ *   PATCH  /api/projects/:pid/config
+ *   （/:pid/sessions/:sid/... 同 handler 双挂载 —— 老前端和 jsonl 里的历史引用
+ *     还打得通；扁平化后 sessionRoot === 工作区根，这批文件从来就是每项目一份。
+ *     真正 per-session 的数据（.nd/<sid>/、PUT /sessions/:sid/model）不在本文件，
+ *     那些保持 sid 专属，见 sessions.js。）
  *
- * 文件实际位置：
- *   <project_workspace>/sessions/<sid>/canvas.html
- *   <project_workspace>/sessions/<sid>/spec.json
- *   <project_workspace>/sessions/<sid>/.git/                  （per-session history）
+ * 文件实际位置（扁平化后全在工作区根）：
+ *   <workspace>/canvas.html、spec.json、session-config.json、assets/、.git/
  */
 
 import express from 'express';
@@ -22,6 +28,7 @@ import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
 import {
   getSessionWorkspace, ensureSessionWorkspace, validateSessionId,
+  getWorkspaceRoot, ensureProjectWorkspace,
   commitWorkspace, listHistory, revertWorkspace,
 } from '../projects/workspace.js';
 import { fitInjectionBlock } from './standalone-fit.js';
@@ -38,14 +45,31 @@ const router = express.Router();
 const MAX_HTML_BYTES = 8 * 1024 * 1024; // 8MB
 
 function guard(req, res) {
-  try {
-    validateSessionId(req.params.sid);
-  } catch (err) {
-    res.status(400).json({ error: err.message || 'invalid pid/sid' });
-    return null;
+  // sid 只在走老 alias 时存在 —— 有就校验形状，没有就是项目级路由
+  if (req.params.sid !== undefined) {
+    try {
+      validateSessionId(req.params.sid);
+    } catch (err) {
+      res.status(400).json({ error: err.message || 'invalid pid/sid' });
+      return null;
+    }
   }
   // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
   return guardProject(req, res);
+}
+
+/** 两条挂载共用（只读路径）：alias 带 sid 走原路，项目级直接取工作区根 */
+function rootOf(req) {
+  return req.params.sid !== undefined
+    ? getSessionWorkspace(req.params.pid, req.params.sid)
+    : getWorkspaceRoot(req.params.pid);
+}
+
+/** 两条挂载共用（写路径）：同上，但先 ensure 工作区存在 */
+function ensureRootOf(req) {
+  return req.params.sid !== undefined
+    ? ensureSessionWorkspace(req.params.pid, req.params.sid)
+    : ensureProjectWorkspace(req.params.pid);
 }
 
 // 单文件 GET（assets/* 子树）—— 让 iframe 里 <img src="assets/generated/x.jpg">
@@ -61,10 +85,10 @@ const ASSET_MIME = {
 // thumbnail 地址的解析与兜底（缺 thumb → 回原图 → 现编 512 webp）在
 // lib/image-variant.js，artifact-file 路由吃的是同一份，两条路由行为一致。
 
-router.get('/:pid/sessions/:sid/assets/*subPath', async (req, res, next) => {
+router.get(['/:pid/assets/*subPath', '/:pid/sessions/:sid/assets/*subPath'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     // Express 5 named wildcard：req.params.subPath 是 string[] 或 string
     const raw = req.params.subPath;
     const subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
@@ -162,19 +186,23 @@ function rewriteImagesToThumbnails(html) {
       `${prefix}assets/generated/.thumbnails/${name}.thumb.webp${suffix}`);
 }
 
-router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
+router.get(['/:pid/canvas', '/:pid/sessions/:sid/canvas'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const file = path.join(sessionRoot, 'canvas.html');
     try {
       let content = await fs.readFile(file, 'utf8');
       // 注入 <base href>：让 iframe 内 <img src="assets/...">/url("assets/...") 等
-      // 相对资源解析显式锚到 sessions/<sid>/，不依赖 iframe.src 的隐式 base URL
+      // 相对资源解析显式锚到本工作区，不依赖 iframe.src 的隐式 base URL
       // （src 带 ?v=xxx query / 部署 redirect 等都可能让浏览器解析跑偏）。
       // 已含 <base> 时跳过；正则只匹配开始 <head> tag。
+      // base 跟着请求进来的那条路走（项目级 / sid alias）——assets 两边都挂了，
+      // 项目级页面锚到 sid 路径（或反过来）虽然也能通，但没必要跨范式。
       if (!/<base\s+href=/i.test(content)) {
-        const baseHref = `/api/projects/${encodeURIComponent(req.params.pid)}/sessions/${encodeURIComponent(req.params.sid)}/`;
+        const baseHref = req.params.sid !== undefined
+          ? `/api/projects/${encodeURIComponent(req.params.pid)}/sessions/${encodeURIComponent(req.params.sid)}/`
+          : `/api/projects/${encodeURIComponent(req.params.pid)}/`;
         content = content.replace(/<head([^>]*)>/i, `<head$1>\n  <base href="${baseHref}">`);
       }
       // 透明替换 generated 图片为 thumbnail（preview 流畅；导出 / agent 看到的源
@@ -202,7 +230,7 @@ router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
 });
 
 /**
- * GET /:pid/sessions/:sid/canvas/deck-meta —— 返 deck 比例信息
+ * GET /:pid/canvas/deck-meta —— 返 deck 比例信息
  *
  * 读 canvas.html wrap data-deck-aspect 属性 → resolve 到 4 档预设
  * （16:9 / 16:10 / 9:16 / 4:3），返 { aspect, width, height }。
@@ -213,10 +241,10 @@ router.get('/:pid/sessions/:sid/canvas', async (req, res, next) => {
  *
  * canvas.html 还没生成 → 返默认 16:9（让前端能用 fallback 占位）
  */
-router.get('/:pid/sessions/:sid/canvas/deck-meta', async (req, res, next) => {
+router.get(['/:pid/canvas/deck-meta', '/:pid/sessions/:sid/canvas/deck-meta'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     // ?path= 让任务 deck 也能问自己的比例（缺省旧式 cwd/canvas.html）
     const rel = typeof req.query.path === 'string' && req.query.path ? req.query.path : 'canvas.html';
     const file = path.resolve(sessionRoot, rel);
@@ -236,13 +264,13 @@ router.get('/:pid/sessions/:sid/canvas/deck-meta', async (req, res, next) => {
 });
 
 /**
- * PUT /:pid/sessions/:sid/canvas —— 落库用户在画布上的直接编辑
+ * PUT /:pid/canvas —— 落库用户在画布上的直接编辑
  *
  * body.path（2026-07-28）：任务模型下 deck 住 tasks/<任务>/canvas.html，
  * 不带这个字段就会把用户的改动写进 sessions/<sid>/canvas.html —— 前端显示
  * "已保存"，用户看的那份却纹丝不动。缺省仍是旧式 cwd/canvas.html。
  */
-router.put('/:pid/sessions/:sid/canvas', async (req, res, next) => {
+router.put(['/:pid/canvas', '/:pid/sessions/:sid/canvas'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const { html, source = 'user', path: relPath } = req.body || {};
@@ -253,7 +281,7 @@ router.put('/:pid/sessions/:sid/canvas', async (req, res, next) => {
       return res.status(413).json({ error: 'html too large (>8MB)' });
     }
 
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await ensureRootOf(req);
     const file = path.resolve(sessionRoot, typeof relPath === 'string' && relPath ? relPath : 'canvas.html');
     if (file !== sessionRoot && !file.startsWith(sessionRoot + path.sep)) {
       return res.status(400).json({ error: 'path escapes workspace' });
@@ -274,7 +302,9 @@ router.put('/:pid/sessions/:sid/canvas', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/:pid/sessions/:sid/canvas/history', async (req, res, next) => {
+// history / revert / undo：git 仓是项目级一个，workspace.js 三个 git helper 的
+// sessionId 参数只是记出处 / 已不参与路径 —— 项目级挂载直接把 undefined 传下去
+router.get(['/:pid/canvas/history', '/:pid/sessions/:sid/canvas/history'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const limit = Math.min(Number(req.query.limit) || 50, 200);
@@ -283,7 +313,7 @@ router.get('/:pid/sessions/:sid/canvas/history', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/:pid/sessions/:sid/canvas/revert', async (req, res, next) => {
+router.post(['/:pid/canvas/revert', '/:pid/sessions/:sid/canvas/revert'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const { commit } = req.body || {};
@@ -298,7 +328,7 @@ router.post('/:pid/sessions/:sid/canvas/revert', async (req, res, next) => {
   }
 });
 
-router.post('/:pid/sessions/:sid/canvas/undo', async (req, res, next) => {
+router.post(['/:pid/canvas/undo', '/:pid/sessions/:sid/canvas/undo'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const entries = await listHistory(req.params.pid, req.params.sid, { limit: 5 });
@@ -321,15 +351,18 @@ router.post('/:pid/sessions/:sid/canvas/undo', async (req, res, next) => {
 });
 
 /**
- * GET /:pid/sessions/:sid/spec —— 读 sessions/<sid>/spec.json（agent 私域档案）
+ * GET /:pid/spec —— 读工作区根的 spec.json（agent 私域档案）
  *
  * 不存在或解析失败时返回 {} —— 让前端不会因 spec 缺失崩。
- * 这是只读 endpoint —— spec.json 完全由 agent 维护。
+ * 这是只读 endpoint —— spec.json 完全由 agent 维护（mutateSpecJson 写的就是
+ * 工作区根这份，hooks.js 读的也是它 —— 项目级挂载跟写入方同一落点）。
+ * 注意：.nd/<sid>/ 里也有一份叫 spec.json 的会话私档（压缩摘要），那是另一回事，
+ * 不走这条路由。
  */
-router.get('/:pid/sessions/:sid/spec', async (req, res, next) => {
+router.get(['/:pid/spec', '/:pid/sessions/:sid/spec'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     const file = path.join(sessionRoot, 'spec.json');
     try {
       const raw = await fs.readFile(file, 'utf8');
@@ -350,7 +383,7 @@ router.get('/:pid/sessions/:sid/spec', async (req, res, next) => {
 // vision-checker 子代理仍可 Read design-plan.md，走子代理的 cwd Read 路径。
 
 /**
- * GET /:pid/sessions/:sid/config —— 读 session-config.json（用户/前端拥有的 session 配置）
+ * GET /:pid/config —— 读 session-config.json（用户/前端拥有的 session 配置）
  *
  * 跟 spec.json 区分：
  *   - spec.json = agent 私域档案（agent 通过 record_decision/expose_tweaks/PostCompact 写）
@@ -361,25 +394,24 @@ router.get('/:pid/sessions/:sid/spec', async (req, res, next) => {
  *
  * 文件不存在时返回默认 config。
  */
-router.get('/:pid/sessions/:sid/config', async (req, res, next) => {
+router.get(['/:pid/config', '/:pid/sessions/:sid/config'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = rootOf(req);
     res.json({ config: await readSessionConfig(sessionRoot) });
   } catch (err) { next(err); }
 });
 
 /**
- * PATCH /:pid/sessions/:sid/config —— 部分更新 session-config.json
+ * PATCH /:pid/config —— 部分更新 session-config.json
  *
  * body: 任意 partial config（只覆盖传进来的字段）
  * 返回：merge 后的完整 config
  */
-router.patch('/:pid/sessions/:sid/config', async (req, res, next) => {
+router.patch(['/:pid/config', '/:pid/sessions/:sid/config'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-    await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await ensureRootOf(req);
     const patch = req.body || {};
     if (typeof patch !== 'object' || Array.isArray(patch)) {
       return res.status(400).json({ error: 'body must be object' });

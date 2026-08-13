@@ -42,6 +42,7 @@
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
  *   run.plan_mode_requested    { toolUseId, reason, estimatedPages?, taskKind? }  agent 调 request_plan_mode（阻塞态，前端 banner 决定后 POST /plan-request/:tid/decide 解阻塞）
  *   board.updated              { objectId, zoneId, summary }               pin_to_board 改画布布局（sessionId:null 广播，前端整份重拉 board.json）
+ *   project.active_session     { activeSessionId }                         项目级会话指针变更（故意不带 sessionId —— 见构造器注释）
  *
  * 外层把 EventBus 桥接到：
  *   - WebSocket：subscribe('*') → ws.send(JSON.stringify(evt))
@@ -212,6 +213,19 @@ export const Events = {
   querySessionEnd: (sessionId, reason) => ({ type: 'run.query.end', sessionId, reason }),
   // 排队提示：用户在 agent 跑时追加消息，UI 显示"已排队 N 条"
   queueDepth: (sessionId, depth) => ({ type: 'run.queue.depth', sessionId, depth }),
+
+  // ── 会话收敛 E1a（2026-08-13）：项目级 active session 指针变更广播 ──
+  //
+  // 会话真相源收敛到 projects.active_session_id（服务端指针）之后，指针一动
+  // 就广播这条，同项目的其他标签页靠它把自己对齐到服务端真相。
+  //
+  // ⚠️ 这条事件**绝对不能带 sessionId 字段**：ws/index.js 的下发过滤器是
+  // `event.sessionId && event.sessionId !== sid` —— 带上的话，正开着**别的**
+  // 会话（或还没有会话）的标签页会把它过滤掉，而那些标签页恰恰是最需要
+  // 知道"指针已经指向别处"的人。载荷字段叫 activeSessionId，绕开过滤器的
+  // 同时语义也更准：它是指针的新值，不是"这条事件属于哪个会话"。
+  // activeSessionId 可为 null（指针被清空，比如指向的会话被删）。
+  projectActiveSession: (activeSessionId) => ({ type: 'project.active_session', activeSessionId }),
 
   // ── P0+ stage 1 新增（28+ 种 SDK message 翻译）──
   toolProgress: (blockId, toolName, elapsedSeconds) => ({
