@@ -19,7 +19,9 @@ export const ZONE_GAP_Y = 28;             // 堆叠工作区之间的垂直间�
  * 成员摆在框里。那套几何（区内网格 / 区内排布 / 分组带 / 一屏画幅）随
  * "当前目录"模型一起退役 —— 现在进文件夹是**换一层桌面**，不是把框摊开。
  */
-export const FOLDER_CARD = { w: 200, h: 200 };
+// 2026-08-13 从 200×200 加大：卡面要装下 2×2 的真缩略（图片直出、deck/站点
+// LiveFrame 微缩），200 宽的格子里缩略什么都看不清（用户要"看一眼知道装了什么"）
+export const FOLDER_CARD = { w: 288, h: 240 };
 export const FOLDER_CARD_H = FOLDER_CARD.h;
 export const DECK_EMBED_W = 640;          // deck 内嵌渲染宽度（1920 → 1/3 缩放）
 export const STAGE_CARD_W = 560;          // 舞台卡宽度（板内坐标系）

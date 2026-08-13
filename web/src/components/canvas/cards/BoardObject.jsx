@@ -301,7 +301,7 @@ function NoteFaces({ o }) {
  * 二十张就是几 MB 的白烧。走 `?w=` 响应式档（服务端 imageVariant，webp 也能缩，
  * 2026-08-01 修过），实测同一张 149KB → 12KB。
  */
-function thumbSrcOf(projectId, item) {
+export function thumbSrcOf(projectId, item) {
   if (item.hasThumb) {
     const base = item.name.replace(/\.[^.]+$/, '');
     return Assets.artifactFileUrl(projectId, `assets/generated/.thumbnails/${base}.thumb.webp`);

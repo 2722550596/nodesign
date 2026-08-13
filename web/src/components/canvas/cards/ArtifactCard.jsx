@@ -120,7 +120,7 @@ export const ARTIFACT_FACES = {
  * 进视口才为真。**离开视口会变回 false** —— 这是故意的：留着就没有限流了。
  * rootMargin 给足预加载，正常滚动/平移察觉不到卡片是"刚挂上"的。
  */
-function useInViewport(ref) {
+export function useInViewport(ref) {
   const [inView, setInView] = useState(false);
   useEffect(() => {
     const el = ref.current;

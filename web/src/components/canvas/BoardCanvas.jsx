@@ -2,9 +2,9 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import {
-  Image as ImageIcon, FileText, Plus, ExternalLink,
-  X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
-  PencilLine, ChevronsUpDown, Focus, Presentation, Globe, Map as MapIcon,
+  Plus, ExternalLink,
+  X, Trash2, BookOpen, FolderOpen, FolderInput, LogOut,
+  PencilLine, ChevronsUpDown, Focus,
   Maximize2, Minus, MousePointer2, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
   FolderPlus, StickyNote,
 } from 'lucide-react';
@@ -20,6 +20,7 @@ import {
   chromeOf, cardOf,
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
+import FolderFace from './cards/FolderFace.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
@@ -589,15 +590,17 @@ export default function BoardCanvas({
     /**
      * 里面装了什么。**只看直接子级**（跟"进去看到的那一层"一致）。
      *
-     * 名字够用，不做缩略图：文件夹卡 200 宽，塞几张 iframe 缩略既看不清又要
-     * 为每个文件夹再挂一批 iframe —— 产物卡那两道限流的账会翻好几倍。
-     * 「一眼知道装了什么」靠的是名字，不是像素。
+     * 2026-08-13（同日二改）：条目带上完整物件引用 `o` —— 文件夹卡面从名字
+     * 清单升级成真缩略（用户要"看一眼知道装了什么"，卡也加大到 288 宽）。
+     * 数据当场就有（`objects` 是全目录树的完整清单，过滤在 positioned 那一步
+     * 才发生），一个额外请求都不用发。iframe 的账在 FolderFace 里算：
+     * 视口门 + 缩放门 + 每卡上限，见那边的说明。
      */
     const peekIn = (dir) => {
       const subs = allFolders.filter(id => parentOf(id) === dir)
-        .map(id => ({ kind: 'folder', title: id.split('/').pop() }));
+        .map(id => ({ kind: 'folder', title: id.split('/').pop(), o: null }));
       const files = objects.filter(o => dirOf(o) === dir)
-        .map(o => ({ kind: o.type, title: o.title || o.name || String(o.id).split('/').pop() }));
+        .map(o => ({ kind: o.type, title: o.title || o.name || String(o.id).split('/').pop(), o }));
       const all = [...subs, ...files];
       return { count: all.length, peek: all.slice(0, 4) };
     };
@@ -2087,48 +2090,9 @@ export default function BoardCanvas({
                 ...(ringZones.has(z.id) ? { animation: 'ndAgentRing 1600ms ease-in-out infinite' } : null),
               }}
             >
-              {/* 卡面：一枚大文件夹图标 + 装了多少东西。
-                  这里将来该放里面前几件的缩略（"看一眼就知道装了什么"），
-                  但那要先有缩略图管线，不在这一刀里。 */}
-              <div style={{
-                flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column',
-                gap: 3, padding: `${GAP.sm}px ${GAP.sm}px 0`,
-                background: PAPER.wall, borderRadius: `${RADIUS.xl}px ${RADIUS.xl}px 0 0`,
-                overflow: 'hidden',
-              }}>
-                {z.count === 0 ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: GAP.xs }}>
-                    <Folder size={34} color={PAPER.pencil} strokeWidth={1.4} />
-                    <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>空的</span>
-                  </div>
-                ) : (
-                  <>
-                    {z.peek.map((it, i) => {
-                      const ItemIcon = it.kind === 'folder' ? Folder
-                        : it.kind === 'image' ? ImageIcon
-                        : it.kind === 'note' ? StickyNote
-                        : it.kind === 'deck' ? Presentation
-                        : it.kind === 'site' ? Globe
-                        : it.kind === 'world' ? MapIcon
-                        : FileText;
-                      return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: GAP.xs, minWidth: 0 }}>
-                          <ItemIcon size={11} color={PAPER.pencil} style={{ flexShrink: 0 }} />
-                          <span style={{
-                            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text2,
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>{it.title}</span>
-                        </div>
-                      );
-                    })}
-                    {z.count > z.peek.length && (
-                      <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginTop: 2 }}>
-                        还有 {z.count - z.peek.length} 项
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
+              {/* 卡面：里面前几件的真缩略（FolderFace，2026-08-13 从名字清单
+                  升级；iframe 的三道闸 —— 视口/缩放/每卡上限 —— 在那边算） */}
+              <FolderFace z={z} projectId={projectId} fileVersions={fileVersions} scale={scale} />
 
               <div style={{
                 height: 40, flexShrink: 0,
