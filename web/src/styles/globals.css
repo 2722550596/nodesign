@@ -13,6 +13,15 @@
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
+/* 龙藏体（Long Cang，OFL）：硬笔手写 —— 画布"写一段字"的默认笔迹。
+   用户要的是圆珠笔手感（2026-08-13），楷体太工整像印出来的。
+   2.9MB swap 加载：先用楷体显影，字体到了再换笔迹。 */
+@font-face {
+  font-family: 'Long Cang ND';
+  src: url('../assets/fonts/longcang-regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
 * { box-sizing: border-box; }
 
 html, body, #root {

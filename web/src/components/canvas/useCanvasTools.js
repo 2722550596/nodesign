@@ -29,7 +29,7 @@ const MIN_SAMPLE_DIST = 3;
 /** 单条涂鸦最多这么多点（服务端还有 8000 字符的硬闸门兜底） */
 const MAX_POINTS = 600;
 
-export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateScribble, onComment }) {
+export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateScribble, onComment, onEditText }) {
   const [draft, setDraft] = useState(null);      // 正在画的那条：{ points: [{x,y}] }
   const [textAt, setTextAt] = useState(null);    // 正在写的那段：{ x, y }
   const drawRef = useRef(null);
@@ -64,6 +64,13 @@ export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateSc
     if (tool === 'text') {
       // 已经开着一个输入框时，这一下是"点别处收工"，交给输入框自己处理
       if (textAt) return false;
+      // 点在已有的字上 = 改那段字，不是叠一段新的。"想挪个字它却弹新输入框"
+      // 是用户明确不要的行为（2026-08-13）—— 编辑入口交回 BoardCanvas。
+      const hit = e.target.closest?.('[data-board-object]');
+      if (hit?.dataset.boardType === 'text') {
+        onEditText?.(hit.getAttribute('data-board-object'));
+        return true;
+      }
       const w = toWorld(e.clientX, e.clientY);
       setTextAt(w);
       return true;
@@ -83,7 +90,7 @@ export function useCanvasTools({ tool, toWorld, zoneAt, onCreateText, onCreateSc
       return true;
     }
     return false;
-  }, [tool, textAt, toWorld, zoneAt, onComment]);
+  }, [tool, textAt, toWorld, zoneAt, onComment, onEditText]);
 
   const onPointerMove = useCallback((e) => {
     const d = drawRef.current;

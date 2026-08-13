@@ -58,6 +58,13 @@ function BoardObject({
     cursor: 'grab', userSelect: 'none',
     touchAction: 'none',
     animation: POP_IN,
+    // 变换（2026-08-13，选中态控制器写入 data.rotation / data.scale）：
+    // 围绕中心转/缩。命中不用另算 —— DOM 事件本来就跟着 transform 走，
+    // 选中框作为子层也一起转。只有墨类（text/scribble）有这两个字段。
+    ...(isInk && (o.data?.rotation || (o.data?.scale && o.data.scale !== 1)) ? {
+      transform: `rotate(${o.data?.rotation || 0}deg) scale(${o.data?.scale ?? 1})`,
+      transformOrigin: '50% 50%',
+    } : null),
     // agent 此刻正在动这个物件 → 外圈光圈（放在 animation 之后才盖得住）。
     // 转动的那段亮弧画在下面的伪层里，这里只管稳的那一圈。
     // ⚠️ 这几处都写**完整的 border 简写**，不写 borderColor：上面 base 里已经

@@ -69,7 +69,18 @@ const FOLDERS = ['鉴赏页', '鉴赏页/初稿'];  // ← 会被 createFolder /
 
 const BOARD = {
   size: { w: 4000, h: 2600 },
-  objects: {},          // 故意留空：走"首次落点"那条路，正好验自动排布
+  // 大体留空走"首次落点"那条路（验自动排布）；墨类两件是例外 —— 它们的
+  // 本体就在 board.json 里，不给就永远测不到（选中/变换/编辑都在它们身上）
+  objects: {
+    'text:demo1': {
+      x: 620, y: 320, w: 140, h: 40, z: 5,
+      kind: 'text', data: { t: '手写示例', font: 'pen', size: 'lg', color: 'ink', rotation: 20, scale: 1.5 },
+    },
+    'scribble:demo1': {
+      x: 640, y: 420, w: 80, h: 40, z: 6,
+      kind: 'scribble', data: { d: 'M 8 8 Q 28 38 48 16 L 72 28', color: 'ink', width: 2 },
+    },
+  },
   zones: {},
   bindings: {},
 };

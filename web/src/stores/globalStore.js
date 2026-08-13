@@ -36,7 +36,9 @@ export const useGlobalStore = create((set) => ({
       const v = JSON.parse(localStorage.getItem('nd:canvasFont'));
       if (v?.font && v?.size) return v;
     } catch { /* 没设过 / 隐私模式 */ }
-    return { font: 'kai', size: 'md' };
+    // 默认手写（龙藏体）：白板上随手写的字要像手写的（2026-08-13 用户定）。
+    // 已经设过偏好的人不受影响 —— 上面 localStorage 优先。
+    return { font: 'pen', size: 'md' };
   })(),
   setCanvasFont: (v) => {
     try { localStorage.setItem('nd:canvasFont', JSON.stringify(v)); } catch { /* */ }

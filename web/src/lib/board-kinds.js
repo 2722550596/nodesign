@@ -201,7 +201,9 @@ export const KINDS = {
     backing: 'canvas',
     size: { w: 220, h: 40 },
     reader: null,
-    primary: null,
+    // 2026-08-13 从 null 改成编辑：写下的字原来永远改不了 —— 双击什么都
+    // 不发生，是"操作字框还弹新建输入框"那批投诉的另一半
+    primary: 'editText',
     actions: ['delete'],
     legacyBucket: 'doc',
   },

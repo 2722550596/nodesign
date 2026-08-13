@@ -21,6 +21,7 @@ import {
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
 import FolderFace from './cards/FolderFace.jsx';
+import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
@@ -184,6 +185,16 @@ export default function BoardCanvas({
   const followAgent = useGlobalStore(st => st.followAgent);
   const [commentDraft, setCommentDraft] = useState(null);   // { targetId, at }
   const commentDraftRef = useRef(null);
+  /** 正在改内容的手写文字：{ id, at:{x,y}, initial }（复用 TextDraft） */
+  const [editingText, setEditingText] = useState(null);
+  /**
+   * 选中的墨类物件（text/scribble）—— 选中后浮出变换控制器（旋转/缩放）。
+   * 只有墨类可选：产物卡的"操作"是开窗和拖动，套一层选中态纯属多余。
+   */
+  const [selectedId, setSelectedId] = useState(null);
+  const selectedIdRef = useRef(null);
+  selectedIdRef.current = selectedId;
+  const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [bindings, setBindings] = useState({});   // board.json 的关系表
   const [hoveredBinding, setHoveredBinding] = useState(null);
   const [presence, setPresence] = useState(emptyPresence);
@@ -804,15 +815,49 @@ export default function BoardCanvas({
     const cols = Math.min(26, Math.max(6, t.length));
     const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
     const px = { sm: 13, md: 16, lg: 22, xl: 30 }[canvasFont.size] || 16;
+    // 归属跟涂鸦同一条规则：落点被谁的文件夹卡框住就归谁。原来这里漏写 zone，
+    // 在文件夹层里写的字会静默归到根上（2026-08-13 查实补齐）
+    const zid = zoneAtPoint({ x: at.x, y: at.y });
     patchLayout(id, {
       x: Math.round(at.x), y: Math.round(at.y), z: ++zMaxRef.current,
       w: Math.round(cols * px * 1.05) + 12,
       h: Math.round(lines * px * 1.6) + 10,
       kind: 'text',
       data: { t, font: canvasFont.font, size: canvasFont.size, color: 'ink' },
+      ...(zid ? { zone: zid } : {}),
     });
     return id;
-  }, [patchLayout, canvasFont]);
+  }, [patchLayout, canvasFont, zoneAtPoint]);
+
+  /** 打开某段字的内容编辑（双击 / 文字工具点在字上，两个入口共用） */
+  const openTextEditor = useCallback((o) => {
+    setEditingText({ id: o.id, at: { x: o.pos.x, y: o.pos.y }, initial: o.data?.t || '' });
+  }, []);
+
+  const commitTextEdit = useCallback((text) => {
+    const ed = editingText;
+    setEditingText(null);
+    if (!ed) return;
+    const t = String(text || '').trim();
+    const old = layoutRef.current[ed.id];
+    if (!old) return;
+    if (!t) {
+      // 清空 = 删掉这段字（服务端对空文本也是整条丢弃，两边同一个语义）
+      setLayout(prev => { const next = { ...prev }; delete next[ed.id]; return next; });
+      dirtyRef.current.objects.add(ed.id);
+      scheduleSave();
+      return;
+    }
+    // 尺寸按新内容重估（跟创建同一套公式 —— 它只定命中区和避让矩形）
+    const cols = Math.min(26, Math.max(6, t.length));
+    const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
+    const px = { sm: 13, md: 16, lg: 22, xl: 30 }[old.data?.size] || 16;
+    patchLayout(ed.id, {
+      w: Math.round(cols * px * 1.05) + 12,
+      h: Math.round(lines * px * 1.6) + 10,
+      data: { ...old.data, t },
+    });
+  }, [editingText, patchLayout, scheduleSave]);
 
   /** 写一张便利贴 → `notes/*.md`（**这条是给 agent 看的**，走右键菜单） */
   const createNoteAt = useCallback(async (at) => {
@@ -877,9 +922,15 @@ export default function BoardCanvas({
     tool,
     toWorld: camera.toWorld,
     zoneAt: zoneAtPoint,
-    onCreateText: handleCreateText,
+    // 一次性工具（one-shot）：写完一段自动回到指针。想连写的人多按一次 T 的
+    // 代价，远小于"忘了自己拿着笔，想挪字却弹出新输入框"的困惑（用户报）。
+    onCreateText: (t, at) => { handleCreateText(t, at); setTool('select'); },
     onCreateScribble: handleCreateScribble,
     onComment: handleComment,
+    onEditText: (id) => {
+      const o = positionedRef.current.find(x => x.id === id);
+      if (o) openTextEditor(o);
+    },
   });
 
   /**
@@ -1062,6 +1113,11 @@ export default function BoardCanvas({
     // click/dblclick 在 pointerup 之后才派发，此时 dragRef 已清 —— 拖完的
     // "余韵"记在这个 ref 上，让点击类 handler 能区分"拖完松手"和"真点击"
     recentDragMovedRef.current = !!d?.moved;
+    // 点了一下没拖动 = 选中（只有墨类进选中态，产物卡的动作是开窗/拖动）
+    if (d?.kind === 'object' && !d.moved) {
+      const obj = positioned.find(o => o.id === d.id);
+      setSelectedId(obj?.native ? d.id : null);
+    }
     if (d?.kind === 'object') {
       // 落点判定 → **真的搬文件**（2026-08-08）：
       //   落在文件夹上（收起态卡 / 展开态框）= 搬进那个目录
@@ -1249,6 +1305,7 @@ export default function BoardCanvas({
       reload();
     } catch (err) { console.warn('[board] delete note failed:', err.message); }
   };
+  handleDeleteNoteRef.current = handleDeleteNote;
 
   const focusDeck = (o) => {
     if (o.type === 'world') {
@@ -1295,6 +1352,8 @@ export default function BoardCanvas({
     // 展开态 2026-08-13 退役 —— "在画布上并排看两份 deck"这件事本来就该由窗
     // 来做，而一个会自己变大两倍半的卡片是所有落点逻辑的噪声源。
     open: focusDeck,
+    // 手写文字：双击改内容（原来是 null —— 写下的字永远改不了）
+    editText: openTextEditor,
   };
 
   const primaryOpen = (o) => PRIMARY[primaryOf(o)]?.(o);
@@ -1311,6 +1370,8 @@ export default function BoardCanvas({
         setProjectPanel(null); setViewer(null); setDetail(null);
         return;
       }
+      // 有选中先取消选中（比"退层"近一级的撤销）
+      if (selectedIdRef.current) { setSelectedId(null); return; }
       if (!cwd) return;                       // 已经在根上，ESC 没有更上一层可退
       exitToProjectRef.current?.();
     };
@@ -1343,6 +1404,24 @@ export default function BoardCanvas({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onAskAgent]);
+
+  // Delete / Backspace 删掉选中的墨类物件（选中态 2026-08-13 才有，这键也是）
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const sel = selectedIdRef.current;
+      if (!sel) return;
+      const o = positionedRef.current.find(x => x.id === sel);
+      if (!o?.native) return;
+      e.preventDefault();
+      setSelectedId(null);
+      handleDeleteNoteRef.current?.(o);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   /**
    * 换层（2026-08-13）：进一个文件夹 = 桌面换成它那一层；退出 = 回上一层。
@@ -2011,6 +2090,12 @@ export default function BoardCanvas({
         data-tool={tool}
         data-drawing={canvasTools.draft ? canvasTools.draft.points.length : ''}
         onPointerDown={(e) => {
+          // 点到既不是物件也不是变换手柄的地方 → 取消选中（选中态的唯一出口
+          // 之一；另一个是 Esc）。放在工具分派**之前**：不管手里拿什么，点空白
+          // 都该收掉选框。
+          if (selectedIdRef.current && !e.target.closest('[data-board-object],[data-transform-handle]')) {
+            setSelectedId(null);
+          }
           // 顺序即优先级：工具在手就归工具，工具没接才轮到相机平移。
           // 否则「拖着画一笔」和「拖空白平移」抢同一个手势，画一笔就跑镜头。
           if (canvasTools.onPointerDown(e)) return;
@@ -2192,6 +2277,27 @@ export default function BoardCanvas({
             </svg>
           )}
 
+          {/* 选中态变换控制器（世界层，跟着被选物件的 transform 走）。
+              被选物件可能这一帧刚被删/被搬走 —— find 不到就整层不画。 */}
+          {(() => {
+            if (!selectedId) return null;
+            const o = positioned.find(it => it.id === selectedId);
+            if (!o?.native) return null;
+            return (
+              <TransformControls
+                o={o}
+                sz={sizeOf(o)}
+                camScale={scale}
+                toWorld={camera.toWorld}
+                onChange={(patch) => {
+                  const cur = layoutRef.current[o.id];
+                  if (!cur) return;
+                  patchLayout(o.id, { data: { ...cur.data, ...patch } });
+                }}
+              />
+            );
+          })()}
+
           {/* 在场：谁在画布上干活（PresenceLayer.jsx）*/}
           <PresenceLayer table={presence} rectOf={rectOfId} />
 
@@ -2223,6 +2329,20 @@ export default function BoardCanvas({
             }}
             onCommit={canvasTools.commitText}
             onCancel={canvasTools.cancelText}
+          />
+        )}
+
+        {/* 改字输入框：双击一段字 / 文字工具点在字上，预填原文（清空=删除） */}
+        {editingText && (
+          <TextDraft
+            screen={{
+              x: (editingText.at.x + cam.x) * scale,
+              y: (editingText.at.y + cam.y) * scale,
+            }}
+            initial={editingText.initial}
+            placeholder="改成什么…（⌘/Ctrl+Enter 落笔，清空=删除）"
+            onCommit={commitTextEdit}
+            onCancel={() => setEditingText(null)}
           />
         )}
 
@@ -2393,8 +2513,8 @@ export default function BoardCanvas({
  * 用 Enter 直接提交是错的 —— 用户在画布上写的多半是一段话不是一个词，
  * 单行提交会把"想写三行"变成"写了三次"。
  */
-function TextDraft({ screen, onCommit, onCancel, placeholder = '写点什么…（⌘/Ctrl+Enter 落笔）' }) {
-  const [value, setValue] = useState('');
+function TextDraft({ screen, onCommit, onCancel, placeholder = '写点什么…（⌘/Ctrl+Enter 落笔）', initial = '' }) {
+  const [value, setValue] = useState(initial);
   const ref = useRef(null);
   // 「点别处 = 提交」靠 onBlur 实现，但**创建它的那一次点击自己就会触发 blur**：
   // mousedown 开框 → 自动聚焦 → 同一次点击的 mouseup 把焦点抢回画布 → blur →

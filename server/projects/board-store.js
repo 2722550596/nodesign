@@ -92,8 +92,21 @@ const MAX_SCRIBBLE_PATH = 8000;
 const MAX_TEXT_LEN = 2000;
 
 /** 画布文字可选的字体。**白名单而不是自由字符串** —— 这个值会进 CSS */
-export const TEXT_FONTS = ['kai', 'sans', 'serif', 'mono'];
+export const TEXT_FONTS = ['pen', 'kai', 'sans', 'serif', 'mono'];
 const TEXT_SIZES = ['sm', 'md', 'lg', 'xl'];
+
+/**
+ * 变换字段（2026-08-13，选中态控制器）。缺省不落字段 —— 没转过没缩过的物件
+ * 别背两个恒等值，board.json 的 diff 要能一眼看出"谁被动过"。
+ */
+function sanitizeTransform(data) {
+  const out = {};
+  const rot = Number(data?.rotation);
+  if (Number.isFinite(rot) && rot !== 0) out.rotation = clampNum(rot, -360, 360, 0);
+  const sc = Number(data?.scale);
+  if (Number.isFinite(sc) && sc !== 1) out.scale = clampNum(sc, 0.2, 10, 1);
+  return out;
+}
 
 function sanitizeCanvasData(kind, data) {
   if (kind === 'text') {
@@ -104,6 +117,7 @@ function sanitizeCanvasData(kind, data) {
       font: TEXT_FONTS.includes(data?.font) ? data.font : 'kai',
       size: TEXT_SIZES.includes(data?.size) ? data.size : 'md',
       color: ['ink', 'red', 'pencil', 'brass'].includes(data?.color) ? data.color : 'ink',
+      ...sanitizeTransform(data),
     };
   }
   if (kind !== 'scribble') return null;
@@ -114,6 +128,7 @@ function sanitizeCanvasData(kind, data) {
     d,
     color: ['ink', 'red', 'pencil', 'brass'].includes(data.color) ? data.color : 'ink',
     width: clampNum(data.width, 1, 24, 2),
+    ...sanitizeTransform(data),
   };
 }
 
