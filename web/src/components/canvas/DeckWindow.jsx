@@ -119,7 +119,7 @@ export default function DeckWindow({
   useEffect(() => {
     if (!projectId || !sessionId) return;
     let cancelled = false;
-    SessionConfig.read(projectId, sessionId).then(({ config }) => {
+    SessionConfig.read(projectId).then(({ config }) => {
       if (cancelled) return;
       if (config && typeof config.tweaks_mode_enabled === 'boolean') {
         setTweaksEnabled(config.tweaks_mode_enabled);
@@ -131,7 +131,7 @@ export default function DeckWindow({
   const handleTweaksEnabledChange = useCallback((next) => {
     setTweaksEnabled(next);
     if (!projectId || !sessionId) return;
-    SessionConfig.patch(projectId, sessionId, { tweaks_mode_enabled: next })
+    SessionConfig.patch(projectId, { tweaks_mode_enabled: next })
       .catch(() => { /* ignore；下次 turn 重新读取 */ });
   }, [projectId, sessionId]);
 

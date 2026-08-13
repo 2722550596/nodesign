@@ -1586,14 +1586,14 @@ export default function ProjectWorkspace() {
       // 无会话闸门 2026-08-13 撤除：产物属于项目不属于会话，canvas 写入和
       // pending buffer 都已是项目级路由 —— 编辑不再要求先开一轮对话
       const html = '<!doctype html>\n' + iframeDoc.documentElement.outerHTML;
-      await Canvas.write(id, currentSessionId, html, 'user', info.deckPath || null);
+      await Canvas.write(id, html, 'user', info.deckPath || null);
       showToast(`已保存：「${info.newText.slice(0, 20)}」`, 'success');
 
       // C4：push 进 pending-changes buffer，下次发 chat 时 agent 主动拉
       try {
         const el = findElementByAnchor(info.anchor, iframeDoc.body);
         const aiContext = el ? serializeForAI(el) : null;
-        await PendingChanges.push(id, currentSessionId, {
+        await PendingChanges.push(id, {
           kind: 'edit',
           anchor: info.anchor,
           ...(info.deckPath ? { path: info.deckPath } : {}),
@@ -1622,7 +1622,7 @@ export default function ProjectWorkspace() {
     try {
       if (persist) {
         if (!html) { showToast('页面未就绪，改动没保存', 'error'); return; }
-        await Canvas.write(id, currentSessionId, html, 'user', path);
+        await Canvas.write(id, html, 'user', path);
         showToast(`已保存：${summary}`, 'success');
         // 用户通道的写没有 run.file_changed 事件（那是 agent PostToolUse 直发的），
         // 本地补一笔版本：让本页从干净磁盘态平滑重载（LiveFrame 换代 + 滚动保持），
@@ -1633,7 +1633,7 @@ export default function ProjectWorkspace() {
       }
       for (const r of records) {
         try {
-          await PendingChanges.push(id, currentSessionId, { ...r, path });
+          await PendingChanges.push(id, { ...r, path });
         } catch (err) {
           console.warn('[pending-changes] push site layout failed:', err.message);
         }
@@ -1675,7 +1675,7 @@ export default function ProjectWorkspace() {
     // 无会话时评论只剩本地橙框、agent 永远收不到（**静默丢失**）。buffer 已是
     // 项目级（2026-08-13），无条件推：第一条消息一发 agent 就能拉到。
     try {
-      await PendingChanges.push(id, currentSessionId, {
+      await PendingChanges.push(id, {
         id: cid,
         kind: 'comment',
         anchor: ctx.anchor,
@@ -1703,7 +1703,7 @@ export default function ProjectWorkspace() {
       return;
     }
     const rel = path;
-    await PendingChanges.regionComment(id, currentSessionId, {
+    await PendingChanges.regionComment(id, {
       path: rel, region, viewport, container, elements, text,
     });
     const what = elements.length
@@ -1866,7 +1866,7 @@ export default function ProjectWorkspace() {
   const handleExport = async (format) => {
     try {
       // （无会话闸门 2026-08-13 撤除 —— 导出的是项目的产物，路由已项目级）
-      const { blob, filename } = await Exports.download(id, currentSessionId, format);
+      const { blob, filename } = await Exports.download(id, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -2000,7 +2000,7 @@ export default function ProjectWorkspace() {
           isolation: 'isolate',
         }}>
           <CanvasFrame
-            htmlSrc={currentSessionId ? Canvas.artifactUrl(id, currentSessionId, versionOfFile(fileVersions, 'canvas.html')) : null}
+            htmlSrc={currentSessionId ? Canvas.artifactUrl(id, versionOfFile(fileVersions, 'canvas.html')) : null}
             selectedAnchor={selectedAnchor}
             onSelectChange={setSelectedAnchor}
             onTextEdit={handleTextEdit}

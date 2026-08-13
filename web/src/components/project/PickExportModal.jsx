@@ -31,7 +31,7 @@ export default function PickExportModal({ open, onClose, projectId, sessionId, o
     if (!open || !projectId || !sessionId) return;
     let cancelled = false;
     setLoading(true);
-    Exports.items(projectId, sessionId)
+    Exports.items(projectId)
       .then(({ items: list = [], kind = null }) => {
         if (cancelled) return;
         setItems(list);
@@ -63,7 +63,7 @@ export default function PickExportModal({ open, onClose, projectId, sessionId, o
     if (picked.size === 0) return;
     setBusy(true);
     try {
-      const { blob, filename } = await Exports.pick(projectId, sessionId, [...picked]);
+      const { blob, filename } = await Exports.pick(projectId, [...picked]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

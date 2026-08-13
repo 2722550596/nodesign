@@ -35,7 +35,7 @@ export function usePendingEdits({ projectId, sessionId }) {
     revertersRef.current.clear();
     if (!projectId) return;   // 无会话闸门 2026-08-13 撤除：buffer 已项目级
     let cancelled = false;
-    PendingChanges.list(projectId, sessionId).then(({ items = [] }) => {
+    PendingChanges.list(projectId).then(({ items = [] }) => {
       if (cancelled) return;
       // 只回填 pending-* kind（edit/comment 由别处管）
       const ours = items.filter(it => typeof it.kind === 'string' && it.kind.startsWith('pending-'));
@@ -84,7 +84,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       revertersRef.current.delete(oldEdit.id);
       // 后端 buffer 也要清掉旧 id（避免 agent 看到两条同 anchor 的 edit）
       if (projectId) {
-        try { await PendingChanges.clear(projectId, sessionId, [oldEdit.id]); } catch { /* */ }
+        try { await PendingChanges.clear(projectId, [oldEdit.id]); } catch { /* */ }
       }
     }
 
@@ -116,7 +116,7 @@ export function usePendingEdits({ projectId, sessionId }) {
 
     if (projectId) {
       try {
-        await PendingChanges.push(projectId, sessionId, item);
+        await PendingChanges.push(projectId, item);
       } catch (err) {
         console.warn('[pending-edits] push failed:', err.message);
       }
@@ -148,7 +148,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       setEdits(prev => prev.filter(e => !idSet.has(e.id)));
       setRedoStack(prev => [...prev, { type: 'restore', items: op.items }]);
       if (projectId) {
-        try { await PendingChanges.clear(projectId, sessionId, ids); } catch { /* */ }
+        try { await PendingChanges.clear(projectId, ids); } catch { /* */ }
       }
     } else if (op.type === 'clear') {
       // 注：clear 已经 invoke 过 reverters 还原 DOM；这里只重建前端 + 后端 buffer。
@@ -157,7 +157,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       setRedoStack(prev => [...prev, { type: 'clear-redo', items: op.items }]);
       if (projectId) {
         for (const it of op.items) {
-          try { await PendingChanges.push(projectId, sessionId, it); } catch { /* */ }
+          try { await PendingChanges.push(projectId, it); } catch { /* */ }
         }
       }
     }
@@ -174,7 +174,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       setUndoStack(prev => [...prev, { type: 'push', items: op.items }]);
       if (projectId) {
         for (const it of op.items) {
-          try { await PendingChanges.push(projectId, sessionId, it); } catch { /* */ }
+          try { await PendingChanges.push(projectId, it); } catch { /* */ }
         }
       }
     } else if (op.type === 'clear-redo') {
@@ -183,7 +183,7 @@ export function usePendingEdits({ projectId, sessionId }) {
       setEdits(prev => prev.filter(e => !idSet.has(e.id)));
       setUndoStack(prev => [...prev, { type: 'clear', items: op.items }]);
       if (projectId) {
-        try { await PendingChanges.clear(projectId, sessionId, ids); } catch { /* */ }
+        try { await PendingChanges.clear(projectId, ids); } catch { /* */ }
       }
     }
     return true;
@@ -200,7 +200,7 @@ export function usePendingEdits({ projectId, sessionId }) {
     setUndoStack(prev => [...prev, { type: 'clear', items: snapshot }]);
     setRedoStack([]);
     if (projectId) {
-      try { await PendingChanges.clear(projectId, sessionId, snapshot.map(it => it.id)); } catch { /* */ }
+      try { await PendingChanges.clear(projectId, snapshot.map(it => it.id)); } catch { /* */ }
     }
   }, [edits, projectId, sessionId, invokeReverters]);
 

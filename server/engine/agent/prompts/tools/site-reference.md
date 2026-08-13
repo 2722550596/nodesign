@@ -17,7 +17,7 @@
 
 **构建型站点**（Astro / 11ty / 自写 build 脚本）：源随便组织，构建产物落
 `dist/`（或 `out/` `build/` `_site/`，有 index.html 的那个自动被认作**产物根**；
-也可在 `.nd-task.json` 加 `"root": "<目录>"` 显式指定）。预览、截图、`list_pages`、
+也可在 `.nd-project.json` 加 `"root": "<目录>"` 显式指定）。预览、截图、`list_pages`、
 导出、发布看的**全是产物根** —— 改完源必须重新构建，否则用户看到的还是旧的。
 `node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
 

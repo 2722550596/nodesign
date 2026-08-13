@@ -45,7 +45,7 @@ export default function TweaksPanel({
     }
     let cancelled = false;
     setLoading(true);
-    Spec.read(projectId, sessionId)
+    Spec.read(projectId)
       .then((r) => {
         if (cancelled) return;
         const tweaks = r?.spec?.tweaks;

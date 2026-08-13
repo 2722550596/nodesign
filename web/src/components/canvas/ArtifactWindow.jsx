@@ -237,9 +237,8 @@ export const INK_READOUT = {
  * 格式清单由**服务端**给（`/artifacts` 的 `tasks[].exports`，随 focusDeck 一路
  * 传下来），前端不硬编码 —— 第三种形态上线时这里自动跟上。
  *
- * ⚠️ 导出路由目前仍是会话作用域的（`Exports.download(pid, sid, format)`），
- * 没有活跃会话时点了会 toast「请先选中一个会话再导出」。那是会话耦合时代的
- * 遗留，跟这条工具栏无关。
+ *（导出路由 2026-08-13 已随会话收敛项目化：`Exports.download(pid, format)`，
+ * 无会话也能导。老的 sid 形式路由服务端永久保留 —— jsonl 里持久化过绝对 URL。）
  */
 export function exportToolGroup({ kind, exports: formats, onExport }) {
   if (!onExport) return null;

@@ -114,9 +114,9 @@ export const Publish = {
   unpublish: (pid, task) => jsonRequest('DELETE', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
 };
 
-// ── Canvas（H3：session-scoped）──
+// ── Canvas（2026-08-13 起项目级：会话收敛后画布/deck 归项目所有）──
 export const Canvas = {
-  read: async (pid, sid) => {
+  read: async (pid) => {
     const res = await fetch(`/api/projects/${pid}/canvas`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -125,32 +125,33 @@ export const Canvas = {
     return res.text();
   },
   // path：任务 deck 是 tasks/<任务>/canvas.html；不传写会话自己的 canvas.html
-  write: (pid, sid, html, source = 'user', deckPath = null) =>
+  write: (pid, html, source = 'user', deckPath = null) =>
     jsonRequest('PUT', `/api/projects/${pid}/canvas`, { html, source, ...(deckPath ? { path: deckPath } : {}) }),
-  history: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/canvas/history`),
-  revert: (pid, sid, commit) =>
+  history: (pid) => jsonRequest('GET', `/api/projects/${pid}/canvas/history`),
+  revert: (pid, commit) =>
     jsonRequest('POST', `/api/projects/${pid}/canvas/revert`, { commit }),
   // Canvas.undo (git checkout 上一个 commit) 已砍 (2026-05-07) — SDK rewindFiles
   // 通过对话里"回到此处"覆盖所有场景（含历史 session resume 链路）。后端 endpoint
   // 留着不删但无前端调用。
-  /** iframe src 用 — sid 必传 */
-  artifactUrl: (pid, sid, version) =>
+  /** iframe src 用 */
+  artifactUrl: (pid, version) =>
     `/api/projects/${pid}/canvas${version ? `?v=${encodeURIComponent(version)}` : ''}`,
   /** deck 比例信息（前端缩略图按比例设容器尺寸 + iframe size 用） */
-  deckMeta: (pid, sid, deckPath = null) =>
+  deckMeta: (pid, deckPath = null) =>
     jsonRequest('GET', `/api/projects/${pid}/canvas/deck-meta${deckPath ? `?path=${encodeURIComponent(deckPath)}` : ''}`),
 };
 
-// ── Spec（设计意图档案，session-scoped）──
+// ── Spec（设计意图档案，项目级）──
 export const Spec = {
-  read: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/spec`),
+  read: (pid) => jsonRequest('GET', `/api/projects/${pid}/spec`),
 };
 
-// ── SessionConfig（用户/前端拥有的 session 配置，区别于 agent 私域 spec.json）──
+// ── SessionConfig（项目级 UI 偏好，区别于 agent 私域 spec.json；服务端落
+// ui-config.json —— 名字是历史遗留，真·会话配置是 .nd/<sid>/ 里模型那份）──
 // 字段：tweaks_mode_enabled
 export const SessionConfig = {
-  read: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/config`),
-  patch: (pid, sid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/config`, patch),
+  read: (pid) => jsonRequest('GET', `/api/projects/${pid}/config`),
+  patch: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/config`, patch),
 };
 
 // ── Plan（Phase 3.2：SDK 原生 plan mode 审批流）──
@@ -189,20 +190,20 @@ export const Elicit = {
       { action, content }),
 };
 
-// ── PendingChanges（C4：用户直接编辑 + 评论 buffer，session-scoped）──
+// ── PendingChanges（C4：用户直接编辑 + 评论 buffer，项目级）──
 // 前端 push edit / comment item，下次发 chat 时 turn.js 在 user message 前
 // prepend system 提示 → agent 主动调 mcp__nodesign__get_pending_changes 拉详情。
 export const PendingChanges = {
-  list: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/pending-changes`),
-  push: (pid, sid, item) =>
+  list: (pid) => jsonRequest('GET', `/api/projects/${pid}/pending-changes`),
+  push: (pid, item) =>
     jsonRequest('POST', `/api/projects/${pid}/pending-changes`, item),
   /**
    * 圈选评论：{ path, region, viewport, elements, text }。
    * 服务端顺手跑一次 chromium 把那块截下来，所以比别的 push 慢（一两秒）。
    */
-  regionComment: (pid, sid, payload) =>
+  regionComment: (pid, payload) =>
     jsonRequest('POST', `/api/projects/${pid}/region-comment`, payload),
-  clear: (pid, sid, ids) => {
+  clear: (pid, ids) => {
     const qs = Array.isArray(ids) && ids.length > 0 ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
     return jsonRequest('DELETE', `/api/projects/${pid}/pending-changes${qs}`);
   },
@@ -293,10 +294,10 @@ export const Assets = {
 // ── Exports（H3：session-scoped）──
 export const Exports = {
   /** 当前任务里可以单独导出的东西（deck / 图 / 其它产物）*/
-  items: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/exports/items`),
+  items: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports/items`),
 
   /** 挑几样下载：单个原样、多个打 zip。返回 { blob, filename } */
-  pick: async (pid, sid, paths, filename) => {
+  pick: async (pid, paths, filename) => {
     const res = await fetch(`/api/projects/${pid}/exports/pick`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -310,7 +311,7 @@ export const Exports = {
   },
 
   /** 下载文件，返回 { blob, filename }，调用方自行触发 a.click() */
-  download: async (pid, sid, format) => {
+  download: async (pid, format) => {
     const res = await fetch(`/api/projects/${pid}/exports/${format}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -321,9 +322,9 @@ export const Exports = {
     return { blob, filename };
   },
 
-  list: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/exports`),
+  list: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports`),
 
-  downloadFile: async (pid, sid, filename) => {
+  downloadFile: async (pid, filename) => {
     const res = await fetch(`/api/projects/${pid}/exports/file/${encodeURIComponent(filename)}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));

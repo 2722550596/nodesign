@@ -29,7 +29,7 @@ export default function DecisionsTab({ projectId, sessionId, reloadKey = 0 }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await Spec.read(projectId, sessionId);
+      const result = await Spec.read(projectId);
       setSpec(result?.spec || {});
     } catch (err) {
       setError(err);
