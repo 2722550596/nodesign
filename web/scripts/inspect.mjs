@@ -118,6 +118,39 @@ if (WHEEL) {
 }
 
 /**
+ * 悬停路径：`--hover=<sel>` 真鼠标挪到元素中心停 350ms；配 `--hover-to=<sel>`
+ * 再**步进**挪到第二个元素（hover 显隐出来的按钮）上，停 250ms 报告它还在
+ * 不在、然后真点一下。验"悬停出来的按钮能不能点到"必须走真路径 ——
+ * locator.click 是瞬移，穿缝卸载（按钮浮在卡外、路上有死缝）这种病测不出来。
+ */
+const HOVER = opt('hover', null);
+const HOVER_TO = opt('hover-to', null);
+let hoverReport = null;
+if (HOVER) {
+  const el = await page.$(HOVER);
+  if (!el) errors.push(`--hover 没找到元素: ${HOVER}`);
+  else {
+    const b = await el.boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+    await page.waitForTimeout(350);
+    if (HOVER_TO) {
+      const t = await page.$(HOVER_TO);
+      if (!t) { hoverReport = { appeared: false }; errors.push(`--hover-to 悬停后没出现: ${HOVER_TO}`); }
+      else {
+        const tb = await t.boundingBox();
+        await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 10 });
+        await page.waitForTimeout(250);
+        const still = await page.$(HOVER_TO);
+        const sb = still ? await still.boundingBox() : null;
+        hoverReport = { appeared: true, survivedTravel: !!sb, box: sb };
+        if (sb) { await page.mouse.click(sb.x + sb.width / 2, sb.y + sb.height / 2); await page.waitForTimeout(600); }
+        else errors.push(`--hover-to 挪过去的路上目标卸载了: ${HOVER_TO}`);
+      }
+    }
+  }
+}
+
+/**
  * 拖拽：`--drag=<选择器>|<dx>,<dy>`。**必须一步步发 mousemove** ——
  * 画布的拖拽是自己在 pointermove 里积位移的，一步到位的 move 它只会当成
  * 一次抖动（而且落点提示根本来不及算）。
@@ -236,5 +269,6 @@ console.log(JSON.stringify({
   unmatched: [...new Set(unmatched)],
   calls,
   dragEnd,
+  hoverReport,
   probe,
 }, null, 2));

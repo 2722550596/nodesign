@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink, BookOpen, Trash2,
 } from 'lucide-react';
@@ -39,6 +39,16 @@ function BoardObject({
   scale = 1,
 }) {
   const [hover, setHover] = useState(false);
+  // 离开宽限：pointerLeave 不立刻收工具条，等 200ms。没有这条的话，鼠标奔着
+  // 按钮去的路上稍微出界一下（很容易，按钮浮在卡外）工具条就当场卸载 ——
+  // 用户的原话是"鼠标一离开产物本身视图点击按钮，按钮就会消失"。
+  const hoverTimer = useRef(null);
+  const armHover = () => { clearTimeout(hoverTimer.current); setHover(true); };
+  const disarmHover = () => {
+    clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => setHover(false), 200);
+  };
+  useEffect(() => () => clearTimeout(hoverTimer.current), []);
   const sz = sizeOf(o);
   // 一笔墨不是一张纸 —— 不给卡片外观（底色/描边/影子全免），只在悬停时浮出
   // 一点底色示意"这一笔是可以拖的"。
@@ -98,26 +108,43 @@ function BoardObject({
   };
   const actions = actionsOf(o).map(id => ACTION_DEFS[id]).filter(Boolean);
 
+  // 工具条挂在卡片上沿之外。这里有两个坑，都踩过：
+  //
+  // 1. **死缝**：以前写 `top:-26` 而条高约 22px —— 条和卡之间留了一道几像素的
+  //    空隙。鼠标从卡奔按钮，穿过空隙的一瞬 pointerLeave 触发、hover 归零、
+  //    按钮在你点到之前卸载。修法是外壳 `bottom:'100%'`（下沿贴死卡上沿）+
+  //    paddingBottom 当桥：视觉上条还是浮在卡外 4px，但命中区域连续无缝。
+  // 2. **镜头缩小按钮跟着缩**：条住在世界层里，scale 0.5 时 13px 图标只剩
+  //    6px 物理像素。反缩放 1/(相机×物件缩放) 让它物理尺寸恒定 ——
+  //    跟 TransformControls 的手柄同一条规矩。origin 钉在右下角，
+  //    缩放围绕"贴卡那一点"进行，桥不会被缩出缝来。
+  const invScale = 1 / (scale * (isInk ? (o.data?.scale ?? 1) : 1));
   const Actions = hover && actions.length > 0 && (
     <div data-board-action style={{
-      position: 'absolute', top: -26, right: 0, display: 'flex', gap: GAP.xxs,
-      // 一小片浮起来的纸，不是描边白盒。这条工具标是 2026-08-03 之前全站换肤
-      // 唯一漏掉的地方 —— 因为它写死了 rgba(255,255,255,.95)，绕过了整套 token，
-      // 于是纸面上飘着一个上一代设计语言的白色圆角描边框。
-      background: PAPER.paper, border: 'none',
-      borderRadius: RADIUS.md, padding: GAP.xxs, zIndex: 5,
-      boxShadow: PAPER_SHADOW.far,
+      position: 'absolute', bottom: '100%', right: 0, paddingBottom: 4, zIndex: 5,
+      transform: invScale !== 1 ? `scale(${invScale})` : undefined,
+      transformOrigin: '100% 100%',
     }}>
-      {actions.map((a, i) => {
-        const Icon = a.icon;
-        return (
-          <button key={i} title={a.title} data-board-action
-            onClick={(e) => { e.stopPropagation(); if (!wasDrag()) a.fn(); }}
-            style={{ border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.text, display: 'flex', padding: 3 }}>
-            <Icon size={12} />
-          </button>
-        );
-      })}
+      <div style={{
+        display: 'flex', gap: GAP.xxs,
+        // 一小片浮起来的纸，不是描边白盒。这条工具标是 2026-08-03 之前全站换肤
+        // 唯一漏掉的地方 —— 因为它写死了 rgba(255,255,255,.95)，绕过了整套 token，
+        // 于是纸面上飘着一个上一代设计语言的白色圆角描边框。
+        background: PAPER.paper, border: 'none',
+        borderRadius: RADIUS.md, padding: GAP.xxs,
+        boxShadow: PAPER_SHADOW.far,
+      }}>
+        {actions.map((a, i) => {
+          const Icon = a.icon;
+          return (
+            <button key={i} title={a.title} data-board-action
+              onClick={(e) => { e.stopPropagation(); if (!wasDrag()) a.fn(); }}
+              style={{ border: 0, background: 'transparent', cursor: 'pointer', color: COLOR.text, display: 'flex', padding: 5 }}>
+              <Icon size={13} />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 
@@ -130,8 +157,8 @@ function BoardObject({
         if (e.target.closest('[data-board-action]')) return;
         if (!wasDrag()) onPrimary?.();
       }}
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
+      onPointerEnter={armHover}
+      onPointerLeave={disarmHover}
       style={base}
     >
       {Actions}
