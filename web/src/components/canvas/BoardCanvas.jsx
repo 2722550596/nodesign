@@ -4,23 +4,24 @@ import ReactMarkdown from 'react-markdown';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink,
   X, Trash2, BookOpen, Folder, FolderOpen, FolderInput, LogOut,
-  Presentation, PencilLine, ChevronsUpDown, Focus, Globe,
+  PencilLine, ChevronsUpDown, Focus,
   Maximize2, Minus, MousePointer2, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
   FolderPlus, StickyNote,
 } from 'lucide-react';
 import { Assets, Sessions, Memory, Canvas, Instruction } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
-import WorldMap from './WorldMap.jsx';
 import {
-  DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, DECK_EMBED_W, ZONE, ZONE_MIN_H,
+  DESKTOP_W, MARGIN_X, ZONE_GAP_Y, FOLDER_CARD_H, ZONE, ZONE_MIN_H,
   PROJECT_BAND_Y, PROJECT_BAND_H,
-  SITE_VIEWPORTS, EASE, POP_IN, newStackedZoneRect, resolveZoneAvoidance, packRow, ROW_GAP, GROUP_LABEL_H,
+  EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP, GROUP_LABEL_H,
   ZONE_MIN_W, COL_W, COL_GAP,
 } from '../../lib/board-geometry.js';
 import {
   SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, legacyBucketOf, isFileBacked,
+  chromeOf, cardOf,
 } from '../../lib/board-kinds.js';
+import ArtifactCard from './cards/ArtifactCard.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion, ROAM_MARGIN } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget } from '../../lib/board-presence.js';
@@ -28,9 +29,7 @@ import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './St
 import { zoneOfObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
-import { versionOfFile, versionOfTask, versionOfSitePage } from '../../lib/file-versions.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
-import LiveFrame from './LiveFrame.jsx';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import FloatingToolbar from '../ui/FloatingToolbar.jsx';
@@ -123,7 +122,8 @@ export default function BoardCanvas({
   const [folders, setFolders] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [memoryDocs, setMemoryDocs] = useState([]);
-  // 布局（saved + 本地改动合一）：{ [id]: {x,y,z,expanded} }；zones：{ [sid]: {x,y,w,h,title} }
+  // 布局（saved + 本地改动合一）：{ [id]: {x,y,z} }；zones：{ [路径]: {x,y,w,h,title} }
+  // （存量数据里还有 expanded 字段，展开态 2026-08-13 退役后**读都不读**，见 board-kinds）
   const [layout, setLayout] = useState({});
   const [zones, setZones] = useState({});
   // 影子工作区（2026-07-28）：agent 正在往一个还不存在的任务目录里写，产物列表
@@ -1303,11 +1303,11 @@ export default function BoardCanvas({
     read: openViewer,
     detail: (o) => setDetail(o),
     openFile,
-    // 收起态先展开成内嵌渲染，已经展开了才开最大化窗口
-    expand: (o) => {
-      if (o.pos.expanded) focusDeck(o);
-      else patchLayout(o.id, { expanded: true, z: ++zMaxRef.current });
-    },
+    // 产物：双击直接开那扇窗。
+    // ⚠️ 这里曾经是两段式（先展开成画布上的内嵌渲染，再双击一次才开窗）。
+    // 展开态 2026-08-13 退役 —— "在画布上并排看两份 deck"这件事本来就该由窗
+    // 来做，而一个会自己变大两倍半的卡片是所有落点逻辑的噪声源。
+    open: focusDeck,
   };
 
   const primaryOpen = (o) => PRIMARY[primaryOf(o)]?.(o);
@@ -1676,65 +1676,26 @@ export default function BoardCanvas({
     setMenu({ x: e.clientX, y: e.clientY, items });
   }, [zoneAtPoint, createFolderAt, createNoteAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent]);
 
-  // ── deck 自动内嵌渲染（2026-07-28：工作台=常驻默认视图后的配套）──
-  // 工作内容直接在画布里看：当前会话的 deck 有 canvas 就自动展开成内嵌 iframe。
-  // 两个触发源：进会话时 HEAD 探测已有 canvas；agent 正在写 deck（file_changed）。
-  // 用户手动收起过（layout.expanded 有显式值）就不抢——每 sid 只自动展开一次。
-  const autoExpandedRef = useRef(new Set());
-  const pendingExpandRef = useRef(new Set());
-
-  const tryAutoExpand = useCallback((sid) => {
-    if (!sid || autoExpandedRef.current.has(sid)) return true;
-    // 站点任务的产物物件是 site:task/<名>，不是 deck:task/<名> —— 只认 deck 前缀
-    // 的话站点永远等不到物件，pending 集合会一直攒着白试。
-    const candidates = [`deck:${sid}`, `site:${sid}`];
-    const targetId = candidates.find(id => layoutRef.current[id]?.expanded !== undefined)
-      || candidates.find(id => positionedRef.current.some(it => it.id === id));
-    if (!targetId) return false;          // 产物物件还没派生出来，等布局更新再试
-    if (layoutRef.current[targetId]?.expanded !== undefined) {
-      autoExpandedRef.current.add(sid);   // 用户碰过展开态，尊重
-      return true;
-    }
-    const o = positionedRef.current.find(it => it.id === targetId);
-    if (!o) return false;
-    autoExpandedRef.current.add(sid);
-    patchLayout(targetId, { x: o.pos.x, y: o.pos.y, expanded: true, z: ++zMaxRef.current });
-    return true;
-  }, [patchLayout]);
-
-  useEffect(() => {
-    if (!currentSessionId || autoExpandedRef.current.has(currentSessionId)) return;
-    let cancelled = false;
-    fetch(Canvas.artifactUrl(projectId, currentSessionId, 0), { method: 'HEAD' })
-      .then((r) => {
-        if (cancelled || !r.ok) return;
-        if (!tryAutoExpand(currentSessionId)) pendingExpandRef.current.add(currentSessionId);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [projectId, currentSessionId, tryAutoExpand]);
-
-  // 布局每次变化把挂起的自动展开消化掉（deck 物件迟到的场景）
-  useEffect(() => {
-    if (!pendingExpandRef.current.size) return;
-    for (const sid of [...pendingExpandRef.current]) {
-      if (tryAutoExpand(sid)) pendingExpandRef.current.delete(sid);
-    }
-  }, [positioned, tryAutoExpand]);
-
-  // 舞台层的 file_changed 触发口：立刻试展开，deck 物件还没派生出来就挂起等布局。
-  // 任务 deck 直播（任务模型）：agent 正在写 tasks/<任务>/canvas.html 时，工作
-  // 视图把聚焦切到该任务工作区 —— 否则镜头还锁在会话工作区，产出全程不可见
+  // ── agent 正在写什么 → 视图跟过去（2026-08-13 从"自动展开"改剩这一半）──
+  //
+  // 原来这里是一整条「deck 自动内嵌渲染」链：进会话 HEAD 探测已有 canvas、
+  // agent 写 deck（file_changed）时自动把那张卡展开成内嵌 iframe，还带一个
+  // per-session 的"用户手动收起过就不抢"记忆。展开态退役后这条链没有了落点。
+  //
+  // ⚠️ **不要把它原样映射成"自动开窗"**：`preview_deck`（agent 主动摊给用户看）
+  // 翻译成开窗是对的，但 file_changed 是每写一个文件就来一发 —— 那会变成
+  // agent 每存一次盘就把一扇模态窗拍在用户脸上。方卡带实时缩略图之后，
+  // "工作过程当场可见"这件事缩略图自己就做到了。
+  //
+  // 只留下有意义的那一半：**把视图切到 agent 正在动的那个文件夹**。
   const requestAutoExpand = useCallback((key) => {
-    if (!tryAutoExpand(key)) pendingExpandRef.current.add(key);
-    if (key) {
-      setFocusZoneId(prev => {
-        if (prev === key) return prev;
-        fittedKeyRef.current = '';
-        return key;
-      });
-    }
-  }, [tryAutoExpand]);
+    if (!key) return;
+    setFocusZoneId(prev => {
+      if (prev === key) return prev;
+      fittedKeyRef.current = '';
+      return key;
+    });
+  }, []);
 
   /**
    * 舞台卡认领目标（agent 刚开始写某个文件）：
@@ -1823,7 +1784,7 @@ export default function BoardCanvas({
   }, []);
 
   const { stageCards, stageBadges, dismissStageCard } = useStageState({
-    stageRef, artifactRoots, followToObject, tryAutoExpand: requestAutoExpand,
+    stageRef, artifactRoots, followToObject,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
     onRawEvent: handlePresenceEvent,
   });
@@ -2143,10 +2104,9 @@ export default function BoardCanvas({
               onOpenFile={() => openFile(o)}
               onDetail={() => setDetail(o)}
               onDeleteNote={() => handleDeleteNote(o)}
-              // 展开也拿路权（z 置顶）：deck/site 展开变大时是它把邻居挤开，
-              // 而不是它自己被避让系统摆走
-              onToggleExpand={() => patchLayout(o.id, { expanded: !o.pos.expanded, z: ++zMaxRef.current })}
               onFocus={() => focusDeck(o)}
+              // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
+              scale={scale}
             />
           ))}
 
@@ -2414,13 +2374,19 @@ export default function BoardCanvas({
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
 function BoardObject({
   o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
-  onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onToggleExpand, onFocus,
+  onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
+  scale = 1,
 }) {
   const [hover, setHover] = useState(false);
   const sz = sizeOf(o);
-  // 涂鸦不是一张纸，是一笔墨 —— 不给卡片外观（底色/描边/影子全免），
-  // 只在悬停时浮出一点底色示意"这一笔是可以拖的"。
-  const isInk = o.type === 'scribble';
+  // 一笔墨不是一张纸 —— 不给卡片外观（底色/描边/影子全免），只在悬停时浮出
+  // 一点底色示意"这一笔是可以拖的"。
+  //
+  // ⚠️ 判据 2026-08-13 从硬编码的 `o.type === 'scribble'` 换成形态表的
+  // `chrome` 轴。`text` 加进来的时候漏了这一行，于是画布上手写的字外面套着
+  // 一张白卡 —— 而它自己的注释写着"没有卡片外观，就是一段字浮在纸上"。
+  // 每加一种画布原生物件就漏一次，这种判据就该住在表里。
+  const isInk = chromeOf(o) === 'bare';
   const base = {
     position: 'absolute', left: o.pos.x, top: o.pos.y, width: sz.w,
     zIndex: o.pos.z || 1,
@@ -2509,184 +2475,11 @@ function BoardObject({
         </div>
       )}
 
-      {o.type === 'deck' && !o.pos.expanded && (
-        <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
-            <Presentation size={13} color={o.sid === currentSessionId ? COLOR.text : COLOR.sub} />
-            <span style={{
-              fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
-            }}>{o.title}</span>
-            {/* 常驻窗口控制（浏览器边栏按钮式，不藏 hover 里）*/}
-            <button data-board-action title="编辑（开放 deck 工具）" onClick={onFocus} style={winBtn}>
-              <PencilLine size={11} />
-            </button>
-            <button data-board-action title="内嵌渲染" onClick={onToggleExpand} style={winBtn}>
-              <ChevronsUpDown size={11} />
-            </button>
-          </div>
-          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-            {o.task ? `任务 deck · 双击内嵌渲染`
-              : o.sid === currentSessionId ? '当前会话 · 双击内嵌渲染'
-              : `${formatTime(o.mtime)} · 双击内嵌渲染`}
-          </div>
-        </div>
-      )}
-
-      {o.type === 'deck' && o.pos.expanded && (
-        <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
-          <div style={{
-            height: 28, display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `0 ${GAP.sm}px`,
-            borderBottom: `1px solid ${COLOR.borderLt}`,
-          }}>
-            <Presentation size={12} color={COLOR.sub} />
-            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-              {o.title}
-            </span>
-            {/* 常驻窗口控制：编辑 + 收起 */}
-            <button data-board-action title="编辑（开放 deck 工具）" onClick={onFocus} style={winBtn}>
-              <PencilLine size={11} />
-            </button>
-            <button data-board-action title="收起" onClick={onToggleExpand} style={winBtn}>
-              <ChevronsUpDown size={11} />
-            </button>
-          </div>
-          <div
-            style={{ width: DECK_EMBED_W, height: 360, overflow: 'hidden', background: COLOR.bgWhite, borderRadius: '0 0 10px 10px', position: 'relative' }}
-          >
-            {/* 内嵌渲染：live iframe 缩到 1/3，pointer-events 关闭 —— deck 元素级
-                工具（DirectEdit / Drag / Comment）只在聚焦（✏️）后的编辑视图开放。
-                LiveFrame 双缓冲：agent 改动时旧画面保留到新文档就绪，不闪白 */}
-            <LiveFrame
-              title={`deck-${o.task ? `task-${o.task}${o.deckFile && o.deckFile !== 'canvas.html' ? `-${o.deckFile}` : ''}` : o.sid}`}
-              src={o.task
-                ? `${Assets.artifactFileUrl(projectId, o.deckFile)}?v=${versionOfFile(fileVersions, o.deckFile)}`
-                : Canvas.artifactUrl(projectId, o.sid, versionOfFile(fileVersions, 'canvas.html'))}
-              style={{
-                width: 1920, height: 1080, border: 0,
-                transform: `scale(${DECK_EMBED_W / 1920})`, transformOrigin: '0 0',
-                pointerEvents: 'none',
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {o.type === 'site' && !o.pos.expanded && (
-        <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
-            <Globe size={13} color={COLOR.sub} />
-            <span style={{
-              fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
-            }}>{o.title}</span>
-            <button data-board-action title="打开站点（响应式预览 + 编辑）" onClick={onFocus} style={winBtn}>
-              <PencilLine size={11} />
-            </button>
-            <button data-board-action title="内嵌预览" onClick={onToggleExpand} style={winBtn}>
-              <ChevronsUpDown size={11} />
-            </button>
-          </div>
-          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-            {o.single ? '单页 · 双击预览' : `站点 · ${o.pages?.length || 1} 个页面 · 双击预览`}
-          </div>
-        </div>
-      )}
-
-      {o.type === 'site' && o.pos.expanded && (
-        <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
-          <div style={{
-            height: 28, display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `0 ${GAP.sm}px`,
-            borderBottom: `1px solid ${COLOR.borderLt}`,
-          }}>
-            <Globe size={12} color={COLOR.sub} />
-            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-              {o.title}
-            </span>
-            <button data-board-action title="打开站点" onClick={onFocus} style={winBtn}>
-              <PencilLine size={11} />
-            </button>
-            <button data-board-action title="收起" onClick={onToggleExpand} style={winBtn}>
-              <ChevronsUpDown size={11} />
-            </button>
-          </div>
-          <div style={{ width: DECK_EMBED_W, height: 400, overflow: 'hidden', background: COLOR.bgWhite, borderRadius: '0 0 10px 10px', position: 'relative' }}>
-            {/* 站点缩略：按桌面宽度渲染再等比缩。**不套 1920×1080 固定画框** ——
-                站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿"。
-                版本按**入口页**取（entry html + 非 html 资产）：agent 改别的子页
-                时缩略图不重载；LiveFrame 双缓冲让必要的重载也不闪白 */}
-            <LiveFrame
-              title={`site-${o.id}`}
-              src={`${Assets.artifactFileUrl(projectId, `${o.base || o.task}/${o.entry || 'index.html'}`)}?v=${versionOfSitePage(fileVersions, o.base || o.task, o.entry || 'index.html')}`}
-              style={{
-                width: SITE_VIEWPORTS[0].w,
-                height: Math.round(400 / (DECK_EMBED_W / SITE_VIEWPORTS[0].w)),
-                border: 0,
-                transform: `scale(${DECK_EMBED_W / SITE_VIEWPORTS[0].w})`, transformOrigin: '0 0',
-                pointerEvents: 'none',
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {o.type === 'world' && !o.pos.expanded && (
-        <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
-            <Globe size={13} color={COLOR.sub} />
-            <span style={{
-              fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
-            }}>{o.title}</span>
-            <button data-board-action title="打开世界（地图 + 世界书）" onClick={onFocus} style={winBtn}>
-              <PencilLine size={11} />
-            </button>
-            <button data-board-action title="铺开地图" onClick={onToggleExpand} style={winBtn}>
-              <ChevronsUpDown size={11} />
-            </button>
-          </div>
-          <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-            {(() => {
-              const n = o.nodes || [];
-              // 容器不算地点（它是收纳态，设计上明确不是地点），口径与
-              // server 端 describe() 的计数一致，两处对不上会像 bug
-              const p = n.filter(x => x.type === 'place').length;
-              const c = n.filter(x => x.type === 'character').length;
-              return n.length ? `世界 · ${p} 个地点 / ${c} 个角色 · 双击铺开` : '世界 · 地图还是空的 · 双击查看';
-            })()}
-          </div>
-        </div>
-      )}
-
-      {o.type === 'world' && o.pos.expanded && (
-        <div style={{ display: 'flex', flexDirection: 'column', animation: POP_IN }}>
-          <div style={{
-            height: 28, display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `0 ${GAP.sm}px`,
-            borderBottom: `1px solid ${COLOR.borderLt}`,
-          }}>
-            <Globe size={12} color={COLOR.sub} />
-            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-              {o.title}
-            </span>
-            <button data-board-action title="打开世界（地图 + 世界书）" onClick={onFocus} style={winBtn}>
-              <PencilLine size={11} />
-            </button>
-            <button data-board-action title="收起" onClick={onToggleExpand} style={winBtn}>
-              <ChevronsUpDown size={11} />
-            </button>
-          </div>
-          {/* 地图比框高就自己滚，不去顶别人的位置（布局按固定矩形做避让） */}
-          <div
-            data-board-action
-            onPointerDown={(e) => e.stopPropagation()}
-            style={{
-              width: DECK_EMBED_W, height: 420, overflowY: 'auto', overflowX: 'hidden',
-              background: COLOR.bg, borderRadius: '0 0 10px 10px',
-            }}
-          >
-            <WorldMap projectId={projectId} base={o.base || o.task} nodes={o.nodes} />
-          </div>
-        </div>
+      {/* deck / 站点 / 世界共用一张方卡（cards/ArtifactCard.jsx）。
+          在这之前这里是六个分支约 180 行 —— 三种形态 × 收起/展开两态，骨架
+          逐字节相同，只有图标、一行小字、缩略图内容三处不一样。 */}
+      {cardOf(o) === 'artifact' && (
+        <ArtifactCard o={o} projectId={projectId} fileVersions={fileVersions} scale={scale} />
       )}
 
       {o.type === 'image' && (
@@ -2925,11 +2718,6 @@ const toolBtn = {
   background: COLOR.bgCard, color: COLOR.text, cursor: 'pointer',
   padding: `${GAP.xs}px ${GAP.sm + 2}px`,
   fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-};
-
-const winBtn = {
-  border: 0, background: 'rgba(0,0,0,0.05)', borderRadius: RADIUS.sm,
-  cursor: 'pointer', color: COLOR.text, display: 'inline-flex', padding: 3, flexShrink: 0,
 };
 
 const zoneHeaderBtn = {

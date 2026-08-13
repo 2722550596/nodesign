@@ -1,4 +1,10 @@
-import { DECK_EMBED_W } from './board-geometry.js';
+/**
+ * 产物方卡的脚印。宽度跟图片卡（200）对齐 —— 桌面上一排卡宽窄不一的话，
+ * packRow 的列宽只能取最宽那个，剩下的全在自己的格子里晃。
+ * 高度 = 缩略图 150（4:3，与图片卡同一比例）+ 名字条 50。
+ */
+export const ARTIFACT_CARD = { w: 200, h: 200 };
+export const ARTIFACT_CARD_LABEL_H = 50;
 
 /**
  * 形态能力表 —— 每种画布物件「是什么、能做什么」写在一张表里。
@@ -26,11 +32,26 @@ import { DECK_EMBED_W } from './board-geometry.js';
  * - `variant`：同一种 type 因为自身属性走不同行为。目前只有一例 ——
  *   `.md` 文件也是 `file`，但它能进阅读器（2026-08-03 加的路由）。
  *   放在表里当变体，而不是在调用点写 `type === 'file' && isMarkdown(o)`。
+ * - `chrome`：这个物件长不长得像**一张纸**（底色 / 描边 / 影子 / 大圆角）。
+ *   `'bare'` = 不是卡片，是画布上的一笔（涂鸦、手写文字）。
+ *   2026-08-13 加：在这之前判据是 BoardObject 里硬编码的
+ *   `o.type === 'scribble'`，于是 `text` 加进来的时候漏了 —— 画布文字外面
+ *   套着一张白卡，而它自己的注释写着"没有卡片外观，就是一段字浮在纸上"。
+ *   **这条轴不能用 `backing` 代替**：`doc` 也是 canvas backing，但它要卡片外观。
+ * - `card`：卡体由哪个渲染器画。`'artifact'` = 三种产物共用的那张方卡
+ *   （`components/canvas/cards/ArtifactCard.jsx`）；其余仍在 BoardObject 里
+ *   各画各的 —— 它们每种只有一个分支，没有重复可收。
  *
- * ## 不在这张表里的东西
+ * ## 展开态 2026-08-13 退役
  *
- * 卡体的 JSX 仍在 BoardCanvas 的 `BoardObject` 里。渲染下沉是下一步，
- * 先把**行为**收敛掉 —— 行为是纯函数，可以单测锁死，改起来零视觉风险。
+ * deck / 站点 / 世界原来各有"收起卡"和"展开成内嵌渲染"两态，六个分支抄了
+ * 六遍。现在卡片只有一种样子（方卡 + 实时缩略图），双击直接开那扇窗。
+ * 换来的是**尺寸恒定** —— 布局系统按矩形排布，一个会自己变大两倍半的卡片
+ * 是所有防遮盖逻辑的噪声源。`sizeExpanded` 随之从表里删除。
+ *
+ * ⚠️ 存量数据里还有 `expanded: true`（服务端 sanitizeObject 会一直保留它）。
+ * `sizeOf` 不再读这个字段 —— 留着读的话，老卡会带着 640×388 的**隐形脚印**
+ * 参与命中判定和落点计算，而渲染出来只有 200 宽，手感会玄学到没法查。
  */
 
 /** 能渲染的 markdown（`.md` / `.markdown`）。 */
@@ -44,20 +65,23 @@ export function isMarkdown(o) {
  * 字段：
  * - `label`        中文名，给调试和无障碍标签用
  * - `backing`      `'file'` = 磁盘产物 / `'canvas'` = 只活在 board.json
- * - `size`         收起态尺寸（布局系统按矩形做避让，尺寸必须可预知）。
+ * - `size`         卡片脚印（布局系统按矩形排布，尺寸必须可预知）。
  *                  **卡体是 height:auto，这里的高度只用来占位** —— 声明得比
  *                  实渲高，每一行就白留那么多；2026-08-07 在浏览器里逐个量过
  *                  offsetHeight 校准，改卡体高度时要回来一起改
- * - `sizeExpanded` 展开态尺寸；有这项即代表 `expandable`
+ * - `chrome`       `'card'` = 一张纸（底色/描边/影子/大圆角）/ `'bare'` = 一笔墨
+ * - `card`         卡体渲染器：`'artifact'` = 三种产物共用的方卡；
+ *                  缺省 = 仍在 BoardObject 里各画各的
  * - `reader`       双击/「阅读」进哪个阅读器：`'memory'` 走 Memory.read、
  *                  `'file'` 拉原始文件正文、`'note'` 剥 frontmatter 后读、
  *                  `null` 没有阅读器
- * - `primary`      双击的默认动作：`'read'|'detail'|'expand'|'openFile'`
+ * - `primary`      双击的默认动作：`'read'|'detail'|'open'|'openFile'`
  * - `actions`      hover 工具条按钮，**顺序即渲染顺序**
  * - `legacyBucket` 没有工作区可归时掉进桌面底部收纳带的哪一摞
  */
 export const KINDS = {
   doc: {
+    chrome: 'card',
     label: '文档',
     backing: 'canvas',
     size: { w: 200, h: 96 },
@@ -70,12 +94,12 @@ export const KINDS = {
   deck: {
     label: '幻灯',
     backing: 'file',
-    size: { w: 240, h: 56 },
-    sizeExpanded: { w: DECK_EMBED_W, h: 28 + 360 },
+    chrome: 'card',
+    card: 'artifact',
+    size: ARTIFACT_CARD,
     reader: null,
-    primary: 'expand',
-    // deck 卡自带常驻标题栏（编辑 / 内嵌渲染都在上面），外挂 hover 工具标
-    // 是重复的第二套按钮 —— 2026-07-28 撤掉，deck 只留卡内那一套。
+    primary: 'open',
+    // 方卡整张就是"打开"的按钮（双击 / 点缩略图），不外挂 hover 工具标
     actions: [],
     legacyBucket: 'deck',
   },
@@ -83,11 +107,11 @@ export const KINDS = {
   site: {
     label: '站点',
     backing: 'file',
-    size: { w: 240, h: 56 },
-    // 站点没有固定比例，取 16:10 一屏做取景框，够看出版式和配色
-    sizeExpanded: { w: DECK_EMBED_W, h: 28 + 400 },
+    chrome: 'card',
+    card: 'artifact',
+    size: ARTIFACT_CARD,
     reader: null,
-    primary: 'expand',
+    primary: 'open',
     actions: ['add'],
     legacyBucket: 'art',
   },
@@ -95,17 +119,17 @@ export const KINDS = {
   world: {
     label: '世界',
     backing: 'file',
-    size: { w: 240, h: 56 },
-    // 展开态铺开地图（嵌套地点框 + 立绘）。高度给固定值不给自适应 ——
-    // 布局系统按矩形做避让，尺寸得可预知；地图比框高就内部滚动。
-    sizeExpanded: { w: DECK_EMBED_W, h: 28 + 420 },
+    chrome: 'card',
+    card: 'artifact',
+    size: ARTIFACT_CARD,
     reader: null,
-    primary: 'expand',
+    primary: 'open',
     actions: ['add'],
     legacyBucket: 'art',
   },
 
   image: {
+    chrome: 'card',
     label: '图片',
     backing: 'file',
     size: { w: 200, h: 176 },
@@ -116,6 +140,7 @@ export const KINDS = {
   },
 
   note: {
+    chrome: 'card',
     label: '便签',
     backing: 'file',
     size: { w: 200, h: 148 },
@@ -139,6 +164,7 @@ export const KINDS = {
    * 尺寸由笔画包围盒定，不走这张表 —— 这里的 size 只是兜底。
    */
   scribble: {
+    chrome: 'bare',
     label: '涂鸦',
     backing: 'canvas',
     size: { w: 160, h: 120 },
@@ -159,6 +185,7 @@ export const KINDS = {
    * 尺寸跟涂鸦一样由内容决定（sizeOf 读 pos.w/h），这里给的是没量过时的兜底。
    */
   text: {
+    chrome: 'bare',
     label: '文字',
     backing: 'canvas',
     size: { w: 220, h: 40 },
@@ -169,6 +196,7 @@ export const KINDS = {
   },
 
   file: {
+    chrome: 'card',
     label: '文件',
     backing: 'file',
     size: { w: 224, h: 32 },
@@ -198,7 +226,7 @@ export function traitsOf(o) {
 }
 
 /**
- * 物件当前占的矩形（展开态取 sizeExpanded）。
+ * 物件占的矩形。
  *
  * **画布原生物件（涂鸦）自带尺寸**：它的大小是画出来的，不是形态表能预设的。
  * 创建时就把真实包围盒写进了 `layout.w/h`，这里必须读回来 —— 2026-08-07 前
@@ -211,12 +239,20 @@ export function sizeOf(o) {
   if (k.backing === 'canvas' && o?.pos?.w > 0 && o?.pos?.h > 0) {
     return { w: o.pos.w, h: o.pos.h };
   }
-  return (o?.pos?.expanded && k.sizeExpanded) || k.size;
+  // ⚠️ 这里曾经是 `(o.pos.expanded && k.sizeExpanded) || k.size`。展开态退役后
+  // 存量数据里的 `expanded: true` 必须**读都不读** —— 读了老卡就会带着
+  // 640×388 的隐形脚印参与命中和落点计算，渲染却只有 200 宽。
+  return k.size;
 }
 
-/** 能不能展开成内嵌渲染态。 */
-export function isExpandable(o) {
-  return !!kindOf(o).sizeExpanded;
+/** 长得像一张纸，还是画布上的一笔墨。 */
+export function chromeOf(o) {
+  return kindOf(o).chrome || 'card';
+}
+
+/** 卡体由哪个渲染器画（缺省 = BoardObject 里各画各的）。 */
+export function cardOf(o) {
+  return kindOf(o).card || null;
 }
 
 /** 真相在磁盘上吗（决定能否加入上下文 / 打开原始文件 / 按路径派生归属）。 */
@@ -260,9 +296,6 @@ export function legacyBucketOf(o) {
  * 老代码按 `SIZES.deck` / `SIZES.deckExpanded` 这样取值，这里原样铺平一份，
  * 免得为了立表把十几个调用点一起改。新代码请用 `sizeOf(o)`。
  */
-export const SIZES = Object.fromEntries([
-  ...Object.entries(KINDS).map(([k, v]) => [k, v.size]),
-  ...Object.entries(KINDS)
-    .filter(([, v]) => v.sizeExpanded)
-    .map(([k, v]) => [`${k}Expanded`, v.sizeExpanded]),
-]);
+export const SIZES = Object.fromEntries(
+  Object.entries(KINDS).map(([k, v]) => [k, v.size]),
+);

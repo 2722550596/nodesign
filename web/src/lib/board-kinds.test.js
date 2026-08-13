@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   KINDS, kindOf, traitsOf, sizeOf, actionsOf, primaryOf, readerOf,
-  isExpandable, isFileBacked, legacyBucketOf, isMarkdown, SIZES,
+  chromeOf, cardOf, isFileBacked, legacyBucketOf, isMarkdown, SIZES, ARTIFACT_CARD,
 } from './board-kinds.js';
 
 /**
@@ -16,6 +16,24 @@ import {
  * 抄自 sizeOf(board-geometry.js:70)、actions(BoardObject:1766-1773)、
  * primaryOpen(BoardCanvas:1027-1036)。**改表时不要顺手改它们** —— 它们
  * 就是那条基线；真要改行为，先在这里改断言并说明为什么。
+ *
+ * ## 2026-08-13：产物三兄弟的尺寸与双击动作**有意改了**，理由如下
+ *
+ * 按上面立的规矩，在这里说明白：
+ *
+ * 1. **展开态整个退役。** deck / 站点 / 世界原来各有"收起条"和"在画布上展开成
+ *    内嵌渲染"两态，卡体在 BoardCanvas 里抄了六遍（约 180 行，骨架逐字节相同）。
+ *    现在只有一种样子：方卡 + 实时缩略图，双击直接开那扇窗。
+ *    换来的是**尺寸恒定** —— 一个会自己变大两倍半的卡片是所有落点/防遮盖逻辑
+ *    的噪声源，而"并排看两份 deck"本来就该由窗来做。
+ *    → `sizeExpanded` 从表里删除，`isExpandable` 随之删除，`SAMPLES` 里那三个
+ *      "展开"样本改成**验证展开态存量数据被忽略**（见下）。
+ * 2. **收起态 240×56 → 方卡 200×200。** 一条只有一行字的窄条上看不出这是什么
+ *    东西；三种产物在桌面上长得一模一样。方卡上面那块是实时缩略图。
+ *    宽度取 200 跟图片卡对齐 —— 一排卡宽窄不一的话 packRow 的列宽只能取最宽
+ *    那个，剩下的全在自己格子里晃。
+ * 3. **双击 `'expand'` → `'open'`。** 老的是两段式（先展开、再双击才开窗），
+ *    展开态没了之后第一段没有落点。
  */
 
 const LEGACY_SIZES = {
@@ -51,10 +69,13 @@ const CALIBRATED = {
 };
 const expectedSize = (k) => CALIBRATED[k] || LEGACY_SIZES[k];
 
+/** 产物三兄弟改用方卡（2026-08-13，理由见文件头第 2 条） */
+const SQUARE = { deck: ARTIFACT_CARD, site: ARTIFACT_CARD, world: ARTIFACT_CARD };
+
 function legacySizeOf(o) {
-  if (o.type === 'deck') return o.pos?.expanded ? LEGACY_SIZES.deckExpanded : expectedSize('deck');
-  if (o.type === 'site') return o.pos?.expanded ? LEGACY_SIZES.siteExpanded : expectedSize('site');
-  if (o.type === 'world') return o.pos?.expanded ? LEGACY_SIZES.worldExpanded : expectedSize('world');
+  // 展开态存量数据**必须被忽略**：还读 `pos.expanded` 的话，老卡会带着
+  // 640×388 的隐形脚印参与命中判定，渲染出来却只有 200 宽
+  if (SQUARE[o.type]) return SQUARE[o.type];
   return expectedSize(o.type) || expectedSize('file');
 }
 
@@ -75,19 +96,20 @@ function legacyPrimary(o) {
   if (o.type === 'doc' || o.type === 'note') return 'read';
   if (o.type === 'image') return 'detail';
   if (o.type === 'file') return md ? 'read' : 'openFile';
-  if (o.type === 'deck' || o.type === 'site' || o.type === 'world') return 'expand';
+  if (o.type === 'deck' || o.type === 'site' || o.type === 'world') return 'open';
   return undefined;
 }
 
 /** 覆盖全部 type × 展开态 × markdown 变体的样本。 */
 const SAMPLES = [
   { label: 'doc', o: { type: 'doc', title: '记忆' } },
-  { label: 'deck 收起', o: { type: 'deck', pos: {} } },
-  { label: 'deck 展开', o: { type: 'deck', pos: { expanded: true } } },
-  { label: 'site 收起', o: { type: 'site', pos: {} } },
-  { label: 'site 展开', o: { type: 'site', pos: { expanded: true } } },
-  { label: 'world 收起', o: { type: 'world', pos: {} } },
-  { label: 'world 展开', o: { type: 'world', pos: { expanded: true } } },
+  { label: 'deck', o: { type: 'deck', pos: {} } },
+  // 存量 expanded:true —— 断言它跟没有这个字段的完全一样（不再有隐形脚印）
+  { label: 'deck 带存量 expanded', o: { type: 'deck', pos: { expanded: true } } },
+  { label: 'site', o: { type: 'site', pos: {} } },
+  { label: 'site 带存量 expanded', o: { type: 'site', pos: { expanded: true } } },
+  { label: 'world', o: { type: 'world', pos: {} } },
+  { label: 'world 带存量 expanded', o: { type: 'world', pos: { expanded: true } } },
   { label: 'image', o: { type: 'image', name: 'a.webp', ext: '.webp' } },
   { label: 'note', o: { type: 'note', name: '灵感.md', ext: '.md' } },
   { label: 'file 普通', o: { type: 'file', name: 'a.zip', ext: '.zip' } },
@@ -190,12 +212,33 @@ describe('两条轴', () => {
 });
 
 describe('派生判定', () => {
-  it('可展开 = 声明了 sizeExpanded，三种窗口形态', () => {
-    const expandable = Object.keys(KINDS).filter(k => isExpandable({ type: k }));
-    expect(expandable.sort()).toEqual(['deck', 'site', 'world']);
+  it('走统一方卡的就是那三种产物', () => {
+    const artifacts = Object.keys(KINDS).filter(k => cardOf({ type: k }) === 'artifact');
+    expect(artifacts.sort()).toEqual(['deck', 'site', 'world']);
   });
 
-  it('deck 不给外挂工具条（卡内自带那一套）', () => {
+  /**
+   * `chrome` 是**闸门**，不是记录现状：`'bare'` = 这东西不是一张纸，是画布上
+   * 的一笔墨（不给底色/描边/影子/圆角）。加成员是产品决定。
+   *
+   * 这条轴 2026-08-13 才立起来，起因是它漏过一次：判据原本硬编码在 BoardObject
+   * 里写 `o.type === 'scribble'`，`text` 加进来时没人想起改那一行，于是画布上
+   * 手写的字外面套着一张白卡 —— 而它自己的注释写着"没有卡片外观"。
+   * **不能用 backing 代替**：`doc` 也是 canvas backing，但它要卡片外观。
+   */
+  it('bare（一笔墨）是白名单', () => {
+    const bare = Object.entries(KINDS).filter(([, v]) => v.chrome === 'bare').map(([k]) => k);
+    expect(bare.sort()).toEqual(['scribble', 'text']);
+  });
+
+  it('每种形态都得声明 chrome，不能漏', () => {
+    for (const [name, k] of Object.entries(KINDS)) {
+      expect(['card', 'bare'], `${name} 的 chrome`).toContain(k.chrome);
+    }
+    expect(chromeOf({ type: 'nope' })).toBe('card');   // 未知兜底成卡片
+  });
+
+  it('deck 不给外挂工具条（整张方卡就是打开的按钮）', () => {
     expect(actionsOf({ type: 'deck' })).toEqual([]);
   });
 
@@ -223,9 +266,10 @@ describe('SIZES 兼容出口', () => {
    * 断言的是「**老的每一项一个字节都没变**」，不是「两张表完全相等」——
    * 后者会在每次加新形态时红一次，红久了就没人当真了。新增项另测。
    */
-  it('老的尺寸逐项未变（收起态那四项按实渲校准过，见 CALIBRATED）', () => {
+  it('老的尺寸逐项未变（校准见 CALIBRATED，方卡见 SQUARE）', () => {
     for (const [k, v0] of Object.entries(LEGACY_SIZES)) {
-      const v = CALIBRATED[k] || v0;
+      if (k.endsWith('Expanded')) continue;            // 展开态整档退役
+      const v = SQUARE[k] || CALIBRATED[k] || v0;
       expect(SIZES[k], `SIZES.${k}`).toEqual(v);
     }
   });
@@ -234,10 +278,8 @@ describe('SIZES 兼容出口', () => {
     expect(SIZES.scribble).toEqual(KINDS.scribble.size);
   });
 
-  it('每个声明了 sizeExpanded 的形态都铺出 xxxExpanded', () => {
-    for (const [k, v] of Object.entries(KINDS)) {
-      if (v.sizeExpanded) expect(SIZES[`${k}Expanded`], k).toEqual(v.sizeExpanded);
-    }
+  it('展开态退役后不再铺 xxxExpanded 这一档', () => {
+    expect(Object.keys(SIZES).filter(k => k.endsWith('Expanded'))).toEqual([]);
   });
 });
 

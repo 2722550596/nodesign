@@ -20,8 +20,7 @@ const SHIMMER_MIN_H = 84;        // 再挤也不低于这个高度
  * shimmer / chip / 已更新角标 / 画布内答题）。与桌面只共享一个事实——
  * "物件在哪"（positioned / 可见性），其余状态全部自治：
  *
- *   useStageState   事件驱动的卡片状态机（stageRef 接线、镜头跟随触发、
- *                   deck 自动展开触发都在这）
+ *   useStageState   事件驱动的卡片状态机（stageRef 接线、镜头跟随触发都在这）
  *   splitStageCards 渲染分流：锚得到可见物件 → 板内；锚不到 → dock
  *   StageBoardLayer 板内坐标系那一面（角标 + 贴物件卡），随桌面缩放
  *   StageDock       屏幕坐标系那一面（视口底部居中）
@@ -32,7 +31,7 @@ const SHIMMER_MIN_H = 84;        // 再挤也不低于这个高度
 // ── 状态机 ──
 
 export function useStageState({
-  stageRef, artifactRoots, followToObject, tryAutoExpand,
+  stageRef, artifactRoots, followToObject,
   onStageTarget, onPreviewRequest,
   /**
    * 原始事件旁路。舞台层独占 `stageRef`，别的消费者（在场层）没有第二个入口 ——
@@ -180,8 +179,11 @@ export function useStageState({
         // 物件"已更新"角标（在板上才有意义）
         const oid = resolveObjectId(evt.filePath, artifactRoots);
         if (!oid) return;
-        // agent 正在写 deck → 自动展开内嵌渲染，工作过程直接在画布里看
-        if (oid.startsWith('deck:')) tryAutoExpand?.(oid.slice(5));
+        // ⚠️ 这里曾经"agent 正在写 deck → 自动把那张卡展开成内嵌渲染"。
+        // 展开态 2026-08-13 退役，而**不该原样映射成"自动开窗"** —— file_changed
+        // 是每写一个文件就来一发，那会变成 agent 每存一次盘就把一扇模态窗拍在
+        // 用户脸上。方卡自带实时缩略图，"工作过程当场可见"它自己就做到了；
+        // 视图跟到那个文件夹由 onStageTarget 那条负责，不必在这儿再来一次。
         const ts = Date.now();
         setStageBadges(prev => ({ ...prev, [oid]: ts }));
         setTimeout(() => {
@@ -275,7 +277,7 @@ export function useStageState({
       default: break;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifactRoots, followToObject, removeStageCardLater, tryAutoExpand, onStageTarget, onPreviewRequest]);
+  }, [artifactRoots, followToObject, removeStageCardLater, onStageTarget, onPreviewRequest]);
 
   useEffect(() => {
     if (!stageRef) return;
