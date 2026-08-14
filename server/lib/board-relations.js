@@ -83,8 +83,9 @@ export async function relationsDigest(pid, { limit = 12 } = {}) {
   return lines.join('\n');
 }
 
-/** 某个端点 id 是否指向这个工作区相对路径（裸路径或任一 kind 前缀形态） */
-function endpointMatchesRel(end, rel) {
+/** 某个端点 id 是否指向这个工作区相对路径（裸路径或任一 kind 前缀形态）。
+ *  导出仅供测试钉规则（fileNeighborhood 是唯一业务调用方）。 */
+export function endpointMatchesRel(end, rel) {
   if (end === rel) return true;
   for (const p of KIND_PREFIXES) if (end === p + rel) return true;
   // 目录型产物的收敛（2026-08-14 根站病族普查补上的）：站点/世界的边挂在
