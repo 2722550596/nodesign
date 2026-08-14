@@ -39,8 +39,9 @@ export default function WorldWindow({
   const [reloadKey, setReloadKey] = useState(0);
   const [book, setBook] = useState(null);
 
-  const baseRel = base || `tasks/${task}`;
-  const bookPath = `${baseRel}/${entry}`;
+  // 同 SiteWindow：根上的世界 base 是空串，老 `tasks/` 兜底在扁平世界是错路径
+  const baseRel = base || task || '';
+  const bookPath = [baseRel, entry].filter(Boolean).join('/');
   const bookVersion = versionOfFile(fileVersions, bookPath);
 
   // 世界书按需拉：进这扇窗多数时候是来看地图的

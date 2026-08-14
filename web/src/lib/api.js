@@ -108,12 +108,18 @@ export const Admin = {
 };
 
 // ── Publish（站点一键上线 Cloudflare Pages，task 级）──
+// 根站的 task 是空串（扁平化后站点住工作区根）。它的 store key 是 '.'，但 '.'
+// 进不了 URL 路径段（WHATWG 把单点段归一掉，发出去就成 /publish/），所以
+// 根站走**无段**路径 `/publish`，服务端按无段=根站解释（publish.js 双注册）。
+const pubPath = (pid, task) => (task && task !== '.'
+  ? `/api/projects/${pid}/publish/${encodeURIComponent(task)}`
+  : `/api/projects/${pid}/publish`);
 export const Publish = {
-  get: (pid, task) => jsonRequest('GET', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  get: (pid, task) => jsonRequest('GET', pubPath(pid, task)),
   // root：多站点任务点名要发哪个（'.' = 任务根）；单站点省略
-  publish: (pid, task, root) => jsonRequest('POST', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`,
+  publish: (pid, task, root) => jsonRequest('POST', pubPath(pid, task),
     root != null ? { root } : undefined),
-  unpublish: (pid, task) => jsonRequest('DELETE', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  unpublish: (pid, task) => jsonRequest('DELETE', pubPath(pid, task)),
 };
 
 // ── Canvas（2026-08-13 起项目级：会话收敛后画布/deck 归项目所有）──

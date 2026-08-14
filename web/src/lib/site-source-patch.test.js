@@ -145,4 +145,9 @@ describe('versionOfSitePage', () => {
     const v = { 'tasks/b/dist/index.html': 1, 'tasks/b/dist/x.css': 1, 'tasks/b/src/index.html': 7, 'tasks/b/src/m.js': 4 };
     expect(versionOfSitePage(v, 'tasks/b/dist', 'index.html')).toBe(2);
   });
+  it('根站：base 为空串时页面 key 无前缀、全工作区非 html 都是资产', () => {
+    const v = { 'index.html': 2, 'posts/chapter-1.html': 5, 'style.css': 3 };
+    expect(versionOfSitePage(v, '', 'index.html')).toBe(2 + 3);
+    expect(versionOfSitePage(v, '', 'posts/chapter-1.html')).toBe(5 + 3);
+  });
 });

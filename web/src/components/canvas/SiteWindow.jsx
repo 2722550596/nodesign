@@ -89,8 +89,11 @@ export default function SiteWindow({
   const iframeRef = useRef(null);
 
   const vp = SITE_VIEWPORTS.find(v => v.id === viewport) || SITE_VIEWPORTS[0];
-  const baseRel = base || `tasks/${task}`;
-  const relPath = `${baseRel}/${current}`;
+  // 根站的 base 合法地是空串（扁平化后站点住工作区根）。老兜底 `tasks/${task}`
+  // 在扁平世界拼出 `tasks//index.html`（服务端旧前缀剥离正则不吃空段 → 404）；
+  // 现在 task 本身就是文件夹路径，直接当兜底。filter(Boolean) 防前导斜杠 403。
+  const baseRel = base || task || '';
+  const relPath = [baseRel, current].filter(Boolean).join('/');
   // 版本按**这一页**取（本页 html + 非 html 共享资产）：agent 改别的页时这扇窗不动
   const pageVersion = versionOfSitePage(fileVersions, baseRel, current);
   const src = `${Assets.artifactFileUrl(projectId, relPath)}?v=${pageVersion}-${reloadKey}`;

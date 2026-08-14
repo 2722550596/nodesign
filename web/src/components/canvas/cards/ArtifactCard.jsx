@@ -78,12 +78,14 @@ export const ARTIFACT_FACES = {
     Preview: ({ o, projectId, fileVersions, box }) => {
       const deviceW = SITE_VIEWPORTS[0].w;
       const scale = box.w / deviceW;
+      // 根站的 base 合法地是空串（扁平化后站点长在工作区根上），硬拼 `/` 会造出
+      // `/index.html` 这种前导斜杠路径 —— 服务端按绝对路径判越界直接 403
       const base = o.base || o.task;
       const entry = o.entry || 'index.html';
       return (
         <LiveFrame
           title={`site-${o.id}`}
-          src={`${Assets.artifactFileUrl(projectId, `${base}/${entry}`)}?v=${versionOfSitePage(fileVersions, base, entry)}`}
+          src={`${Assets.artifactFileUrl(projectId, [base, entry].filter(Boolean).join('/'))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
           style={{
             width: deviceW, height: Math.round(box.h / scale), border: 0,
             transform: `scale(${scale})`, transformOrigin: '0 0',

@@ -67,12 +67,13 @@ function LiveTile({ o, projectId, fileVersions }) {
   }
   const deviceW = SITE_VIEWPORTS[0].w;
   const k = TILE_W / deviceW;
+  // 根站 base 是空串，filter(Boolean) 防拼出前导斜杠（同 ArtifactCard）
   const base = o.base || o.task;
   const entry = o.entry || 'index.html';
   return (
     <LiveFrame
       title={`peek-${o.id}`}
-      src={`${Assets.artifactFileUrl(projectId, `${base}/${entry}`)}?v=${versionOfSitePage(fileVersions, base, entry)}`}
+      src={`${Assets.artifactFileUrl(projectId, [base, entry].filter(Boolean).join('/'))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
       style={{
         width: deviceW, height: Math.ceil(TILE_H / k), border: 0,
         transform: `scale(${k})`, transformOrigin: '0 0',

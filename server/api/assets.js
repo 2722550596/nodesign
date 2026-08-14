@@ -436,6 +436,18 @@ router.get('/:pid/artifacts', async (req, res, next) => {
           if (seg && seg !== p) claimed.add(seg);       // 只有带下级路径的才算认领
           else if (seg && a.kind !== 'deck') claimed.add(seg);
         }
+        // 根站（root='' srcRoot=''）：上面四个字段全切不出认领段，可它的 pages
+        // 跨着子目录（'posts/chapter-1.html'）。那些子目录是站点内部结构，不是
+        // 并列容器 —— 不认领的话它们会被递归成独立任务、页面被 deck 解析器
+        // 再收编一遍，同一份文件在桌面上出现两个身份（站点页 + deck 卡），
+        // 而且卡还打不开（实测 proj_mss59y9l_8ems，2026-08-14）。
+        // 只在根站场景做：非根站的 root 目录本身已被认领，内部结构扫不到。
+        if (a.kind === KIND_SITE && !a.single && !a.root && !a.srcRoot) {
+          for (const pg of (a.pages || [])) {
+            const seg = String(pg).split('/')[0];
+            if (seg && seg !== pg) claimed.add(seg);
+          }
+        }
       }
 
       let entries = [];

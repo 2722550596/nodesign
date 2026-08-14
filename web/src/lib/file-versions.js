@@ -59,11 +59,14 @@ export function versionOfTask(versions, task) {
  * @param {string} pageRel 页面相对产物根的路径（'index.html' / 'posts/a.html'）
  */
 export function versionOfSitePage(versions, baseRel, pageRel) {
-  if (!versions || !baseRel || !pageRel) return 0;
-  const prefix = `${baseRel}/`;
-  let sum = versions[`${baseRel}/${pageRel}`] || 0;
+  if (!versions || !pageRel) return 0;
+  // 根站（扁平化后站点长在工作区根上）的 baseRel 合法地是空串：此时页面 key
+  // 没有前缀、整个工作区的非 html 文件都是这个站的资产。原来 `!baseRel` 早退 0
+  // 会让根站页面永远不热刷新。
+  const prefix = baseRel ? `${baseRel}/` : '';
+  let sum = versions[`${prefix}${pageRel}`] || 0;
   for (const [k, v] of Object.entries(versions)) {
-    if (k.startsWith(prefix) && !/\.html?$/i.test(k)) sum += v;
+    if ((!prefix || k.startsWith(prefix)) && !/\.html?$/i.test(k)) sum += v;
   }
   return sum;
 }
