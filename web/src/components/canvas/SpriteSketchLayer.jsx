@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { PAPER } from '../../lib/paper.js';
+import { STAGE_CARD_W } from '../../lib/board-geometry.js';
 import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
 import { isImeEnter } from '../../lib/helpers.js';
 import { CLAUDE_BRAND, CLAUDE_PATH } from '../ui/ClaudeMark.jsx';
@@ -30,9 +31,11 @@ const KEYFRAMES = `
   @keyframes ndInkIn      { to { opacity: 1; } }
   @keyframes ndRayPulse {
     0% { transform: scale(1); }
-    8% { transform: scale(0.7); }
-    16% { transform: scale(0.84); }
-    24% { transform: scale(1); }
+    5% { transform: scale(1.07); }
+    10% { transform: scale(0.6); }
+    15% { transform: scale(1.13); }
+    21% { transform: scale(0.96); }
+    27% { transform: scale(1); }
     100% { transform: scale(1); }
   }
 `;
@@ -63,8 +66,12 @@ const RAY_WEDGES = [
   'M12 12 L-14.23 -18.20 L6.50 -27.62 Z',
 ];
 
-/** 每个触点相对前一个的起拍间隔；一整圈 = 12 × 130ms ≈ 1.6s */
-const RAY_STEP_MS = 130;
+/**
+ * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 100ms = 1.2s。
+ * 脉冲本身不是匀速（用户纠偏"太均匀没弹性"）：先反向一挤蓄力（1.07）→
+ * 压到底（0.6）→ 弹过头（1.13）→ 回摆落定 —— 弹簧的相位表，不是节拍器。
+ */
+const RAY_STEP_MS = 100;
 
 /**
  * 活跃态：**星芒自己的触点**顺时针逐个收缩回弹（用户点名要的就是矢量图
@@ -317,6 +324,42 @@ function slotVisible(slot, cam, viewport) {
 /** 精灵离开视野多久才追过来。太快 = 用户一动画布它就跳，像牛皮糖。 */
 const OFFSCREEN_RELOCATE_MS = 3000;
 
+// ── 输出框（代码直播 / 终端）的落位 ──
+
+/** 输出框身位：宽沿用舞台卡口径，高按"头 + 代码体 maxHeight 280"估 */
+const FRAME_W = STAGE_CARD_W;
+const FRAME_H_EST = 340;
+
+/**
+ * 输出框绕着精灵找位（2026-08-14 用户拍板：代码直播框跟精灵同层同住，
+ * 以精灵为圆心保持在一定范围内；可以压产物，但要有算法尽量别压）。
+ * 候选四方位按偏好序（脚下 → 右 → 左 → 头顶），第一个不压任何产物的赢；
+ * 全都压着东西就挑压得最少的 —— "宁可压也不消失"，这跟精灵本体的
+ * "全占就不出现"规矩刻意相反：闲话可以不说，正在写的代码必须看得见。
+ */
+export function findFrameSpot(at, obstacles) {
+  if (!at) return null;
+  const candidates = [
+    { x: at.x, y: at.y + SPRITE_H + 14 },
+    { x: at.x + SPRITE_W + 24, y: at.y },
+    { x: at.x - FRAME_W - 24, y: at.y },
+    { x: at.x, y: at.y - FRAME_H_EST - 22 },
+  ];
+  let best = candidates[0];
+  let bestCost = Infinity;
+  for (const c of candidates) {
+    let cost = 0;
+    for (const o of obstacles || []) {
+      const ow = Math.min(c.x + FRAME_W, o.x + o.w) - Math.max(c.x, o.x);
+      const oh = Math.min(c.y + FRAME_H_EST, o.y + o.h) - Math.max(c.y, o.y);
+      if (ow > 0 && oh > 0) cost += ow * oh;
+    }
+    if (cost === 0) return c;
+    if (cost < bestCost) { bestCost = cost; best = c; }
+  }
+  return best;
+}
+
 /**
  * 精灵层（**世界层**，挂在被相机变换的容器里）。2026-08-14 五批起是**唯一**
  * 的精灵家：工作/闲时不再是两个挂载点 —— 那套的缝隙正是用户报的"活跃真空"
@@ -330,7 +373,7 @@ const OFFSCREEN_RELOCATE_MS = 3000;
  *     离开视野 3 秒才追过来重新落位重画；视口全被占就不出现。
  *     **活跃与否不影响这条链** —— 活跃只换图标（转轮）和台词。
  */
-export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam, viewport, obstacles, text, quiet = false, onAsk }) {
+export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam, viewport, obstacles, text, quiet = false, onAsk, frameCards = [], renderFrameCard }) {
   const [slot, setSlot] = useState(null);      // 世界坐标
   const [drawKey, setDrawKey] = useState(0);
   const stateRef = useRef({});
@@ -369,20 +412,47 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
   const at = workAnchor
     ? { x: Math.round(workAnchor.x - 14), y: Math.round(workAnchor.y - 56) }
     : slot;
+
+  // 输出框落位：精灵在哪它就绕着哪找位。obstacles 变一次（产物增删/拖动落盘）
+  // 才重算 —— 流式打字每拍都重排的话框会来回蹦。
+  const hasFrames = frameCards.length > 0 && typeof renderFrameCard === 'function';
+  const frameSpot = useMemo(
+    () => (hasFrames ? findFrameSpot(at, obstacles) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hasFrames, at?.x, at?.y, obstacles],
+  );
+
   if (!at || !text) return null;
   return (
-    <div style={{
-      position: 'absolute', left: at.x, top: at.y, zIndex: 305, pointerEvents: 'none',
-      // 目标间移动是"走过去"；槽位重落走 drawKey 重画（定格换场），过渡不碍事
-      transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
-    }}>
-      <SpriteSketch
-        drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
-        // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
-        // 从**当前落点**算 —— recap 长文遮挡输入行的病由 quiet 让位治）
-        onMarkClick={onAsk ? () => onAsk({ x: at.x + 54, y: at.y + 50 }) : undefined}
-      />
-    </div>
+    <>
+      <div style={{
+        position: 'absolute', left: at.x, top: at.y, zIndex: 305, pointerEvents: 'none',
+        // 目标间移动是"走过去"；槽位重落走 drawKey 重画（定格换场），过渡不碍事
+        transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
+      }}>
+        <SpriteSketch
+          drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
+          // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
+          // 从**当前落点**算 —— recap 长文遮挡输入行的病由 quiet 让位治）
+          onMarkClick={onAsk ? () => onAsk({ x: at.x + 54, y: at.y + 50 }) : undefined}
+        />
+      </div>
+      {/* 输出框（代码直播/终端）：跟着精灵走，绕它找不压产物的方位
+          （findFrameSpot；全压就认最小遮挡）。并发多张只露最近两张 ——
+          第三张起在聊天时间轴里永远有，画布不摆尸体墙。 */}
+      {hasFrames && frameSpot && (
+        <div style={{
+          position: 'absolute', left: frameSpot.x, top: frameSpot.y, width: FRAME_W,
+          zIndex: 304, pointerEvents: 'auto',
+          display: 'flex', flexDirection: 'column', gap: 10,
+          transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
+        }}>
+          {frameCards.slice(-2).map((c) => (
+            <div key={c.blockId}>{renderFrameCard(c)}</div>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

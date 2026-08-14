@@ -3,7 +3,7 @@
  *
  * 通过 SDK 的 query options.agents 字段挂载 4 个子代理：
  *
- *   explorer          — 研究员（搜索 + 读资料 + 验证事实），给主 agent 找外链/参考/素材
+ *   explorer          — ⏸ 停用中（2026-08-14）。研究员（搜索 + 读资料 + 验证事实）
  *   vision-checker    — 截图 + a11y / 视觉合理性评审（C14 真实 prompt 在 vision-checker.md）
  *   ds-extractor      — 抽 design system tokens（C15 真实 prompt + design-system.json schema）
  *   tweak-proposer    — 推可调 slider schema（C16 真实 prompt + tweak-schema.json schema）
@@ -135,32 +135,21 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
     // 不给：Write/Edit（不写代码）/ Bash（不要 shell shenanigans）/
     //       AskUserQuestion（子代理不直接跟用户说话）/ screenshot/export/
     //       record_decision（不是它的角色）/ Task（不允许嵌套子代理）
-    explorer: {
-      description:
-        'Research/explorer subagent. Use this when the main agent needs '
-        + 'external information that requires web search or URL fetching: '
-        + 'finding reference image URLs, looking up CDN font links, validating '
-        + 'facts/numbers, finding inspiration sources, or gathering '
-        + 'design references. Returns a structured research report with URLs '
-        + 'and findings — no code, no design judgment, just facts. '
-        + 'Saves the main agent\'s context window by offloading research turns.',
-      prompt: loadPrompt('explorer'),
-      // structural 类，走 fast model（kimi 主时默认 claude-haiku-4-5-20251001-cc）
-      model: pickAgentModel('explorer', { sdkSpoofMain, subModel }),
-      tools: [
-        'mcp__nodesign__web_search',
-        'mcp__nodesign__screenshot_url',
-        'WebFetch',
-        'Read', 'Glob', 'Grep',
-        'TodoWrite',
-      ],
-      // maxTurns 限制：研究是有限动作，但 8 轮在真实多维 brief 上不够
-      // （2026-08-05 两次 16-17 次调用的研究在第 8 轮被 SDK 硬掐——超限不是
-      // 软着陆，是当场断流，没有收尾回合，报告全损只回传开场白或空）。
-      // 提到 12，同时 explorer.md 加了「随手记」纪律：每轮工具调用前先用
-      // text 记下已有发现，被掐时主 agent 至少拿到最后一段阶段性结论。
-      maxTurns: 12,
-    },
+    // ⏸ explorer 研究员（2026-08-14 用户暂时停用："有点没用"）。定义与
+    // prompt（explorer.md）原样保留，恢复 = 取消注释 + prelude 补回子代理
+    // 清单那两行。停用期间搜索/读外链由主 agent 直接用 web_search / WebFetch。
+    // explorer: {
+    //   description: 'Research/explorer subagent. …',
+    //   prompt: loadPrompt('explorer'),
+    //   model: pickAgentModel('explorer', { sdkSpoofMain, subModel }),
+    //   tools: [
+    //     'mcp__nodesign__web_search', 'mcp__nodesign__screenshot_url',
+    //     'WebFetch', 'Read', 'Glob', 'Grep', 'TodoWrite',
+    //   ],
+    //   // maxTurns 12 的来历：8 轮在真实多维 brief 上会被 SDK 硬掐断流
+    //   // （2026-08-05 两次报告全损），提级 + explorer.md「随手记」纪律。
+    //   maxTurns: 12,
+    // },
 
     'vision-checker': {
       description:

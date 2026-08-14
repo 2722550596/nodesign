@@ -6,6 +6,8 @@
  * 2026-08-13 拆掉"回落到会话区"那级。2026-08-14 生图占位整个迁出舞台层：
  * 它现在是纸面层的**幻影物件**（PhantomLayer.jsx），座位一次算好、真图落地
  * 座位过户 —— 舞台分流对 image 卡的唯一正确行为是**完全不碰**。
+ * 2026-08-14 二拍板：代码/终端直播卡也不再贴物件/掉 dock —— 它们是精灵的
+ * 输出框，出口是 spriteCards（AmbientSpriteLayer 绕精灵找位摆）。
  */
 import { describe, it, expect } from 'vitest';
 import { splitStageCards } from './StageLayer.jsx';
@@ -32,24 +34,26 @@ describe('splitStageCards 落点', () => {
     expect(dockChips).toHaveLength(0);
   });
 
-  it('代码卡贴当前工作区、按 slot 错开', () => {
-    const { anchoredCards } = split([
-      { blockId: 'b2', kind: 'code', status: 'running', text: '', filePath: '终焉之莉莉/主稿.html' },
-      { blockId: 'b3', kind: 'code', status: 'running', text: '', filePath: '终焉之莉莉/试作.html' },
+  it('代码/终端卡走精灵输出框（2026-08-14 拍板），按开工时间排序', () => {
+    const { anchoredCards, dockPanels, spriteCards } = split([
+      { blockId: 'b3', kind: 'terminal', status: 'running', text: '', startedAt: 2 },
+      { blockId: 'b2', kind: 'code', status: 'running', text: '', filePath: '终焉之莉莉/主稿.html', startedAt: 1 },
     ]);
-    expect(anchoredCards.map(c => c.zoneRect.id)).toEqual([ZONE_ID, ZONE_ID]);
-    expect(anchoredCards.map(c => c.slot)).toEqual([0, 1]);
+    expect(anchoredCards).toHaveLength(0);
+    expect(dockPanels).toHaveLength(0);
+    expect(spriteCards.map(c => c.blockId)).toEqual(['b2', 'b3']);
   });
 
-  it('区被收起 / 压根没有区 → 代码卡才落 dock', () => {
-    const { anchoredCards, dockPanels } = splitStageCards({
+  it('代码卡定位不到区也不掉 dock —— 输出框跟精灵，不跟目标', () => {
+    const { anchoredCards, dockPanels, spriteCards } = splitStageCards({
       stageCards: { b1: { blockId: 'b1', kind: 'code', status: 'running', text: '' } },
       positioned: [], visibleIdSet: new Set(),
       visibleZones: [{ ...zones[0], collapsed: true }],
       focusZone: null,
     });
     expect(anchoredCards).toHaveLength(0);
-    expect(dockPanels).toHaveLength(1);
+    expect(dockPanels).toHaveLength(0);
+    expect(spriteCards).toHaveLength(1);
   });
 
   it('chip 走 dock 胶囊排，question 走 dock 面板', () => {

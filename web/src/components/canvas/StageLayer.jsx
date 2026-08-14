@@ -352,6 +352,7 @@ export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZ
   const anchoredCards = [];
   const dockPanels = [];
   const dockChips = [];
+  const spriteCards = [];
   const visibleZoneOf = (zid) => (zid ? visibleZones.find(v => !v.collapsed && v.id === zid) : null);
   // 同一块区里并发的同类卡各占一个坑位，不要叠在同一个点上
   const slots = new Map();
@@ -363,6 +364,10 @@ export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZ
   };
   for (const c of Object.values(stageCards)) {
     if (c.kind === 'image') continue;   // 幻影层接管（PhantomLayer.jsx）
+    // 代码直播 / 终端 = 精灵的输出框（2026-08-14 用户拍板）：不再贴目标物件
+    // 或掉 dock，跟着精灵走、绕它找位（AmbientSpriteLayer 的 findFrameSpot）。
+    // 贴物件那条路留给"已更新"角标和子代理便利贴。
+    if (c.kind === 'code' || c.kind === 'terminal') { spriteCards.push(c); continue; }
     if (c.kind === 'chip') { dockChips.push(c); continue; }
     if (c.kind === 'question') { dockPanels.push(c); continue; }
     const o = c.objectId ? positioned.find(it => it.id === c.objectId) : null;
@@ -372,7 +377,9 @@ export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZ
     if (!zr) { dockPanels.push(c); continue; }
     anchoredCards.push({ card: c, zoneRect: zr, slot: takeSlot(zr.id, c.kind) });
   }
-  return { anchoredCards, dockPanels, dockChips };
+  // 并发时序稳定：按开工时间排，"最近两张露出"的口径才不会抖
+  spriteCards.sort((a, b) => (a.startedAt || 0) - (b.startedAt || 0));
+  return { anchoredCards, dockPanels, dockChips, spriteCards };
 }
 
 // ── 板内坐标系那一面（角标 + 贴物件卡）──
@@ -478,7 +485,7 @@ function StageCard({ card, obj, zoneRect, slot = 0, boardSize, scale = 1, onDism
  * 品牌橙边 —— 跟精灵徽记、语音泡同一个身份。墨面正文不动：机器写的
  * 东西保持等宽墨底，这条是设计语言的底线，换身份不换物料。
  */
-function StageCardBody({ card, scale = 1, onDismiss }) {
+export function StageCardBody({ card, scale = 1, onDismiss }) {
   if (card.kind === 'subagent') return <SubagentStickyCard card={card} onDismiss={onDismiss} scale={scale} />;
   const running = card.status === 'running';
   const isTerm = card.kind === 'terminal';

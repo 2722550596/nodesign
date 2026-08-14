@@ -1,7 +1,9 @@
 # Task(subagent_type='vision-checker') 派遣 prompt 模板
 
 > 此文件由 PreToolUse(Task) hook 在 agent 派 vision-checker 时注入。
-> SKILL.md § 四、自检与收尾 讲"何时派 / 怎么处理 critique"；本文是具体派遣 prompt 范例。
+> 何时派（prelude「做完之前先自己看」定的）：**同一个视觉问题你已自检 + 改过两轮、
+> 用户依旧不满意** —— 独立外援，不是收尾默认动作。派遣 prompt 里带上用户不满意的
+> 原话和你已试过的改法，让它带着"前两轮为什么没治好"去看。本文是派遣 prompt 范例。
 >
 > vision-checker 默认走"先全图一轮 + 每页逐张对照 plan"工作流（自己 list_pages 取页数 / fullPage 总览 / 循环 pageIndex 逐页 / 按页分组报告）。你只需要在 prompt 里给上下文 + 重点关注方向，工作流它自己跑。
 

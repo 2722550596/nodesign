@@ -30,7 +30,7 @@ import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
-import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
+import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
 import { AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
 import { usePhantoms, claimPhantomSeat, PhantomImageCard } from './PhantomLayer.jsx';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
@@ -2395,7 +2395,7 @@ export default function BoardCanvas({
   // （image 卡 2026-08-14 迁出 —— 幻影入座见 PhantomLayer.jsx，occupancy 参数
   //   连同它的唯一消费方 placeImageCard 一起拆除）
   const visibleIdSet = new Set(visibleObjects.map(o => o.id));
-  const { anchoredCards, dockPanels, dockChips } = splitStageCards({
+  const { anchoredCards, dockPanels, dockChips, spriteCards } = splitStageCards({
     stageCards, positioned, visibleIdSet, visibleZones, focusZone: '',
   });
 
@@ -2860,6 +2860,13 @@ export default function BoardCanvas({
             text={mainActive ? workText : ambientText}
             quiet={!!spriteAsk}
             onAsk={onSpriteSay ? setSpriteAsk : undefined}
+            // 输出框（代码直播/终端）2026-08-14 起归精灵管：跟着它走、绕它
+            // 找位（可压产物但尽量不压）。渲染器从这儿递 —— 卡片长相还是
+            // StageLayer 的，精灵层只管摆位，两边不互相 import 出环。
+            frameCards={spriteCards}
+            renderFrameCard={(card) => (
+              <StageCardBody card={card} onDismiss={() => dismissStageCard(card.blockId)} />
+            )}
           />
 
           {/* 精灵对话输入行：点星芒浮出的那道铅笔虚线 */}
