@@ -72,6 +72,10 @@ export default function LinkPopover({
       ref={ref}
       data-no-pan
       onContextMenu={(e) => e.preventDefault()}
+      // 兜底 Enter：不管焦点落在哪个子元素上，Enter 都提交
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !isImeEnter(e)) { e.stopPropagation(); submit(); }
+      }}
       style={{
         position: 'fixed',
         left: flip.x ? undefined : x,
@@ -102,6 +106,9 @@ export default function LinkPopover({
           return (
             <button
               key={id}
+              // 不抢输入框焦点：点完 chip 直接 Enter 就能落线（真机踩过——
+              // 焦点跑到按钮上，Enter 变成再点一次 chip，线永远落不下去）
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setType(id)}
               style={{
                 padding: '3px 10px', borderRadius: RADIUS.pill,
