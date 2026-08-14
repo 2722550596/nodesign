@@ -41,30 +41,9 @@ import { sessionMessagesToDisplay } from '../lib/session-to-messages.js';
 import { reduceChatEvent, clearThinkingStreaming, mergeLiveTurnSnapshot, mergeHydrated } from '../lib/chat-stream.js';
 import { bumpFileVersion, versionOfFile } from '../lib/file-versions.js';
 
-// 舞台旁路消费的事件（转发进 BoardCanvas 的 stageRef，见 handleEvent 管线 1 段）
-const STAGE_EVENTS = new Set([
-  // run.start（2026-08-14 补）：在场 reducer 的上场信号。曾不在名单 —— reducer
-  // 的 run.start 案是死路，精灵只能等第一个工具事件靠"接管显形"立起来，
-  // 整个思考/开场白阶段装闲（首条消息前的长思考最明显）。
-  // run.tool_use_summary 同批补：reducer 的"正在做什么"案同样从没收到过事件
-  //（它只在 CHAT_STREAM_EVENTS，而管线 2 在管线 1 之后才 return，进这里是旁路）。
-  'run.start', 'run.tool_use_summary',
-  'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
-  'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
-  'run.done', 'run.error', 'run.cancelled',
-  // 铅笔精灵（2026-08-14 日记本批）：服务端压好的手写短句 + 收场 recap。
-  // （正文流 run.delta.text 曾在这儿旁路给语音泡，同日退役 —— 画布要的是
-  //   一行旁白，不是聊天镜像）
-  'run.sprite_summary', 'run.recap',
-  // 子代理舞台便利贴（2026-07-30）：运行中出贴、完成翻结果。管线 1 是旁路
-  // （if 不 return），这四个事件同时继续走管线 3 的聊天侧栏逻辑
-  'run.task.started', 'run.task.progress', 'run.task.notification', 'run.subagent.stop',
-]);
-// 聊天流折叠事件（lib/chat-stream.js reducer 接管，见管线 2 段）
-const CHAT_STREAM_EVENTS = new Set([
-  'run.delta.text', 'run.delta.thinking', 'run.tool_use_summary',
-  'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_result',
-]);
+// 事件分流判据（名单+过期规则）2026-08-14 抽进 lib/event-router.js 配单测 ——
+// 谁进哪条管线是"精灵丢状态"病族的老巢，判据改动要连测试一起动
+import { STAGE_EVENTS, CHAT_STREAM_EVENTS, isStaleEvent } from '../lib/event-router.js';
 import { usePendingEdits } from '../hooks/usePendingEdits.js';
 
 export default function ProjectWorkspace() {
@@ -644,10 +623,8 @@ export default function ProjectWorkspace() {
     // stale guard 的事件不走这个 helper。
     const liveRunId = currentRunIdRef.current;
     const liveSid = sessionIdRef.current;
-    const isStale = (
-      (evt.runId && liveRunId && evt.runId !== liveRunId)
-      || (evt.sessionId && liveSid && evt.sessionId !== liveSid)
-    );
+    // 判据在 lib/event-router.js（配单测）："有值且不匹配才算过期"
+    const isStale = isStaleEvent(evt, { runId: liveRunId, sessionId: liveSid });
 
     // ── 1. 舞台旁路 ──：工具流 / 文件变更 / 收场信号原样转发给工作台画布
     // （agent 实时动作演出）。BoardCanvas 未挂载时 stageRef.current 为 null，自然丢弃。

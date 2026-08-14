@@ -1,0 +1,58 @@
+/**
+ * event-router —— WS 事件的分流判据（2026-08-14 可维护性行动 C 刀，从
+ * ProjectWorkspace.handleEvent 抽出）。
+ *
+ * ## 为什么抽
+ *
+ * 一条 WS 通道进来的事件走三条管线：①舞台旁路（STAGE_EVENTS → stageRef，
+ * **不 return**，同一事件可以继续走后面的管线）②聊天流折叠
+ * （CHAT_STREAM_EVENTS → chat-stream reducer，消费即止）③控制帧与 run 生命
+ * 周期（switch）。谁进哪条管线、哪些算过期 —— 这两个判据是"精灵丢状态"
+ * 病族的老巢（六批通道体检、七修 run.start 死名单都在这里），却一直没有
+ * 单测。抽成纯数据+纯函数，钉子见 event-router.test.js。
+ *
+ * ## 两张名单的关系
+ *
+ * 有交集是**刻意的**：`run.tool_use.started` 等既要演在画布上（舞台），又要
+ * 折进聊天时间轴。管线 1 是旁路不短路，所以一个事件可以两边都吃。
+ */
+
+/** 舞台旁路（BoardCanvas stageRef：舞台卡 / 在场精灵 / 幻影 / 手写行） */
+export const STAGE_EVENTS = new Set([
+  // run.start（七修补进）：在场 reducer 的上场信号。曾不在名单 —— reducer 的
+  // run.start 案是死路，精灵整个思考/开场白阶段装闲。
+  // run.tool_use_summary 同批：reducer 的"正在做什么"案同样从没收到过事件。
+  // ⚠️ 名单与 board-presence reducer 消费的类型有 parity 钉子
+  //（board-presence.test.js："消费的类型必须在转发名单里"）——两头都在事件才活。
+  'run.start', 'run.tool_use_summary',
+  'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
+  'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
+  'run.done', 'run.error', 'run.cancelled',
+  // 铅笔精灵：服务端压好的手写短句 + 收场 recap
+  'run.sprite_summary', 'run.recap',
+  // 子代理舞台便利贴：运行中出贴、完成翻结果（同时继续走聊天侧栏逻辑）
+  'run.task.started', 'run.task.progress', 'run.task.notification', 'run.subagent.stop',
+]);
+
+/** 聊天流折叠（lib/chat-stream.js reducer 接管，消费即止） */
+export const CHAT_STREAM_EVENTS = new Set([
+  'run.delta.text', 'run.delta.thinking', 'run.tool_use_summary',
+  'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_result',
+]);
+
+/**
+ * 过期判据：WS replay / 跨 session 旁路 / 多 tab 同 sid 收到非当前 turn 的
+ * delta。**两个条件都是"有值且不匹配才算过期"** —— 事件没带 id（老事件没
+ * enrich）或本地还没有基准（首条消息 POST 未返回）时一律放行，宁可多收一拍
+ * 也不能把新一轮的开头吞掉（run.start 认领与 delta 同拍到达的老案）。
+ *
+ * @param {object} evt  WS 事件
+ * @param {{ runId?: string|null, sessionId?: string|null }} live 本地基准
+ */
+export function isStaleEvent(evt, { runId = null, sessionId = null } = {}) {
+  if (!evt) return false;
+  return Boolean(
+    (evt.runId && runId && evt.runId !== runId)
+    || (evt.sessionId && sessionId && evt.sessionId !== sessionId),
+  );
+}

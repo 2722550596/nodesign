@@ -262,18 +262,18 @@ describe('事件形状 parity（2026-08-13 事故的钉子）', () => {
     for (const t of consumed) expect(eventsSrc).toContain(`'${t}'`);
   });
 
-  it('reducer 里消费的事件类型每个都真的会被转发进来（STAGE_EVENTS）', () => {
+  it('reducer 里消费的事件类型每个都真的会被转发进来（STAGE_EVENTS）', async () => {
     // 2026-08-14 事故的另一半：事件在服务端真实存在，reducer 的案也写对了，
-    // 但 ProjectWorkspace 的 STAGE_EVENTS 名单里没有它 —— run.start 就这么
-    // 当了两天死代码，精灵整个思考阶段装闲。事件要活，得两头都在。
-    const wsSrc = fs.readFileSync(
-      new URL('../routes/ProjectWorkspace.jsx', import.meta.url), 'utf8',
-    );
-    const stageList = wsSrc.split('const STAGE_EVENTS')[1]?.split('])')[0] || '';
+    // 但转发名单里没有它 —— run.start 就这么当了两天死代码，精灵整个思考
+    // 阶段装闲。事件要活，得两头都在。名单 2026-08-14 抽进 event-router.js，
+    // 这里直接吃真名单（比 grep 源码强：改名/挪家都跟得上）。
+    const { STAGE_EVENTS } = await import('./event-router.js');
     const reducerSrc = fs.readFileSync(new URL('./board-presence.js', import.meta.url), 'utf8');
     const consumed = [...reducerSrc.matchAll(/case '(run\.[\w.]+)'/g)].map(m => m[1]);
     expect(consumed.length).toBeGreaterThan(0);
-    for (const t of consumed) expect(stageList).toContain(`'${t}'`);
+    for (const t of consumed) {
+      expect(STAGE_EVENTS.has(t), `${t} 不在转发名单`).toBe(true);
+    }
   });
 });
 
