@@ -41,6 +41,13 @@ export function formatDate(iso) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** ISO → "M/D HH:MM"（画布卡片上的短时间戳） */
+export function formatClock(iso) {
+  const d = parseStamp(iso);
+  if (!d) return '';
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 /** "刚刚" / "X 分钟前" / "X 小时前" / "X 天前" */
 export function timeAgo(iso) {
   const at = parseStamp(iso);

@@ -17,18 +17,24 @@ import { publishSite, unpublishSite, validTaskName } from '../lib/site-publish.j
 
 const router = express.Router();
 
-router.get('/:pid/publish/:task', (req, res) => {
+// 根站（扁平化后站点住工作区根）的 store key 是 '.'，但 '.' 进不了 URL 路径段：
+// WHATWG URL 规范把单点段（含 %2E）就地归一掉，浏览器发出去就成了 /publish/。
+// 所以路由双注册：无 :task 段 = 根站。
+const taskOf = (req) => (req.params.task ?? '.');
+
+router.get(['/:pid/publish', '/:pid/publish/:task'], (req, res) => {
   if (!guardProject(req, res)) return;
-  if (!validTaskName(req.params.task)) return res.status(400).json({ error: 'invalid task' });
-  const site = getPublished(req.params.pid, req.params.task);
+  const task = taskOf(req);
+  if (!validTaskName(task)) return res.status(400).json({ error: 'invalid task' });
+  const site = getPublished(req.params.pid, task);
   res.json({ published: !!site, site });
 });
 
-router.post('/:pid/publish/:task', async (req, res) => {
+router.post(['/:pid/publish', '/:pid/publish/:task'], async (req, res) => {
   if (!guardProject(req, res)) return;
   try {
     const { site, warning } = await publishSite({
-      projectId: req.params.pid, task: req.params.task,
+      projectId: req.params.pid, task: taskOf(req),
       root: typeof req.body?.root === 'string' ? req.body.root : undefined,
       user: req.user,
     });
@@ -40,10 +46,10 @@ router.post('/:pid/publish/:task', async (req, res) => {
   }
 });
 
-router.delete('/:pid/publish/:task', async (req, res) => {
+router.delete(['/:pid/publish', '/:pid/publish/:task'], async (req, res) => {
   if (!guardProject(req, res)) return;
   try {
-    const removed = await unpublishSite({ projectId: req.params.pid, task: req.params.task });
+    const removed = await unpublishSite({ projectId: req.params.pid, task: taskOf(req) });
     if (!removed) return res.status(404).json({ error: 'not published' });
     res.json({ removed: true });
   } catch (err) {

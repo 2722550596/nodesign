@@ -13,6 +13,25 @@
   font-weight: 700; font-style: normal; font-display: swap;
 }
 
+/* 龙藏体（Long Cang，OFL）：硬笔手写 —— 画布"写一段字"的默认笔迹。
+   用户要的是圆珠笔手感（2026-08-13），楷体太工整像印出来的。
+   2.9MB swap 加载：先用楷体显影，字体到了再换笔迹。 */
+@font-face {
+  font-family: 'Long Cang ND';
+  src: url('../assets/fonts/longcang-regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+
+/* Caveat（OFL，可变字重 400-700，latin 子集 73KB）：手写栈的英文那一笔。
+   龙藏体的拉丁字形很糙，英文句子（精灵的 "cooking…"、用户随手写的一句英文）
+   落在它上面像凑合 —— Caveat 排在手写栈最前，只吃拉丁字符，中文照旧穿透
+   到龙藏体（2026-08-14，用户点名要一套好看的英文手写）。 */
+@font-face {
+  font-family: 'Caveat ND';
+  src: url('../assets/fonts/caveat-nd.woff2') format('woff2');
+  font-weight: 400 700; font-style: normal; font-display: swap;
+}
+
 * { box-sizing: border-box; }
 
 html, body, #root {

@@ -16,6 +16,7 @@
 
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { Assets } from '../../lib/api.js';
+import { joinRel } from '../../lib/paths.js';
 
 /** 地点框按深度收敛：外层大、内层小，层级一眼可辨 */
 const PLACE_STYLE = [
@@ -23,10 +24,22 @@ const PLACE_STYLE = [
   { pad: 8, radius: 8, title: FONT_SIZE.xs, portrait: 48 },
   { pad: 6, radius: 7, title: FONT_SIZE.xs, portrait: 40 },
 ];
-const styleAt = (depth) => PLACE_STYLE[Math.min(depth, PLACE_STYLE.length - 1)];
+/**
+ * ⚠️ 必须夹取，不能直接拿 depth 当下标。
+ *
+ * `Math.min(undefined, 2)` 是 NaN，`PLACE_STYLE[NaN]` 是 undefined，下一行
+ * 读 `.pad` 就抛 —— 而这块地图渲染在工作台里，**崩的是整条路由**（React Router
+ * 的错误边界接走，用户看到的是一整页空白，不是"世界卡坏了"）。
+ * 2026-08-13 用检查通道真渲染时抓到：假数据少给一个 depth 就整页白。
+ * 节点是服务端扫目录生成的，字段齐不齐取决于那边，前端这里得自己站稳。
+ */
+const styleAt = (depth) => {
+  const i = Number.isFinite(depth) ? Math.max(0, Math.min(Math.trunc(depth), PLACE_STYLE.length - 1)) : 0;
+  return PLACE_STYLE[i];
+};
 
 const imgUrl = (projectId, base, rel, w) =>
-  `${Assets.artifactFileUrl(projectId, `${base}/${rel}`)}?w=${w}`;
+  `${Assets.artifactFileUrl(projectId, joinRel(base, rel))}?w=${w}`;
 
 function Portrait({ projectId, base, node, size }) {
   const src = node.portrait ? imgUrl(projectId, base, node.portrait, 480) : null;

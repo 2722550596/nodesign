@@ -135,6 +135,8 @@ export const useProjectStore = create((set, get) => ({
     if (typeof patch.skillId === 'string') apiPatch.skillId = patch.skillId;
     if ('description' in patch) apiPatch.description = patch.description;
     if (typeof patch.kind === 'string') apiPatch.kind = patch.kind;
+    // 会话指针（2026-08-13 收敛后它就是会话真相源；null = 清空回"新会话"）
+    if ('activeSessionId' in patch) apiPatch.activeSessionId = patch.activeSessionId;
     if (Object.keys(apiPatch).length === 0) return get().getProject(id);
     const { project } = await Projects.update(id, apiPatch);
     const e = enrich(project);

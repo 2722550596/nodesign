@@ -5,9 +5,10 @@ import AppShell from '../components/layout/AppShell.jsx';
 // 主区两栏固定（左 chat + 右 canvas 占满）；5 个次级 UI = 浮窗 bounds=parent
 // 限制在 canvas section 内（chat / canvas 不再可拖动 — PLAN.md:431 旧决策回归）。
 import FloatingPanel from '../components/layout/FloatingPanel.jsx';
+import ChatDock from '../components/layout/ChatDock.jsx';
 import { PanelManagerProvider } from '../components/layout/PanelManager.jsx';
 // PanelMenu 已下架（用户反馈"面板"按钮太冗余）— 浮窗仍可通过 hooks 直接 toggle
-import { Sliders } from 'lucide-react';
+import { Sliders, MessageSquare, MessageSquarePlus } from 'lucide-react';
 import ChatPanel from '../components/chat/ChatPanel.jsx';
 import CanvasFrame from '../components/canvas/CanvasFrame.jsx';
 // InspectTab 由 InspectFloatingCard 间接使用（不在此处直接 import）
@@ -28,6 +29,7 @@ import PickExportModal from '../components/project/PickExportModal.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
 import ElicitationModal from '../components/run/ElicitationModal.jsx';
 import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_KAI, FONT_MONO, STAGE } from '../lib/theme.js';
+import { INK_SURFACE } from '../lib/paper.js';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { newId } from '../lib/helpers.js';
@@ -41,9 +43,19 @@ import { bumpFileVersion, versionOfFile } from '../lib/file-versions.js';
 
 // 舞台旁路消费的事件（转发进 BoardCanvas 的 stageRef，见 handleEvent 管线 1 段）
 const STAGE_EVENTS = new Set([
+  // run.start（2026-08-14 补）：在场 reducer 的上场信号。曾不在名单 —— reducer
+  // 的 run.start 案是死路，精灵只能等第一个工具事件靠"接管显形"立起来，
+  // 整个思考/开场白阶段装闲（首条消息前的长思考最明显）。
+  // run.tool_use_summary 同批补：reducer 的"正在做什么"案同样从没收到过事件
+  //（它只在 CHAT_STREAM_EVENTS，而管线 2 在管线 1 之后才 return，进这里是旁路）。
+  'run.start', 'run.tool_use_summary',
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
   'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
   'run.done', 'run.error', 'run.cancelled',
+  // 铅笔精灵（2026-08-14 日记本批）：服务端压好的手写短句 + 收场 recap。
+  // （正文流 run.delta.text 曾在这儿旁路给语音泡，同日退役 —— 画布要的是
+  //   一行旁白，不是聊天镜像）
+  'run.sprite_summary', 'run.recap',
   // 子代理舞台便利贴（2026-07-30）：运行中出贴、完成翻结果。管线 1 是旁路
   // （if 不 return），这四个事件同时继续走管线 3 的聊天侧栏逻辑
   'run.task.started', 'run.task.progress', 'run.task.notification', 'run.subagent.stop',
@@ -56,15 +68,24 @@ const CHAT_STREAM_EVENTS = new Set([
 import { usePendingEdits } from '../hooks/usePendingEdits.js';
 
 export default function ProjectWorkspace() {
-  // H1：URL 作为 session 唯一 source of truth
-  //   - /projects/:id/work        → 无 sid（新会话）
-  //   - /projects/:id/sessions/:sid → 带 sid（恢复某 session）
-  // 切换 session 走 navigate；run.done 后若 url 没 sid（新会话刚跑完）
-  // navigate replace 到 /sessions/<sid> 让 URL 反映真实 sid，刷新可恢复
+  // 会话真相源收敛（2026-08-13 E1b）：**服务端指针**（projects.active_session_id）
+  // 是唯一真相，URL 不再编码会话。
+  //   - /projects/:id/work           唯一入口，跟着项目指针走（刷新即恢复）
+  //   - /projects/:id/sessions/:sid  旧链接兼容：采纳该 sid 后归一到 /work
+  // 在这之前 URL 是真相源（/work=新会话、/sessions/:sid=续）。收敛动机正是
+  // 两个真相源会分叉：显式带旧 sid 的标签页与服务端指针各执一词，两个标签
+  // 静默岔成两条会话。指针变化由 project.active_session 事件广播到所有标签。
   const { id, sid: urlSid } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const currentSessionId = urlSid || null;
+  const [currentSessionId, setCurrentSessionId] = useState(() => urlSid || null);
+  // 旧式 /sessions/:sid 链接进来：采纳一次，URL 归一（会话不再进 URL）
+  useEffect(() => {
+    if (urlSid) navigate(`/projects/${id}/work`, { replace: true });
+    // 只在挂载时归一 —— urlSid 已经进了 state 初值
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const adoptedPointerRef = useRef(!!urlSid);
 
   // Phase A.1（2026-05-07）：sessionId Ref 避开 React 闭包陈旧。
   // handleSend 是 async 闭包，await Turn.send 后再读 currentSessionId 拿的是闭包
@@ -79,6 +100,17 @@ export default function ProjectWorkspace() {
 
   // ── store ──
   const project = useProjectStore(s => s.projects.find(p => p.id === id));
+  // 项目档案到位后跟指针（只在本地还没采纳过时 —— 用户点了"新对话"就别拽回去）。
+  // ⚠️ 这条 effect 必须待在 `project` 声明之后：依赖数组在**渲染时**求值，
+  // 放上面就是 TDZ 白屏（BoardCanvas 栽过四次的同一坑，2026-08-13 这里也栽了一次）。
+  useEffect(() => {
+    if (adoptedPointerRef.current || !project) return;
+    adoptedPointerRef.current = true;
+    if (project.activeSessionId) {
+      sessionIdRef.current = project.activeSessionId;
+      setCurrentSessionId(project.activeSessionId);
+    }
+  }, [project]);
   const hydrateOne = useProjectStore(s => s.hydrateOne);
   const updateProject = useProjectStore(s => s.updateProject);
   const deleteProject = useProjectStore(s => s.deleteProject);
@@ -132,9 +164,19 @@ export default function ProjectWorkspace() {
   const boardApiRef = useRef(null);
   // 舞台层（2026-07-28）：run.* 工具流原样转发进 BoardCanvas，画布演出 agent 实时动作
   const stageRef = useRef(null);
+  // 视口容器（画布铺满它、浮窗在它里面拖）。浮动工具栏的限位也用这一个。
+  const stageAreaRef = useRef(null);
   // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
   const [subagents, setSubagents] = useState({});
-  useEffect(() => { setSubagents({}); }, [currentSessionId]);
+  useEffect(() => {
+    setSubagents({});
+    // 换会话大扫除（2026-08-14）：旧会话的舞台卡/在场精灵/手写行全收场 ——
+    // 旧 run 的收场事件换会话后会被 stale guard 拦掉，不扫的话精灵冻在
+    // "正在干活"里转圈。合成一枚 run.cancelled 走正常收场路（舞台卡清扫 +
+    // 在场全体下场都认它）；切进正在跑的会话由 reducer 的"接管显形"补台
+    //（主 agent 活动事件到了就地立起来，不等看不见的 run.start）。
+    stageRef.current?.onEvent?.({ type: 'run.cancelled', synthetic: true });
+  }, [currentSessionId]);
 
   // 上下文用量：切会话 / 刷新页面时先清掉（上一场的数字不能当这一场用），再向
   // 服务端要这个 session 的当前值。run.context_usage 只在 turn 内推，两轮之间和
@@ -204,6 +246,9 @@ export default function ProjectWorkspace() {
 
   const [shareOpen, setShareOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // 有产物窗铺满屏幕时收掉顶栏的浮现（它的关闭钮在右上角，鼠标够它的路上
+  // 必然扫过顶部感应带）
+  const [artifactWindowOpen, setArtifactWindowOpen] = useState(false);
   const [exportsListOpen, setExportsListOpen] = useState(false);
   const [pickExportOpen, setPickExportOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -304,9 +349,21 @@ export default function ProjectWorkspace() {
   //  - system / decisions → toolbar Settings popover（C2）
   //  - inspect / comments → 选中元素自动弹的 contextual InspectFloatingCard（C3）
   //  - 仅 tweaks 保留 floating panel（C5 schema 驱动）
-  const defaultPanels = useMemo(() => ({
-    tweaks:    { position: { x: 96, y: 160 },  size: { width: 320, height: 360 }, visible: false, zIndex: 100 },
-  }), []);
+  const defaultPanels = useMemo(() => {
+    // 聊天栏默认贴右侧、留出顶栏高度，高度吃满可视区。**位置只是默认值** ——
+    // 拖过一次之后就由 localStorage 说了算（PanelManager 持久化 per-project）。
+    // 用 window 尺寸算是因为 panel 坐标是绝对像素，而"贴右边"要知道容器多宽；
+    // 容器就是视口减顶栏，首帧拿 window 足够准，之后 ResizeObserver 会收边。
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+    const chatW = 380;
+    // chat 不在这张表里了：它 2026-08-08 起是钉在右缘的 ChatDock，自己管
+    // 收起/宽度，**位置不再是一个状态**。留在这里只会让 PanelManager 继续
+    // 持久化一份没人读的坐标。
+    return {
+      tweaks: { position: { x: 96, y: 160 }, size: { width: 320, height: 360 }, visible: false, zIndex: 100 },
+    };
+  }, []);
 
   const panelMeta = useMemo(() => ({
     tweaks:    { label: 'Tweaks',    icon: Sliders },
@@ -552,18 +609,16 @@ export default function ProjectWorkspace() {
         });
         setCurrentRunId(runId);
         setActiveRun({ pid: id, runId });  // A4.3：让 AskUserQuestionView 直 POST /answer
-        // Phase A.1 对齐 handleSend：从 /work 起新 session 时立即同步 ref + navigate
-        // 到 /sessions/<sid>。否则用户在 agent 回复 H4a 首条 turn 期间追加消息，
-        // sessionIdRef.current 仍是 null，handleSend 会带 sessionId=null 再起一条
-        // 新 session，URL 跳走，原 session 脱钩——典型现象就是"在 agent 回复时追加
-        // 消息会被自动跳转然后开个新 session"。
+        // Phase A.1 对齐 handleSend：起新 session 时**立即**同步 ref + state。
+        // 否则用户在首条 turn 期间追加消息，sessionIdRef.current 仍是 null，
+        // handleSend 会带 sessionId=null 再起一条新 session 脱钩。
+        // （URL 不再动 —— 服务端已在 turn 里把指针写到这条会话）
         if (!sidForRequest && returnedSid) {
           sessionIdRef.current = returnedSid;
-          navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
-        } else {
-          // 续约场景：只清 location.state 防 navigate 后退/刷新重发
-          navigate(location.pathname, { replace: true, state: null });
+          setCurrentSessionId(returnedSid);
         }
+        // 清 location.state 防 navigate 后退/刷新重发
+        navigate(location.pathname, { replace: true, state: null });
       } catch (err) {
         setMessages((ms) => [...ms, {
           id: newId('msg'), role: 'assistant',
@@ -637,6 +692,18 @@ export default function ProjectWorkspace() {
         setMessages(prev => mergeHydrated(prev, display));
         break;
       }
+      case 'project.active_session': {
+        // 会话指针变了（别的标签页切换/新建/删除，或 turn 写回）。指针是真相源，
+        // 空闲的标签页跟着走；正在流式的标签页不动 —— 把用户正看着的对话
+        // 从脚下抽走比短暂不同步糟得多，它结束后下一次指针变化会再对齐。
+        const next = evt.activeSessionId || null;
+        if (next !== sessionIdRef.current && !currentRunIdRef.current) {
+          sessionIdRef.current = next;
+          setCurrentSessionId(next);
+        }
+        break;
+      }
+
       case 'ws.connected': {
         // ws-client 处理 lastSeq；此处按 server 报的 activeRunId 恢复/同步 streaming 状态
         // —— 抖动期间 onStatusChange 不再强制 reset isStreaming，重连后由这里权威决定。
@@ -656,12 +723,22 @@ export default function ProjectWorkspace() {
             setCurrentRunId(serverRunId);
             setActiveRun({ pid: id, runId: serverRunId });
           }
+          // 精灵接管（2026-08-14 首条消息真空修）：真的 run.start 多半已丢 ——
+          // 新项目首条消息时 WS 还挂在 sid=null 上，服务端把 session-scoped
+          // 事件全滤掉了，等 POST 返回带新 sid 重连，run.start 早发完了；断线
+          // 重连同理。聊天靠 live_turn 快照补课，在场表没有快照 —— server 报
+          // activeRunId 就是"在跑"的权威话，合成一枚 run.start 让主 agent 立即
+          // 上场（reducer 对已在场的 run.start 幂等，网络抖动多来几次无害）。
+          stageRef.current?.onEvent?.({ type: 'run.start', synthetic: true, runId: serverRunId });
         } else if (localRunId) {
           setIsStreaming(false);
           currentRunIdRef.current = null;
           setCurrentRunId(null);
           setActiveRun(null);
           setMessages(prev => clearThinkingStreaming(prev));
+          // 对称收场：断线期间 run 已结束（run.done 错过且 buffer 挤掉了）——
+          // 不扫的话精灵冻在"正在干活"里转圈，同六批换会话那枚合成事件。
+          stageRef.current?.onEvent?.({ type: 'run.cancelled', synthetic: true });
         }
         break;
       }
@@ -1326,6 +1403,12 @@ export default function ProjectWorkspace() {
    */
   const handleSend = async (text) => {
     if (!text || !text.trim()) return;
+    // 任何一条消息发出去，攒着的元素评论就随行了（agent 每轮都拉 pending
+    // changes）—— 标 sentAt 只为让「发给 agent（N 条标注）」那颗浮钮的计数
+    // 归零，不影响橙色框（那个跟 status 走，agent clear 时才消）。
+    setComments(arr => arr.some(c => !c.sentAt)
+      ? arr.map(c => (c.sentAt ? c : { ...c, sentAt: Date.now() }))
+      : arr);
     // mime 字段必传：Phase 1.4 后端 image inline 检测用 mime 判断是不是图
     const attachments = inputs
       .filter(it => it.type === 'asset' && it.path)
@@ -1372,13 +1455,13 @@ export default function ProjectWorkspace() {
         arr.forEach(it => { if (it.previewUrl) URL.revokeObjectURL(it.previewUrl); });
         return [];
       });
-      // streamInput 重构修：从 /work 路径起新 session 时立刻 navigate 到 /sessions/<sid>
-      // —— 否则用户在第一 turn 跑完前发追加，currentSessionId 还是 null 会被当新 session
-      // 起，跟原 session 脱钩（之前只在 run.done/cancelled 后 navigate，慢了一拍）
+      // 起新 session 时立刻同步 ref + state —— 否则用户在第一 turn 跑完前发追加，
+      // currentSessionId 还是 null 会被当新 session 起，跟原 session 脱钩。
+      // ref 先行：下一条极快追加的 handleSend 不等 setState 那一拍。
+      // （URL 不再动，服务端 turn 已把指针写到这条会话并广播）
       if (!sidForRequest && returnedSid) {
-        // Phase A.1：立即同步 ref，让下一条极快追加的 handleSend 拿到正确 sid（不依赖 navigate 的 useParams 异步刷新）
         sessionIdRef.current = returnedSid;
-        navigate(`/projects/${id}/sessions/${returnedSid}`, { replace: true });
+        setCurrentSessionId(returnedSid);
       }
     } catch (err) {
       // 429（额度用完 / 并发已满）和 451（内容外审拦截）不是故障，
@@ -1398,7 +1481,7 @@ export default function ProjectWorkspace() {
 
   /** streamInput 重构：用户主动结束当前 session（终结 query handle）
    *  - 调 close endpoint → backend inputQueue.close + abortController.abort
-   *  - navigate to /work → currentSessionId 变 null → useEffect 自动 reset 前端 state
+   *  - 本地清会话 + 清服务端指针（URL 已不承载会话，navigate 到 /work 清不掉了）
    *  - session JSONL 不删，从 SessionListModal 仍可找回（resume 走 forkSession）
    */
   const handleCloseSession = async () => {
@@ -1406,13 +1489,15 @@ export default function ProjectWorkspace() {
     try {
       await Sessions.close(id, currentSessionId);
     } catch (err) {
-      // close 失败不阻塞前端 — 仍 navigate 让用户能继续
+      // close 失败不阻塞前端 — 本地照样清，让用户能继续
       console.warn('[Project] close session failed:', err.message);
     }
     setIsStreaming(false);
     setCurrentRunId(null);
     setActiveRun(null);
-    navigate(`/projects/${id}/work`, { replace: true });
+    sessionIdRef.current = null;
+    setCurrentSessionId(null);
+    updateProject(id, { activeSessionId: null });
   };
 
   /** 手动压缩上下文：raw 模式发 /compact 斜杠命令直达 SDK（跳过消息装饰，
@@ -1544,19 +1629,17 @@ export default function ProjectWorkspace() {
       return;
     }
     try {
+      // 无会话闸门 2026-08-13 撤除：产物属于项目不属于会话，canvas 写入和
+      // pending buffer 都已是项目级路由 —— 编辑不再要求先开一轮对话
       const html = '<!doctype html>\n' + iframeDoc.documentElement.outerHTML;
-      if (!currentSessionId) {
-        showToast('请先开始一个会话再编辑 canvas', 'error');
-        return;
-      }
-      await Canvas.write(id, currentSessionId, html, 'user', info.deckPath || null);
+      await Canvas.write(id, html, 'user', info.deckPath || null);
       showToast(`已保存：「${info.newText.slice(0, 20)}」`, 'success');
 
       // C4：push 进 pending-changes buffer，下次发 chat 时 agent 主动拉
       try {
         const el = findElementByAnchor(info.anchor, iframeDoc.body);
         const aiContext = el ? serializeForAI(el) : null;
-        await PendingChanges.push(id, currentSessionId, {
+        await PendingChanges.push(id, {
           kind: 'edit',
           anchor: info.anchor,
           ...(info.deckPath ? { path: info.deckPath } : {}),
@@ -1581,14 +1664,11 @@ export default function ProjectWorkspace() {
    * persist=false = React mount 区（运行时 DOM 动不得），照旧推 pending-* 等 agent 改 JSX。
    */
   const handleSiteDomEdit = async ({ path, html, summary, records = [], persist = true }) => {
-    if (!currentSessionId) {
-      showToast('请先开始一个会话再编辑', 'error');
-      return;
-    }
+    // （无会话闸门 2026-08-13 撤除 —— 理由见 handleTextEdit）
     try {
       if (persist) {
         if (!html) { showToast('页面未就绪，改动没保存', 'error'); return; }
-        await Canvas.write(id, currentSessionId, html, 'user', path);
+        await Canvas.write(id, html, 'user', path);
         showToast(`已保存：${summary}`, 'success');
         // 用户通道的写没有 run.file_changed 事件（那是 agent PostToolUse 直发的），
         // 本地补一笔版本：让本页从干净磁盘态平滑重载（LiveFrame 换代 + 滚动保持），
@@ -1599,7 +1679,7 @@ export default function ProjectWorkspace() {
       }
       for (const r of records) {
         try {
-          await PendingChanges.push(id, currentSessionId, { ...r, path });
+          await PendingChanges.push(id, { ...r, path });
         } catch (err) {
           console.warn('[pending-changes] push site layout failed:', err.message);
         }
@@ -1637,22 +1717,147 @@ export default function ProjectWorkspace() {
       status: 'open',
       createdAt: new Date().toISOString(),
     }]);
-    // C4：push 进 pending-changes buffer
-    if (currentSessionId) {
-      try {
-        await PendingChanges.push(id, currentSessionId, {
-          id: cid,
-          kind: 'comment',
-          anchor: ctx.anchor,
-          aiContext: ctx.aiContext,
-          ...(ctx.path ? { path: ctx.path } : {}),
-          text: trimmed,
-        });
-      } catch (err) {
-        console.warn('[pending-changes] push comment failed:', err.message);
-      }
+    // C4：push 进 pending-changes buffer。原来包着 `if (currentSessionId)` ——
+    // 无会话时评论只剩本地橙框、agent 永远收不到（**静默丢失**）。buffer 已是
+    // 项目级（2026-08-13），无条件推：第一条消息一发 agent 就能拉到。
+    try {
+      await PendingChanges.push(id, {
+        id: cid,
+        kind: 'comment',
+        anchor: ctx.anchor,
+        aiContext: ctx.aiContext,
+        ...(ctx.path ? { path: ctx.path } : {}),
+        text: trimmed,
+      });
+    } catch (err) {
+      console.warn('[pending-changes] push comment failed:', err.message);
     }
   };
+  /**
+   * 圈选评论（2026-08-07）—— 跟点选评论进同一条 pending-changes buffer，
+   * 差别是它多带一张服务端截的区域图。
+   *
+   * **发完直接起一轮**，不像点选评论那样只攒着等下一条消息：用户刚画完框、
+   * 按了「发给 agent」，那个动作本身就是"现在就说这件事"。攒着不动的话
+   * 他会以为没发出去。消息里只写一句指路，具体内容 agent 自己去
+   * get_pending_changes 拉 —— 那边有图有元素清单，比塞进聊天里省得多。
+   */
+  const handleRegionComment = async ({ region, viewport, container, elements, text, path }) => {
+    // 无会话闸门 2026-08-13 撤除：没有会话时 handleSend 自己会起一条新的
+    if (!path) {
+      showToast('这份产物没有任务路径，圈选暂时用不了', 'error');
+      return;
+    }
+    const rel = path;
+    await PendingChanges.regionComment(id, {
+      path: rel, region, viewport, container, elements, text,
+    });
+    const what = elements.length
+      ? `${elements.slice(0, 3).map(e => `<${e.tag}>`).join('')}${elements.length > 3 ? ' 等' : ''}`
+      : '一块区域';
+    useGlobalStore.getState().openChatDock();   // 对话在悬浮卡里流，收起时唤出来
+    await handleSend(text
+      ? `我在 ${rel} 上圈了一块（${what}）：${text}`
+      : `我在 ${rel} 上圈了一块（${what}），看一下 —— 截图和框住的元素都在 pending changes 里。`);
+  };
+
+  /**
+   * 就地标注（2026-08-13，E3）：右键画布物件/文件夹 → 浮层写一句 → 直接起
+   * 一轮。样板是 handleRegionComment（"用户刚按了发送，这个动作本身就是
+   * 现在就说"），差别是它的载荷小（目标 + 一句话），直接进消息即可 ——
+   * 不过 pending buffer，零新服务端面。id 就是工作区相对路径（画布 id=路径
+   * 模型），agent 拿它能直接找到文件/文件夹；涂鸦手写这类原生物件的 id
+   * 指向 board.json 条目，agent 也认得。
+   */
+  /**
+   * 画布标注 → 直接起一轮。
+   *
+   * `targets`（框选之后批量标注）走同一条路：一条消息把这几件都点名，而不是
+   * 发 N 条 —— 用户说的是"这几张一起改"，拆成 N 条 agent 就得猜它们之间的关系。
+   */
+  const handleAnnotate = async ({ target, targets, text, queue }) => {
+    const list = targets?.length ? targets : [target];
+    // 报**路径**不是 id：`deck:主稿.html` 这种带形态前缀的东西 agent 读不出来
+    const whereOf = (t) => t.path || t.id;
+
+    /**
+     * 「攒着」：进 pending-changes buffer，右下角那条「发给 agent（N 条标注）」
+     * 浮钮攒够了一次发（用户 2026-08-13 提）。
+     *
+     * **走的是元素标注那条现成的路**，不新开一条：同一个 buffer、同一条浮钮、
+     * 同一个 `get_pending_changes`。画布标注和元素标注对 agent 来说是一回事
+     * （"用户指着某个东西说了句话"），差别只在锚点粗细 —— 一个指到文件，
+     * 一个指到文件里的某个元素。
+     *
+     * 锚点写 `{ board: id, path }`：`findElementByAnchor` 解不出它，所以产物窗
+     * 里那圈橙色标记不会去画一个不存在的元素（那正是我们要的 —— 画布标注的
+     * 视觉落点是卡片上的角标，不是文档里的框）。
+     */
+    if (queue) {
+      for (const t of list) {
+        const cid = newId('cmt');
+        const item = {
+          id: cid,
+          kind: 'comment',
+          anchor: { board: t.id, label: `${t.typeLabel}「${t.title}」` },
+          path: whereOf(t),
+          text,
+        };
+        setComments(arr => [...arr, {
+          ...item, board: t.id, status: 'open', createdAt: new Date().toISOString(),
+        }]);
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await PendingChanges.push(id, item);
+        } catch (err) {
+          console.warn('[pending-changes] push board note failed:', err.message);
+        }
+      }
+      showToast(`攒下了${list.length > 1 ? ` ${list.length} 条` : ''}，从下面那条浮钮一起发`, 'info');
+      return;
+    }
+
+    useGlobalStore.getState().openChatDock();
+    // E4：发送瞬间精灵先飘到目标上（本地合成在场，真事件来了自然接管）
+    boardApiRef.current?.presenceHint?.(list[0].id);
+    const desc = list.map((t) => {
+      const where = whereOf(t);
+      const loc = where && where !== t.title ? `（${where}）` : '';
+      return `${t.typeLabel}「${t.title}」${loc}`;
+    }).join('、');
+    await handleSend(`【画布标注】${desc}：${text}`);
+  };
+
+  /**
+   * 「发给 agent（N 条标注）」浮钮（E3）：元素评论攒批后的空间确认按钮。
+   * 消息只写一句指路 —— 内容和锚点 agent 自己去 pending changes 拉。
+   */
+  const unsentComments = comments.filter(c => c.status === 'open' && !c.sentAt);
+  /**
+   * 画布上每件东西攒了几条待发标注 → 卡片角标。
+   *
+   * 没有角标的话，「攒着」之后画布上一点痕迹都没有，只有右下角一个数字 ——
+   * 走查到第五张时你已经不记得前面标过哪几张了。
+   */
+  // ⚠️ 不用 useMemo：这一段在**早退之后**（`unsentComments` 也是），加个 hook
+  // 就等于"这次渲染比上次多调了一个 hook"，React 直接崩。一次遍历几条评论，
+  // memo 省不出什么（2026-08-13 真跑撞到）。
+  const boardNoteCounts = {};
+  for (const c of unsentComments) if (c.board) boardNoteCounts[c.board] = (boardNoteCounts[c.board] || 0) + 1;
+  const handleSendAnnotations = async () => {
+    const n = unsentComments.length;
+    if (!n) return;
+    const paths = [...new Set(unsentComments.map(c => c.path).filter(Boolean))];
+    const where = paths.length ? paths.join('、') : '打开的产物';
+    // 措辞不写死"元素标注"：这条 buffer 现在同时装画布标注（指到一件东西）和
+    // 元素标注（指到文档里的某个元素），说成一种会让 agent 去找不存在的元素
+    const kindWord = unsentComments.every(c => c.board) ? '标注'
+      : (unsentComments.some(c => c.board) ? '标注（有的指着画布上的东西，有的指着页面元素）' : '元素标注');
+    useGlobalStore.getState().openChatDock();
+    // sentAt 标记在 handleSend 开头统一做
+    await handleSend(`我在 ${where} 上留了 ${n} 条${kindWord}，内容和锚点都在 pending changes 里，逐条处理一下。`);
+  };
+
   const handleJumpToComment = (comment) => {
     if (!iframeDoc) return;
     const el = findElementByAnchor(comment.anchor, iframeDoc.body);
@@ -1771,11 +1976,8 @@ export default function ProjectWorkspace() {
    */
   const handleExport = async (format) => {
     try {
-      if (!currentSessionId) {
-        showToast('请先选中一个会话再导出', 'error');
-        return;
-      }
-      const { blob, filename } = await Exports.download(id, currentSessionId, format);
+      // （无会话闸门 2026-08-13 撤除 —— 导出的是项目的产物，路由已项目级）
+      const { blob, filename } = await Exports.download(id, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1794,27 +1996,31 @@ export default function ProjectWorkspace() {
   return (
     <PanelManagerProvider projectId={id} defaultPanels={defaultPanels} panelMeta={panelMeta}>
     <AppShell
+      // 工作台顶栏浮在画布之上、鼠标离开就淡出：画布是这里唯一的内容，
+      // 横带越少越好。**浮起来而不是收起高度**——顶栏一参与布局，收展就会
+      // 改画布容器高度，相机可视区跟着变、contain 重算，画面会跳。
+      overlayTop
+      topSuppressed={artifactWindowOpen}
+      /**
+       * 面包屑 = **当前目录一路拆到根**（2026-08-13）。
+       *
+       * 以前这里最多两级（项目名 / 任务名），因为那时只有"在项目区"和"聚焦
+       * 某一块区"两种状态。现在文件夹可以套文件夹，进到第三层就得能一眼看出
+       * 自己在哪、还能点回去任意一级。
+       *
+       * 项目名那一级 = 根目录。点它回根，跟点 logo 回首页不是一回事。
+       */
       breadcrumb={[
-        // 「项目」这一级删了（2026-07-30）：左边的 logo 本来就回首页，两个入口指同一处。
-        // 面包屑最多两级 —— 项目名 / 任务名。
-        // 项目名这一级就是项目区（点它 = 退回全景），不再单列一个「项目区」——
-        // 两个标签指向同一个地方，重复。在工作区里时它可点，已经在项目区时是当前位置。
-        boardUi?.focus
-          ? {
-              label: project.name,
-              onClick: () => boardApiRef.current?.exitToProject(),
-              title: '退出任务，回到项目区（会话一起退出，ESC 同效）',
-            }
-          : { label: project.name, title: '项目区：记忆 / 指引 / 风格 / 文件 + 全部工作区' },
-        // 工作区那一级：名字跟项目名撞了就只写「工作区」——首页建的项目由会话摘要
-        // 正名，单会话项目里这两个名字天然一样，重复写两遍纯噪音。
-        ...(boardUi?.focus
-          ? [{
-              label: boardUi.focus.title === project.name ? '工作区' : boardUi.focus.title,
-              // 0 项时不写计数：为零的计数是噪音
-              ...(boardUi.focus.count > 0 ? { hint: `${boardUi.focus.count} 项` } : {}),
-            }]
-          : []),
+        {
+          label: project.name,
+          title: '回到桌面根',
+          ...(boardUi?.cwd ? { onClick: () => boardApiRef.current?.goTo?.('') } : {}),
+        },
+        ...((boardUi?.crumbs || []).map((c, i, all) => ({
+          label: c.title,
+          // 最后一级是"你现在在这儿"，不可点
+          ...(i < all.length - 1 ? { onClick: () => boardApiRef.current?.goTo?.(c.id) } : {}),
+        }))),
       ]}
       actions={
         <>
@@ -1864,73 +2070,48 @@ export default function ProjectWorkspace() {
               onViewCode={handleViewCode}
               isQuickProject={project.kind === 'quick'}
               onUpgrade={() => { setActionsOpen(false); setUpgradeOpen(true); }}
+              onOpenProjectPanel={(key) => boardApiRef.current?.openProjectPanel(key)}
+              projectBand={boardUi?.projectBand || null}
             />
           </div>
         </>
       }
     >
-      {/* 主区两栏：左 ChatPanel 固定 + 右 Canvas section（占满 + 浮窗叠加） */}
-      {/* AppShell children 包装层是普通 div（非 flex），用 height:100% 拿满 */}
-      <div style={{
-        height: '100%', display: 'flex', minHeight: 0,
-        background: STAGE.bg,
-        overflow: 'hidden',
-      }}>
-        {/* 左栏 chat 固定 */}
-        {/* 分界用软投影不用硬线（2026-07-30）：一条 1px 边框是"画了一条线"，
-            右向的淡投影是"这一栏有点厚度"，跟画布那张纸的层次读起来更顺。
-            圆角留给真正浮起来的东西（站点窗 / deck 窗），固定轨道不做成卡片 ——
-            它既不能拖也不能关，浮起来的暗示是假的，还要吃掉本就只有 360 的宽度。 */}
-        <aside style={{
-          width: 360, flexShrink: 0,
-          display: 'flex', flexDirection: 'column',
-          background: COLOR.bgWhite,
-          boxShadow: '2px 0 10px rgba(45,36,24,0.05)',
-          zIndex: 1,
-          minHeight: 0,
-        }}>
-          <ChatPanel
-            messages={messages}
-            onSend={handleSend}
-            isStreaming={isStreaming}
-            queueDepth={queueDepth}
-            wsStatus={wsStatus}
-            lastEventAt={lastEventAt}
-            trayItems={inputs}
-            onRemoveTrayItem={handleRemoveInput}
-            onPickFile={handleAddInput}
-            promptSuggestion={promptSuggestion}
-            onDismissSuggestion={() => setPromptSuggestion(null)}
-            agentProgress={agentProgress}
-            thinkingTokens={thinkingTokens}
-            onStop={currentRunId ? handleStop : null}
-            todos={todos}
-            sessionTitle={currentSessionTitle}
-            subagents={subagents}
-            onOpenSessionList={() => setSessionListOpen(true)}
-            onCloseSession={handleCloseSession}
-            onNewChat={() => navigate(`/projects/${id}/work`)}
-            hasActiveSession={!!currentSessionId}
-            systemInfo={systemInfo}
-            contextUsage={contextUsage}
-            onCompact={handleCompact}
-            onRefreshUsage={refreshContextUsage}
-            projectId={id}
-            sessionId={currentSessionId}
-            onCanvasReload={handleCanvasReload}
-          />
-        </aside>
-
-        {/* 右主区：CanvasFrame 占满（边到边，无 padding 卡片）+ 5 浮窗叠加 */}
-        {/* bounds='parent' 限制浮窗在此 section 内，不跑屏外、不跑到 chat 上 */}
-        <section style={{
-          flex: 1, minWidth: 0,
+      {/* 主区一层：画布占满全屏，聊天栏浮在它之上（2026-08-07 外壳改制）
+       *
+       * 原来是「左 360px 固定 chat + 右 canvas」两栏。改的理由是画布成了唯一
+       * 顶层曲面，固定侧栏等于在最值钱的横向空间上永久收 360px 的税，而
+       * DESKTOP_W=1360 这个逻辑宽当初就是照着"旁边有侧栏"定的。
+       *
+       * **「跟随镜头」是靠层级实现的，不是靠代码跟随**：聊天栏是这个视口容器的
+       * absolute 子元素，跟画布内容的滚动/相机不在同一个坐标系里，所以画布怎么
+       * 动它都待在屏幕原处。将来换成真相机（无限画布）也一样成立 —— 它在屏幕
+       * 空间，不在画布空间。
+       */}
+      <div
+        ref={stageAreaRef}
+        style={{
+          height: '100%', minHeight: 0,
           position: 'relative',
+          background: STAGE.bg,
+          overflow: 'hidden',
+        }}
+      >
+        {/* 画布：铺满整个视口容器，边到边。
+         *
+         * `isolation:'isolate'` 是有用的：它把画布里的一切（世界层、关系线、
+         * 在场标记、打开的产物窗）关进自己的层叠上下文，于是**浮窗层永远在
+         * 产物窗之上** —— 打开一个 deck 还能跟 agent 说话，而那是这个工具的
+         * 全部意义。不隔离的话，产物窗那个 z-index 500 会跟聊天栏的 120 在
+         * 同一个上下文里比大小，把聊天盖死。 */}
+        <section style={{
+          position: 'absolute', inset: 0,
           display: 'flex', flexDirection: 'column',
           background: COLOR.bgWhite,
+          isolation: 'isolate',
         }}>
           <CanvasFrame
-            htmlSrc={currentSessionId ? Canvas.artifactUrl(id, currentSessionId, versionOfFile(fileVersions, 'canvas.html')) : null}
+            htmlSrc={currentSessionId ? Canvas.artifactUrl(id, versionOfFile(fileVersions, 'canvas.html')) : null}
             selectedAnchor={selectedAnchor}
             onSelectChange={setSelectedAnchor}
             onTextEdit={handleTextEdit}
@@ -1946,10 +2127,21 @@ export default function ProjectWorkspace() {
             projectId={id}
             sessionId={currentSessionId}
             decisionsReloadKey={decisionsReloadKey}
-            comments={comments}
+            // 产物窗只吃**元素标注**：画布标注的锚点是一件东西不是一个元素，
+            // 混进去会让窗里的「评论 (N)」多算，也会让标记层拿着 {board:…}
+            // 去 querySelector（anchor.path 那一支正好是选择器串，`鉴赏页` 这种
+            // 路径进去就是个无效选择器）。它们的视觉落点是卡片角标，见 NoteBadge
+            comments={comments.filter(c => !c.board)}
+            boardNoteCounts={boardNoteCounts}
+            onAnnotate={handleAnnotate}
+            // 精灵对话通道（2026-08-14）：星芒下写的一句原样进会话 —— 跟聊天框
+            // 同一条 handleSend，跑动中自然是追加/排队语义。刻意**不**开聊天抽屉：
+            // 日记本范式的回条是精灵手写短句，全文想看再自己开侧栏
+            onSpriteSay={(text) => handleSend(text)}
             onAddComment={handleAddComment}
             onResolveComment={handleResolveComment}
             onDeleteComment={handleDeleteComment}
+            onRegionComment={handleRegionComment}
             onSiteDomEdit={handleSiteDomEdit}
             onDirectEdit={handleDirectEdit}
             onTriggerRun={handleTriggerRun}
@@ -1970,6 +2162,8 @@ export default function ProjectWorkspace() {
             boardUi={boardUi}
             boardApiRef={boardApiRef}
             onBoardUiState={setBoardUi}
+            onWindowOpenChange={setArtifactWindowOpen}
+            onExport={handleExport}
             stageRef={stageRef}
             onAddToContext={(item) => {
               // 工作台物件 → 上下文托盘（同上传附件语义，下一条消息带给 agent）。
@@ -1977,20 +2171,106 @@ export default function ProjectWorkspace() {
               setInputs(prev => prev.some(it => it.path === item.path) ? prev : [...prev, item]);
               showToast(`已加入上下文：${item.name}（发消息时一起带给 agent）`, 'success');
             }}
+            onAskAgent={(ctx) => {
+              // 画布里的 agent 入口（2026-08-08）：画布只说「用户指着这里」，
+              // 翻译成人话是这里的事 —— 画布不该知道聊天栏长什么样。
+              //
+              // **不替他把话说完**：只垫一句定位，光标停在后面等他写要做什么。
+              // 自动填一整句会变成"猜他想干嘛"，猜错了他还得先删掉。
+              // 复用既有的注入通道（Inspect「触发新 run」走的也是它）：
+              // 写进 chatDraft，ChatComposer 会同步进 textarea 并把光标放到末尾。
+              const lead = ctx?.objects?.length
+                ? `关于「${ctx.objects.map(id => id.split('/').pop()).join('、')}」，`
+                : ctx?.folder ? `在「${ctx.folder.split('/').pop()}」文件夹里，` : '';
+              if (lead) useGlobalStore.getState().setChatDraft(lead);
+              useGlobalStore.getState().focusComposer();
+            }}
           />
 
-          {/* 浮窗层 —— bounds='parent' = 不出 canvas section
-              C3：inspect / comments 删 — 改用 InspectFloatingCard（CanvasFrame 内贴选中元素） */}
-          <FloatingPanel id="tweaks" title="Tweaks" icon={Sliders} bodyStyle={{ padding: 0 }}>
-            <TweaksPanel
-              projectId={id}
-              sessionId={currentSessionId}
-              iframeDoc={iframeDoc}
-              reloadKey={tweaksReloadKey}
-              onChat={handleSend}
-            />
-          </FloatingPanel>
         </section>
+
+        {/* Tweaks 浮窗跟聊天栏一样住在画布 section **外面**：它是用来调正在看的
+            那个 deck 的，被产物窗盖住就等于没有。
+            C3：inspect / comments 删 — 改用 InspectFloatingCard（CanvasFrame 内贴选中元素） */}
+        <FloatingPanel id="tweaks" title="Tweaks" icon={Sliders} bodyStyle={{ padding: 0 }}>
+          <TweaksPanel
+            projectId={id}
+            sessionId={currentSessionId}
+            iframeDoc={iframeDoc}
+            reloadKey={tweaksReloadKey}
+            onChat={handleSend}
+          />
+        </FloatingPanel>
+
+        {/* 「发给 agent（N 条标注）」—— 元素评论攒批后的空间确认按钮（E3）。
+            跟悬浮卡一样住在隔离层**外面**：标注多半是在产物窗里点的，
+            按钮被窗盖住等于没有。有未发标注才出现。 */}
+        {unsentComments.length > 0 && (
+          <button
+            onClick={handleSendAnnotations}
+            style={{
+              position: 'absolute', bottom: 64, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 130,
+              display: 'inline-flex', alignItems: 'center', gap: GAP.sm,
+              padding: `${GAP.sm}px ${GAP.lg}px`,
+              border: 'none', borderRadius: RADIUS.md, cursor: 'pointer',
+              background: INK_SURFACE.bg, color: INK_SURFACE.text,
+              boxShadow: INK_SURFACE.shadow,
+              fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, letterSpacing: '0.04em',
+              animation: 'ndPopIn 160ms cubic-bezier(0.32, 0.72, 0, 1)',
+            }}
+            title="agent 会去 pending changes 里逐条读你的标注"
+          >
+            <MessageSquarePlus size={14} strokeWidth={1.75} />
+            发给 agent（{unsentComments.length} 条标注）
+          </button>
+        )}
+
+        {/* 对话 —— 悬浮 AI 卡（2026-08-13）：关着零遮挡，鼠标贴屏缘唤出，
+            图钉固定。放在 canvas section **之外**、视口容器之内：它跟画布
+            内容不共用坐标系，画布怎么滚它都待在屏幕原处（这就是「跟随镜头」）。 */}
+        <ChatDock title={currentSessionTitle || '对话'}>
+          {({ collapse, pinned, onTogglePin }) => (
+          <ChatPanel
+            onCollapse={collapse}
+            pinned={pinned}
+            onTogglePin={onTogglePin}
+            messages={messages}
+            onSend={handleSend}
+            isStreaming={isStreaming}
+            queueDepth={queueDepth}
+            wsStatus={wsStatus}
+            lastEventAt={lastEventAt}
+            trayItems={inputs}
+            onRemoveTrayItem={handleRemoveInput}
+            onPickFile={handleAddInput}
+            promptSuggestion={promptSuggestion}
+            onDismissSuggestion={() => setPromptSuggestion(null)}
+            agentProgress={agentProgress}
+            thinkingTokens={thinkingTokens}
+            onStop={currentRunId ? handleStop : null}
+            todos={todos}
+            sessionTitle={currentSessionTitle}
+            subagents={subagents}
+            onOpenSessionList={() => setSessionListOpen(true)}
+            onCloseSession={handleCloseSession}
+            onNewChat={() => {
+              // 新对话 = 清指针（本地即时 + 服务端广播，别的标签页跟着走）
+              sessionIdRef.current = null;
+              setCurrentSessionId(null);
+              updateProject(id, { activeSessionId: null });
+            }}
+            hasActiveSession={!!currentSessionId}
+            systemInfo={systemInfo}
+            contextUsage={contextUsage}
+            onCompact={handleCompact}
+            onRefreshUsage={refreshContextUsage}
+            projectId={id}
+            sessionId={currentSessionId}
+            onCanvasReload={handleCanvasReload}
+          />
+          )}
+        </ChatDock>
       </div>
 
       <ShareModal show={shareOpen} onClose={() => setShareOpen(false)} project={project} />
@@ -2030,10 +2310,11 @@ export default function ProjectWorkspace() {
         projectId={id}
         currentSessionId={currentSessionId}
         onSwitch={(sid) => {
-          // H1：切换 session 走 URL navigate（URL 是 sid 唯一 source of
-          // truth），useEffect 会自动重 hydrate messages。
-          // sid=null → 新会话路径 /work；有 sid → /sessions/<sid>
-          navigate(sid ? `/projects/${id}/sessions/${sid}` : `/projects/${id}/work`);
+          // 切会话 = 改服务端指针（唯一真相源），本地先行、WS 重连自动重 hydrate。
+          // 以前这里 navigate 到 /sessions/:sid —— URL 真相源时代的舞蹈，已收敛。
+          sessionIdRef.current = sid || null;
+          setCurrentSessionId(sid || null);
+          updateProject(id, { activeSessionId: sid || null });
         }}
       />
       {elicitRequest && (

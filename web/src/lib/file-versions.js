@@ -22,6 +22,16 @@
 export function workspaceRelOf(filePath) {
   if (!filePath || typeof filePath !== 'string') return null;
   const p = filePath.replace(/\\/g, '/');
+  // 已经是工作区相对路径（run.file_changed 的 filePath 服务端过了 toWorkspaceRel）
+  // → 原样用。⚠️ 别掉进下面的老式猜测：它只认 tasks/assets/agent-memory 标志段
+  // （任务模型时代的形状），扁平化后 `稿件/主稿.html` 会被猜成 `主稿.html` ——
+  // 版本记在错的 key 上，文件夹里的产物改完 iframe 永不刷新（2026-08-14
+  // 根站病族普查顺带查实的静默病）。
+  if (!p.startsWith('/') && !/^[A-Za-z]:\//.test(p)) {
+    const rel = p.replace(/^\.\//, '').replace(/\/+$/, '');
+    return rel || null;
+  }
+  // 绝对路径（generate_image 的 absPath 这类调用方）：老式猜测
   const m = p.match(/(?:^|\/)((?:tasks|assets|agent-memory)\/.+)$/);
   if (m) return m[1];
   // 旧式会话：产物就在 cwd 根（canvas.html / spec.json …）
@@ -36,34 +46,23 @@ export function versionOfFile(versions, rel) {
 }
 
 /**
- * 一个任务目录整体的版本号（该目录下所有文件版本之和）。
- * 站点用它：改 `style.css` 或任意子页，整站预览都该重渲。
- */
-export function versionOfTask(versions, task) {
-  if (!versions || !task) return 0;
-  const prefix = `tasks/${task}/`;
-  let sum = 0;
-  for (const [k, v] of Object.entries(versions)) {
-    if (k.startsWith(prefix)) sum += v;
-  }
-  return sum;
-}
-
-/**
  * 站点**单页**的刷新版本（2026-07-30）：该页自己的 html + 产物根下所有非 html
  * 文件（css/js/图片可能被任何页引用，改了都该重渲）。其它页面的 html 不算 ——
  * agent 改 about.html 时正在看的 index.html 不该跟着重载。
- * versionOfTask 仍留给"整任务"粒度的消费方（导出菜单等）。
+ * （versionOfTask 已删：零调用点的死代码，还揣着扁平化前的 tasks/ 前缀。）
  *
  * @param {string} baseRel 产物根（'tasks/<t>' 或 'tasks/<t>/dist'）
  * @param {string} pageRel 页面相对产物根的路径（'index.html' / 'posts/a.html'）
  */
 export function versionOfSitePage(versions, baseRel, pageRel) {
-  if (!versions || !baseRel || !pageRel) return 0;
-  const prefix = `${baseRel}/`;
-  let sum = versions[`${baseRel}/${pageRel}`] || 0;
+  if (!versions || !pageRel) return 0;
+  // 根站（扁平化后站点长在工作区根上）的 baseRel 合法地是空串：此时页面 key
+  // 没有前缀、整个工作区的非 html 文件都是这个站的资产。原来 `!baseRel` 早退 0
+  // 会让根站页面永远不热刷新。
+  const prefix = baseRel ? `${baseRel}/` : ''; // path-compose-ok：三元已守空串，这是前缀不是路径
+  let sum = versions[`${prefix}${pageRel}`] || 0;
   for (const [k, v] of Object.entries(versions)) {
-    if (k.startsWith(prefix) && !/\.html?$/i.test(k)) sum += v;
+    if ((!prefix || k.startsWith(prefix)) && !/\.html?$/i.test(k)) sum += v;
   }
   return sum;
 }

@@ -7,7 +7,7 @@
 
 - `kind`: `'edit'` / `'comment'` / `'pending-move'` / `'pending-duplicate'` / `'pending-style'` / `'pending-delete'` / `'applied-move'` / `'applied-style'` / `'applied-duplicate'`
 - `anchor`: 元素稳定锚点（{ dataId, path, textHint, bbox }）
-- `path`（可选）: 改动属于哪份文件（如 `tasks/<任务>/about.html`）；没有 = 会话的 canvas.html
+- `path`（可选）: 改动属于哪份文件（如 `about.html`）；没有 = 会话的 canvas.html
 - `aiContext`: 元素角色 / 页面信息 / outerHTML / computed styles / siblings；移动类还带 `targetContainerTag` + `alignmentHints`
 - `diff`（edit）: `{ oldText, newText }` —— 用户改成了什么
 - `text`（comment）: 评论原文
@@ -21,7 +21,7 @@
   - **comment 带 `linkedToEditId`**：评论关联到 buffer 里的某条 pending-* edit（拖完浮 PostDragNotePanel 提交的 follow-up）。处理时**把该 comment 视为对那条 edit 的补充指令**——比如 pending-move 关联 comment "保持其它元素位置不变" → 走默认保护邻居的更严格档；pending-move 关联 comment "顺便把右边那块也搬过来" → 视为复合操作一起做。处理完两条都进 clearedIds
 - **edits 是用户已经手动改完的** —— done deal 不动；只在回复里知会"用户改了 N 处文字 OK"
 - **applied-move / applied-style / applied-duplicate 也是 done deal** —— 站点窗的拖拽落地时前端已把改动写回 `path` 指的文件。**不要再应用一遍**（重复应用 = 元素被搬两次）。用它理解用户动了什么；如果用户后续要求"顺一下"，可以把烤进 inline 的 left/top 提炼进样式表，否则不主动动
-  - **`path` 在构建产物目录下**（如 `tasks/<t>/dist/…`）时：改动落在的是构建产物，下次构建会把它冲掉。在做任何会触发重新构建的事之前，先把这条改动同步回对应的源文件（按 anchor/aiContext 找源码里的对应元素）
+  - **`path` 在构建产物目录下**（如 `dist/…`）时：改动落在的是构建产物，下次构建会把它冲掉。在做任何会触发重新构建的事之前，先把这条改动同步回对应的源文件（按 anchor/aiContext 找源码里的对应元素）
   - 记录带 `serializedFrom: 'runtime-dom'` 时：落盘走的是整页运行时序列化兜底（干净源码上没定位到锚点），文件里可能混入该页脚本的运行时产物（注入节点/内联动画态）。用户抱怨"页面变怪了"时优先查这份文件
 - **pending-move / pending-duplicate** —— 用户已经在画布拖完了视觉，但**源代码还是老样子**。
   - 用 `anchor.dataId` (data-anchor) 在 canvas.html 里 grep 出 source 段

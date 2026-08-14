@@ -5,12 +5,15 @@
  * 消息时，turn.js 在 composeUserMessage 里 prepend 一个 system 提示告诉 agent
  * "有 N 处变更"，agent 主动调 mcp__nodesign__get_pending_changes 拉详情。
  *
- * 路径：
- *   POST   /api/projects/:pid/sessions/:sid/pending-changes  append item
- *   GET    /api/projects/:pid/sessions/:sid/pending-changes  返 { items, count }
- *   DELETE /api/projects/:pid/sessions/:sid/pending-changes  全清（也接 ?ids=）
+ * 路径（2026-08-13 起**项目级**，会话级留作 alias）：
+ *   POST   /api/projects/:pid/pending-changes  append item
+ *   GET    /api/projects/:pid/pending-changes  返 { items, count }
+ *   DELETE /api/projects/:pid/pending-changes  全清（也接 ?ids=）
+ *   （/:pid/sessions/:sid/... 同 handler 双挂载 —— 老前端和 jsonl 里的
+ *     历史引用还打得通；sid 在扁平化后本来就只是路由上的仪式，
+ *     sessionRoot === 工作区根，这份 buffer 从来就是每项目一份）
  *
- * 文件：<sessionRoot>/pending-changes.json
+ * 文件：<工作区根>/pending-changes.json
  *   { items: [{ id, kind, anchor, aiContext?, diff?, text?, linkedToEditId?, move?, styleDelta?, reactMount?, ts }] }
  *
  * 2026-05-12 起新增 kind:
@@ -32,7 +35,10 @@ import { randomUUID } from 'crypto';
 import { mutex } from 'async-mutex-lite';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
-import { ensureSessionWorkspace, validateSessionId } from '../projects/workspace.js';
+import {
+  ensureSessionWorkspace, ensureProjectWorkspace, validateSessionId, getSharedDir,
+} from '../projects/workspace.js';
+import { renderRegionShot, saveRegionShot } from '../lib/region-shot.js';
 
 const router = express.Router();
 
@@ -40,14 +46,24 @@ const FILE_NAME = 'pending-changes.json';
 const MAX_ITEMS = 200;
 
 function guard(req, res) {
-  try {
-    validateSessionId(req.params.sid);
-  } catch (err) {
-    res.status(400).json({ error: err.message || 'invalid pid/sid' });
-    return null;
+  // sid 只在走老 alias 时存在 —— 有就校验形状，没有就是项目级路由
+  if (req.params.sid !== undefined) {
+    try {
+      validateSessionId(req.params.sid);
+    } catch (err) {
+      res.status(400).json({ error: err.message || 'invalid pid/sid' });
+      return null;
+    }
   }
   // pid 校验 + 存在性 + 归属（2026-07-30 多用户）统一走 guardProject
   return guardProject(req, res);
+}
+
+/** 两条挂载共用：alias 带 sid 走原路，项目级直接 ensure 工作区 */
+function rootOf(req) {
+  return req.params.sid !== undefined
+    ? ensureSessionWorkspace(req.params.pid, req.params.sid)
+    : ensureProjectWorkspace(req.params.pid);
 }
 
 async function readBuf(sessionRoot) {
@@ -66,16 +82,16 @@ async function writeBuf(file, items) {
   await fs.writeFile(file, JSON.stringify({ items }, null, 2), 'utf8');
 }
 
-router.get('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
+router.get(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await rootOf(req);
     const { items } = await readBuf(sessionRoot);
     res.json({ items, count: items.length });
   } catch (err) { next(err); }
 });
 
-router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
+router.post(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
     const body = req.body || {};
@@ -119,7 +135,7 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
     }
     // pending-delete 只需 anchor
 
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const sessionRoot = await rootOf(req);
 
     // 接受 body.id（前端 newId('cmt') 等）以让前后端 id 统一——agent 调
     // clear_pending_changes 时 event 带 clearedIds，前端 comments state 用同一
@@ -171,10 +187,95 @@ router.post('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.delete('/:pid/sessions/:sid/pending-changes', async (req, res, next) => {
+/**
+ * 圈选评论（2026-08-07）—— 用户在预览上框一块，连同框里涉及的元素、一张
+ * 该区域的截图、以及一句话交给 agent。
+ *
+ * 单独一条路由而不是复用上面那个 POST，因为它要做两件那边不做的事：
+ * 跑一次 chromium 把区域截下来落盘，以及**不带 anchor**（圈的是一块地方
+ * 不是一个元素，硬塞一个 anchor 只会让 agent 以为用户点的是某一个）。
+ *
+ * 截图失败不挡下单：元素清单和那句话本身就够 agent 干活了，为了一张图把
+ * 用户刚圈完的东西整个丢掉是最差的选择。
+ */
+router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
-    const sessionRoot = await ensureSessionWorkspace(req.params.pid, req.params.sid);
+    const body = req.body || {};
+    const { region, viewport } = body;
+    const relPath = typeof body.path === 'string' ? body.path.replace(/\\/g, '/') : '';
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+
+    const num = (v) => typeof v === 'number' && Number.isFinite(v);
+    if (!region || !num(region.x) || !num(region.y) || !(region.w > 0) || !(region.h > 0)) {
+      return res.status(400).json({ error: 'region: { x, y, w, h } required' });
+    }
+    if (!viewport || !(viewport.width > 0) || !(viewport.height > 0)) {
+      return res.status(400).json({ error: 'viewport: { width, height } required' });
+    }
+    // 页面路径相对项目工作区根。扁平化之前这里硬要求 `tasks/<任务>/<文件>`
+    // 三段起步，现在根上的 `index.html` 只有一段，那条判据会把它全拒掉。
+    const parts = relPath.split('/');
+    if (!parts.length || parts.includes('..') || parts.some(p => !p || p.startsWith('.'))) {
+      return res.status(400).json({ error: 'invalid page path' });
+    }
+    const sharedDir = path.resolve(getSharedDir(req.params.pid));
+    const absPath = path.resolve(sharedDir, ...parts);
+    if (!absPath.startsWith(sharedDir + path.sep)) {
+      return res.status(400).json({ error: 'path escapes the workspace' });
+    }
+    try { await fs.access(absPath); } catch {
+      return res.status(404).json({ error: `page not found: ${relPath}` });
+    }
+
+    const elements = Array.isArray(body.elements) ? body.elements.slice(0, 12) : [];
+    const itemId = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : randomUUID();
+    const sessionRoot = await rootOf(req);
+
+    let shot = null;
+    let shotError = null;
+    try {
+      const { buffer } = await renderRegionShot({
+        absPath,
+        region: { x: region.x, y: region.y, w: region.w, h: region.h },
+        viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
+      });
+      shot = await saveRegionShot(sessionRoot, itemId, buffer);
+    } catch (err) {
+      shotError = err?.message || String(err);
+      console.warn('[region-comment] 截图失败，只带元素清单下单:', shotError);
+    }
+
+    const item = {
+      id: itemId,
+      kind: 'region-comment',
+      path: relPath,
+      text,
+      region: { x: Math.round(region.x), y: Math.round(region.y), w: Math.round(region.w), h: Math.round(region.h) },
+      ...(body.container && typeof body.container === 'object' ? { container: body.container } : {}),
+      viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
+      elements,
+      ...(shot ? { shot } : {}),
+      ...(shotError ? { shotError } : {}),
+      ts: new Date().toISOString(),
+    };
+
+    const count = await mutex(`pending:${sessionRoot}`, async () => {
+      const { items, file } = await readBuf(sessionRoot);
+      items.push(item);
+      const trimmed = items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items;
+      await writeBuf(file, trimmed);
+      return trimmed.length;
+    });
+
+    res.json({ ok: true, item, count });
+  } catch (err) { next(err); }
+});
+
+router.delete(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const sessionRoot = await rootOf(req);
 
     // 同 POST：mutex 串行避免 DELETE / POST 并发互踩
     const idsParam = req.query?.ids;
@@ -209,9 +310,11 @@ export async function readPendingSummary(sessionRoot) {
     const duplicates = items.filter(it => it.kind === 'pending-duplicate').length;
     const styles = items.filter(it => it.kind === 'pending-style').length;
     const deletes = items.filter(it => it.kind === 'pending-delete').length;
+    const regions = items.filter(it => it.kind === 'region-comment').length;
     const parts = [];
     if (edits > 0) parts.push(`${edits} 编辑`);
     if (comments > 0) parts.push(`${comments} 评论`);
+    if (regions > 0) parts.push(`${regions} 圈选`);
     if (moves > 0) parts.push(`${moves} 拖动`);
     if (duplicates > 0) parts.push(`${duplicates} 复制`);
     if (styles > 0) parts.push(`${styles} 样式`);

@@ -29,7 +29,7 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
     setLoading(true);
     setError(null);
     try {
-      const result = await Exports.list(projectId, sessionId);
+      const result = await Exports.list(projectId);
       setFiles(result?.files || []);
     } catch (err) {
       setError(err);
@@ -44,7 +44,7 @@ export default function ExportsListModal({ show, onClose, projectId, sessionId }
 
   const handleDownload = async (file) => {
     try {
-      const { blob, filename } = await Exports.downloadFile(projectId, sessionId, file.name);
+      const { blob, filename } = await Exports.downloadFile(projectId, file.name);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

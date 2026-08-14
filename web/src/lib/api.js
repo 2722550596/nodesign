@@ -108,18 +108,24 @@ export const Admin = {
 };
 
 // ── Publish（站点一键上线 Cloudflare Pages，task 级）──
+// 根站的 task 是空串（扁平化后站点住工作区根）。它的 store key 是 '.'，但 '.'
+// 进不了 URL 路径段（WHATWG 把单点段归一掉，发出去就成 /publish/），所以
+// 根站走**无段**路径 `/publish`，服务端按无段=根站解释（publish.js 双注册）。
+const pubPath = (pid, task) => (task && task !== '.'
+  ? `/api/projects/${pid}/publish/${encodeURIComponent(task)}`
+  : `/api/projects/${pid}/publish`);
 export const Publish = {
-  get: (pid, task) => jsonRequest('GET', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  get: (pid, task) => jsonRequest('GET', pubPath(pid, task)),
   // root：多站点任务点名要发哪个（'.' = 任务根）；单站点省略
-  publish: (pid, task, root) => jsonRequest('POST', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`,
+  publish: (pid, task, root) => jsonRequest('POST', pubPath(pid, task),
     root != null ? { root } : undefined),
-  unpublish: (pid, task) => jsonRequest('DELETE', `/api/projects/${pid}/publish/${encodeURIComponent(task)}`),
+  unpublish: (pid, task) => jsonRequest('DELETE', pubPath(pid, task)),
 };
 
-// ── Canvas（H3：session-scoped）──
+// ── Canvas（2026-08-13 起项目级：会话收敛后画布/deck 归项目所有）──
 export const Canvas = {
-  read: async (pid, sid) => {
-    const res = await fetch(`/api/projects/${pid}/sessions/${sid}/canvas`);
+  read: async (pid) => {
+    const res = await fetch(`/api/projects/${pid}/canvas`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
@@ -127,32 +133,33 @@ export const Canvas = {
     return res.text();
   },
   // path：任务 deck 是 tasks/<任务>/canvas.html；不传写会话自己的 canvas.html
-  write: (pid, sid, html, source = 'user', deckPath = null) =>
-    jsonRequest('PUT', `/api/projects/${pid}/sessions/${sid}/canvas`, { html, source, ...(deckPath ? { path: deckPath } : {}) }),
-  history: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/history`),
-  revert: (pid, sid, commit) =>
-    jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/canvas/revert`, { commit }),
+  write: (pid, html, source = 'user', deckPath = null) =>
+    jsonRequest('PUT', `/api/projects/${pid}/canvas`, { html, source, ...(deckPath ? { path: deckPath } : {}) }),
+  history: (pid) => jsonRequest('GET', `/api/projects/${pid}/canvas/history`),
+  revert: (pid, commit) =>
+    jsonRequest('POST', `/api/projects/${pid}/canvas/revert`, { commit }),
   // Canvas.undo (git checkout 上一个 commit) 已砍 (2026-05-07) — SDK rewindFiles
   // 通过对话里"回到此处"覆盖所有场景（含历史 session resume 链路）。后端 endpoint
   // 留着不删但无前端调用。
-  /** iframe src 用 — sid 必传 */
-  artifactUrl: (pid, sid, version) =>
-    `/api/projects/${pid}/sessions/${sid}/canvas${version ? `?v=${encodeURIComponent(version)}` : ''}`,
+  /** iframe src 用 */
+  artifactUrl: (pid, version) =>
+    `/api/projects/${pid}/canvas${version ? `?v=${encodeURIComponent(version)}` : ''}`,
   /** deck 比例信息（前端缩略图按比例设容器尺寸 + iframe size 用） */
-  deckMeta: (pid, sid, deckPath = null) =>
-    jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/canvas/deck-meta${deckPath ? `?path=${encodeURIComponent(deckPath)}` : ''}`),
+  deckMeta: (pid, deckPath = null) =>
+    jsonRequest('GET', `/api/projects/${pid}/canvas/deck-meta${deckPath ? `?path=${encodeURIComponent(deckPath)}` : ''}`),
 };
 
-// ── Spec（设计意图档案，session-scoped）──
+// ── Spec（设计意图档案，项目级）──
 export const Spec = {
-  read: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/spec`),
+  read: (pid) => jsonRequest('GET', `/api/projects/${pid}/spec`),
 };
 
-// ── SessionConfig（用户/前端拥有的 session 配置，区别于 agent 私域 spec.json）──
+// ── SessionConfig（项目级 UI 偏好，区别于 agent 私域 spec.json；服务端落
+// ui-config.json —— 名字是历史遗留，真·会话配置是 .nd/<sid>/ 里模型那份）──
 // 字段：tweaks_mode_enabled
 export const SessionConfig = {
-  read: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/config`),
-  patch: (pid, sid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/sessions/${sid}/config`, patch),
+  read: (pid) => jsonRequest('GET', `/api/projects/${pid}/config`),
+  patch: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/config`, patch),
 };
 
 // ── Plan（Phase 3.2：SDK 原生 plan mode 审批流）──
@@ -191,16 +198,22 @@ export const Elicit = {
       { action, content }),
 };
 
-// ── PendingChanges（C4：用户直接编辑 + 评论 buffer，session-scoped）──
+// ── PendingChanges（C4：用户直接编辑 + 评论 buffer，项目级）──
 // 前端 push edit / comment item，下次发 chat 时 turn.js 在 user message 前
 // prepend system 提示 → agent 主动调 mcp__nodesign__get_pending_changes 拉详情。
 export const PendingChanges = {
-  list: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/pending-changes`),
-  push: (pid, sid, item) =>
-    jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/pending-changes`, item),
-  clear: (pid, sid, ids) => {
+  list: (pid) => jsonRequest('GET', `/api/projects/${pid}/pending-changes`),
+  push: (pid, item) =>
+    jsonRequest('POST', `/api/projects/${pid}/pending-changes`, item),
+  /**
+   * 圈选评论：{ path, region, viewport, elements, text }。
+   * 服务端顺手跑一次 chromium 把那块截下来，所以比别的 push 慢（一两秒）。
+   */
+  regionComment: (pid, payload) =>
+    jsonRequest('POST', `/api/projects/${pid}/region-comment`, payload),
+  clear: (pid, ids) => {
     const qs = Array.isArray(ids) && ids.length > 0 ? `?ids=${encodeURIComponent(ids.join(','))}` : '';
-    return jsonRequest('DELETE', `/api/projects/${pid}/sessions/${sid}/pending-changes${qs}`);
+    return jsonRequest('DELETE', `/api/projects/${pid}/pending-changes${qs}`);
   },
 };
 
@@ -232,11 +245,40 @@ export const Assets = {
   /** 删便签 */
   removeNote: (pid, filename) =>
     jsonRequest('DELETE', `/api/projects/${pid}/notes/${encodeURIComponent(filename)}`),
-  /** 任务便利贴（tasks/<任务>/notes/*.md，agent 和用户的共享头脑风暴层）*/
-  putTaskNote: (pid, task, filename, text) =>
-    jsonRequest('PUT', `/api/projects/${pid}/task-notes/${encodeURIComponent(task)}/${encodeURIComponent(filename)}`, { text }),
-  removeTaskNote: (pid, task, filename) =>
-    jsonRequest('DELETE', `/api/projects/${pid}/task-notes/${encodeURIComponent(task)}/${encodeURIComponent(filename)}`),
+  /** 便利贴（notes/*.md，agent 和用户的共享头脑风暴层）*/
+  putTaskNote: (pid, filename, text) =>
+    jsonRequest('PUT', `/api/projects/${pid}/task-notes/${encodeURIComponent(filename)}`, { text }),
+  removeTaskNote: (pid, filename) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/task-notes/${encodeURIComponent(filename)}`),
+  /**
+   * 删文件夹（连同里面的一切）。rel = 工作区相对路径，可以是嵌套的 `稿件/初稿`。
+   * 每一段单独编码 —— 整串 encodeURIComponent 会把分隔的 '/' 也编掉，
+   * 服务端的通配路由就只能收到一段。
+   */
+  /**
+   * 把一个东西搬进另一个文件夹（**真的动磁盘**）。
+   * to='' = 搬到工作区根。返回 { from, to, moved, board }，board 是改完名的新画布。
+   */
+  /** 新建文件夹；parent 为空 = 建在工作区根。重名自动加序号，返回真实落名 */
+  createFolder: (pid, { parent = '', name } = {}) =>
+    jsonRequest('POST', `/api/projects/${pid}/folders`, { parent, ...(name ? { name } : {}) }),
+  /**
+   * 搬家（真 `fs.rename`）。
+   *
+   * ⚠️ `toDir` 是**目标目录**不是新路径：`moveEntry(pid, '稿件/主稿.html', '定稿')`
+   * → 落到 `定稿/主稿.html`；`''` = 工作区根。传新路径的话服务端 stat 不到目录，
+   * 回 404 `target folder not found`（2026-08-13 真栽过：拖进任何文件夹都失败）。
+   */
+  moveEntry: (pid, from, toDir) =>
+    jsonRequest('POST', `/api/projects/${pid}/move`, { from, to: toDir }),
+  /**
+   * 改名（真 `fs.rename`，位置不变只换最后一段）。跟 moveEntry 是一对：
+   * move 换爹、rename 换名字。**扩展名不用传** —— 服务端按原文件补回去。
+   */
+  renameEntry: (pid, from, name) =>
+    jsonRequest('POST', `/api/projects/${pid}/rename`, { from, name }),
+  removeFolder: (pid, rel) =>
+    jsonRequest('DELETE', `/api/projects/${pid}/folders/${String(rel).split('/').map(encodeURIComponent).join('/')}`),
   /** 画布布局（空间画布，含 zones 分区）*/
   getBoard: (pid) => jsonRequest('GET', `/api/projects/${pid}/board`),
   putBoard: (pid, board) => jsonRequest('PUT', `/api/projects/${pid}/board`, { board }),
@@ -244,9 +286,7 @@ export const Assets = {
   patchBoard: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/board`, { patch }),
   /**
    * 产物文件 URL（project 级，不依赖 session）。
-   * relPath 是 artifacts 返回的 agent 视角路径（'assets/...'），
-   * artifact-file 路由根=shared/（2026-07-28 任务模型起），路径必须带
-   * 'assets/' 或 'tasks/' 前缀原样传递（server 兼容旧的无前缀形态）。
+   * relPath 是 artifacts 返回的 agent 视角路径，相对项目工作区根原样传递。
    */
   artifactFileUrl: (pid, relPath) => {
     const sub = String(relPath || '');
@@ -257,19 +297,16 @@ export const Assets = {
    * 没产物时返 204，<img> 走 onError 兜底成占位框。
    */
   coverUrl: (pid) => `/api/projects/${pid}/cover`,
-  /** 删任务文件夹 —— 连它绑定的会话一起删（一对一，不独立存在）*/
-  removeTask: (pid, name) =>
-    jsonRequest('DELETE', `/api/projects/${pid}/tasks/${encodeURIComponent(name)}`),
 };
 
 // ── Exports（H3：session-scoped）──
 export const Exports = {
   /** 当前任务里可以单独导出的东西（deck / 图 / 其它产物）*/
-  items: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/exports/items`),
+  items: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports/items`),
 
   /** 挑几样下载：单个原样、多个打 zip。返回 { blob, filename } */
-  pick: async (pid, sid, paths, filename) => {
-    const res = await fetch(`/api/projects/${pid}/sessions/${sid}/exports/pick`, {
+  pick: async (pid, paths, filename) => {
+    const res = await fetch(`/api/projects/${pid}/exports/pick`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths, filename }),
@@ -282,8 +319,8 @@ export const Exports = {
   },
 
   /** 下载文件，返回 { blob, filename }，调用方自行触发 a.click() */
-  download: async (pid, sid, format) => {
-    const res = await fetch(`/api/projects/${pid}/sessions/${sid}/exports/${format}`);
+  download: async (pid, format) => {
+    const res = await fetch(`/api/projects/${pid}/exports/${format}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
@@ -293,10 +330,10 @@ export const Exports = {
     return { blob, filename };
   },
 
-  list: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/exports`),
+  list: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports`),
 
-  downloadFile: async (pid, sid, filename) => {
-    const res = await fetch(`/api/projects/${pid}/sessions/${sid}/exports/file/${encodeURIComponent(filename)}`);
+  downloadFile: async (pid, filename) => {
+    const res = await fetch(`/api/projects/${pid}/exports/file/${encodeURIComponent(filename)}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw Object.assign(new Error(data.error || res.statusText), { status: res.status });

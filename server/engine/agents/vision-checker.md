@@ -14,9 +14,9 @@ do that page.
 0. **Which artifact, and which kind.** There are two kinds and they need
    completely different review workflows:
 
-   - **deck** — `tasks/<task>/canvas.html` (older sessions: `canvas.html` in
+   - **deck** — `canvas.html` (older sessions: `canvas.html` in
      cwd). Fixed aspect, one screen per `<section data-page="N">`.
-   - **site** — `tasks/<task>/index.html` plus sibling `.html` pages and a
+   - **site** — `index.html` plus sibling `.html` pages and a
      shared `style.css`. Responsive, naturally scrolling, no page numbers.
 
    `list_pages` tells you which one you are on: a deck returns entries with
@@ -28,13 +28,11 @@ do that page.
    canvas tool. If it doesn't, call them with no `path` — they default to
    the artifact the parent is currently working on.
 
-   **Do not go hunting with Glob.** `tasks/` and `assets/` are symlinks and
-   Glob does not follow them, so it will look like the workspace is empty.
-   If a tool says the artifact isn't found, say so and stop — don't conclude
-   it doesn't exist.
+   **Do not go hunting with Glob.** If a tool says the artifact isn't found,
+   say so and stop — don't conclude it doesn't exist.
 
 1. **Read `design-plan.md`** if it exists — next to the deck
-   (`tasks/<task>/design-plan.md`), else in cwd. It's the parent agent's
+   (`.nd/<session>/design-plan.md`), else in cwd. It's the parent agent's
    pre-execution design brief — core metaphor, palette, deck_kind, per-page
    decisions (`function_in_arc` / `rhythm_vs_prev` / `c_decisions`),
    `meta.anti_cliche`. Plan changes everything: you critique against the
@@ -75,7 +73,7 @@ S1. **Report broken links first.** `list_pages` already gave you a broken
     than any spacing issue. Lead with them.
 
 S2. **Shoot every page at desktop**:
-    `screenshot_canvas({ path: 'tasks/<task>/<file>', device: 'desktop' })`.
+    `screenshot_canvas({ path: '<file>', device: 'desktop' })`.
     Site screenshots default to fullPage, so you see the whole page, not
     just the first screen. Web pages are long — reviewing only the hero is
     the single most common way a site review misses everything.

@@ -37,6 +37,9 @@ export function publishLimit() {
 }
 
 export function validTaskName(name) {
+  // `.` 是工作区根上那个站的 key（扁平化后最常见的一种），单独放行；
+  // 其余仍然是单层目录名。
+  if (name === '.') return true;
   return typeof name === 'string' && name.length > 0
     && !name.includes('/') && !name.includes('..') && !name.startsWith('.');
 }
@@ -59,18 +62,21 @@ async function runWrangler(args) {
 }
 
 /**
- * 找任务里的目录站点产物（单页试作不可发布）。
+ * 找要发布的目录站点产物（单页试作不可发布）。
  *
- * root 消歧（2026-08-07，agent 报障修）：一个任务可以装多个平行站点，
- * 老逻辑 find() 静默拿第一个——发错了哪个都没人知道。现在：
- *   - 显式传 root（'.' 表示任务根）→ 精确匹配，匹配不上报错并列出现有的
- *   - 不传且只有一个 → 照发
- *   - 不传且有多个 → 409 列出候选，让调用方点名，不猜
+ * `key` 扁平化之后是**站点的产物根**：`.` = 工作区根上那个站，`v2` 之类 =
+ * 子目录站。发布记录表里的存量数据存的还是旧任务名，那些记录仍然能下线
+ * （unpublish 走存下来的 host，不需要重新寻址），但重发布会认不出来 ——
+ * 这是可接受的：重发布本来就要用户在界面上点一下当前那个站。
+ *
+ * root 消歧（main 39ca348 合入，语义照搬）：多个平行站点时不猜。
+ *   - 显式传 root（'.' 表示工作区根）→ 精确匹配，匹配不上 400 并列出现有的
+ *   - 没传 root：key 匹配 || 只有一个站兜底（旧发布记录兼容）|| 409 列候选
  */
-async function resolveSiteRoot(pid, task, root) {
-  const taskDir = path.join(getSharedDir(pid), 'tasks', task);
-  try { await fs.access(taskDir); } catch { return null; }
-  const manifest = await taskManifest(taskDir);
+async function resolveSiteRoot(pid, key, root) {
+  const workspaceRoot = getSharedDir(pid);
+  try { await fs.access(workspaceRoot); } catch { return null; }
+  const manifest = await taskManifest(workspaceRoot);
   const sites = (manifest?.artifacts || []).filter(a => a.kind === 'site' && !a.single);
   if (!sites.length) return null;
   const label = (a) => a.root || '.';
@@ -79,15 +85,22 @@ async function resolveSiteRoot(pid, task, root) {
     const want = root === '.' ? '' : root.replace(/\/+$/, '');
     inst = sites.find(a => (a.root || '') === want);
     if (!inst) {
-      throw fail(400, `任务里没有 root 为「${root}」的站点，现有：${sites.map(label).join('、')}`);
+      throw fail(400, `没有 root 为「${root}」的站点，现有：${sites.map(label).join('、')}`);
     }
-  } else if (sites.length > 1) {
-    throw fail(409, `这个任务下有 ${sites.length} 个平行站点：${sites.map(label).join('、')}`
-      + ' —— 用 root 参数指定要发布哪个（任务根传 "."），不能替你猜');
   } else {
-    inst = sites[0];
+    const wanted = key === '.' || key === '' || key == null ? '' : String(key).replace(/\/+$/, '');
+    inst = sites.find(a => (a.root || '') === wanted)
+      || (sites.length === 1 ? sites[0] : null);
+    if (!inst) {
+      throw fail(409, `工作区里有 ${sites.length} 个平行站点：${sites.map(label).join('、')}`
+        + ' —— 用 root 参数指定要发布哪个（工作区根传 "."），不能替你猜');
+    }
   }
-  return { taskDir, root: inst.root || '', rootAbs: inst.root ? path.join(taskDir, inst.root) : taskDir };
+  return {
+    taskDir: workspaceRoot,
+    root: inst.root || '',
+    rootAbs: inst.root ? path.join(workspaceRoot, inst.root) : workspaceRoot,
+  };
 }
 
 /** staging：与整站 zip 同语义（产物根 + .ndignore + assets 副本 + 相对路径改写） */
@@ -98,7 +111,7 @@ async function stageSite(pid, { taskDir, root, rootAbs }) {
   let staged = 0;
   for (const f of files) {
     if (!root && f.rel === 'canvas.html') continue;          // 根站排 deck 保留名
-    if (f.rel === '.nd-task.json') continue;
+    if (f.rel === '.nd-project.json') continue;
     const dest = path.join(stage, f.rel);
     await fs.mkdir(path.dirname(dest), { recursive: true });
     if (/\.(html?|css)$/i.test(f.rel)) {

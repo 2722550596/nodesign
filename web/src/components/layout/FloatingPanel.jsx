@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Rnd } from 'react-rnd';
 import { X } from 'lucide-react';
-import { COLOR, FONT_MONO, FONT_SIZE, GAP, RADIUS, STAGE, alpha } from '../../lib/theme.js';
+import { COLOR, FONT_SANS, FONT_MONO, FONT_SIZE, GAP, RADIUS, STAGE, alpha } from '../../lib/theme.js';
+import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
 import { usePanelState } from './PanelManager.jsx';
 
 /**
@@ -83,6 +84,17 @@ export default function FloatingPanel({
   // 默认 'parent' —— 浮窗只在父容器内拖（典型场景：浮在 canvas 上不出 canvas）。
   // snap-to-edge 仅 bounds==='window' 时启用（小区域内 snap 没意义）。
   bounds = 'parent',
+  /**
+   * 能不能关。**默认能，但主界面必须传 false**。
+   *
+   * 受控 panel 原本一律带关闭钮（`effectiveOnClose` 在 controlled 时自动兜底），
+   * 而 PanelMenu 那个"面板"菜单 2026 年已下架 —— 也就是说**关掉的浮窗没有任何
+   * UI 能叫回来**，只能清 localStorage。次级面板（Tweaks）关了无所谓，聊天栏
+   * 关了就等于把主界面弄丢了。所以这个开关是必需的，不是可选的礼貌。
+   */
+  closable = true,
+  /** 标题栏右侧塞自定义控件（收起钮之类），排在关闭钮左边 */
+  titleExtra,
 }) {
   const state = usePanelState(id);
   const [dragging, setDragging] = useState(false);
@@ -147,7 +159,9 @@ export default function FloatingPanel({
   };
 
   const interacting = dragging || resizing;
-  const effectiveOnClose = onClose || (controlled ? () => state.setVisible(false) : null);
+  const effectiveOnClose = closable
+    ? (onClose || (controlled ? () => state.setVisible(false) : null))
+    : null;
 
   return (
     <>
@@ -191,12 +205,18 @@ export default function FloatingPanel({
         onMouseDown={handleMouseDown}
         style={{
           zIndex,
-          background: COLOR.bgWhite,
-          borderRadius: STAGE.radius,
-          boxShadow: interacting
-            ? '0 16px 48px rgba(43,33,23,0.18), 0 4px 12px rgba(43,33,23,0.08)'
-            : STAGE.shadow,
-          border: `1px solid ${STAGE.borderWarm}`,
+          // 纸，不是浮层（2026-08-07）：浮窗浮在画布上，而画布上别的东西
+          // （便签、产物卡、文件夹）全是纸。原来这里是纯白 + 圆角 12 + 中性
+          // 柔光，压在纸面上就是两种材质打架 —— 它看起来像贴上去的对话框，
+          // 而不是桌上另一张纸。
+          //   · 底色换 PAPER.paper 并铺同一层颗粒
+          //   · 圆角归零（这套语言里最大的实体是纸，纸没有圆角）
+          //   · 影子换 PAPER_SHADOW（单一光向：右上打光，影子偏左下）
+          background: PAPER.paper,
+          backgroundImage: GRAIN,
+          borderRadius: 0,
+          boxShadow: interacting ? PAPER_SHADOW.near : PAPER_SHADOW.mid,
+          border: `1px solid ${PAPER.hair}`,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -213,9 +233,10 @@ export default function FloatingPanel({
             alignItems: 'center',
             gap: GAP.sm,
             padding: `${GAP.md}px ${GAP.lg}px`,
-            background: 'rgba(255,255,255,0.95)',
-            borderBottom: `1px solid ${STAGE.borderWarm}`,
-            fontFamily: FONT_MONO,
+            // 标题条 = 纸的抬头：比纸身略深一点点的暖色，不是白条
+            background: 'rgba(240,234,219,0.55)',
+            borderBottom: `1px solid ${PAPER.hair}`,
+            fontFamily: FONT_SANS,
             fontSize: FONT_SIZE.xs,
             fontWeight: 500,
             color: COLOR.text,
@@ -225,6 +246,7 @@ export default function FloatingPanel({
         >
           {Icon && <Icon size={12} style={{ color: COLOR.text4 }} />}
           <span style={{ flex: 1 }}>{title}</span>
+          {titleExtra}
           {effectiveOnClose && (
             <button
               onClick={(e) => { e.stopPropagation(); effectiveOnClose(); }}

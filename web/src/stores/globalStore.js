@@ -21,6 +21,49 @@ export const useGlobalStore = create((set) => ({
     toasts: s.toasts.filter(t => t.id !== id),
   })),
 
+  /**
+   * 画布手写文字的字体与字号（2026-08-08）。
+   *
+   * 用户要「不同的、好看的字体供选择」，并且「先放在设置里，默认选一个比较
+   * 合适的」。默认楷体：整套语言里正文就是楷体，手写在白板上的一句话跟它同源；
+   * 等宽只留给机器写的东西。
+   *
+   * 存 localStorage 不存后端：它是**这台机器上这个人的手感偏好**，不是项目
+   * 属性 —— 同一个项目换台电脑打开，字体该跟着人走而不是跟着项目走。
+   */
+  canvasFont: (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('nd:canvasFont'));
+      if (v?.font && v?.size) return v;
+    } catch { /* 没设过 / 隐私模式 */ }
+    // 默认手写（龙藏体）：白板上随手写的字要像手写的（2026-08-13 用户定）。
+    // 已经设过偏好的人不受影响 —— 上面 localStorage 优先。
+    return { font: 'pen', size: 'md' };
+  })(),
+  setCanvasFont: (v) => {
+    try { localStorage.setItem('nd:canvasFont', JSON.stringify(v)); } catch { /* */ }
+    set({ canvasFont: v });
+  },
+
+  /**
+   * 镜头跟随 agent（2026-08-08）。开关，默认开。
+   *
+   * 跟随本身早就有（跟人不跟事件，见 BoardCanvas 的 followTarget），缺的是
+   * 一个能关掉它的地方 —— 用户在画布另一头摆自己的东西时，镜头被 agent 拽走
+   * 是很烦的。用户接管冷却（8 秒）只能缓解，关不掉。
+   */
+  followAgent: (() => {
+    try {
+      const v = localStorage.getItem('nd:followAgent');
+      if (v !== null) return v === '1';
+    } catch { /* 隐私模式 */ }
+    return true;
+  })(),
+  setFollowAgent: (v) => {
+    try { localStorage.setItem('nd:followAgent', v ? '1' : '0'); } catch { /* */ }
+    set({ followAgent: v });
+  },
+
   // ── Canvas mode（Edit / Preview / Code） ──
   canvasMode: 'edit',
   setCanvasMode: (m) => set({ canvasMode: m }),
@@ -32,6 +75,25 @@ export const useGlobalStore = create((set) => ({
   // ── Chat draft（让 Inspect "触发新 run" 把元素意图填回 ChatComposer）──
   chatDraft: '',
   setChatDraft: (s) => set({ chatDraft: s }),
+  /**
+   * 「把光标放进输入框」的信号（2026-08-08）。
+   *
+   * 不能靠 chatDraft 兼职：它的消费方判的是 `if (chatDraft)`，而空串是假值 ——
+   * 按 `/` 唤出时垫的词恰好就是空串（没有指着任何东西），于是既不填也不聚焦。
+   * 用一个只增不减的计数器：值本身没有意义，**变化**才是信号，所以连着按两次
+   * 也能各触发一次。
+   */
+  composerFocusTick: 0,
+  focusComposer: () => set((st) => ({ composerFocusTick: st.composerFocusTick + 1 })),
+  /**
+   * 「唤出悬浮 AI 卡」的信号（2026-08-13，E3）。同上是计数器。
+   *
+   * 悬浮卡未固定时是收起来的（E2）——就地标注/圈选发送后对话在卡里流，
+   * 卡不出来用户就看不见 agent 的回应。focusComposer 也隐含这个语义
+   * （对着隐形输入框聚焦是空操作），ChatDock 两个 tick 都听。
+   */
+  chatDockOpenTick: 0,
+  openChatDock: () => set((st) => ({ chatDockOpenTick: st.chatDockOpenTick + 1 })),
   consumeChatDraft: () => {
     const draft = useGlobalStore.getState().chatDraft;
     set({ chatDraft: '' });

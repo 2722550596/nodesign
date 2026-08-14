@@ -1,8 +1,8 @@
 /**
  * mcp/tools/record-decision.js — record_decision MCP tool
  *
- * agent 在做关键设计决策时调，把"做了什么 + 为什么"写成任务便利贴
- * `tasks/<任务>/notes/决策.md` 的一面（`---` 分面）。2026-07-30 起决策
+ * agent 在做关键设计决策时调，把"做了什么 + 为什么"写成共享便利贴
+ * `notes/决策.md` 的一面（`---` 分面）。2026-07-30 起决策
  * 不再进 spec.json.decisions[]：便利贴是 agent 和用户的**共享层**——
  * 用户在画布上直接看到、能翻、能改；spec.json 只是 agent 自己的暗档案，
  * 用户看不见，头脑风暴根本进不来。旧会话已有的 spec.json decisions[]
@@ -12,32 +12,17 @@
  *   - 一个 .md = 一张贴；`\n---\n` 分面，翻页看
  *   - 每面第一行 `# 标题`
  *
- * 任务定位：活跃产物（artifact-target）所在任务优先，没有就取 tasks/ 下
- * 唯一的任务目录；都没有 → 报错让 agent 先建任务（决策必须有归属，写到
- * session 根用户在桌面上看不见，等于没记）。
+ * 落点：工作区 `notes/`（扁平模型，2026-08-08 起）—— 没有"任务归属"了，
+ * 便利贴直接住项目桌面。
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { getActiveArtifact, taskNameOf } from '../../../lib/artifact-target.js';
 import { Events } from '../../agent/events.js';
 
 const NOTE_FILE = '决策.md';
-
-/** 定位当前会话的任务名：活跃产物 → tasks/ 唯一目录 → null */
-async function resolveTask(workspaceRoot, sessionId) {
-  const active = getActiveArtifact(sessionId)?.path || null;
-  const fromActive = active ? taskNameOf(active) : null;
-  if (fromActive) return fromActive;
-  try {
-    const entries = await fs.readdir(path.join(workspaceRoot, 'tasks'), { withFileTypes: true });
-    const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.')).map(e => e.name);
-    if (dirs.length === 1) return dirs[0];
-  } catch { /* tasks/ 不存在 */ }
-  return null;
-}
 
 /**
  * @param {object} deps
@@ -48,8 +33,8 @@ async function resolveTask(workspaceRoot, sessionId) {
 export function makeRecordDecisionTool({ workspaceRoot, sessionId, ctx }) {
   return tool(
     'record_decision',
-    `Record a key design decision as a face of the task's decision sticky note
-(tasks/<task>/notes/决策.md). The note is SHARED with the user — it renders as
+    `Record a key design decision as a face of the project's decision sticky note
+(notes/决策.md). The note is SHARED with the user — it renders as
 a flippable sticky on their canvas, they can read and edit it. Use this to
 capture WHY you made a particular choice — color, type scale, layout metaphor,
 copy strategy — so the intent survives across sessions and the user can push
@@ -67,7 +52,7 @@ Do NOT use this tool for:
 - Every change — over-recording bloats the note and dilutes signal
 
 For free-form shared notes (brainstorm material, reference digests, handoff
-context), just Write tasks/<task>/notes/<slug>.md directly — same sticky-note
+context), just Write notes/<slug>.md directly — same sticky-note
 rendering, no tool needed.`,
     {
       title: z
@@ -97,18 +82,6 @@ rendering, no tool needed.`,
             isError: true,
           };
         }
-        const task = await resolveTask(workspaceRoot, sessionId);
-        if (!task) {
-          return {
-            content: [{
-              type: 'text',
-              text: 'No task folder yet — create tasks/<name>/ (and your artifact) first; '
-                + 'decisions live on the task as a sticky note.',
-            }],
-            isError: true,
-          };
-        }
-
         const alts = Array.isArray(alternatives)
           ? alternatives.map(s => String(s).trim()).filter(Boolean) : [];
         const face = [
@@ -120,7 +93,7 @@ rendering, no tool needed.`,
           `- ${new Date().toISOString().slice(0, 10)}`,
         ].join('\n');
 
-        const notesDir = path.join(workspaceRoot, 'tasks', task, 'notes');
+        const notesDir = path.join(workspaceRoot, 'notes');
         await fs.mkdir(notesDir, { recursive: true });
         const noteFile = path.join(notesDir, NOTE_FILE);
         let prev = '';
@@ -132,7 +105,9 @@ rendering, no tool needed.`,
         try {
           // MCP 工具写盘不走 PostToolUse(Write/Edit) 那条 file_changed 直发，
           // 自己补一发，前端便利贴才会当场刷新
-          ctx?.emit?.(Events.fileChanged(noteFile, 'change'));
+          // 工作区相对路径（fileChanged 正字法；曾发绝对路径=前端只吃到清单重拉，
+          // 寻址和版本 key 全失配。2026-08-14 普查改）
+          ctx?.emit?.(Events.fileChanged(`notes/${NOTE_FILE}`, 'change'));
           ctx?.emit?.({
             type: 'run.decision_recorded',
             title: title.trim(),
@@ -144,7 +119,11 @@ rendering, no tool needed.`,
         return {
           content: [{
             type: 'text',
-            text: `Decision recorded as face ${faceCount} of tasks/${task}/notes/${NOTE_FILE}: "${title.trim()}"`,
+            // ⚠️ 这里曾写 `tasks/${task}/...` —— 扁平化删掉 task 变量时漏了这行，
+            // `task` 成悬空引用：决策照写、事件照发，**返回时 ReferenceError 被
+            // 外层 catch 接住**，agent 每次调用都收到报错以为失败（还可能重试出
+            // 重复面）。悬空引用潜伏族第二案（第一案 reloadToken，2026-08-08）。
+            text: `Decision recorded as face ${faceCount} of notes/${NOTE_FILE}: "${title.trim()}"`,
           }],
         };
       } catch (err) {

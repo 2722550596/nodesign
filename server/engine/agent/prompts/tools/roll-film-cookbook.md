@@ -50,7 +50,7 @@ non_diegetic_music: N/A
 3. **音床**（一整条音乐盖全片，压低不抢台词）：
    `ffmpeg -i joined.mp4 -i bed.ogg -filter_complex "[1:a]volume=0.18,afade=t=out:st=<片长-3>:d=3[bed];[0:a][bed]amix=inputs=2:duration=first:normalize=0[a]" -map 0:v -map "[a]" -c:v copy -c:a aac mixed.mp4`
    ⚠️ `normalize=0` 必须写——amix 默认把各轨压半，台词会突然变小声。
-   音床别自造：让用户给，或 explorer 搜 Wikimedia Commons 的公有领域曲目 curl 进 assets/。
+   音床别自造：让用户给，或用 web_search 搜 Wikimedia Commons 的公有领域曲目 curl 进 assets/。
 4. **轻调色**（收尾提一口气，别重手）：
    `ffmpeg -i mixed.mp4 -vf "eq=contrast=1.03:saturation=1.04" -c:a copy final.mp4`
 

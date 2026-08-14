@@ -39,7 +39,7 @@ see the render, this one is for **the user**.`,
         .string()
         .optional()
         .describe(
-          "Deck to show, e.g. 'tasks/<task folder>/canvas.html'. Omit for the current session's own canvas.html.",
+          "Deck to show, workspace-relative (e.g. 'canvas.html' or '稿件/主稿.html'). Omit for the active artifact.",
         ),
     },
     async ({ path: rawPath }) => {

@@ -26,8 +26,11 @@ import fs from 'node:fs/promises';
 import deck from './deck.js';
 import site from './site.js';
 import world from './world.js';
+import { isReservedFile } from '../task-scan.js';
 
 export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site, [world.id]: world });
+
+export { RESERVED_DIRS, isReservedFile } from '../task-scan.js';
 
 /**
  * 判定优先级：world 最前，然后 canvas.html 在 index.html 之前
@@ -63,10 +66,17 @@ export function can(kind, cap) {
   return !!KINDS[kind]?.capabilities?.includes(cap);
 }
 
-/** 读任务标记（`.nd-task.json`）。没有 / 读不动 → null */
-export async function readTaskMarker(taskDir) {
+/**
+ * 读产物标记（`.nd-project.json`）。没有 / 读不动 → null。
+ *
+ * 2026-08-07 从 `.nd-task.json` 改名。旧文件里有两个字段：`sessionId`（这个
+ * 任务属于哪次对话 —— 正是要废的那条绑定，迁移时直接删）和 `root`（构建型
+ * 站点显式声明产物根，agent 刚写完源还没 build 的窗口期靠它认出"站已经在了"）。
+ * 后者还有用，所以标记本身留着，只是不再承载归属。
+ */
+export async function readTaskMarker(root) {
   try {
-    const raw = await fs.readFile(path.join(taskDir, '.nd-task.json'), 'utf8');
+    const raw = await fs.readFile(path.join(root, '.nd-project.json'), 'utf8');
     const parsed = JSON.parse(raw);
     return (parsed && typeof parsed === 'object') ? parsed : null;
   } catch { return null; }
@@ -91,11 +101,12 @@ export async function detectTaskKind(taskDir, marker) {
   return KINDS[k] ? k : null;
 }
 
-/** 任务根顶层有没有散装 .html（探索期：试作先行，主 deck 未铺） */
-async function hasLooseHtml(taskDir) {
+/** 工作区顶层有没有散装 .html（探索期：试作先行，主 deck 未铺） */
+async function hasLooseHtml(root) {
   try {
-    const entries = await fs.readdir(taskDir, { withFileTypes: true });
-    return entries.some(e => e.isFile() && /\.html?$/i.test(e.name) && !e.name.startsWith('.'));
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    return entries.some(e => e.isFile() && /\.html?$/i.test(e.name)
+      && !e.name.startsWith('.') && !isReservedFile(e.name));
   } catch { return false; }
 }
 
@@ -162,7 +173,6 @@ export async function taskManifest(taskDir) {
     pages: primary?.pages || [],
     exportFormats: def.exportFormats,
     view: def.view,
-    sessionId: typeof marker?.sessionId === 'string' ? marker.sessionId : null,
   };
 }
 

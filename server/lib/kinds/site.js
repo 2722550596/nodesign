@@ -5,13 +5,14 @@
  *   手写站点   —— 源即产物，index.html 在任务根（产物根 = ''）
  *   构建型站点 —— 源在任务根（md / 模板 / 构建脚本随便放），构建产物落在
  *                约定目录（dist/ out/ build/ _site/ public/，谁有 index.html 认谁），
- *                或 `.nd-task.json` 里 `root` 字段显式指定。
+ *                或 `.nd-project.json` 里 `root` 字段显式指定（08-07 从
+ *                `.nd-task.json` 改名，读的是 kinds/index.js readTaskMarker）。
  * 预览、截图、list_pages、整站 zip、发布，全部指向产物根；任务根是 agent 的地盘。
  */
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { walkTaskFiles, loadIgnore, DRAFTS_DIR } from '../task-scan.js';
+import { walkTaskFiles, loadIgnore, DRAFTS_DIR, RESERVED_DIRS } from '../task-scan.js';
 
 const ENTRY = 'index.html';
 
@@ -71,7 +72,8 @@ async function discoverInstances(taskDir, marker) {
     try { entries = await fs.readdir(taskDir, { withFileTypes: true }); } catch { /* */ }
     const ignore = await loadIgnore(taskDir);
     for (const e of entries) {
-      if (!e.isDirectory() || e.name.startsWith('.') || e.name === DRAFTS_DIR || e.name === 'assets') continue;
+      if (!e.isDirectory() || e.name.startsWith('.') || e.name === DRAFTS_DIR) continue;
+      if (RESERVED_DIRS.has(e.name)) continue;
       if (ignore(e.name, true)) continue;
       if (await exists(path.join(taskDir, e.name, ENTRY))) {
         out.push({ srcRoot: e.name, root: e.name, single: false });

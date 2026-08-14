@@ -47,6 +47,12 @@ import { makeGenerateImageTool } from './tools/generate-image.js';
 import { makeRemoveBackgroundTool } from './tools/remove-background.js';
 import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
+import { makeRelateOnBoardTool } from './tools/relate-on-board.js';
+import { makeReadBoardTool } from './tools/read-board.js';
+import { makeArrangeOnBoardTool } from './tools/arrange-on-board.js';
+import { makeCreateOnBoardTool } from './tools/create-on-board.js';
+import { makeOrganizeBoardTool } from './tools/organize-board.js';
+import { makeReadDocumentTool } from './tools/read-document.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 import { makePublishSiteTool } from './tools/publish-site.js';
@@ -84,10 +90,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
-  return createSdkMcpServer({
-    name: 'nodesign',
-    version: '0.1.0',
-    tools: [
+  const tools = [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
       makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }),
 
@@ -97,6 +100,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // deliver_files — agent 挑好的产物直接进用户浏览器下载列表（emit run.download_ready）
       makeDeliverFilesTool({ workspaceRoot, projectId, sessionId, ctx }),
+
+      // read_document — Word / Excel / PowerPoint 的读取口（2026-08-07）。
+      // 普通 Read 读这三种只会拿到二进制乱码**而且不报错**，agent 会拿着空气
+      // 往下干。PDF 不在此列：Read 原生支持，真跑验过。
+      makeReadDocumentTool({ workspaceRoot, sharedRoot }),
 
       // C10 export_handoff — 复用 exports.js 的 buildHandoffZip，写到 workspace/exports/
       makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
@@ -168,7 +176,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 抠图（rembg U²-Net，server 端 spawn .venv-rembg python subprocess）
       // 任何 workspace 里的图都能抠，输出 RGBA PNG 到 assets/generated/<name>.png。
       // 跟 generate_image 解耦：generate_image 只生图，想透明叠加单独调本工具。
-      makeRemoveBackgroundTool({ workspaceRoot, sharedRoot, ctx }),
+      makeRemoveBackgroundTool({ workspaceRoot, sharedRoot, projectId, ctx }),
 
       // Agent in-loop 请求进 SDK plan mode —— emit run.plan_mode_requested
       // 给前端弹横幅，用户点 yes 走 /permission-mode endpoint 切 mode 后再 POST
@@ -179,17 +187,37 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // 工作台分区画布（2026-07-27）：agent 协助摆放 —— 把产物/文档/deck 钉进
       // 某 session 的工作区。写 board.json（board-store 单锁）+ 广播 board.updated。
-      makePinToBoardTool({ sharedRoot, projectId, sessionId, ctx }),
+      makePinToBoardTool({ sharedRoot, projectId, ctx }),
+
+      // 关系线（2026-08-07）：agent 把「这版改自那版」「这两个是对照」这类
+      // **只有它知道**的关系画到画布上。画布知道每个产物是什么，但不知道它们
+      // 之间是什么关系 —— 那是北极星（排出有版面感的布局）真正缺的那一块。
+      makeRelateOnBoardTool({ projectId, ctx }),
+      // agent 摆位四件（2026-08-14）：看版面 / 语义摆位·立主角 / 落手写便签 / 归纳收纳
+      makeReadBoardTool({ projectId }),
+      makeArrangeOnBoardTool({ projectId, ctx }),
+      makeCreateOnBoardTool({ projectId, ctx }),
+      makeOrganizeBoardTool({ projectId, ctx }),
 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；
       // agent 在 caption / 自然回话邀请反馈，下一轮用户 chat 即天然 gate。
-    ].map((t) => (
-      // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
-      // 集中在这打标避免改 16 个工具文件）
-      ALWAYS_LOAD_TOOLS.has(t.name)
-        ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
-        : t
-    )),
+  ].map((t) => (
+    // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
+    // 集中在这打标避免改 16 个工具文件）
+    ALWAYS_LOAD_TOOLS.has(t.name)
+      ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
+      : t
+  ));
+
+  const server = createSdkMcpServer({
+    name: 'nodesign',
+    version: '0.1.0',
+    tools,
   });
+  // 开局契约自检用（2026-08-14 灭门案第 3 层）：预期工具名从构造本 server 的
+  // 同一份 tools 数组上取，不另立第二份清单 —— 第二真相源会漂移。session-loop
+  // 收到 system:init 时拿它跟 SDK 实际注册进会话的工具对账。
+  server.toolNames = tools.map((t) => t.name);
+  return server;
 }

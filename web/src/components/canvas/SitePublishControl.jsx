@@ -4,11 +4,23 @@
  * 三态：未发布（上线按钮，两击确认 —— 发到公网是外发动作）→ 发布中（转圈，
  * deploy 同步等 30-90s）→ 已发布（绿点 + 链接 + 更新 / 下线）。
  * 下线同样两击确认。403（试用号 / 超额）直接把服务端的白话文案 toast 出来。
+ *
+ * ## 配色：墨面，不是纸面（2026-08-13）
+ *
+ * 它 08-13 从窗口头部的名牌条搬进了那条常驻工具栏，而工具栏是**墨色**的
+ * （INK_SURFACE）。搬过去时只是塞了个纸色底的盒子把它裹住 —— 一条工具栏上
+ * 两种物料，看着就是没做完。现在整个换到 INK_SURFACE 那套：底色透明、字用
+ * 墙色、hover 用同一档半透明白。
+ *
+ * 唯一保留的彩色是**状态色**：已发布那颗绿点、下线确认那一下的红。
+ * 它们不是装饰，是"这东西现在在公网上"和"你正要把它撤下来"。
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { Rocket, ExternalLink, Copy, RefreshCw, CloudOff, Loader2 } from 'lucide-react';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { INK_SURFACE } from '../../lib/paper.js';
+import ToolbarButton, { TOOL_BTN, toolPillStyle } from '../ui/ToolbarButton.jsx';
 import { Publish } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
@@ -72,7 +84,7 @@ export default function SitePublishControl({ projectId, task, root = null }) {
 
   if (busy) {
     return (
-      <span style={{ ...pill, color: COLOR.sub }}>
+      <span style={{ ...pill, color: INK_SURFACE.textDim }}>
         <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} />
         <style>{'@keyframes spin{to{transform:rotate(360deg)}}'}</style>
         {site ? '更新中…' : '上线中…'}
@@ -81,18 +93,17 @@ export default function SitePublishControl({ projectId, task, root = null }) {
   }
 
   if (!site) {
+    // ⚠️ 不给 `boxed`：这一颗独占一组，外面那个墨色盒子已经是它的边界了，
+    // 再描一圈就是"框里套框"。描边只属于**同组里有多颗**的情况（预览/源码
+    // 那种，边框在分隔彼此）。
     return confirm === 'publish' ? (
-      <button onClick={doPublish} style={{ ...pill, background: COLOR.btn, color: COLOR.btnText, border: 0, cursor: 'pointer' }}>
-        <Rocket size={11} /> 确认发到公网？
-      </button>
+      <ToolbarButton icon={Rocket} label="确认发到公网？" active onClick={doPublish} />
     ) : (
-      <button
-        onClick={() => arm('publish')}
+      <ToolbarButton
+        icon={Rocket} label="上线"
         title="发布到 Cloudflare Pages，任何人可访问"
-        style={{ ...pill, background: 'transparent', border: `1px solid ${COLOR.borderMd}`, color: COLOR.text3, cursor: 'pointer' }}
-      >
-        <Rocket size={11} /> 上线
-      </button>
+        onClick={() => arm('publish')}
+      />
     );
   }
 
@@ -102,48 +113,29 @@ export default function SitePublishControl({ projectId, task, root = null }) {
         href={site.url} target="_blank" rel="noreferrer"
         title={site.url}
         style={{
-          ...pill, textDecoration: 'none', color: COLOR.success,
-          background: 'rgba(74,138,74,0.08)', maxWidth: 190,
+          ...pill, textDecoration: 'none', color: INK_SURFACE.text,
+          background: 'rgba(120,190,120,0.16)', maxWidth: 190,
         }}
       >
-        <span style={{ width: 6, height: 6, borderRadius: RADIUS.round, background: COLOR.success, flexShrink: 0 }} />
+        {/* 状态色留着：这颗绿点说的是「它现在在公网上」，不是装饰 */}
+        <span style={{ width: 6, height: 6, borderRadius: RADIUS.round, background: '#6FBF6F', flexShrink: 0 }} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: FONT_MONO }}>
           {site.url.replace(/^https:\/\//, '')}
         </span>
         <ExternalLink size={10} style={{ flexShrink: 0 }} />
       </a>
-      <MiniBtn title="复制地址" onClick={copyUrl}><Copy size={11} /></MiniBtn>
-      <MiniBtn title="把当前版本重新发布（地址不变）" onClick={doPublish}><RefreshCw size={11} /></MiniBtn>
+      <ToolbarButton title="复制地址" icon={Copy} onClick={copyUrl} />
+      <ToolbarButton title="把当前版本重新发布（地址不变）" icon={RefreshCw} onClick={doPublish} />
       {confirm === 'unpublish' ? (
-        <button onClick={doUnpublish} style={{ ...pill, background: COLOR.error, color: COLOR.bgWhite, border: 0, cursor: 'pointer' }}>
-          确认下线？
-        </button>
+        <ToolbarButton label="确认下线？" danger onClick={doUnpublish} />
       ) : (
-        <MiniBtn title="下线（公网地址失效）" danger onClick={() => arm('unpublish')}><CloudOff size={11} /></MiniBtn>
+        <ToolbarButton title="下线（公网地址失效）" icon={CloudOff} danger onClick={() => arm('unpublish')} />
       )}
     </span>
   );
 }
 
-const pill = {
-  display: 'inline-flex', alignItems: 'center', gap: 5,
-  padding: '3px 9px', borderRadius: RADIUS.pill,
-  fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-};
+// 身位和配色全部来自 ui/ToolbarButton.jsx —— 这里一个尺寸都不自己定
+const pill = toolPillStyle;
 
-function MiniBtn({ children, title, onClick, danger }) {
-  return (
-    <button
-      title={title}
-      onClick={onClick}
-      style={{
-        width: 22, height: 22, borderRadius: RADIUS.md,
-        background: 'transparent', border: 0, cursor: 'pointer',
-        color: danger ? COLOR.error : COLOR.sub,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.05)'; }}
-      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-    >{children}</button>
-  );
-}
+// MiniBtn 退役：纯图标按钮就是 ToolbarButton 不给 label 的那一形态

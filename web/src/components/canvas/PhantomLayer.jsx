@@ -1,0 +1,179 @@
+import { useEffect, useRef, useState } from 'react';
+import { Image as ImageIcon } from 'lucide-react';
+import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SIZE, CANVAS, alpha } from '../../lib/theme.js';
+import { sizeOf } from '../../lib/board-kinds.js';
+import { MARGIN_X, DESKTOP_W, ROW_GAP } from '../../lib/board-geometry.js';
+
+/**
+ * PhantomLayer —— 生图占位的幻影物件（2026-08-14，用户拍板"幻影入座+座位过户"）
+ *
+ * ## 在这之前
+ *
+ * 生图等待卡（shimmer）住在舞台层：浮在画布**上方**、落点由舞台自算（贴工作区
+ * 下沿铺），真图落地时走正常入座逻辑**另排一个座** —— 于是占位卡和成品不在
+ * 同一个位置，图一出来就跳位。跟精灵曾经的毛病同一个：不在纸上，位置不受管控。
+ *
+ * ## 现在
+ *
+ * 占位卡是一个**幻影物件**：出生时按正常入座逻辑排一个座（一次算好就钉死，
+ * 不反流），渲染在纸面层（和产物同一平面）；真图落地时 BoardCanvas 的入座
+ * memo 把幻影的座位**直接过户**给它（layout[真图] = 幻影.seat，由 seatFixes
+ * 照常落盘）—— 占位在哪，成品就在哪，不跳位。
+ *
+ * ## 生命周期（数据源 = 舞台状态机的 image 条目，血统不变）
+ *
+ *   出生   stageCards 出现 kind==='image' → 算座、入表
+ *   等待   shimmer 流光（跑动中）
+ *   过户   入座 memo 撞见"新来的图"→ 认领最老的未过户幻影 → 图坐幻影的座
+ *   蒸发   过户完成（下一帧清）/ 失败红态 10s / 90s 没等到图（图落进了别的
+ *          文件夹之类）—— 幻影是转瞬态，绝不落盘
+ *
+ * v1 边界：幻影只排**根桌面层**。生成图片的常见落点 assets/generated/ 归属
+ * 到根，命中大多数情况；落进具体文件夹的图走不到过户（幻影超时蒸发），
+ * 文件夹卡的橙圈仍然指示"里面在干活"。
+ */
+
+/** 认领窗：过了这个时长还没等到图，认命蒸发 */
+const PHANTOM_TTL_MS = 90_000;
+/** 失败红态展示时长 */
+const PHANTOM_FAIL_MS = 10_000;
+
+/** 图片卡的身位（和真图入座同一个 sizeOf 口径 —— 过户后不缩不胀） */
+const IMG_SIZE = sizeOf({ type: 'image' });
+
+const hitRect = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
+
+/**
+ * 给幻影找个座：从"已有内容的最低边"下面开始，一行行从左往右扫第一个空位 ——
+ * 跟新物件入座（packRow 起排线）同一个精神，只是单件版。
+ * obstacles = 这一层的物件 + 文件夹卡 + 已就座的其他幻影。
+ */
+export function findPhantomSeat(obstacles, contentBottom) {
+  const w = IMG_SIZE.w; const h = IMG_SIZE.h;
+  const xMax = DESKTOP_W - MARGIN_X - w;
+  let y = Math.max(MARGIN_X, Math.round(contentBottom) + ROW_GAP);
+  for (let row = 0; row < 40; row += 1) {
+    for (let x = MARGIN_X; x <= xMax; x += w + 16) {
+      const r = { x, y, w, h };
+      if (!obstacles.some(o => hitRect(r, o))) return { x, y };
+    }
+    y += h + 16;
+  }
+  return { x: MARGIN_X, y };   // 扫不到就叠底部（幻影是转瞬态，压着也就几秒）
+}
+
+/**
+ * 幻影表管理。phantomsRef 是给入座 memo 消费的那份（认领时 memo 直接在 ref
+ * 上标 consumedBy —— movingRef 在同一个 memo 里就是这么用的，有先例）；
+ * state 那份只管渲染。
+ */
+export function usePhantoms({ stageCards, phantomsRef, obstaclesRef, contentBottomRef }) {
+  const [phantoms, setPhantoms] = useState([]);
+
+  useEffect(() => {
+    const table = phantomsRef.current;
+    let changed = false;
+    const now = Date.now();
+
+    // 出生 / 状态同步
+    for (const c of Object.values(stageCards)) {
+      if (c.kind !== 'image') continue;
+      const cur = table.get(c.blockId);
+      if (!cur) {
+        const taken = [...table.values()].filter(p => !p.consumedBy).map(p => ({ ...p.seat, w: IMG_SIZE.w, h: IMG_SIZE.h }));
+        const seat = findPhantomSeat(
+          [...(obstaclesRef.current || []), ...taken],
+          contentBottomRef.current || 0,
+        );
+        table.set(c.blockId, {
+          blockId: c.blockId, seat, prompt: c.prompt || '', status: c.status,
+          bornAt: now, consumedBy: null,
+        });
+        changed = true;
+      } else if (cur.status !== c.status || cur.prompt !== (c.prompt || cur.prompt)) {
+        cur.status = c.status;
+        if (c.prompt) cur.prompt = c.prompt;
+        changed = true;
+      }
+    }
+
+    // 蒸发：过户完成 / 失败到时 / 认领窗超时
+    for (const [key, p] of table) {
+      const dead = p.consumedBy
+        || (p.status === 'fail' && now - p.bornAt > PHANTOM_FAIL_MS)
+        || now - p.bornAt > PHANTOM_TTL_MS;
+      if (dead) { table.delete(key); changed = true; }
+    }
+
+    if (changed) {
+      setPhantoms([...table.values()].filter(p => !p.consumedBy));
+    }
+    // 没有新事件也要能蒸发（stageCards 静止时的超时）：挂一个懒扫
+    const t = setTimeout(() => {
+      const tbl = phantomsRef.current;
+      let dirty = false;
+      const n = Date.now();
+      for (const [key, p] of tbl) {
+        if (p.consumedBy || n - p.bornAt > PHANTOM_TTL_MS
+          || (p.status === 'fail' && n - p.bornAt > PHANTOM_FAIL_MS)) {
+          tbl.delete(key); dirty = true;
+        }
+      }
+      if (dirty) setPhantoms([...tbl.values()].filter(p => !p.consumedBy));
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [stageCards, phantomsRef, obstaclesRef, contentBottomRef]);
+
+  return phantoms;
+}
+
+/**
+ * 入座 memo 的认领口（在 memo 里调用，跟 movingRef 同一种 ref 用法）：
+ * 新来的图 → 最老的未过户幻影的座。认领即标记，同一个幻影不会发两次座。
+ */
+export function claimPhantomSeat(phantomsRef, newImageId) {
+  const free = [...phantomsRef.current.values()]
+    .filter(p => !p.consumedBy)
+    .sort((a, b) => a.bornAt - b.bornAt);
+  if (!free.length) return null;
+  free[0].consumedBy = String(newImageId);
+  return { ...free[0].seat };
+}
+
+/** 幻影卡本体：纸面层的 shimmer（视觉从舞台版搬家，身位换成真图卡口径） */
+export function PhantomImageCard({ p }) {
+  const running = p.status === 'running';
+  return (
+    <div
+      data-phantom="image"
+      style={{
+        position: 'absolute', left: p.seat.x, top: p.seat.y,
+        width: IMG_SIZE.w, height: IMG_SIZE.h,
+        borderRadius: RADIUS.xl, overflow: 'hidden',
+        border: `1px solid ${p.status === 'fail' ? '#b0554f' : alpha(CANVAS.brass, 0.5)}`,
+        background: COLOR.bgCard, boxShadow: '0 6px 18px rgba(60,48,20,0.14)',
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{
+        height: IMG_SIZE.h - 24,
+        background: running
+          ? 'linear-gradient(100deg, #ece7db 30%, #faf8f2 45%, #ece7db 60%)'
+          : COLOR.bgCard,
+        backgroundSize: '200% 100%',
+        animation: running ? 'ndShimmer 1.5s linear infinite' : 'none',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <ImageIcon size={22} color="#b3a58a" />
+      </div>
+      <div style={{
+        display: 'flex', alignItems: 'center', padding: `${GAP.xxs}px ${GAP.md}px`,
+        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {running ? '生成图片中…' : p.status === 'ok' ? '就位中…' : '生成失败'}
+        {p.prompt ? ` · ${p.prompt}` : ''}
+      </div>
+    </div>
+  );
+}

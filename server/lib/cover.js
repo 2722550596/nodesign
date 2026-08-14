@@ -42,40 +42,32 @@ function serialize(fn) {
  * @returns {Promise<null | { taskId, kind, view, absPath, relPath, mtimeMs }>}
  */
 export async function pickCoverArtifact(sharedDir) {
-  const tasksDir = path.join(sharedDir, 'tasks');
-  let entries;
-  try {
-    entries = await fs.readdir(tasksDir, { withFileTypes: true });
-  } catch { return null; }
-
-  const dirs = [];
-  for (const e of entries) {
-    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+  // 扁平化之前这里先按 mtime 把任务目录排个序，再从最新那个任务里取头一份产物。
+  // 现在产物都在工作区根上并排放着，直接按**产物**的 mtime 挑最新的那份。
+  const manifest = await taskManifest(sharedDir).catch(() => null);
+  const list = manifest?.artifacts || [];
+  const dated = [];
+  for (const art of list) {
     try {
-      const st = await fs.stat(path.join(tasksDir, e.name));
-      dirs.push({ name: e.name, mtimeMs: st.mtimeMs });
-    } catch { /* 扫到一半被删：跳过 */ }
+      dated.push({ art, mtimeMs: (await fs.stat(path.join(sharedDir, art.entryRel))).mtimeMs });
+    } catch { /* 入口是声明出来的但还没写盘 → 换下一份 */ }
   }
-  dirs.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  dated.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
-  for (const d of dirs) {
-    const taskDir = path.join(tasksDir, d.name);
-    const manifest = await taskManifest(taskDir).catch(() => null);
-    const art = manifest?.artifacts?.[0];
-    if (!art) continue;
+  for (const { art } of dated) {
+    const taskDir = sharedDir;
     const absPath = path.join(taskDir, art.entryRel);
     let fileMtime = 0;
     try {
       fileMtime = (await fs.stat(absPath)).mtimeMs;
     } catch { continue; }   // 入口是声明出来的但还没写盘 → 换下一个任务
     return {
-      taskId: d.name,
+      taskId: null,
       kind: art.kind,
       view: art.view,
       absPath,
-      relPath: `tasks/${d.name}/${art.entryRel}`,
-      // 目录 mtime 管增删、文件 mtime 管重写，取大的当缓存 key
-      mtimeMs: Math.max(d.mtimeMs, fileMtime),
+      relPath: art.entryRel,
+      mtimeMs: fileMtime,
     };
   }
   return null;
@@ -131,25 +123,25 @@ export async function renderCoverShot(cover) {
 
 /**
  * 指定产物的封面目标（橱窗用：某件具体作品，不是"项目最新那件"）。
- * @param {string} relPath  'tasks/<任务>/<入口>'
+ *
+ * @param {string} relPath  产物入口，相对工作区根。橱窗表里的存量数据是
+ *   扁平化之前的 `tasks/<任务>/<入口>`，前两段剥掉就是现在的位置。
  */
 export async function resolveCoverTarget(sharedDir, relPath) {
-  const rel = String(relPath || '').replace(/\\/g, '/');
+  const rel = String(relPath || '').replace(/\\/g, '/').replace(/^tasks\/[^/]+\//, '');
   const parts = rel.split('/');
-  if (parts[0] !== 'tasks' || parts.length < 3 || parts.includes('..')) return null;
-  const taskId = parts[1];
-  const taskDir = path.join(sharedDir, 'tasks', taskId);
+  if (!parts.length || parts.includes('..') || parts.some(p => !p || p.startsWith('.'))) return null;
+  const taskDir = sharedDir;
   const absPath = path.join(sharedDir, ...parts);
-  if (!absPath.startsWith(taskDir + path.sep)) return null;
+  if (!absPath.startsWith(path.resolve(sharedDir) + path.sep)) return null;
   let fileMtime = 0;
   try {
     fileMtime = (await fs.stat(absPath)).mtimeMs;
   } catch { return null; }
   const manifest = await taskManifest(taskDir).catch(() => null);
-  const entryRel = parts.slice(2).join('/');
-  const art = manifest?.artifacts?.find(a => a.entryRel === entryRel) || manifest?.artifacts?.[0];
+  const art = manifest?.artifacts?.find(a => a.entryRel === rel) || manifest?.artifacts?.[0];
   return {
-    taskId,
+    taskId: null,
     kind: art?.kind || 'site',   // 认不出来按 site 取景（首屏一屏，比硬套 16:9 安全）
     view: art?.view || 'site',
     absPath,

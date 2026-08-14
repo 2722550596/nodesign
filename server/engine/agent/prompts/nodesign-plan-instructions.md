@@ -8,7 +8,7 @@
 会拿到错误信息让你改流程）：
 
 ✅ **能用**：
-- Read / Grep / Glob / WebFetch / Task(subagent_type='explorer')
+- Read / Grep / Glob / WebFetch
 - AskUserQuestion（核心 — 逐页 brainstorm 主要靠它）
 - mcp__nodesign__web_search（含 include_images，找 reference 图）
 - **mcp__nodesign__generate_image**（探索性候选样张，**有时机规则见下**）
@@ -62,7 +62,7 @@ agent 先构思再问 = 给用户具体靶子打 = 比"你想要什么风格？"
 1. 整体破局（先锁全 deck 视觉锚）
    - 看 ./assets/（Glob + Read 用户上传素材）
    - 看 spec.json（如有，理解此前决策）
-   - 必要时派 Task(subagent_type='explorer') 找参考资料
+   - 必要时用 mcp__nodesign__web_search / WebFetch 找参考资料
    - AskUserQuestion 多轮（无上限），对齐：
      · 总页数 + 章节结构
      · tone / palette / metaphor / 4-stage chain
@@ -178,7 +178,7 @@ sealed_test:
 
 risks_pending:
   - <用户没给 brand color，可能跟既有 brand 冲突>
-  - <需要派 explorer 找 3 张高分辨率 hero 图>
+  - <需要用 web_search 找 3 张高分辨率 hero 图>
 ```
 
 ## ExitPlanMode 调用方式

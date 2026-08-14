@@ -22,7 +22,7 @@ import { getProject } from '../../../projects/store.js';
 import { getUserPluginsRoot } from '../../agent/plugin-loader.js';
 import { installPluginToRoot } from '../../../lib/plugin-install.js';
 import { upsertEntry } from '../../../lib/showcase-store.js';
-import { taskNameOf, getActiveArtifact } from '../../../lib/artifact-target.js';
+import { getActiveArtifact } from '../../../lib/artifact-target.js';
 import { Events } from '../../agent/events.js';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{2,39}$/;
@@ -89,7 +89,7 @@ so it does not apply to the current session).`,
       showcaseNote: z.string().max(400).optional()
         .describe('One line for the showcase card: what occasion this piece was for.'),
       artifactPath: z.string().optional()
-        .describe('Work to show on the card, relative to workspace (e.g. "tasks/<task>/canvas.html"). Defaults to the active artifact.'),
+        .describe('Work to show on the card, relative to workspace (e.g. "canvas.html" or "稿件/主稿.html"). Defaults to the active artifact.'),
       overwrite: z.boolean().optional()
         .describe('Replace an existing skill of the same name. Ask the user before setting this.'),
     },
@@ -119,14 +119,17 @@ so it does not apply to the current session).`,
         }
 
         // 橱窗条目：作品 + 它沉淀出来的 skill
+        // 橱窗条目指向的是**产物的相对路径**。扁平化前还要顺带记一个 taskId
+        // （产物住在哪个任务文件夹里），任务层没了之后这个字段永远是 null ——
+        // 留着列是因为 showcase 表里有存量数据，读的时候还认它。
         const rel = String(artifactPath || getActiveArtifact(sessionId)?.path || '').replace(/\\/g, '/');
-        const artifactRel = rel.startsWith('tasks/') ? rel : null;
+        const artifactRel = rel || null;
         let entry = null;
         try {
           entry = upsertEntry({
             userId: ownerId,
             projectId,
-            taskId: artifactRel ? taskNameOf(artifactRel) : null,
+            taskId: null,
             artifactRel,
             skillName: name,
             title: (showcaseTitle || title).trim(),

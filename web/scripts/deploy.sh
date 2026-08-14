@@ -50,3 +50,36 @@ echo "==> 清理 ${KEEP_DAYS} 天没被碰过的旧分片"
 PRUNED=$(find "$LIVE_DIR/assets" -type f -mtime "+$KEEP_DAYS" -print -delete | wc -l)
 
 echo "==> 完成：分片 $(find "$LIVE_DIR/assets" -type f | wc -l) 个，清理 $PRUNED 个"
+
+# ── 服务端新鲜度闸门 ────────────────────────────────────────────────────
+#
+# **node 不热重载。** 改了服务端不重启，就是拿旧代码验新功能 —— 而且一点
+# 报错都没有：前端是新的、接口行为是旧的，表现成"我明明改了怎么没生效"。
+# 这个项目 2026-08-07 一天中过两次，2026-08-13 又中一次（放开产物搬家那条
+# 改完只 deploy 没 restart，用户硬刷新照样不 OK）。
+#
+# 判据：`server/` 里最新的文件比正在监听的那个进程还新 = 它跑的是旧代码。
+# 只提醒不自动重启 —— 重启会打断正在跑的 agent 会话，那得由人决定。
+PORT="${ND_PORT:-}"
+if [ -z "$PORT" ]; then
+  case "$(pwd)" in
+    *Nodesign-canvas*) PORT=4002 ;;
+    *Nodesign-exp*)    PORT=4002 ;;
+    *)                 PORT=4001 ;;
+  esac
+fi
+SRV_PID=$(ss -lptnH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)
+if [ -n "$SRV_PID" ]; then
+  PROC_EPOCH=$(date -d "$(ps -o lstart= -p "$SRV_PID")" +%s 2>/dev/null || echo 0)
+  NEWEST=$(find ../server -type f \( -name '*.js' -o -name '*.mjs' -o -name '*.md' \) \
+    -not -path '*/node_modules/*' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1)
+  NEWEST_EPOCH=${NEWEST%% *}
+  NEWEST_FILE=${NEWEST#* }
+  if [ -n "$NEWEST_EPOCH" ] && [ "${NEWEST_EPOCH%.*}" -gt "$PROC_EPOCH" ]; then
+    echo ""
+    echo "⚠️  服务端有改动比进程还新，:$PORT 上跑的是旧代码"
+    echo "    最新改动：$NEWEST_FILE"
+    echo "    node 不热重载 —— 要生效得： pm2 restart <应用名>"
+    echo ""
+  fi
+fi

@@ -52,10 +52,12 @@ import {
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
+import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
+import { summarizeReply, summarizeRecap, clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
 import {
@@ -69,10 +71,13 @@ import {
   detectArtifact,
 } from './agent-shared.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
+// 合流并集（2026-08-13）：commitWorkspace/taskManifest 是扁平化这边的，
+// getUserById/levelFor 是 main 的每用户内容尺度旋钮（78ceaac）；
+// main 的 listTasks 已随任务层退役，不再引入
+import { commitTaskWorkspace, commitWorkspace } from '../../projects/workspace.js';
+import { taskManifest } from '../../lib/artifact-target.js';
 import { getUserById } from '../../auth/users-store.js';
 import { levelFor } from '../../lib/moderation.js';
-import { commitTaskWorkspace } from '../../projects/workspace.js';
-import { listTasks } from '../../lib/artifact-target.js';
 
 /**
  * Plan-mode 硬 deny 列表（canUseTool 钩子拦）。Allowlist 反过来推：
@@ -254,10 +259,12 @@ export async function runSession({
   }
   if (!eventBus) throw new Error('runSession: eventBus required');
 
+  // 2026-08-07 扁平化：cwd 就是项目工作区，`sharedRoot` 和它是同一个目录。
+  // 旧代码在这里用 `../../shared` 从会话沙盒爬回共享目录 —— 那条相对路径现在
+  // 会爬到数据根之外，两个名字保留只是为了不动下游几十处引用。
   const cwdRoot = sessionWorkspaceRoot;
-  const sharedRoot = projectId
-    ? path.join(sessionWorkspaceRoot, '..', '..', 'shared')
-    : null;
+  const sharedRoot = cwdRoot;
+  const sessionMetaRoot = path.join(cwdRoot, '.nd', sessionId);
 
   const sessionAbortController = new AbortController();
   // initialPermissionMode 落进 active-runs，canUseTool 通过 getSessionPermissionMode 读
@@ -314,7 +321,7 @@ export async function runSession({
   // model 优先级：调用方显式 > session-config.json（用户在 picker 选的，随会话
   // 持久）> env 全局默认。这条链现在只写在 session-model.js 一处 —— 以前它在这里、
   // turn.js、canvas.js 各有一份写法不同的复制品，对不上的时候没人发现。
-  const { model: resolvedModel } = await resolveSessionModel(cwdRoot);
+  const { model: resolvedModel } = await resolveSessionModel(sessionMetaRoot);
   const model = resolvedModel;
   const sdkModel = resolveSdkSpoofModel(model);
 
@@ -393,6 +400,10 @@ export async function runSession({
     } catch { /* */ }
     throw err;
   }
+
+  // MCP server 实例落变量：开局契约自检要从**传给 query 的同一个实例**上取预期
+  // 工具名（server.toolNames，见 mcp/index.js）——不另立第二份清单。
+  const nodesignServer = createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx });
 
   const sdkOptions = {
     cwd: cwdRoot,
@@ -709,7 +720,7 @@ export async function runSession({
     hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId, projectId }),
 
     mcpServers: {
-      nodesign: createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx }),
+      nodesign: nodesignServer,
     },
 
     // mainModel = appModel ('kimi-k2.6')，sdkModel = SDK 视角 alias ('claude-opus-4-7[1m]')。
@@ -789,11 +800,20 @@ export async function runSession({
    * 画布上编辑同一份文件也不会撞 index.lock。
    */
   const commitWorldTasks = async (root, status) => {
-    const tasks = await listTasks(root);
-    for (const t of tasks) {
-      if (t.kind !== 'world') continue;
-      const tag = status === 'success' ? '' : `（${status}）`;
-      await commitTaskWorkspace(t.dir, `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`);
+    const m = await taskManifest(root);
+    const worlds = (m?.artifacts || []).filter(a => a.kind === 'world');
+    if (!worlds.length) return;
+    const tag = status === 'success' ? '' : `（${status}）`;
+    const msg = `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`;
+    // 提交**每个世界自己那个仓**，不是工作区根。
+    //
+    // 2026-08-07 cwd 收敛成工作区之后这里传的 root 变成了工作区根，于是
+    // commitTaskWorkspace 提交的是项目仓 —— 世界自己的历史从那天起就冻住了，
+    // 而那正是它的撤销机制（RP 的「回退三轮」是 checkout，小说的「这条线不要了」
+    // 是 branch）。一句报错都没有，因为提交本身成功了，只是提交错了地方。
+    for (const w of worlds) {
+      const dir = w.root ? path.join(root, w.root) : root;
+      await commitTaskWorkspace(dir, msg);
     }
   };
 
@@ -807,6 +827,16 @@ export async function runSession({
       setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
       sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
+      // recap（2026-08-14 日记本批）：闲时精灵写在画布上的"刚才干了什么/挂着
+      // 什么"。fire-and-forget、失败无声 —— 绝不影响收场。发在 run.done 之后：
+      // 前端 stale guard 只拦"另一个 run 正在跑"的旧事件，闲时照单全收。
+      summarizeRecap({
+        finalText: info?.finalText || '',
+        toolCount: sharedCtx.counters.toolCalls,
+        durationMs: sharedCtx.counters.durationMs || (Date.now() - sharedCtx.startedAt),
+      })
+        .then((line) => { if (line) sharedCtx.emit(Events.recap(line)); })
+        .catch(() => { /* 装饰性小结 */ });
       // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
       // 正名一次（只一次，用户改过名就不动）。失败不影响 turn。
       autoNameProjectFromSession(projectId, sessionId)
@@ -849,6 +879,23 @@ export async function runSession({
       );
     }
 
+    // 工作区一轮一条 commit（2026-08-08）。
+    //
+    // 在这之前**只有"用户在画布上直接编辑 HTML"那一条路会提交**（canvas.js 的
+    // PUT），agent 写文件、mv 文件一次 commit 都不产生 —— 项目仓里基本只有一条
+    // init。现在它承担一件具体的活：画布物件的 id 就是工作区相对路径，agent
+    // 背着画布 `mv` 一个文件，那张卡的坐标 / 关系线 / 批注全断，而且因为
+    // board.objects 是稀疏的，断掉的条目**清都清不掉**。git 的改名检测是唯一
+    // 不用引入第二个真相源就能认出"这是同一个东西换了位置"的办法
+    // （见 board-store.js 的 reconcileBoardRenames），而它需要有 commit 可比。
+    //
+    // 失败只 warn：一个 commit 落不下不该让已经跑完的 turn 变成失败。
+    // **等它落完再往下走**：对账器（reconcileBoardRenames）靠这条 commit 才看得见
+    // agent 这一轮 mv 了什么。不等的话，turn 完成事件触发的那次产物重扫可能跑在
+    // commit 前面，改名这一轮就漏掉了。
+    await commitWorkspace(projectId, sessionId, `turn ${status}: ${new Date().toISOString()}`, { author: 'agent' })
+      .catch((err) => console.warn('[git] turn commit failed:', err.message));
+
     activeTurnRunId = null;
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
     // 晋升排队的下一 turn（无排队时置 null）—— 追加消息在 turn 内不再抢占
@@ -879,6 +926,57 @@ export async function runSession({
   }, IDLE_SCAN_INTERVAL_MS);
   idleScanTimer.unref?.();
 
+  // ── 开局契约自检（2026-08-14 空壳钩子灭门案第 3 层，真正治本）──
+  //
+  // 背景：一个 `{ matcher: 'Bash' }` 空壳钩子条目让 SDK initialize 的大 try 吞掉
+  // TypeError → 全部程序化钩子 + 全部 in-process MCP server 无声蒸发，mcp_servers
+  // 里连 failed 都不留，会话照常跑 —— 潜伏六天。能静默这么久的结构性原因是这里
+  // 从来不消费 system:init：SDK 开局就把「会话里实际有哪些 server / 工具」告诉了
+  // 我们，但没人看。
+  //
+  // 现在对账：nodesign 必须 connected，且 server 实例声明的每个工具（探针实测
+  // deferred 工具也在 init.tools 里，27/27）都必须出现。不满足 → recordIssue 进
+  // 自动层 + throw 杀会话（外层 catch 走真错路径：markRunFailed + run.error 前端
+  // 显式可见）。已知代价：SDK 改 init 形状会误杀会话 —— 但误杀 5 分钟定位，
+  // 静默降级是 6 天暗账；工具残废的会话产出是负价值还烧钱，杀掉比放行仁慈。
+  const assertInitContract = (init) => {
+    const problems = [];
+    const nd = (init.mcp_servers || []).find((s) => s.name === 'nodesign');
+    if (!nd) {
+      problems.push('mcp_servers 里没有 nodesign（in-process MCP server 蒸发，连 failed 状态都不留）');
+    } else if (nd.status !== 'connected') {
+      problems.push(`nodesign server status=${nd.status}（预期 connected）`);
+    }
+    const registered = new Set(init.tools || []);
+    const expected = (nodesignServer.toolNames || []).map((n) => `mcp__nodesign__${n}`);
+    const missing = expected.filter((n) => !registered.has(n));
+    if (missing.length) {
+      problems.push(`nodesign 工具缺 ${missing.length}/${expected.length}：${missing.join(', ')}`);
+    }
+    if (!problems.length) {
+      console.info(
+        `[session-loop] sid=${sessionId.slice(0, 8)} init 契约自检 ✓ `
+        + `(nodesign connected, ${expected.length}/${expected.length} tools)`,
+      );
+      return;
+    }
+    const detail = problems.join('；');
+    // 自动层留案底（fail-soft：记录本身不能变成新故障源）。signature 只含缺失
+    // 集合不含 sessionId —— 同一种蒸发聚成一行计数。
+    try {
+      recordIssue({
+        source: 'auto',
+        toolName: 'session_init_contract',
+        summary: `开局契约自检失败：${detail.slice(0, 120)}`,
+        detail,
+        projectId,
+        sessionId,
+        signature: signatureOf(`session_init_contract|${missing.join(',')}|${nd ? nd.status : 'absent'}`),
+      });
+    } catch { /* ignore */ }
+    throw new Error(`开局契约自检失败（杀会话）：${detail}`);
+  };
+
   // ── main stream loop ──
 
   let stream;
@@ -902,6 +1000,28 @@ export async function runSession({
 
     stream = query({ prompt: inputQueue, options: sdkOptions });
     attachSessionQuery(sessionId, stream);
+
+    // 铅笔精灵的手写短句（2026-08-14 日记本批）：assistant 文本一到先写首句
+    // 底稿（refined:false，零成本零延迟），haiku 精修到货再覆盖（refined:true，
+    // "墨水显影"）。子代理的话不上精灵 —— 它们有自己的舞台便利贴。
+    // 全程 fire-and-forget：精灵写不出俏皮话不能影响 run。
+    let lastSummarySrc = '';
+    const maybeSpriteSummary = (message) => {
+      if (message.parent_tool_use_id) return;
+      const text = (message.message?.content || [])
+        .filter(b => b?.type === 'text' && typeof b.text === 'string')
+        .map(b => b.text).join('\n').trim();
+      if (!text || text === lastSummarySrc) return;
+      lastSummarySrc = text;
+      const round = sharedCtx.counters.turns;
+      const draft = clampFirstClause(text);
+      if (draft) sharedCtx.emit(Events.spriteSummary(round, draft, false));
+      summarizeReply(text)
+        .then((line) => {
+          if (line && line !== draft) sharedCtx.emit(Events.spriteSummary(round, line, true));
+        })
+        .catch(() => { /* 装饰性小结，坏了无声 */ });
+    };
 
     // emitContextUsage：fire-and-forget per assistant message
     let usageInFlight = false;
@@ -933,9 +1053,17 @@ export async function runSession({
         mintBackgroundTurn(`sdk_${message.type}`);
       }
 
+      // 开局契约自检：init 每次到达都对账（新建/resume 各来一次）
+      if (message.type === 'system' && message.subtype === 'init') {
+        assertInitContract(message);
+      }
+
       handleSDKMessage(sharedCtx, message);
 
-      if (message.type === 'assistant') emitContextUsage();
+      if (message.type === 'assistant') {
+        emitContextUsage();
+        maybeSpriteSummary(message);
+      }
 
       if (message.type === 'result') {
         // 计量断链修复（2026-07-30）：result message 的 usage/total_cost_usd 是

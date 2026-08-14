@@ -48,7 +48,10 @@ import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
+import { readUiConfigFile } from '../../projects/ui-config.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
+import { relationsDigest, fileNeighborhood } from '../../lib/board-relations.js';
+import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
 import {
   setActiveArtifact, getActiveArtifact, listWorkspaceArtifacts,
@@ -111,7 +114,7 @@ function loadToolPrompt(name) {
  * @returns {Partial<Record<string, Array<{ matcher?: string, hooks: Function[], timeout?: number }>>>}
  */
 export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId } = {}) {
-  return {
+  return assertHooksWellFormed({
     // ── P0+ stage 1（不动）──
 
     // FileChanged → EventBus emit run.file_changed → 前端 reload iframe。
@@ -120,7 +123,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // 声明过，所以它一次都没触发过。注册保留（将来开 watcher 可覆盖 bash/子代理
     // 写文件），实时刷新真正走下面 PostToolUse 的确定性直发。
     FileChanged: [{
-      hooks: [makeFileChangedHandler({ ctx })],
+      hooks: [makeFileChangedHandler({ ctx, workspaceRoot })],
     }],
 
     // ~~PreToolUse(Bash) 白名单~~ Phase 3d 删 —— 改用 session-loop.js sandbox option
@@ -187,6 +190,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // 中期方向：anchored Edit-first 替换 <style id="design-tokens"> +
       // <div class="__nd-deck-wrap"> 两块，省 verbatim 搬运。详见 memory
       // idea_canvas_write_flow_redesign.md
+      // 关系线邻域（2026-08-14 切片③）：agent 摸某个文件时，把连着它的线注进来。
+      // UserPromptSubmit 的全图摘要截断后，这里做精确补充。每个文件一个会话只注一次。
+      matcher: 'Read|Edit|Write',
+      hooks: [makePreToolUseBoardNeighborhoodInjector({ workspaceRoot, projectId })],
+    }, {
       matcher: 'Write',
       hooks: [
         makePreToolUseWriteCanvasReadReminder(),
@@ -220,7 +228,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // canvas.html 当前页数。把 SKILL.md 软约束（"agent 自己 turn 开头 Read
     // spec.json"）变成 SDK 硬注入 —— agent 不必每次都自觉，hook 直接喂上下文。
     UserPromptSubmit: [{
-      hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId })],
+      hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, projectId })],
     }],
 
     // PostToolUse —— 按 MCP 工具名分别注 additionalContext，引导 agent 利用
@@ -241,13 +249,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
         matcher: 'Write|Edit|MultiEdit|NotebookEdit',
         hooks: [makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, sessionId })],
       },
-      // Bash 里 mkdir tasks/<名> 也算认领任务 —— agent 常用 mkdir 起手，
-      // 如果那一轮被打断（没写成文件），任务目录会变成没主的孤儿，
-      // 桌面上就会同时出现"会话区 + 无主任务区"两块（2026-07-28 实测踩到）
-      {
-        matcher: 'Bash',
-        hooks: [makePostToolUseBashTaskBinder({ sharedRoot, sessionId })],
-      },
+      // （曾有 Bash mkdir 认领任务钩子，08-08 扁平化随任务模型一起拆除。当时删了
+      // hooks 数组却留下 `{ matcher: 'Bash' }` 空壳 —— SDK initialize 的大 try 被
+      // 它的 TypeError 打穿，全部程序化钩子 + 全部 in-process MCP server 无声蒸发，
+      // 潜伏六天（2026-08-14 空壳钩子灭门案）。删钩子必须删整个条目；下方
+      // assertHooksWellFormed 出厂断言从此拦这类残骸。）
       // Canvas 焕新升级 S1d — Edit/Write canvas.html 时检测改动落在哪些 page →
       // emit run.canvas_focus_page（前端 SlideNavigator 跳页 + pulse 高亮）。
       // 不返 hookSpecificOutput，纯 emit；不阻塞 agent，不注 additionalContext。
@@ -309,7 +315,40 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     SubagentStop: [{
       hooks: [makeSubagentStopHandler({ ctx })],
     }],
-  };
+  });
+}
+
+/**
+ * 出厂断言（2026-08-14 空壳钩子灭门案第 2 层）：createHooks 出口处校验每个事件
+ * 数组的每个条目都有非空 hooks 数组且全是函数。校验放出口不放调用方 —— 跟着
+ * 真相源走，任何调用路径都逃不过。
+ *
+ * 为什么必须启动即炸：一个 `{ matcher: 'Bash' }` 空壳条目会让 SDK 0.3.218
+ * initialize 的大 try 抛 TypeError 并整段吞掉 —— 全部程序化钩子 + 全部
+ * in-process MCP server 无声蒸发，mcp_servers 里连 failed 都不留，会话照常跑。
+ * 静默降级是六天暗账，启动炸是五分钟定位。
+ */
+function assertHooksWellFormed(hooksByEvent) {
+  for (const [event, entries] of Object.entries(hooksByEvent)) {
+    if (!Array.isArray(entries)) {
+      throw new Error(`[hooks] ${event} 不是数组 —— createHooks 出厂断言拦截`);
+    }
+    entries.forEach((entry, i) => {
+      const bad = !entry
+        || !Array.isArray(entry.hooks)
+        || entry.hooks.length === 0
+        || entry.hooks.some((h) => typeof h !== 'function');
+      if (bad) {
+        const label = entry?.matcher ? ` (matcher: ${entry.matcher})` : '';
+        throw new Error(
+          `[hooks] ${event}[${i}]${label} 是空壳/坏条目（hooks 必须是非空函数数组）。`
+          + '删钩子要删整个条目 —— 空壳会让 SDK initialize 把全部钩子和 in-process '
+          + 'MCP server 无声吞掉（2026-08-14 灭门案）。',
+        );
+      }
+    });
+  }
+  return hooksByEvent;
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -409,11 +448,12 @@ function makePreToolUseGrepContentDefaultHandler() {
  *
  * 返回 {}：不干预 SDK，不影响 agent loop。
  */
-function makeFileChangedHandler({ ctx }) {
+function makeFileChangedHandler({ ctx, workspaceRoot }) {
   // eslint-disable-next-line no-unused-vars
   return async (input, _toolUseId, _options) => {
     try {
-      ctx.emit(Events.fileChanged(input.file_path, input.event));
+      // 同上：发工作区相对路径，前端拿它直接当物件 id 的路径部分
+      ctx.emit(Events.fileChanged(toWorkspaceRel(input.file_path, workspaceRoot), input.event));
     } catch (err) {
       console.warn(`[hooks/FileChanged] handler threw:`, err.message);
     }
@@ -601,7 +641,37 @@ function makeSessionStartHandler({ ctx }) {
  *   - additionalContext?: string      注入后续 prompt（标记成 system 提示）
  *   - sessionTitle?: string           覆盖 session 标题（不用）
  */
-function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
+/**
+ * PreToolUse(Read|Edit|Write) —— 关系线邻域注入（2026-08-14 切片③）。
+ *
+ * agent 正要摸的文件身上如果连着线（用户手画的标注、改自/对照谱系），这一刻
+ * 就是它最相关的时刻。每个文件一个会话只注一次（线是慢变数据，重复注是噪音）；
+ * fail-soft —— 注不上不能挡工具。
+ */
+function makePreToolUseBoardNeighborhoodInjector({ workspaceRoot, projectId }) {
+  const seen = new Set();
+  return async (input) => {
+    try {
+      if (!projectId) return {};
+      const fp = input?.tool_input?.file_path;
+      if (typeof fp !== 'string' || !fp) return {};
+      const rel = toWorkspaceRel(fp, workspaceRoot);
+      if (!rel || seen.has(rel)) return {};
+      seen.add(rel);
+      const brief = await fileNeighborhood(projectId, rel, { limit: 6 });
+      if (!brief) return {};
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          additionalContext: `画布上连着 ${rel} 的关系线：\n${brief}`,
+        },
+      };
+    } catch { return {}; }
+  };
+}
+
+function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, projectId }) {
   return async (_input, _toolUseId, _options) => {
     try {
       if (!workspaceRoot) return {};
@@ -613,15 +683,14 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
       // canonical 答案。especially: agent-memory 路径以前 prompt 0 提及，
       // agent 写品牌档案常写错位置（./brand.md / ./memory.md 等）→ BrandCard 读不到
       parts.push(
-        `你的 cwd 是 ${workspaceRoot}\n`
-        + `关键路径（用 ./ 相对路径访问，软链已挂好不要绕）：\n`
-        + `  ./tasks/<任务名>/          产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css\n`
-        + `  ./tasks/<任务名>/notes/    便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
-        + `  ./spec.json                压缩历史暗档案（决策改写便利贴，这里别再写）\n`
-        + `  ./assets/                  用户上传素材 + 你 curl 下载的资源（软链 → shared，跨 session 共享）\n`
-        + `  ./agent-memory/            跨 session 长期记忆（软链 → shared）\n`
+        `你的 cwd 是 ${workspaceRoot} —— 这是**项目工作区**，产物直接住这儿。\n`
+        + `关键路径（用 ./ 相对路径访问，全是真目录，没有软链）：\n`
+        + `  ./                         产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css；世界 → 世界.md\n`
+        + `  ./notes/                   便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
+        + `  ./assets/                  用户上传素材 + 你 curl 下载的资源\n`
+        + `  ./.claude/agent-memory/    跨项目长期记忆\n`
         + `    ├── memory.md            main agent 通用 memory（前端 MemoryCard 读这条）\n`
-        + `    └── brand/memory.md      品牌档案（前端 BrandCard 读这条；写品牌信息一定走这个完整路径）`,
+        + `    └── brand/memory.md      风格档案（前端 BrandCard 读这条；写风格信息一定走这个完整路径）`,
       );
 
       // 1. spec.json：取最近 N 条 decisions 拼摘要
@@ -649,37 +718,43 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         // spec.json 不存在 / 解析失败 / stat 失败：noop
       }
 
-      // 1.5 任务便利贴清单（2026-07-30）：tasks/*/notes/*.md —— 决策 + 头脑风暴的
-      // 共享层。metadata-not-content：只列文件和每张贴的首行标题，细节 agent 自己 Read
+      // 1.5 便利贴清单（2026-07-30）：notes/*.md —— 决策 + 头脑风暴的共享层。
+      // metadata-not-content：只列文件和每张贴的首行标题，细节 agent 自己 Read
       try {
-        const tasksDir = path.join(workspaceRoot, 'tasks');
-        const taskEntries = await fs.readdir(tasksDir, { withFileTypes: true });
+        const notesDir = path.join(workspaceRoot, 'notes');
+        const noteFiles = (await fs.readdir(notesDir))
+          .filter(n => n.endsWith('.md') && !n.startsWith('.'));
         const lines = [];
-        for (const t of taskEntries) {
-          if (!t.isDirectory() || t.name.startsWith('.')) continue;
-          let noteFiles = [];
+        for (const n of noteFiles.slice(0, 12)) {
+          let title = '';
+          let faces = 0;
           try {
-            noteFiles = (await fs.readdir(path.join(tasksDir, t.name, 'notes')))
-              .filter(n => n.endsWith('.md') && !n.startsWith('.'));
-          } catch { continue; }
-          for (const n of noteFiles.slice(0, 12)) {
-            let title = '';
-            let faces = 0;
-            try {
-              const raw = await fs.readFile(path.join(tasksDir, t.name, 'notes', n), 'utf8');
-              title = (raw.match(/^#\s+(.{1,60})/m)?.[1] || '').trim();
-              faces = raw.split(/\n---\n/).length;
-            } catch { /* 列出文件名就够 */ }
-            const meta = [title, faces > 1 ? `${faces} 面` : ''].filter(Boolean).join(' · ');
-            lines.push(`  tasks/${t.name}/notes/${n}${meta ? `（${meta}）` : ''}`);
-          }
+            const raw = await fs.readFile(path.join(notesDir, n), 'utf8');
+            title = (raw.match(/^#\s+(.{1,60})/m)?.[1] || '').trim();
+            faces = raw.split(/\n---\n/).length;
+          } catch { /* 列出文件名就够 */ }
+          const meta = [title, faces > 1 ? `${faces} 面` : ''].filter(Boolean).join(' · ');
+          lines.push(`  notes/${n}${meta ? `（${meta}）` : ''}`);
         }
         if (lines.length > 0) {
-          parts.push(`任务便利贴（和用户共享，他看得到也可能改过；细节 Read）：\n${lines.join('\n')}`);
+          parts.push(`便利贴（和用户共享，他看得到也可能改过；细节 Read）：\n${lines.join('\n')}`);
         }
       } catch {
-        // tasks/ 不存在：noop
+        // notes/ 不存在：noop
       }
+
+      // 1.7 画布关系线摘要（2026-08-14 切片③）：用户/你在画布上画的连线。
+      // 用户画的排前面 —— 他专门画的线就是他想让你知道的事。手写字端点直接
+      // 带内容（标注全局化的关键一步）。没有线 = 沉默不占 prompt。
+      try {
+        const digest = await relationsDigest(projectId, { limit: 12 });
+        if (digest) {
+          parts.push(
+            `画布关系线（用户和你手动画的连线，端点跟着改名走；语义看线上的词）：\n${digest}\n`
+            + `  产出新东西后记得用 relate_on_board 把「改自/对照/接着/取材」画上去。`,
+          );
+        }
+      } catch { /* 板读不到就沉默 */ }
 
       // 2. 现有产物清单（2026-07-28：任务模型下产物住 tasks/<任务>/，这里以前只看
       //    cwd/canvas.html —— 于是每一轮都在说"还不存在，这可能是首跑"，手上明明有
@@ -689,36 +764,22 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         const artifacts = await listWorkspaceArtifacts(workspaceRoot);
         if (artifacts.length === 0) {
           parts.push(
-            '这个 workspace 还没有产物 —— 产出型工作先建 tasks/<任务名>/，'
-            + `deck 往里写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
+            '这个工作区还没有产物 —— 直接在工作区根上写：'
+            + `deck 写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
             + `世界（角色扮演）写 ${ENTRY_FILE.world}。`,
           );
         } else {
           const active = getActiveArtifact(sessionId)?.path || null;
           const lines = [];
-          const manifestCache = new Map();   // 同任务多产物：manifest 只算一次
+          // 一个工作区一份 manifest，八个产物共用（原来是"同任务多产物"缓存）
+          let manifest = null;
           for (const a of artifacts.slice(0, 8)) {
             let note = '';
             try {
-              if (a.task) {
-                // 形态说明由注册表出（每个产物一行：deck 报页数，站点报页面清单+产物根）
-                const taskDir = path.join(workspaceRoot, 'tasks', a.task);
-                if (!manifestCache.has(a.task)) manifestCache.set(a.task, await taskManifest(taskDir));
-                const m = manifestCache.get(a.task);
-                const relInTask = a.rel.replace(/^tasks\/[^/]+\//, '');
-                const art = m?.artifacts?.find(x => x.entryRel === relInTask) || null;
-                note = art ? await kindDef(art.kind).describe(taskDir, art) : '还判不出形态';
-              } else {
-                // 旧式 cwd 单 deck
-                const stat = await fs.stat(path.join(workspaceRoot, a.rel));
-                if (stat.size <= CANVAS_HTML_MAX_BYTES) {
-                  const raw = await fs.readFile(path.join(workspaceRoot, a.rel), 'utf8');
-                  const n = (raw.match(/<section\b[^>]*\bdata-page=/g) || []).length;
-                  note = n > 0 ? `deck · ${n} 页` : 'deck · 还没有 <section data-page=> 分页结构';
-                } else {
-                  note = `deck · ${(stat.size / 1024).toFixed(0)}KB，Read 时配 limit 分段读`;
-                }
-              }
+              // 形态说明由注册表出（每个产物一行：deck 报页数，站点报页面清单+产物根）
+              if (!manifest) manifest = await taskManifest(workspaceRoot);
+              const art = manifest?.artifacts?.find(x => x.entryRel === a.rel) || null;
+              note = art ? await kindDef(art.kind).describe(workspaceRoot, art) : '还判不出形态';
             } catch { note = '读不到'; }
             lines.push(`  ${a.rel}（${note}）${a.rel === active ? '  ← 画布工具默认打这份' : ''}`);
           }
@@ -741,15 +802,14 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
         // design-plan.md 不存在：noop
       }
 
-      // 4. session-config.json：tweaks_mode_enabled 注入对应行为提示
-      // 用户在 toolbar Tweaks toggle 控制；ON / OFF 对应不同的 agent 行为
+      // 4. ui-config.json（#25 从 session-config.json 改名，读取带旧名回落，
+      // 详见 projects/ui-config.js）：tweaks_mode_enabled 注入对应行为提示。
+      // 用户在 toolbar Tweaks toggle 控制；ON / OFF 对应不同的 agent 行为。
+      // **文件不存在（用户从没碰过 toggle）= 沉默不注入** —— 这条语义靠
+      // readUiConfigFile 返回 null 表达，别用带默认值的读法糊掉它。
       try {
-        const cfgPath = path.join(workspaceRoot, 'session-config.json');
-        const stat = await fs.stat(cfgPath);
-        if (stat.size <= 8 * 1024) {
-          const raw = await fs.readFile(cfgPath, 'utf8');
-          const cfg = JSON.parse(raw);
-          // 默认 true（用户没改过 toggle 时 = 启用）
+        const cfg = await readUiConfigFile(workspaceRoot);
+        if (cfg) {
           const tweaksEnabled = cfg?.tweaks_mode_enabled !== false;
           if (tweaksEnabled) {
             parts.push(
@@ -762,7 +822,7 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
           }
         }
       } catch {
-        // session-config.json 不存在 / 解析失败：默认行为（启用），不注入
+        // 读失败：默认行为（启用），不注入
       }
 
       if (parts.length === 0) return {};
@@ -825,13 +885,16 @@ function makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, ses
       const filePath = typeof t?.file_path === 'string' ? t.file_path
         : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
       if (filePath) {
-        await bindTaskToSession(filePath, sharedRoot, sessionId);
         // 刚写的这份 html 就是"当前产物"——list_pages / screenshot / read_page
         // 不给 path 时默认打它，子代理不必知道任务目录长什么样（artifact-target.js）。
         // 形态（deck / site）不在这里定：resolveArtifactTarget 每次解析都按任务现状
         // 重算，免得"先写 index.html 记成 site、后来目录变了"这种陈旧状态。
-        setActiveArtifact(sessionId, toWorkspaceRel(filePath, workspaceRoot));
-        ctx.emit(Events.fileChanged(filePath, 'change'));
+        const rel = toWorkspaceRel(filePath, workspaceRoot);
+        setActiveArtifact(sessionId, rel);
+        // 发**工作区相对路径**：画布物件的 id 就是这个字符串。以前发绝对路径，
+        // 前端靠 `tasks/<任务>/` 这个特征段把相对部分抠出来 —— 那一层拆掉之后
+        // 绝对路径里再没有可锚定的标志，寻址静默失败（舞台卡掉 dock）。
+        ctx.emit(Events.fileChanged(rel, 'change'));
       }
     } catch (err) {
       console.warn('[hooks/PostToolUse:file-changed] emit failed:', err.message);
@@ -1860,77 +1923,18 @@ function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoot }) {
 }
 
 
-/** PostToolUse(Bash) —— 命令里出现 tasks/<名> 就把它认领给当前会话 */
-function makePostToolUseBashTaskBinder({ sharedRoot, sessionId }) {
-  return async (input, _toolUseId, _options) => {
-    try {
-      const cmd = input?.tool_input?.command;
-      if (typeof cmd !== 'string') return {};
-      const seen = new Set();
-      for (const m of cmd.matchAll(/tasks\/([^\s/'"`;|&]+)/g)) {
-        if (seen.has(m[1])) continue;
-        seen.add(m[1]);
-        await bindTaskToSession(`tasks/${m[1]}/.probe`, sharedRoot, sessionId);
-      }
-    } catch (err) {
-      console.warn('[hooks/PostToolUse:bash-task-bind]', err.message);
-    }
-    return {};
-  };
-}
-
 /**
- * 任务=会话（2026-07-28 定死的一对一）：会话第一次往 tasks/<任务>/ 里写东西时，
- * 在任务目录里落一个 .nd-task.json 记住是谁的家。前端据此把"进任务"翻译成
- * "进那个会话"，把"退出任务"翻译成"退出会话"，不用再各处对表。
+ * ⚠️ 这里曾经有「任务 → 会话」的认领机制（2026-07-28 ~ 08-07）：会话第一次往
+ * `tasks/<任务>/` 写东西时落一个 `.nd-task.json` 记住是谁的家，前端据此把
+ * "进任务"翻译成"进那个会话"。还配了一个 PostToolUse(Bash) 钩子扫命令行里的
+ * `tasks/<名>`，因为 `mkdir tasks/x` 不走 Write 工具。
  *
- * 只写一次（已有 marker 不覆盖）—— 任务的归属在它被建出来那一刻就定了。
+ * 整套随任务层一起退役 —— 产物属于项目，不属于任何一次对话。
  */
-/** 工具入参给的可能是绝对路径，也可能是相对 cwd 的 —— 统一成 workspace 相对 */
-function toWorkspaceRel(filePath, workspaceRoot) {
-  const p = String(filePath).replace(/\\/g, '/');
-  if (!workspaceRoot) return p;
-  const root = path.resolve(workspaceRoot);
-  const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
-  return abs.startsWith(root + path.sep) ? abs.slice(root.length + 1) : p;
-}
 
-async function bindTaskToSession(filePath, sharedRoot, sessionId) {
-  if (!sharedRoot || !sessionId) return;
-  const m = String(filePath).replace(/\\/g, '/').match(/(?:^|\/)tasks\/([^/]+)\//);
-  if (!m) return;
-  const taskDir = path.join(sharedRoot, 'tasks', m[1]);
-  const marker = path.join(taskDir, '.nd-task.json');
-  try {
-    await fs.access(taskDir);     // 目录还没建出来就别造标记
-  } catch { return; }
-
-  // 形态（deck / site）在建目录那一刻还判不出来 —— Bash 认领走的是 `mkdir tasks/x`，
-  // 那时目录是空的。所以 kind 允许**后补**：第一次写出入口文件后这里就能判出来，
-  // 补进已有 marker。归属（sessionId）仍然只写一次，认领了就不改。
-  const kind = await detectTaskKind(taskDir);
-  const existing = await readTaskMarker(taskDir);
-  if (existing) {
-    if (kind && existing.kind !== kind && !existing.kindLocked) {
-      try {
-        await fs.writeFile(marker, JSON.stringify({ ...existing, kind }, null, 2), 'utf8');
-      } catch (err) {
-        console.warn('[hooks] backfill task kind failed:', err.message);
-      }
-    }
-    return;                       // 已有归属，不动
-  }
-  try {
-    await fs.writeFile(marker, JSON.stringify({
-      sessionId,
-      boundAt: new Date().toISOString(),
-      ...(kind ? { kind } : {}),
-    }, null, 2), 'utf8');
-  } catch (err) {
-    console.warn('[hooks] bind task→session failed:', err.message);
-  }
-}
-
+// `toWorkspaceRel` 2026-08-13 提到 `server/lib/workspace-path.js`：
+// 发给前端当物件寻址依据的路径全都要过它，而那些 emit 不只在这个文件里
+// （agent-shared 的流式 tool_input 也发 filePath）。
 
 /**
  * PostToolUse(record_decision) —— 锚定风格那一笔之后提醒落两处长期资产
