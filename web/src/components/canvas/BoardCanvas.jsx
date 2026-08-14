@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
-import { orderByRelations } from '../../lib/relation-order.js';
+import { orderByRelations, orderWithGroups } from '../../lib/relation-order.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -606,7 +606,7 @@ export default function BoardCanvas({
     items: [...(dirIndex.byDir.get(dir) || [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
   }), [dirIndex, folderCardOf]);
 
-  const { positioned, folderView, contentBottom, seatFixes } = useMemo(() => {
+  const { positioned, folderView, contentBottom, seatFixes, noteFixes } = useMemo(() => {
     // ── 桌面这一层（根目录）有哪些文件夹 ──
     //
     // 桌面**永远是根**（2026-08-13）。在这之前它是"当前目录"，双击文件夹整块
@@ -633,6 +633,7 @@ export default function BoardCanvas({
       }
     }
 
+    let seatSlots = [];   // 这一趟排出的槽位（批注跟随要看行几何）
     // ── 唯一一条自动：给还没有坐标的排个落脚点 ──
     //
     // 起排线取"已经摆好的东西（含文件夹卡）的最低边"，新来的从那底下开始铺，
@@ -645,14 +646,19 @@ export default function BoardCanvas({
         seatedBottom = Math.max(seatedBottom, it.pos.y + sizeOf(it).h);
       }
       // 字典序只是兜底；关系边（对照/关联凑相邻、接着正向、改自旧→新）
-      // 决定真正的先后 —— 顺序是权威，坐标是算的（北极星切片④）
+      // 决定真正的先后 —— 顺序是权威，坐标是算的（北极星切片④）。
+      // 二程：多成员关系组独占成行（breakBefore），组内紧凑、组间呼吸。
       const byId = new Map(fresh.map(it => [String(it.id), it]));
-      const ordered = orderByRelations(
+      const { order, breakBefore } = orderWithGroups(
         [...byId.keys()].sort((a, b) => a.localeCompare(b)),
         bindings,
-      ).map(id => byId.get(id));
+      );
+      const ordered = order.map(id => byId.get(id));
       const packed = packRow(
-        ordered.map(it => { const sz = sizeOf(it); return { id: it.id, w: sz.w, h: sz.h }; }),
+        ordered.map(it => {
+          const sz = sizeOf(it);
+          return { id: it.id, w: sz.w, h: sz.h, breakBefore: breakBefore.has(String(it.id)) };
+        }),
         { width: DESKTOP_W - MARGIN_X * 2, xMin: MARGIN_X, yTop: seatedBottom ? seatedBottom + ROW_GAP : MARGIN_X },
       );
       const slotById = new Map(packed.slots.map(s => [s.id, s]));
@@ -660,6 +666,7 @@ export default function BoardCanvas({
         const s = slotById.get(it.id);
         if (s) it.pos = { ...it.pos, x: s.x, y: s.y };
       }
+      seatSlots = packed.slots;
     }
 
     let bottom = 0;
@@ -671,7 +678,37 @@ export default function BoardCanvas({
       if (movingRef.current.has(it.id)) continue;   // 正在搬家，别给旧 id 排座
       seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
     }
-    return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes };
+    // 批注文字跟着目标搬家（北极星二程）：目标这一趟被重新落座（整理/首排），
+    // 贴着它说话的手写字跟过去 —— 否则批注线被拉成横跨画布的长线，字和它
+    // 说的东西各在一头。落点 = keepAnnotation 同款（组右沿 + 24，顶对齐）。
+    // 只搬 kind==='text'（涂鸦坐标是内容，永不代摆）；只在有 fresh 时算，
+    // 落盘后 fresh 清空 → noteFixes 清空，不会自激。
+    const noteFixes = {};
+    if (fresh.length) {
+      const freshIds = new Set(fresh.map(it => String(it.id)));
+      const textTargets = new Map();
+      for (const b of Object.values(bindings || {})) {
+        if (b.type !== 'annotates' || !String(b.from).startsWith('text:')) continue;
+        if (!freshIds.has(b.to)) continue;
+        if (!textTargets.has(b.from)) textTargets.set(b.from, []);
+        textTargets.get(b.from).push(b.to);
+      }
+      for (const [tid, targets] of textTargets) {
+        if (layout[tid]?.kind !== 'text') continue;
+        const tSlots = targets.map(id => seatSlots.find(sl => sl.id === id)).filter(Boolean);
+        if (!tSlots.length) continue;
+        // 落点 = 首目标所在**行**的右端空白 —— 不是目标右侧 +24：网格里那个
+        // 位置就是相邻卡。块独占成行（breakBefore）保证行尾有呼吸空间。
+        const anchorY = Math.min(...tSlots.map(sl => sl.y));
+        const rowRight = Math.max(...seatSlots.filter(sl => sl.y === anchorY).map(sl => sl.x + sl.w));
+        const noteW = layout[tid].w || 160;
+        noteFixes[tid] = {
+          x: Math.round(Math.min(rowRight + 24, DESKTOP_W - MARGIN_X - noteW)),
+          y: Math.round(anchorY),
+        };
+      }
+    }
+    return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes, noteFixes };
   }, [dirIndex, folderCardOf, layout, zonesEff, bindings]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
@@ -687,7 +724,8 @@ export default function BoardCanvas({
    */
   useEffect(() => {
     const ids = Object.keys(seatFixes || {});
-    if (!ids.length) return;
+    const nIds = Object.keys(noteFixes || {});
+    if (!ids.length && !nIds.length) return;
     /**
      * ⚠️ 有东西正在改身份（搬家 / 改名）时**一律不落位**。
      *
@@ -709,10 +747,19 @@ export default function BoardCanvas({
         dirtyRef.current.objects.add(id);
         touched = true;
       }
+      // 批注跟随是**覆写**：手写字本来就有坐标，跟随的意义就是换个位置。
+      // 只动还存在的（字可能刚被删）。
+      for (const id of nIds) {
+        if (!prev[id]) continue;
+        if (prev[id].x === noteFixes[id].x && prev[id].y === noteFixes[id].y) continue;
+        next[id] = { ...prev[id], ...noteFixes[id] };
+        dirtyRef.current.objects.add(id);
+        touched = true;
+      }
       if (touched) scheduleSave();
       return touched ? next : prev;
     });
-  }, [seatFixes, scheduleSave]);
+  }, [seatFixes, noteFixes, scheduleSave]);
 
   // ⚠️ 这里曾有「遮盖修正落盘」：区内避让把卡推开之后，把新坐标写回 board.json。
   // 区内避让 2026-08-07 起其实就没在跑了（`resolveZoneAvoidance` 是死导入、
@@ -1662,10 +1709,11 @@ export default function BoardCanvas({
       // 顶层文件夹进网格；嵌套的（`a/b`）不单独排 —— 它画在父文件夹里面，
       // 位置由父的排布决定，单独摆会跑到外面去
       const byZid = new Map(zv.filter(z => !z.id.includes('/')).map(z => [z.id, z]));
-      const tops = orderByRelations(
+      const { order: topOrder, breakBefore: topBreaks } = orderWithGroups(
         [...byZid.values()].sort((a, b) => a.y - b.y || a.x - b.x).map(z => z.id),
         bindings,
-      ).map(id => byZid.get(id));
+      );
+      const tops = topOrder.map(id => byZid.get(id));
       const GAP_X = 24; const GAP_Y = 24;
       const maxW = DESKTOP_W - MARGIN_X * 2;
       // 文件夹是**固定尺寸的方卡**（2026-08-13），排布退化成"一行一行摆格子"。
@@ -1675,6 +1723,7 @@ export default function BoardCanvas({
       const patches = {};
       for (const z of tops) {
         const { w, h } = FOLDER_CARD;
+        if (topBreaks.has(z.id) && cx > MARGIN_X) { cx = MARGIN_X; cy += rowH + GAP_Y; rowH = 0; }
         if (cx > MARGIN_X && cx + w > MARGIN_X + maxW) { cx = MARGIN_X; cy += rowH + GAP_Y; rowH = 0; }
         patches[z.id] = { x: cx, y: cy, w };
         cx += w + GAP_X; rowH = Math.max(rowH, h);

@@ -26,7 +26,7 @@ const CHAIN_READ_DIR = { flow: +1, 'derives-from': -1 };
  * @param {object} bindings    { [bid]: { type, from, to, ... } }
  * @returns {string[]}         关系感知的新顺序（无关系时 === 传入数组）
  */
-export function orderByRelations(ids, bindings) {
+function computeOrder(ids, bindings) {
   const present = new Set(ids);
   // 只吃 affinity 非 null 的类型；两端都得在这一批里（半截在外面的线
   // 拉不动已经坐好的东西，那是另一回事）
@@ -74,13 +74,37 @@ export function orderByRelations(ids, bindings) {
     return out;
   };
 
-  // 输出：按默认序扫，撞到某组第一个成员时整组吐出 —— 组内相邻、组外稳定
+  // 输出：按默认序扫，撞到某组第一个成员时整组吐出 —— 组内相邻、组外稳定。
+  // 顺手记块边界：多成员组独占成行（breakBefore 标在组头和组后第一个），
+  // 版面上就是「组内紧凑、组间呼吸」—— affinity 承诺的"摆近点"落成留白语言。
   const emitted = new Set();
   const out = [];
+  const breakBefore = new Set();
+  let prevWasBlock = false;
   for (const id of ids) {
     if (emitted.has(id)) continue;
     const g = groupOf.get(find(id));
-    for (const m of (g.length > 1 ? orderGroup(g) : g)) { out.push(m); emitted.add(m); }
+    const isBlock = g.length > 1;
+    const members = isBlock ? orderGroup(g) : g;
+    if ((isBlock || prevWasBlock) && out.length) breakBefore.add(members[0]);
+    for (const m of members) { out.push(m); emitted.add(m); }
+    prevWasBlock = isBlock;
   }
-  return out;
+  return { order: out, breakBefore };
+}
+
+/**
+ * 关系感知顺序（兼容旧签名：只要顺序）。
+ */
+export function orderByRelations(ids, bindings) {
+  const r = computeOrder(ids, bindings);
+  return Array.isArray(r) ? r : r.order;
+}
+
+/**
+ * 顺序 + 块边界：入座/整理用。没有关系时 order === 传入数组、breakBefore 空集。
+ */
+export function orderWithGroups(ids, bindings) {
+  const r = computeOrder(ids, bindings);
+  return Array.isArray(r) ? { order: r, breakBefore: new Set() } : r;
 }

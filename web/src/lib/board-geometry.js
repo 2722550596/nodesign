@@ -110,6 +110,12 @@ export function packRow(members, { width, xMin, yTop }) {
   let col = 0; let rowY = yTop; let rowH = 0;
   for (const m of members) {
     const span = Math.min(cols, Math.max(1, Math.ceil((m.w + COL_GAP) / (COL_W + COL_GAP))));
+    // 块边界（北极星二程）：关系组独占成行 —— 组头/组后强制换行，
+    // 版面读出「组内紧凑、组间呼吸」。行首的 breakBefore 是 noop。
+    if (m.breakBefore && col > 0) {
+      rowY += rowH + ROW_GAP;
+      col = 0; rowH = 0;
+    }
     if (col > 0 && col + span > cols) {   // 这一行放不下了，换行
       rowY += rowH + ROW_GAP;
       col = 0; rowH = 0;
