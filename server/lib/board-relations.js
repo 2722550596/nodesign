@@ -57,10 +57,29 @@ export async function relationsDigest(pid, { limit = 12 } = {}) {
   const board = await readBoard(pid);
   const all = Object.values(board.bindings || {});
   if (!all.length) return null;
-  const sorted = [...all.filter(b => b.by === 'user'), ...all.filter(b => b.by !== 'user')];
-  const lines = sorted.slice(0, limit).map(b => `  ${bindingLine(b, board)}`);
-  const more = all.length - lines.length;
+  // 手画的逐条列；自动 ref（内容引用对账出来的底仓）**收拢成每源一行**——
+  // 一个站引三十张图，铺开就把摘要刷没了。优先级 user > agent > auto。
+  const manual = [
+    ...all.filter(b => b.by === 'user'),
+    ...all.filter(b => b.by === 'agent'),
+    ...all.filter(b => b.by !== 'user' && b.by !== 'agent' && !(b.by === 'auto' && b.type === 'ref')),
+  ];
+  const autoRefs = all.filter(b => b.by === 'auto' && b.type === 'ref');
+  const lines = manual.slice(0, limit).map(b => `  ${bindingLine(b, board)}`);
+  const more = manual.length - lines.length;
   if (more > 0) lines.push(`  …还有 ${more} 条（摸到相关文件时会单独提示）`);
+  if (autoRefs.length) {
+    const bySrc = new Map();
+    for (const b of autoRefs) {
+      if (!bySrc.has(b.from)) bySrc.set(b.from, []);
+      bySrc.get(b.from).push(b.to);
+    }
+    for (const [from, tos] of [...bySrc].slice(0, 4)) {
+      const sample = tos.slice(0, 3).join('、');
+      lines.push(`  ${describeEndpoint(from, board)} ─取材─ ${tos.length} 件素材（自动对账：${sample}${tos.length > 3 ? ' 等' : ''}）`);
+    }
+    if (bySrc.size > 4) lines.push(`  …另有 ${bySrc.size - 4} 件产物的取材清单省略`);
+  }
   return lines.join('\n');
 }
 

@@ -180,8 +180,9 @@ function sanitizeBinding(b) {
     ...(typeof b.label === 'string' && b.label.trim()
       ? { label: b.label.trim().slice(0, 60) }
       : {}),
-    // 谁画的。用户画的线 agent 不该擅自删，反过来也一样。
-    ...(b.by === 'agent' || b.by === 'user' ? { by: b.by } : {}),
+    // 谁画的。用户画的线 agent 不该擅自删，反过来也一样；auto = 机器可证的
+    // 引用关系（auto-relations.js 对账层专属，只有它增删自家 b:auto:* 条目）。
+    ...(b.by === 'agent' || b.by === 'user' || b.by === 'auto' ? { by: b.by } : {}),
   };
 }
 

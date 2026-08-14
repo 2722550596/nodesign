@@ -52,6 +52,9 @@ export default function BindingLayer({
     for (const [id, b] of Object.entries(bindings || {})) {
       const style = bindingStyle(b.type);
       if (!style) continue;                       // 未知语义不画（跟服务端同口径）
+      // 自动对账的取材边不画（2026-08-14）：一个站引三十张图，画出来是蜘蛛网
+      // 不是版面。它们的消费方是 agent 上下文和主角判断，不是眼睛。
+      if (b.by === 'auto' && b.type === 'ref') continue;
       const a = rectOf(b.from);
       const z = rectOf(b.to);
       if (!a || !z) continue;                     // 端点当下不可见 → 跳过
@@ -89,7 +92,8 @@ export default function BindingLayer({
         const stroke = hot ? BINDING_ACCENT : style.stroke;
         const suffix = hot ? '-hot' : '';
         // 悬停标签补一笔出处：agent 画的线标出来（用户自己画的是默认，不啰嗦）
-        const label = (b.label || style.label) + (b.by === 'agent' ? ' · agent 画的' : '');
+        const label = (b.label || style.label)
+          + (b.by === 'agent' ? ' · agent 画的' : b.by === 'auto' ? ' · 自动' : '');
         return (
           <g key={id}>
             {/* 命中区：透明粗线，细线也好悬停 */}

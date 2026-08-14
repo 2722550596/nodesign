@@ -19,6 +19,7 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace, commitWorkspace,
 } from '../projects/workspace.js';
 import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
+import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
@@ -512,6 +513,10 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     }
 
     filtered.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
+    // 自动落线对账（2026-08-14）：manifests 正好在手，顺手把「html 真实引用
+    // 了哪些素材」落成 by:'auto' 的 ref 边。fire-and-forget + 30s 节流，
+    // 绝不拖累清单接口。详见 lib/auto-relations.js 头注。
+    reconcileAutoRefsThrottled(req.params.pid, workspaceRoot, tasks);
     res.json({ artifacts: filtered, tasks, folders });
   } catch (err) { next(err); }
 });
