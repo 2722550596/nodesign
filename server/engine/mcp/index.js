@@ -86,10 +86,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
-  return createSdkMcpServer({
-    name: 'nodesign',
-    version: '0.1.0',
-    tools: [
+  const tools = [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
       makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }),
 
@@ -196,12 +193,22 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；
       // agent 在 caption / 自然回话邀请反馈，下一轮用户 chat 即天然 gate。
-    ].map((t) => (
-      // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
-      // 集中在这打标避免改 16 个工具文件）
-      ALWAYS_LOAD_TOOLS.has(t.name)
-        ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
-        : t
-    )),
+  ].map((t) => (
+    // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
+    // 集中在这打标避免改 16 个工具文件）
+    ALWAYS_LOAD_TOOLS.has(t.name)
+      ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
+      : t
+  ));
+
+  const server = createSdkMcpServer({
+    name: 'nodesign',
+    version: '0.1.0',
+    tools,
   });
+  // 开局契约自检用（2026-08-14 灭门案第 3 层）：预期工具名从构造本 server 的
+  // 同一份 tools 数组上取，不另立第二份清单 —— 第二真相源会漂移。session-loop
+  // 收到 system:init 时拿它跟 SDK 实际注册进会话的工具对账。
+  server.toolNames = tools.map((t) => t.name);
+  return server;
 }

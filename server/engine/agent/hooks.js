@@ -113,7 +113,7 @@ function loadToolPrompt(name) {
  * @returns {Partial<Record<string, Array<{ matcher?: string, hooks: Function[], timeout?: number }>>>}
  */
 export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId } = {}) {
-  return {
+  return assertHooksWellFormed({
     // ── P0+ stage 1（不动）──
 
     // FileChanged → EventBus emit run.file_changed → 前端 reload iframe。
@@ -243,12 +243,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
         matcher: 'Write|Edit|MultiEdit|NotebookEdit',
         hooks: [makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, sessionId })],
       },
-      // Bash 里 mkdir tasks/<名> 也算认领任务 —— agent 常用 mkdir 起手，
-      // 如果那一轮被打断（没写成文件），任务目录会变成没主的孤儿，
-      // 桌面上就会同时出现"会话区 + 无主任务区"两块（2026-07-28 实测踩到）
-      {
-        matcher: 'Bash',
-      },
+      // （曾有 Bash mkdir 认领任务钩子，08-08 扁平化随任务模型一起拆除。当时删了
+      // hooks 数组却留下 `{ matcher: 'Bash' }` 空壳 —— SDK initialize 的大 try 被
+      // 它的 TypeError 打穿，全部程序化钩子 + 全部 in-process MCP server 无声蒸发，
+      // 潜伏六天（2026-08-14 空壳钩子灭门案）。删钩子必须删整个条目；下方
+      // assertHooksWellFormed 出厂断言从此拦这类残骸。）
       // Canvas 焕新升级 S1d — Edit/Write canvas.html 时检测改动落在哪些 page →
       // emit run.canvas_focus_page（前端 SlideNavigator 跳页 + pulse 高亮）。
       // 不返 hookSpecificOutput，纯 emit；不阻塞 agent，不注 additionalContext。
@@ -310,7 +309,40 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     SubagentStop: [{
       hooks: [makeSubagentStopHandler({ ctx })],
     }],
-  };
+  });
+}
+
+/**
+ * 出厂断言（2026-08-14 空壳钩子灭门案第 2 层）：createHooks 出口处校验每个事件
+ * 数组的每个条目都有非空 hooks 数组且全是函数。校验放出口不放调用方 —— 跟着
+ * 真相源走，任何调用路径都逃不过。
+ *
+ * 为什么必须启动即炸：一个 `{ matcher: 'Bash' }` 空壳条目会让 SDK 0.3.218
+ * initialize 的大 try 抛 TypeError 并整段吞掉 —— 全部程序化钩子 + 全部
+ * in-process MCP server 无声蒸发，mcp_servers 里连 failed 都不留，会话照常跑。
+ * 静默降级是六天暗账，启动炸是五分钟定位。
+ */
+function assertHooksWellFormed(hooksByEvent) {
+  for (const [event, entries] of Object.entries(hooksByEvent)) {
+    if (!Array.isArray(entries)) {
+      throw new Error(`[hooks] ${event} 不是数组 —— createHooks 出厂断言拦截`);
+    }
+    entries.forEach((entry, i) => {
+      const bad = !entry
+        || !Array.isArray(entry.hooks)
+        || entry.hooks.length === 0
+        || entry.hooks.some((h) => typeof h !== 'function');
+      if (bad) {
+        const label = entry?.matcher ? ` (matcher: ${entry.matcher})` : '';
+        throw new Error(
+          `[hooks] ${event}[${i}]${label} 是空壳/坏条目（hooks 必须是非空函数数组）。`
+          + '删钩子要删整个条目 —— 空壳会让 SDK initialize 把全部钩子和 in-process '
+          + 'MCP server 无声吞掉（2026-08-14 灭门案）。',
+        );
+      }
+    });
+  }
+  return hooksByEvent;
 }
 
 // ─────────────────────────────────────────────────────────────────────
