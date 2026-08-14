@@ -10,9 +10,8 @@ import {
 } from 'lucide-react';
 import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
-import { orderByRelations, orderWithGroups } from '../../lib/relation-order.js';
-import { pickHero } from '../../lib/hero.js';
-import { lineageFolds } from '../../lib/lineage.js';
+import { orderWithGroups } from '../../lib/relation-order.js';
+import { computeDesktopSeating } from '../../lib/board-seating.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -648,142 +647,16 @@ export default function BoardCanvas({
   const phantomObstaclesRef = useRef([]);
   const phantomBottomRef = useRef(0);
 
-  const { positioned, folderView, contentBottom, seatFixes, noteFixes } = useMemo(() => {
-    // ── 桌面这一层（根目录）有哪些文件夹 ──
-    //
-    // 桌面**永远是根**（2026-08-13）。在这之前它是"当前目录"，双击文件夹整块
-    // 换层；现在双击开窗，桌面不动 —— 于是这里不再需要一个"我在第几层"的状态。
-    const folders = (dirIndex.subsOf.get('') || []).map((id) => {
-      const z = zonesEff[id] || {};
-      return folderCardOf(id, {
-        x: Number.isFinite(z.x) ? z.x : 0,
-        y: Number.isFinite(z.y) ? z.y : 0,
-      });
-    });
-
-    // ── 桌面上有哪些物件 ──
-    const items = [];
-    const fresh = [];
-    for (const o of (dirIndex.byDir.get('') || [])) {
-      const stored = layout[o.id];
-      if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
-        items.push({ ...o, pos: stored, zoneId: '' });
-      } else {
-        const it = { ...o, pos: { x: 0, y: 0, z: 1 }, zoneId: '' };
-        items.push(it);
-        fresh.push(it);
-      }
-    }
-
-    // 谱系收叠（北极星路线3）：改自链的旧版藏到现役版身后，链尾带徽标。
-    // 放在主角判断和入座**之前** —— 藏起来的不参与排座也不抢主角。
-    const folds = lineageFolds(items.map(it => String(it.id)), bindings, lineageOpen);
-    let visItems = items;
-    if (folds.hidden.size) visItems = items.filter(it => !folds.hidden.has(String(it.id)));
-    for (const it of visItems) {
-      const st = folds.stacks.get(String(it.id));
-      if (st) { it.stackCount = st.count; it.stackOpen = st.open; }
-    }
-
-    // 主角判断（北极星路线1）：唯一且有证据的最高分产物卡放大一档。
-    // 必须在任何 sizeOf 之前标 —— 命中/排布/渲染吃的是同一个 tier。
-    // 显式主角（agent feature 立的 board.hero）压过推断；不在这一层就回落自动
-    const heroId = (boardHero && visItems.some(it => String(it.id) === boardHero))
-      ? boardHero
-      : pickHero(visItems.map(it => ({ id: String(it.id), type: it.type })), bindings);
-    if (heroId) {
-      const h = visItems.find(it => String(it.id) === heroId);
-      if (h) h.tier = 'hero';
-    }
-
-    let seatSlots = [];   // 这一趟排出的槽位（批注跟随要看行几何）
-    // ── 唯一一条自动：给还没有坐标的排个落脚点 ──
-    //
-    // 起排线取"已经摆好的东西（含文件夹卡）的最低边"，新来的从那底下开始铺，
-    // 不会压到你摆好的版面上。
-    let visFresh = fresh.filter(it => !folds.hidden.has(String(it.id)));
-    // 座位过户（2026-08-14 幻影入座）：新来的图先问幻影表 —— 生图占位卡
-    // 在哪儿等，成品就坐哪儿，不跳位。认领即标记（ref 用法同 movingRef）。
-    const adopted = [];
-    for (const it of visFresh) {
-      if (it.type !== 'image') continue;
-      const seat = claimPhantomSeat(phantomsRef, it.id);
-      if (seat) { it.pos = { ...it.pos, ...seat }; adopted.push(it); }
-    }
-    if (adopted.length) visFresh = visFresh.filter(it => !adopted.includes(it));
-    if (visFresh.length) {
-      let seatedBottom = 0;
-      for (const f of folders) seatedBottom = Math.max(seatedBottom, f.y + f.h);
-      for (const it of visItems) {
-        if (visFresh.includes(it)) continue;
-        seatedBottom = Math.max(seatedBottom, it.pos.y + sizeOf(it).h);
-      }
-      // 字典序只是兜底；关系边（对照/关联凑相邻、接着正向、改自旧→新）
-      // 决定真正的先后 —— 顺序是权威，坐标是算的（北极星切片④）。
-      // 二程：多成员关系组独占成行（breakBefore），组内紧凑、组间呼吸。
-      const byId = new Map(visFresh.map(it => [String(it.id), it]));
-      const { order, breakBefore } = orderWithGroups(
-        [...byId.keys()].sort((a, b) => a.localeCompare(b)),
-        bindings,
-      );
-      const ordered = order.map(id => byId.get(id));
-      const packed = packRow(
-        ordered.map(it => {
-          const sz = sizeOf(it);
-          return { id: it.id, w: sz.w, h: sz.h, breakBefore: breakBefore.has(String(it.id)) };
-        }),
-        { width: DESKTOP_W - MARGIN_X * 2, xMin: MARGIN_X, yTop: seatedBottom ? seatedBottom + ROW_GAP : MARGIN_X },
-      );
-      const slotById = new Map(packed.slots.map(s => [s.id, s]));
-      for (const it of visFresh) {
-        const s = slotById.get(it.id);
-        if (s) it.pos = { ...it.pos, x: s.x, y: s.y };
-      }
-      seatSlots = packed.slots;
-    }
-
-    let bottom = 0;
-    for (const f of folders) bottom = Math.max(bottom, f.y + f.h);
-    for (const it of visItems) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
-    // 新算出来的落点交给下面那条 effect 落盘（不落的话布局会跟着交互抖，见上）
-    // 过户来的座位（adopted）同样要落盘 —— 它就是这张图的正式座位
-    const seatFixes = {};
-    for (const it of [...visFresh, ...adopted]) {
-      if (movingRef.current.has(it.id)) continue;   // 正在搬家，别给旧 id 排座
-      seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
-    }
-    // 批注文字跟着目标搬家（北极星二程）：目标这一趟被重新落座（整理/首排），
-    // 贴着它说话的手写字跟过去 —— 否则批注线被拉成横跨画布的长线，字和它
-    // 说的东西各在一头。落点 = keepAnnotation 同款（组右沿 + 24，顶对齐）。
-    // 只搬 kind==='text'（涂鸦坐标是内容，永不代摆）；只在有 fresh 时算，
-    // 落盘后 fresh 清空 → noteFixes 清空，不会自激。
-    const noteFixes = {};
-    if (visFresh.length) {
-      const freshIds = new Set(visFresh.map(it => String(it.id)));
-      const textTargets = new Map();
-      for (const b of Object.values(bindings || {})) {
-        if (b.type !== 'annotates' || !String(b.from).startsWith('text:')) continue;
-        if (!freshIds.has(b.to)) continue;
-        if (!textTargets.has(b.from)) textTargets.set(b.from, []);
-        textTargets.get(b.from).push(b.to);
-      }
-      for (const [tid, targets] of textTargets) {
-        if (layout[tid]?.kind !== 'text') continue;
-        const tSlots = targets.map(id => seatSlots.find(sl => sl.id === id)).filter(Boolean);
-        if (!tSlots.length) continue;
-        // 落点 = 首目标所在**行**的右端空白 —— 不是目标右侧 +24：网格里那个
-        // 位置就是相邻卡。块独占成行（breakBefore）保证行尾有呼吸空间。
-        const anchorY = Math.min(...tSlots.map(sl => sl.y));
-        const rowRight = Math.max(...seatSlots.filter(sl => sl.y === anchorY).map(sl => sl.x + sl.w));
-        const noteW = layout[tid].w || 160;
-        noteFixes[tid] = {
-          x: Math.round(Math.min(rowRight + 24, DESKTOP_W - MARGIN_X - noteW)),
-          y: Math.round(anchorY),
-        };
-      }
-    }
-    return { positioned: visItems, folderView: folders, contentBottom: bottom, seatFixes, noteFixes };
-  }, [dirIndex, folderCardOf, layout, zonesEff, bindings, lineageOpen, boardHero]);
+  // 入座算法本体 2026-08-14 抽进 lib/board-seating.js（配单测）——语义没动，
+  // 两个 ref 型依赖参数化：movingIds（搬家中不落盘）、claimSeat（幻影座位过户，
+  // 认领即在 memo 里标记，ref 用法同 movingRef 有先例）。
+  const { positioned, folderView, contentBottom, seatFixes, noteFixes } = useMemo(() => (
+    computeDesktopSeating({
+      dirIndex, zonesEff, layout, bindings, lineageOpen, boardHero, folderCardOf,
+      movingIds: movingRef.current,
+      claimSeat: (id) => claimPhantomSeat(phantomsRef, id),
+    })
+  ), [dirIndex, folderCardOf, layout, zonesEff, bindings, lineageOpen, boardHero]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
   // 幻影找座的障碍表与起排线（跟这一趟入座同一份现实）
