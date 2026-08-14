@@ -29,7 +29,7 @@ import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
-import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
+import { emptyPresence, reducePresence, resolvePending, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
 import { AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
 import { usePhantoms, claimPhantomSeat, PhantomImageCard } from './PhantomLayer.jsx';
@@ -2339,13 +2339,20 @@ export default function BoardCanvas({
   // 刷新不重建事件管线。
   const artifactRootsRef = useRef(artifactRoots);
   artifactRootsRef.current = artifactRoots;
-  const handlePresenceEvent = useCallback((evt) => {
-    setPresence(prev => reducePresence(prev, evt, (file) => {
-      const objectId = resolveObjectId(file, artifactRootsRef.current);
-      if (!objectId) return null;
-      return { objectId, zoneId: zoneOfObjectId(objectId) };
-    }));
+  const presenceResolve = useCallback((file) => {
+    const objectId = resolveObjectId(file, artifactRootsRef.current);
+    if (!objectId) return null;
+    return { objectId, zoneId: zoneOfObjectId(objectId) };
   }, []);
+  const handlePresenceEvent = useCallback((evt) => {
+    setPresence(prev => reducePresence(prev, evt, presenceResolve));
+  }, [presenceResolve]);
+  // 新文件补射：位置事件到达时它还不是画布物件（产物清单要等 file_changed 后
+  // 的防抖重拉才收编），reducer 把路挂在 pendingFile 上 —— 清单一刷新就重试。
+  // 不补的话"从 0 产物到有产物"精灵永远落不上去（2026-08-14 用户报的追踪病）。
+  useEffect(() => {
+    setPresence(prev => resolvePending(prev, presenceResolve));
+  }, [artifactRoots, presenceResolve]);
 
   const { stageCards, stageBadges, spriteLine, recap, dismissStageCard } = useStageState({
     stageRef, artifactRoots, followToObject,

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PAPER } from '../../lib/paper.js';
 import { STAGE_CARD_W } from '../../lib/board-geometry.js';
 import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
@@ -47,28 +47,29 @@ const KEYFRAMES = `
 const MARK_DRAW_MS = 760;
 
 /**
- * 官方星芒的 12 个触点各占一个楔形扇区（scratchpad/claude-rays.mjs 从
- * CLAUDE_PATH 逐点量出来的：半径极大=触点尖、相邻尖的中分线=扇区界）。
- * 每条是"圆心 → 两条界在半径 40 处"的三角 clipPath —— 裁的都是同一份
- * 官方 path，所以触点形状一个字没改。顺时针序，表盘 12 点起。
- * ⚠️ 触点间隔天生不均（14°/42°/57°…）—— 那是官方图的手绘感，别"整理"成
- * 等分（等分正是当初手搓 11 根射线被判丑的原因）。
+ * 手绘矢量版星芒（2026-08-14 五版，用户拍板"整个用我们自己的手绘版，操作
+ * 空间大"）：12 个触点 + 中心毂是**独立形状**，从官方轮廓按谷点解剖出来
+ * （scratchpad/claude-rays2.mjs：触点尖=半径极大、谷=相邻尖之间半径极小，
+ * 谷到谷的轮廓段闭合成一根触点，谷点连成 12 边形毂）。480px 逐像素 diff=0
+ * —— 拼回去就是官方图，拆开每根都能自由动。
+ * ox/oy = 谷弦中点 = 这根触点的"根"：挤压绕根缩，根钉在毂缘上永不开缝，
+ * 前一版的 clip 裁切和圆片补丁整套退役。
  */
-const RAY_WEDGES = [
-  'M12 12 L6.50 -27.62 L29.16 -24.13 Z',
-  'M12 12 L29.16 -24.13 L47.04 -7.29 Z',
-  'M12 12 L47.04 -7.29 L51.96 13.81 Z',
-  'M12 12 L51.96 13.81 L47.34 30.73 Z',
-  'M12 12 L47.34 30.73 L37.93 42.46 Z',
-  'M12 12 L37.93 42.46 L22.33 50.64 Z',
-  'M12 12 L22.33 50.64 L-0.72 49.92 Z',
-  'M12 12 L-0.72 49.92 L-16.47 40.10 Z',
-  'M12 12 L-16.47 40.10 L-26.41 23.15 Z',
-  'M12 12 L-26.41 23.15 L-26.17 0.05 Z',
-  'M12 12 L-26.17 0.05 L-14.23 -18.20 Z',
-  'M12 12 L-14.23 -18.20 L6.50 -27.62 Z',
+const HUB = 'M9.57 11.63L9.4 8.81L12.08 9.16L13.82 8.46L16.49 10.53L15.83 12.8L15.74 13.91L15.7 16.19L13.24 16.02L11.92 15.29L10.53 14.44L9.51 13.08Z';
+const RAYS = [
+  { d: 'M12.08 9.16L12.24 9.16L12.24 9.01L12.36 7.3L12.6 5.21L12.83 2.51L12.91 1.75L13.29 0.84L14.03 0.35L14.62 0.63L15.1 1.32L15.03 1.76L14.74 3.61L14.19 6.51L13.82 8.46Z', ox: 12.95, oy: 8.81 },  // tip 280°
+  { d: 'M13.82 8.46L14.03 8.46L14.28 8.21L15.26 6.91L16.91 4.84L17.64 4.03L18.49 3.12L19.04 2.69L20.07 2.69L20.83 3.82L20.49 4.98L19.43 6.33L18.54 7.47L17.28 9.17L16.49 10.53Z', ox: 15.16, oy: 9.5 },  // tip 311°
+  { d: 'M16.49 10.53L16.57 10.64L16.75 10.62L19.61 10.02L21.15 9.74L22.99 9.42L23.82 9.81L23.91 10.21L23.58 11.01L21.62 11.5L19.31 11.96L15.87 12.77L15.83 12.8Z', ox: 16.16, oy: 11.67 },  // tip 351°
+  { d: 'M15.83 12.8L15.88 12.87L17.43 13.01L18.09 13.05L19.71 13.05L22.73 13.27L23.52 13.79L23.99 14.43L23.91 14.92L22.7 15.54L21.06 15.15L17.23 14.24L15.92 13.91L15.74 13.91Z', ox: 15.79, oy: 13.36 },  // tip 14°
+  { d: 'M15.74 13.91L15.74 14.02L16.83 15.09L18.84 16.9L21.34 19.23L21.47 19.8L21.15 20.26L20.81 20.21L18.61 18.55L17.76 17.81L15.83 16.19L15.7 16.19Z', ox: 15.72, oy: 15.05 },  // tip 42°
+  { d: 'M15.7 16.19L15.7 16.36L16.15 17.01L18.49 20.53L18.61 21.61L18.44 21.96L17.83 22.17L17.17 22.05L15.79 20.13L14.38 17.96L13.24 16.02Z', ox: 14.47, oy: 16.1 },  // tip 57°
+  { d: 'M13.24 16.02L13.1 16.1L12.42 23.35L12.11 23.72L11.38 24L10.77 23.54L10.45 22.79L10.77 21.32L11.16 19.39L11.48 17.86L11.76 15.96L11.93 15.33L11.92 15.29Z', ox: 12.58, oy: 15.65 },  // tip 93°
+  { d: 'M11.92 15.29L11.78 15.31L10.35 17.27L8.17 20.22L6.44 22.06L6.03 22.23L5.32 21.86L5.38 21.2L5.78 20.61L8.17 17.57L9.61 15.69L10.54 14.6L10.53 14.44Z', ox: 11.23, oy: 14.87 },  // tip 124°
+  { d: 'M10.53 14.44L10.48 14.44L4.14 18.56L3.01 18.71L2.52 18.25L2.58 17.5L2.81 17.26L4.72 15.95L4.71 15.96L9.43 13.31L9.51 13.08Z', ox: 10.02, oy: 13.76 },  // tip 147°
+  { d: 'M9.51 13.08L9.43 12.95L9.2 12.95L8.41 12.9L5.72 12.83L3.38 12.73L1.11 12.61L0.54 12.49L0.01 11.78L0.06 11.43L0.54 11.11L1.23 11.17L2.75 11.27L5.02 11.43L6.68 11.53L9.12 11.78L9.51 11.78L9.57 11.63Z', ox: 9.54, oy: 12.35 },  // tip 181°
+  { d: 'M9.57 11.63L9.43 11.53L9.33 11.43L6.97 9.84L4.42 8.15L3.09 7.18L2.36 6.68L2 6.22L1.84 5.22L2.5 4.49L3.38 4.55L3.6 4.61L4.5 5.3L6.4 6.78L8.89 8.61L9.26 8.91L9.4 8.81Z', ox: 9.48, oy: 10.22 },  // tip 214°
+  { d: 'M9.4 8.81L9.42 8.74L9.26 8.46L7.9 6.02L6.46 3.53L5.81 2.5L5.64 1.88L5.62 1.78L5.6 1.69L5.58 1.6L5.57 1.51L5.56 1.43L5.55 1.34L5.54 1.24L5.54 1.15L6.29 0.13L6.7 0L7.7 0.13L8.11 0.5L8.73 1.91L9.74 4.14L11.29 7.17L11.74 8.07L11.99 8.9L12.08 9.16Z', ox: 10.74, oy: 8.98 },  // tip 244°
 ];
-
 /**
  * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 85ms ≈ 1.0s（转速旋钮就是
  * 这个数：70 被判"太快"、100 被判"太慢"，85 是二分出来的）。
@@ -84,56 +85,43 @@ const RAY_WEDGES = [
 const RAY_STEP_MS = 85;
 
 /**
- * 活跃态：**星芒自己的触点**顺时针逐个挤压-释放（用户点名要的就是矢量图
- * 本身在动 —— 先后两版都跑偏：手搓射线丢了官方形状、外挂转轮又没动到
- * 图标本身）。做法是把官方 path 按触点裁成 12 片，每片绕图心 scale 收放，
- * 起拍按顺时针错开成一圈行波；脉冲曲线（挤压→蓄压→释放）见 RAY_STEP_MS
- * 那段注释。纯色填充下扇区叠缝不可见；圆心垫一小片静态星芒，兜住各片
- * 缩放时谷底可能开出的细缝。
+ * 活跃态：**星芒自己的触点**顺时针逐个挤压-释放，中心毂随行波呼吸。
+ * 形状来自上面的手绘解剖（HUB + RAYS），动画曲线见 RAY_STEP_MS 注释。
+ * 版本史：手搓等距射线（判丑：官方触点不等距才是手绘感）→ 外挂转轮
+ * （没动到图标本身）→ 楔形 clip 裁官方 path（裂缝要圆片补丁，且只能绕
+ * 图心缩）→ 手绘解剖版（本版：根钉毂缘零裂缝，逐根自由变换）。
  */
 function SpinnerMark({ size }) {
-  const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
-  const period = RAY_WEDGES.length * RAY_STEP_MS;
+  const period = RAYS.length * RAY_STEP_MS;
+  // 同色描边 0.3：独立形状在共享边上各自抗锯齿，拼缝会透出底色成一圈细线
+  // （480px 实测可见）—— 描边让相邻形状彼此搭 0.15，缝就没了；顺带把尖角
+  // 磨圆一点，更像笔画的。透明度仍只放 svg 根（同色叠画不叠深）。
+  const inkProps = {
+    fill: CLAUDE_BRAND, stroke: CLAUDE_BRAND,
+    strokeWidth: 0.3, strokeLinejoin: 'round', strokeLinecap: 'round',
+  };
   return (
-    // ⚠️ 透明度只能放在 svg 根上：楔形之间、楔形与圆心垫片是同色叠画，
-    // per-path 0.95 会在重叠处叠出一圈更深的色斑（截图实锤过），根上的
-    // opacity 是"孩子们先合成、整体再透明"，重叠不可见。
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"
       style={{ display: 'block', flexShrink: 0, overflow: 'visible', opacity: 0.95 }}>
-      <defs>
-        {RAY_WEDGES.map((d, i) => (
-          <clipPath key={i} id={`ndray${uid}${i}`}><path d={d} /></clipPath>
-        ))}
-        {/* 垫片 6.8：星芒中央那坨的谷底最深到 ~7，5.2 时收缩会在圆心咬出缺口 */}
-        <clipPath id={`ndraycore${uid}`}><circle cx="12" cy="12" r="6.8" /></clipPath>
-      </defs>
-      {/* 中心也参与运动（2026-08-14 用户点名）：每转一圈呼吸一次。只向外
-          鼓（scale ≥ 1）—— 它同时还是谷底缺缝的补丁，向内缩就把当初垫它
-          要盖的缝重新亮出来了。 */}
-      <g
-        clipPath={`url(#ndraycore${uid})`}
+      {/* 中心毂：随行波呼吸。只向外鼓（scale ≥ 1）—— 触点的根都钉在毂缘上，
+          向内缩就把接缝拉开了 */}
+      <path
+        d={HUB} {...inkProps}
         style={{
           transformOrigin: '12px 12px', transformBox: 'view-box',
           animation: `ndCoreBreath ${period}ms ease-in-out infinite`,
         }}
-      >
-        <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} />
-      </g>
-      {RAY_WEDGES.map((d, i) => (
-        <g
-          key={i} clipPath={`url(#ndray${uid}${i})`}
+      />
+      {RAYS.map((r, i) => (
+        <path
+          key={i} d={r.d} {...inkProps}
           style={{
-            // transform-box: view-box —— 不写的话 SVG 里 scale 不绕图心
-            // （三件套那批踩过）；负 delay = 一上场行波就已经在半路，没有起手僵直
-            transformOrigin: '12px 12px', transformBox: 'view-box',
-            // 缓动写在 keyframes 里逐段给（挤压/蓄压/释放各一条曲线），
-            // 这里的 linear 只是不碍事的底
+            // 每根绕自己的根挤压（不是绕图心）—— "往里挤"的方向就是各自的轴向
+            transformOrigin: `${r.ox}px ${r.oy}px`, transformBox: 'view-box',
             animation: `ndRayPulse ${period}ms linear infinite`,
             animationDelay: `${i * RAY_STEP_MS - period}ms`,
           }}
-        >
-          <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} />
-        </g>
+        />
       ))}
     </svg>
   );
@@ -412,6 +400,12 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
       if (first) { setDrawKey(k => k + 1); setSlot(first); }
       return undefined;
     }
+    // 工作中不跟镜头（2026-08-14 用户定的规则）：agent 干活的地方就是它站的
+    // 地方，用户把镜头挪去看别处，它不追过来 —— 追随只是闲时的礼节。
+    if (agentActive) {
+      clearTimeout(offTimer.current); offTimer.current = null;
+      return undefined;
+    }
     if (slotVisible(slot, cam, viewport)) {
       clearTimeout(offTimer.current); offTimer.current = null;
     } else if (!offTimer.current) {
@@ -425,7 +419,7 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
       }, OFFSCREEN_RELOCATE_MS);
     }
     return undefined;
-  }, [workAnchor, cam, viewport, obstacles, slot]);
+  }, [workAnchor, agentActive, cam, viewport, obstacles, slot]);
 
   // 卸载兜底：不走上面的显式清理路径时别让计时器对着空组件开枪
   useEffect(() => () => clearTimeout(offTimer.current), []);

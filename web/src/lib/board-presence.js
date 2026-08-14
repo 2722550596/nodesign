@@ -155,9 +155,18 @@ export function reducePresence(table, evt, resolve) {
       // 而 19 条测试全绿，因为测试自己 mock 了一套不存在的事件形状
       // （2026-08-13 查实）。真形状现在有 parity 断言钉在测试里。
       const hit = resolve?.(evt.filePath);
-      if (!hit) return table;
-      if (cur.targetId === hit.objectId && cur.zoneId === hit.zoneId) return table;
-      return { ...table, [who]: { ...cur, targetId: hit.objectId, zoneId: hit.zoneId, at: evt.at || cur.at } };
+      if (!hit) {
+        // 解析不到 ≠ 路径是错的 —— 多半是**新文件**：开写就位和落盘两发事件
+        // 都赶在产物清单收编它之前，直接丢就再没有事件来救了（"从 0 产物到
+        // 有产物追踪不靠谱"的病根，2026-08-14 查实）。把路记在案，清单刷新
+        // 后 resolvePending 补射。
+        if (!evt.filePath || cur.pendingFile === evt.filePath) return table;
+        return { ...table, [who]: { ...cur, pendingFile: evt.filePath } };
+      }
+      if (cur.targetId === hit.objectId && cur.zoneId === hit.zoneId) {
+        return cur.pendingFile ? { ...table, [who]: { ...cur, pendingFile: null } } : table;
+      }
+      return { ...table, [who]: { ...cur, targetId: hit.objectId, zoneId: hit.zoneId, pendingFile: null, at: evt.at || cur.at } };
     }
 
     // "正在做什么"那句话。⚠️ 事件类型是 `run.tool_use.started`（只带工具名）
@@ -186,7 +195,8 @@ export function reducePresence(table, evt, resolve) {
       let touched = false;
       const next = {};
       for (const [id, p] of Object.entries(table)) {
-        if (p.active) { touched = true; next[id] = { ...p, active: false, message: null }; }
+        // pendingFile 一起清：挂账的是"这一轮正在写的新文件"，轮都收了账就作废
+        if (p.active) { touched = true; next[id] = { ...p, active: false, message: null, pendingFile: null }; }
         else next[id] = p;
       }
       return touched ? next : table;
@@ -195,6 +205,28 @@ export function reducePresence(table, evt, resolve) {
     default:
       return table;
   }
+}
+
+/**
+ * 产物清单刷新后的补射（2026-08-14）：位置事件到达时目标还不是画布物件
+ * （新文件），路径挂在 pendingFile 上 —— 清单每次变化调这个重试解析，
+ * 解析到了精灵才真正走到新卡上。没变化返回原表（setState 按引用 bail）。
+ */
+export function resolvePending(table, resolve) {
+  let changed = false;
+  const next = {};
+  for (const [id, p] of Object.entries(table || {})) {
+    if (p.active && p.pendingFile) {
+      const hit = resolve?.(p.pendingFile);
+      if (hit) {
+        next[id] = { ...p, targetId: hit.objectId, zoneId: hit.zoneId, pendingFile: null };
+        changed = true;
+        continue;
+      }
+    }
+    next[id] = p;
+  }
+  return changed ? next : table;
 }
 
 /** 当前真正在场的那些（渲染和跟随都只看这个） */

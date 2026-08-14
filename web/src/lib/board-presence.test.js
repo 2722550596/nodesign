@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
-  emptyPresence, reducePresence, activePresences, followTarget,
+  emptyPresence, reducePresence, resolvePending, activePresences, followTarget,
   colorFor, PRESENCE_COLORS, MAIN_AGENT_ID,
 } from './board-presence.js';
 
@@ -274,5 +274,48 @@ describe('事件形状 parity（2026-08-13 事故的钉子）', () => {
     const consumed = [...reducerSrc.matchAll(/case '(run\.[\w.]+)'/g)].map(m => m[1]);
     expect(consumed.length).toBeGreaterThan(0);
     for (const t of consumed) expect(stageList).toContain(`'${t}'`);
+  });
+});
+
+describe('新文件挂账（2026-08-14 "从 0 产物到有产物追踪不靠谱"的钉子）', () => {
+  // 病根：开写就位（delta.tool_input）和落盘（file_changed）都赶在产物清单
+  // 收编新文件之前，解析失败直接丢就再没有事件来救。修法 = 挂账 + 清单刷新补射。
+  const startEvt = { type: 'run.start' };
+  const writeEvt = { type: 'run.delta.tool_input', filePath: '新稿.html' };
+
+  it('解析不到 ≠ 丢弃：路径挂在 pendingFile 上，位置不动', () => {
+    let t = reducePresence(emptyPresence(), startEvt, null);
+    t = reducePresence(t, writeEvt, () => null);
+    expect(t[MAIN_AGENT_ID].pendingFile).toBe('新稿.html');
+    expect(t[MAIN_AGENT_ID].targetId).toBe(null);
+  });
+
+  it('清单收编后 resolvePending 补射：落位 + 销账', () => {
+    let t = reducePresence(emptyPresence(), startEvt, null);
+    t = reducePresence(t, writeEvt, () => null);
+    t = resolvePending(t, () => ({ objectId: 'deck:新稿.html', zoneId: '' }));
+    expect(t[MAIN_AGENT_ID].targetId).toBe('deck:新稿.html');
+    expect(t[MAIN_AGENT_ID].pendingFile).toBe(null);
+  });
+
+  it('解析仍失败时返回原引用（setState 按引用 bail，effect 频繁跑也无害）', () => {
+    let t = reducePresence(emptyPresence(), startEvt, null);
+    t = reducePresence(t, writeEvt, () => null);
+    expect(resolvePending(t, () => null)).toBe(t);
+    expect(resolvePending(t, null)).toBe(t);
+  });
+
+  it('后续事件解析成功自己销账；run 收场也把挂账清掉', () => {
+    let t = reducePresence(emptyPresence(), startEvt, null);
+    t = reducePresence(t, writeEvt, () => null);
+    t = reducePresence(t, { type: 'run.file_changed', filePath: '新稿.html' },
+      () => ({ objectId: 'deck:新稿.html', zoneId: '' }));
+    expect(t[MAIN_AGENT_ID].pendingFile).toBe(null);
+
+    let t2 = reducePresence(emptyPresence(), startEvt, null);
+    t2 = reducePresence(t2, writeEvt, () => null);
+    t2 = reducePresence(t2, { type: 'run.done' }, null);
+    expect(t2[MAIN_AGENT_ID].pendingFile).toBe(null);
+    expect(resolvePending(t2, () => ({ objectId: 'x', zoneId: '' }))).toBe(t2);
   });
 });
