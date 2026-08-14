@@ -118,9 +118,32 @@ describe('位置与话', () => {
     expect(t[MAIN_AGENT_ID].message).toBe('正在写 canvas.html');
   });
 
-  it('没上场的人收到事件不会凭空出现', () => {
+  /**
+   * 接管显形（2026-08-14）：主 agent 的活动事件=在跑的铁证 —— 切进一个正在
+   * 跑的会话时 run.start 早发过了，这个标签页看不见；不就地立主 agent 的话，
+   * 整轮事件被当无主拒收，精灵装闲（"换会话精灵丢状态"的病根之一）。
+   */
+  it('主 agent 没上过场也能被活动事件立起来（切进正在跑的会话）', () => {
     const t = run([{ type: 'run.file_changed', filePath: 'tasks/甲/x.md' }]);
+    expect(t[MAIN_AGENT_ID].active).toBe(true);
+    expect(t[MAIN_AGENT_ID].targetId).toBe('tasks/甲/x.md');
+    const t2 = run([{ type: 'run.tool_use_summary', summary: '正在写' }]);
+    expect(t2[MAIN_AGENT_ID].message).toBe('正在写');
+  });
+
+  it('子代理没上过场不凭空出现（没有 task.started 就没有名字和颜色）', () => {
+    const t = run([{ type: 'run.file_changed', filePath: 'tasks/甲/x.md', parentToolUseId: 'a' }]);
     expect(Object.keys(t)).toHaveLength(0);
+  });
+
+  it('run.cancelled 同样全体下场（取消过的轮不能留下转圈的精灵）', () => {
+    const t = run([
+      { type: 'run.start' },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md' },
+      { type: 'run.cancelled' },
+    ]);
+    expect(activePresences(t)).toHaveLength(0);
+    expect(t[MAIN_AGENT_ID].targetId).toBe('tasks/甲/x.md');   // 位置留着，下轮接着用
   });
 
   it('不认识的事件原样返回同一引用', () => {

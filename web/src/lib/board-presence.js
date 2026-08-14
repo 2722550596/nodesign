@@ -62,7 +62,7 @@ export function emptyPresence() {
  * - `run.task.notification`/`run.subagent.stop` 子代理下场
  * - `run.delta.tool_input` / `run.file_changed`  谁在动哪个文件 → 更新它的位置
  * - `run.tool_use`         正在做什么 → 更新它那句话
- * - `run.done` / `run.error` 全体下场
+ * - `run.done` / `run.error` / `run.cancelled` 全体下场
  *
  * @param {object} table 当前在场表
  * @param {object} evt   事件
@@ -76,6 +76,21 @@ export function reducePresence(table, evt, resolve) {
 
   // 谁发的这条事件：带 parentToolUseId 的是子代理，否则是主 agent
   const who = parent ? `agent:${parent}` : MAIN_AGENT_ID;
+
+  /**
+   * 主 agent 的"接管显形"（2026-08-14）：主 agent 的活动事件到了但表里没有它
+   * —— 典型场景是**切进一个正在跑的会话**（run.start 早发过了，这个标签页没
+   * 看见）。活动本身就是"在跑"的铁证，就地把主 agent 立起来，别把整轮事件
+   * 当无主拒收（那就是"换会话精灵丢状态"）。子代理不这么干 —— 没有
+   * task.started 就不知道名字和颜色，宁缺毋滥。
+   */
+  const materializeMain = () => ({
+    ...table,
+    [MAIN_AGENT_ID]: {
+      id: MAIN_AGENT_ID, kind: 'main', name: 'Claude', color: colorFor(0),
+      active: true, targetId: null, zoneId: null, message: null, at: evt.at || null,
+    },
+  });
 
   switch (t) {
     case 'run.start': {
@@ -128,8 +143,12 @@ export function reducePresence(table, evt, resolve) {
     //   run.file_changed      写完落盘（权威，兜住非流式工具写的文件）。
     case 'run.delta.tool_input':
     case 'run.file_changed': {
-      const cur = table[who];
-      if (!cur) return table;
+      let cur = table[who];
+      if (!cur) {
+        if (who !== MAIN_AGENT_ID) return table;
+        table = materializeMain();
+        cur = table[MAIN_AGENT_ID];
+      }
       // ⚠️ 字段名是 `filePath`（events.js:fileChanged 的真实形状）。这里曾读
       // `evt.path || evt.file` —— 两个都不存在，resolve(undefined) 恒 null，
       // **在场者的位置从未被设置过**，镜头跟随和精灵定位因此整个失效；
@@ -147,16 +166,23 @@ export function reducePresence(table, evt, resolve) {
     // 假形状事故）。
     case 'run.tool_use.started':
     case 'run.tool_use_summary': {
-      const cur = table[who];
-      if (!cur) return table;
+      let cur = table[who];
+      if (!cur) {
+        if (who !== MAIN_AGENT_ID) return table;
+        table = materializeMain();
+        cur = table[MAIN_AGENT_ID];
+      }
       const msg = evt.summary || evt.name || null;
       if (!msg || cur.message === msg) return table;
       return { ...table, [who]: { ...cur, message: msg } };
     }
 
     case 'run.done':
-    case 'run.error': {
-      // 整轮结束：全体下场（子代理的 stop 事件不保证都到齐）
+    case 'run.error':
+    case 'run.cancelled': {
+      // 整轮结束：全体下场（子代理的 stop 事件不保证都到齐）。
+      // ⚠️ cancelled 曾不在案（2026-08-14 查实）：用户取消一轮之后精灵
+      // 永远停在"正在干活"里转圈 —— 收场信号三种，一种都不能漏。
       let touched = false;
       const next = {};
       for (const [id, p] of Object.entries(table)) {

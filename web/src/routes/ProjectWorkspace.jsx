@@ -162,7 +162,15 @@ export default function ProjectWorkspace() {
   const stageAreaRef = useRef(null);
   // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
   const [subagents, setSubagents] = useState({});
-  useEffect(() => { setSubagents({}); }, [currentSessionId]);
+  useEffect(() => {
+    setSubagents({});
+    // 换会话大扫除（2026-08-14）：旧会话的舞台卡/在场精灵/手写行全收场 ——
+    // 旧 run 的收场事件换会话后会被 stale guard 拦掉，不扫的话精灵冻在
+    // "正在干活"里转圈。合成一枚 run.cancelled 走正常收场路（舞台卡清扫 +
+    // 在场全体下场都认它）；切进正在跑的会话由 reducer 的"接管显形"补台
+    //（主 agent 活动事件到了就地立起来，不等看不见的 run.start）。
+    stageRef.current?.onEvent?.({ type: 'run.cancelled', synthetic: true });
+  }, [currentSessionId]);
 
   // 上下文用量：切会话 / 刷新页面时先清掉（上一场的数字不能当这一场用），再向
   // 服务端要这个 session 的当前值。run.context_usage 只在 turn 内推，两轮之间和
