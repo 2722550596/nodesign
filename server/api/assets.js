@@ -373,6 +373,8 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     const workspaceRoot = getSharedDir(req.params.pid);
     const tasks = [];
     let hasRootSite = false;
+    // 根站认领的一级子目录（pages 顶层段）—— 散文件过滤要用同一口径
+    const rootSiteClaims = new Set();
 
     /** manifest 里的路径是相对**它那个目录**的，挂到工作区坐标系上要加前缀 */
     const under = (base, p) => (!p ? p : (base ? `${base}/${p}` : p));
@@ -386,7 +388,14 @@ router.get('/:pid/artifacts', async (req, res, next) => {
 
       const manifest = await taskManifest(dir);
       const list = manifest?.artifacts || [];
-      if (!rel) hasRootSite = list.some(a => a.kind === KIND_SITE && !a.single && !a.srcRoot);
+      if (!rel) {
+        const rs = list.find(a => a.kind === KIND_SITE && !a.single && !a.srcRoot);
+        hasRootSite = !!rs;
+        for (const pg of (rs?.pages || [])) {
+          const seg = String(pg).split('/')[0];
+          if (seg && seg !== pg) rootSiteClaims.add(seg);
+        }
+      }
 
       if (list.length) {
         tasks.push({
@@ -481,11 +490,23 @@ router.get('/:pid/artifacts', async (req, res, next) => {
       if (err.code !== 'ENOENT') throw err;
     }
 
-    // .html 不当普通文件卡上墙（deck / 站点物件已经代表它们了）；
-    // 根站存在时整个工作区的文件都归那个站，不散着上墙。
+    // .html 不当普通文件卡上墙（deck / 站点物件已经代表它们了）。
+    //
+    // ⚠️ 这里曾写 `if (hasRootSite) return false` —— 根站一存在，**全工作区**
+    // 任何文件夹里的散文件一律隐形。用户把便签搬进文件夹，卡当场凭空消失
+    // （文件在磁盘上完好，2026-08-14 实案）。根站只吞**自己的地盘**：根层
+    // 散文件（.md 除外 —— 那是阅读卡）+ 认领子目录（pages 顶层段）里的文件；
+    // 别的文件夹照常上墙。口径与前端 resolveObjectId / exports 的根站规则一致。
     const filtered = artifacts.filter((a) => {
       if (a.kind !== 'task-file') return true;
-      if (hasRootSite) return false;
+      if (hasRootSite) {
+        const p = String(a.path);
+        const slash = p.indexOf('/');
+        const swallowed = slash < 0
+          ? !p.toLowerCase().endsWith('.md')
+          : rootSiteClaims.has(p.slice(0, slash));
+        if (swallowed) return false;
+      }
       return !a.name.toLowerCase().endsWith('.html');
     });
 
