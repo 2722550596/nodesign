@@ -8,6 +8,7 @@ import { PAPER } from '../../../lib/paper.js';
 import { FOLDER_CARD, SITE_VIEWPORTS } from '../../../lib/board-geometry.js';
 import { versionOfFile, versionOfSitePage } from '../../../lib/file-versions.js';
 import { Assets } from '../../../lib/api.js';
+import { joinRel } from '../../../lib/paths.js';
 import LiveFrame from '../LiveFrame.jsx';
 import { useInViewport } from './ArtifactCard.jsx';
 import { thumbSrcOf } from './BoardObject.jsx';
@@ -73,7 +74,7 @@ function LiveTile({ o, projectId, fileVersions }) {
   return (
     <LiveFrame
       title={`peek-${o.id}`}
-      src={`${Assets.artifactFileUrl(projectId, [base, entry].filter(Boolean).join('/'))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
+      src={`${Assets.artifactFileUrl(projectId, joinRel(base, entry))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
       style={{
         width: deviceW, height: Math.ceil(TILE_H / k), border: 0,
         transform: `scale(${k})`, transformOrigin: '0 0',

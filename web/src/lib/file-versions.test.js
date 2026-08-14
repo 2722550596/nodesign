@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { workspaceRelOf, versionOfFile, versionOfTask, bumpFileVersion } from './file-versions.js';
+import { workspaceRelOf, versionOfFile, versionOfSitePage, bumpFileVersion } from './file-versions.js';
 
 /**
  * 刷新粒度（2026-07-28）。固化的是用户真碰上的那三条：
@@ -35,20 +35,20 @@ describe('版本粒度', () => {
     expect(versionOfFile(v, 'tasks/T/proto-A.html')).toBe(0);   // 没被改，?v= 不变，不重载
   });
 
-  it('站点：改样式表整站版本跟着涨', () => {
+  it('站点：改样式表本页版本跟着涨，别的页不扰动', () => {
     let v = {};
     v = bumpFileVersion(v, 'tasks/S/index.html');
     v = bumpFileVersion(v, 'tasks/S/style.css');
     v = bumpFileVersion(v, 'tasks/S/posts/a.html');
-    expect(versionOfTask(v, 'S')).toBe(3);
-    expect(versionOfTask(v, '别的任务')).toBe(0);
+    expect(versionOfSitePage(v, 'tasks/S', 'index.html')).toBe(2);   // 本页 + 样式表
+    expect(versionOfSitePage(v, 'tasks/别的任务', 'index.html')).toBe(0);
   });
 
-  it('任务之间互不影响', () => {
+  it('站点之间互不影响', () => {
     let v = {};
     v = bumpFileVersion(v, 'tasks/A/canvas.html');
-    expect(versionOfTask(v, 'A')).toBe(1);
-    expect(versionOfTask(v, 'B')).toBe(0);
+    expect(versionOfSitePage(v, 'tasks/A', 'canvas.html')).toBe(1);
+    expect(versionOfSitePage(v, 'tasks/B', 'canvas.html')).toBe(0);
   });
 
   it('认不出的路径不记账（引用不变，不触发重渲）', () => {
@@ -59,7 +59,7 @@ describe('版本粒度', () => {
 
   it('缺省参数不炸', () => {
     expect(versionOfFile(undefined, 'x')).toBe(0);
-    expect(versionOfTask(undefined, 'x')).toBe(0);
+    expect(versionOfSitePage(undefined, '', 'x')).toBe(0);
     expect(versionOfFile({}, undefined)).toBe(0);
   });
 });

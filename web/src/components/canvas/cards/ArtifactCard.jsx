@@ -7,6 +7,7 @@ import { ARTIFACT_HEADER_H, ARTIFACT_PREVIEW_H } from '../../../lib/board-kinds.
 import { versionOfFile, versionOfSitePage } from '../../../lib/file-versions.js';
 import { formatClock } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
+import { joinRel } from '../../../lib/paths.js';
 import LiveFrame from '../LiveFrame.jsx';
 import WorldMap from '../WorldMap.jsx';
 
@@ -85,7 +86,7 @@ export const ARTIFACT_FACES = {
       return (
         <LiveFrame
           title={`site-${o.id}`}
-          src={`${Assets.artifactFileUrl(projectId, [base, entry].filter(Boolean).join('/'))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
+          src={`${Assets.artifactFileUrl(projectId, joinRel(base, entry))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
           style={{
             width: deviceW, height: Math.round(box.h / scale), border: 0,
             transform: `scale(${scale})`, transformOrigin: '0 0',

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Assets } from '../../lib/api.js';
-import { versionOfFile, versionOfTask } from '../../lib/file-versions.js';
+import { versionOfFile } from '../../lib/file-versions.js';
 import { COLOR } from '../../lib/theme.js';
 import BoardCanvas from './BoardCanvas.jsx';
 import FloatingToolbar from '../ui/FloatingToolbar.jsx';

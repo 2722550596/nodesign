@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move, SquareDashedMousePointer } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
+import { joinRel } from '../../lib/paths.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { SITE_VIEWPORTS } from '../../lib/board-geometry.js';
 import ArtifactWindow, { WindowBanner, exportToolGroup } from './ArtifactWindow.jsx';
@@ -49,7 +50,7 @@ import { PAPER_SHADOW } from '../../lib/paper.js';
 export default function SiteWindow({
   projectId,
   task,
-  base,                 // 产物根（'tasks/<t>' 或 'tasks/<t>/dist'）；单页卡传任务根
+  base,                 // 产物根（工作区相对；根站是 ''）；单页卡传入口所在目录
   entry = 'index.html',
   title,
   pages = [],
@@ -91,9 +92,9 @@ export default function SiteWindow({
   const vp = SITE_VIEWPORTS.find(v => v.id === viewport) || SITE_VIEWPORTS[0];
   // 根站的 base 合法地是空串（扁平化后站点住工作区根）。老兜底 `tasks/${task}`
   // 在扁平世界拼出 `tasks//index.html`（服务端旧前缀剥离正则不吃空段 → 404）；
-  // 现在 task 本身就是文件夹路径，直接当兜底。filter(Boolean) 防前导斜杠 403。
+  // 现在 task 本身就是文件夹路径，直接当兜底。joinRel 防前导斜杠 403。
   const baseRel = base || task || '';
-  const relPath = [baseRel, current].filter(Boolean).join('/');
+  const relPath = joinRel(baseRel, current);
   // 版本按**这一页**取（本页 html + 非 html 共享资产）：agent 改别的页时这扇窗不动
   const pageVersion = versionOfSitePage(fileVersions, baseRel, current);
   const src = `${Assets.artifactFileUrl(projectId, relPath)}?v=${pageVersion}-${reloadKey}`;

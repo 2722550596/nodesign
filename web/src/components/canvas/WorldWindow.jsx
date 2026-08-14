@@ -4,6 +4,7 @@ import { Map as MapIcon, BookOpen, RotateCw, ExternalLink } from 'lucide-react';
 import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
 import WorldMap from './WorldMap.jsx';
 import { Assets } from '../../lib/api.js';
+import { joinRel } from '../../lib/paths.js';
 import { versionOfFile } from '../../lib/file-versions.js';
 import { COLOR, GAP, FONT_SANS, FONT_SIZE } from '../../lib/theme.js';
 
@@ -41,7 +42,7 @@ export default function WorldWindow({
 
   // 同 SiteWindow：根上的世界 base 是空串，老 `tasks/` 兜底在扁平世界是错路径
   const baseRel = base || task || '';
-  const bookPath = [baseRel, entry].filter(Boolean).join('/');
+  const bookPath = joinRel(baseRel, entry);
   const bookVersion = versionOfFile(fileVersions, bookPath);
 
   // 世界书按需拉：进这扇窗多数时候是来看地图的

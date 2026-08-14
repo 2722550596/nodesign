@@ -16,6 +16,7 @@
 
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { Assets } from '../../lib/api.js';
+import { joinRel } from '../../lib/paths.js';
 
 /** 地点框按深度收敛：外层大、内层小，层级一眼可辨 */
 const PLACE_STYLE = [
@@ -38,7 +39,7 @@ const styleAt = (depth) => {
 };
 
 const imgUrl = (projectId, base, rel, w) =>
-  `${Assets.artifactFileUrl(projectId, `${base}/${rel}`)}?w=${w}`;
+  `${Assets.artifactFileUrl(projectId, joinRel(base, rel))}?w=${w}`;
 
 function Portrait({ projectId, base, node, size }) {
   const src = node.portrait ? imgUrl(projectId, base, node.portrait, 480) : null;

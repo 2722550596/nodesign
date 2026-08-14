@@ -9,6 +9,7 @@ import {
   FolderPlus, StickyNote,
 } from 'lucide-react';
 import { Assets, Memory, Canvas } from '../../lib/api.js';
+import { joinRel } from '../../lib/paths.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -1298,7 +1299,7 @@ export default function BoardCanvas({
      * 把坐标记到**新 id** 上。
      */
     const toDir = toFolder || '';
-    const to = toDir ? `${toDir}/${base}` : base;
+    const to = joinRel(toDir, base);
     if (to === from) return;
     movingRef.current.add(obj.id);
     const nextId = obj.id.includes(':') ? `${obj.id.split(':')[0]}:${to}` : to;
@@ -1345,7 +1346,7 @@ export default function BoardCanvas({
   const moveZone = useCallback(async (zid, toDir) => {
     const from = String(zid);
     const base = from.split('/').pop();
-    const to = (toDir || '') ? `${toDir}/${base}` : base;
+    const to = joinRel(toDir, base);
     if (to === from) return;
     movingRef.current.add(from);
     try {

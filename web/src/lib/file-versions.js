@@ -36,24 +36,10 @@ export function versionOfFile(versions, rel) {
 }
 
 /**
- * 一个任务目录整体的版本号（该目录下所有文件版本之和）。
- * 站点用它：改 `style.css` 或任意子页，整站预览都该重渲。
- */
-export function versionOfTask(versions, task) {
-  if (!versions || !task) return 0;
-  const prefix = `tasks/${task}/`;
-  let sum = 0;
-  for (const [k, v] of Object.entries(versions)) {
-    if (k.startsWith(prefix)) sum += v;
-  }
-  return sum;
-}
-
-/**
  * 站点**单页**的刷新版本（2026-07-30）：该页自己的 html + 产物根下所有非 html
  * 文件（css/js/图片可能被任何页引用，改了都该重渲）。其它页面的 html 不算 ——
  * agent 改 about.html 时正在看的 index.html 不该跟着重载。
- * versionOfTask 仍留给"整任务"粒度的消费方（导出菜单等）。
+ * （versionOfTask 已删：零调用点的死代码，还揣着扁平化前的 tasks/ 前缀。）
  *
  * @param {string} baseRel 产物根（'tasks/<t>' 或 'tasks/<t>/dist'）
  * @param {string} pageRel 页面相对产物根的路径（'index.html' / 'posts/a.html'）
@@ -63,7 +49,7 @@ export function versionOfSitePage(versions, baseRel, pageRel) {
   // 根站（扁平化后站点长在工作区根上）的 baseRel 合法地是空串：此时页面 key
   // 没有前缀、整个工作区的非 html 文件都是这个站的资产。原来 `!baseRel` 早退 0
   // 会让根站页面永远不热刷新。
-  const prefix = baseRel ? `${baseRel}/` : '';
+  const prefix = baseRel ? `${baseRel}/` : ''; // path-compose-ok：三元已守空串，这是前缀不是路径
   let sum = versions[`${prefix}${pageRel}`] || 0;
   for (const [k, v] of Object.entries(versions)) {
     if ((!prefix || k.startsWith(prefix)) && !/\.html?$/i.test(k)) sum += v;
