@@ -89,7 +89,7 @@ so it does not apply to the current session).`,
       showcaseNote: z.string().max(400).optional()
         .describe('One line for the showcase card: what occasion this piece was for.'),
       artifactPath: z.string().optional()
-        .describe('Work to show on the card, relative to workspace (e.g. "tasks/<task>/canvas.html"). Defaults to the active artifact.'),
+        .describe('Work to show on the card, relative to workspace (e.g. "canvas.html" or "稿件/主稿.html"). Defaults to the active artifact.'),
       overwrite: z.boolean().optional()
         .describe('Replace an existing skill of the same name. Ask the user before setting this.'),
     },

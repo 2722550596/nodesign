@@ -4,16 +4,22 @@
 
 ## 目录
 
+**站点住自己的文件夹**（按站名起，如 `观察日志/`）—— 不要把 index.html 直接
+放在工作区根上。工作区根是整个项目的桌面，notes/ 素材/ 别的产物都住那儿；
+站占了根，路径语义全变成空串特例，别的产物也没了并列的位置。
+
 ```
-（工作区根）
-  index.html        入口（**这个文件名决定了系统把这个任务当站点**）
+观察日志/           站点文件夹（**里面有 index.html 就被认作一个站点**）
+  index.html        入口
   about.html        子页，同目录直接加
   style.css         全站共用一份
   posts/            子目录可以有（页面扫描深度 4 层）
-  assets/           任务自己的素材，站内写相对路径 assets/x.png 引用
+  assets/           站点自己的素材，站内写相对路径 assets/x.png 引用
   _drafts/          独立单页。各自渲成卡并排挑，和其他产物平等；不算站点页面、不进整站导出
   .ndignore         不想被系统扫到的东西写这（gitignore 语法，无 ! 反选）
 ```
+
+（旧项目里工作区根上直接放 index.html 的「根站」仍被识别和支持，但**新站一律入夹**。）
 
 **构建型站点**（Astro / 11ty / 自写 build 脚本）：源随便组织，构建产物落
 `dist/`（或 `out/` `build/` `_site/`，有 index.html 的那个自动被认作**产物根**；
@@ -21,8 +27,8 @@
 导出、发布看的**全是产物根** —— 改完源必须重新构建，否则用户看到的还是旧的。
 `node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
 
-手写起手：`cp site.template.html index.html` +
-`cp style.template.css style.css`，然后改。
+手写起手：`mkdir 观察日志 && cp site.template.html 观察日志/index.html &&
+cp style.template.css 观察日志/style.css`，然后改（文件夹名换成真站名）。
 
 ## 路径铁律
 

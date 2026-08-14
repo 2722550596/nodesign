@@ -155,20 +155,39 @@ router.get(['/:pid/exports/items', '/:pid/sessions/:sid/exports/items'], async (
       } catch { /* 读不到就不列 */ }
     };
 
-    // 任务目录里的东西（deck / 试作 / 说明 / plan；站点则含子目录里的全部页面与样式）。
-    // 统一扫描规则（task-scan.js）：硬清单 + .ndignore 生效，node_modules / 构建缓存
-    // 不再出现在勾选列表里；`_drafts/` 的试作照列（用户可能就想下某一版）。
+    // 产物自己的文件（统一扫描规则 task-scan.js：硬清单 + .ndignore 生效，
+    // `_drafts/` 试作照列 —— 用户可能就想下某一版）。
+    //
+    // ⚠️ 扁平模型改造（2026-08-14）：老判据是 `target.task && target.taskDir`，
+    // 而 artifact-target 在任务层拆掉后 task 恒 null（兼容字段）—— 那条
+    // walkTaskFiles 分支从扁平化起就是死路，站点导出清单只剩入口页 + 引用图，
+    // 子页 / 样式表 / 试作**全部静默缺席**。现按产物根收：
+    //   - 住文件夹的站/世界：整个产物目录（maxDepth 4）
+    //   - 根站（artifactRel='.'）：工作区根还住着 notes/ assets/ 别的产物，
+    //     全扫会把别家打包进去 —— 只收根层散文件（.md 除外，同前端
+    //     resolveObjectId 的认领规则）+ `_drafts/`；引用图由下面的扫描补
+    //   - deck / 单页站：本体一份（扁平后它住的文件夹是用户的收纳空间，
+    //     可能装着不相干的东西，不能整夹打包）
     const isSite = target.ok && target.kind === KIND_SITE;
-    if (target.ok && target.task && target.taskDir) {
-      const files = await walkTaskFiles(target.taskDir, {
-        maxDepth: isSite ? 4 : 1,
+    const isDirArtifact = target.ok && (isSite || target.kind === 'world') && !target.artifact?.single;
+    if (isDirArtifact) {
+      const rootRel = target.artifactRel === '.' ? '' : target.artifactRel;
+      const files = await walkTaskFiles(target.artifactDir, {
+        maxDepth: rootRel ? 4 : 3,
         includeDrafts: true,
       });
       for (const f of files) {
+        if (!rootRel) {
+          const rootLevel = !f.rel.includes('/');
+          const isDraft = f.rel.startsWith('_drafts/');
+          if (!rootLevel && !isDraft) continue;
+          if (rootLevel && /\.md$/i.test(f.name)) continue;
+        }
+        const rel = rootRel ? `${rootRel}/${f.rel}` : f.rel;
         const kind = /\.html?$/i.test(f.name)
           ? (f.rel.startsWith('_drafts/') ? 'draft' : (isSite ? 'site-page' : 'deck'))
           : 'file';
-        await add(`tasks/${target.task}/${f.rel}`, kind);
+        await add(rel, kind);
       }
     } else if (target.ok) {
       await add(target.relPath, isSite ? 'site-page' : 'deck');

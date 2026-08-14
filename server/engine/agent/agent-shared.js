@@ -637,11 +637,9 @@ export async function detectArtifact(ctx) {
     try {
       const artifacts = await listWorkspaceArtifacts(root);
       if (artifacts.length > 0) {
-        // 本会话名下那个任务的优先；没有就取第一份
-        const bound = ctx.sessionId
-          ? artifacts.find(a => a.rel.startsWith('tasks/'))
-          : null;
-        return (bound || artifacts[0]).rel;
+        // 扁平模型：没有"会话名下的任务"了，取第一份（列表序=收集器的
+        // 稳定序）。老的 startsWith('tasks/') 优先级从扁平化起就是死代码。
+        return artifacts[0].rel;
       }
     } catch { /* 扫不动就回落到旧式探测 */ }
   }

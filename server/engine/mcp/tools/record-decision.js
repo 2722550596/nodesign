@@ -118,7 +118,11 @@ rendering, no tool needed.`,
         return {
           content: [{
             type: 'text',
-            text: `Decision recorded as face ${faceCount} of tasks/${task}/notes/${NOTE_FILE}: "${title.trim()}"`,
+            // ⚠️ 这里曾写 `tasks/${task}/...` —— 扁平化删掉 task 变量时漏了这行，
+            // `task` 成悬空引用：决策照写、事件照发，**返回时 ReferenceError 被
+            // 外层 catch 接住**，agent 每次调用都收到报错以为失败（还可能重试出
+            // 重复面）。悬空引用潜伏族第二案（第一案 reloadToken，2026-08-08）。
+            text: `Decision recorded as face ${faceCount} of notes/${NOTE_FILE}: "${title.trim()}"`,
           }],
         };
       } catch (err) {

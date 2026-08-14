@@ -358,12 +358,15 @@ export default function BoardCanvas({
     }
     for (const a of artifacts) {
       const sid = a.sessionId || a.meta?.sessionId || null;
-      // noteTask：任务便利贴（tasks/<任务>/notes/*.md，agent 和用户共享的头脑
-      // 风暴层）；null = 项目级灵感便签（assets/notes/）。删除/编辑走不同路由
+      // noteTask：共享便利贴标记（notes/*.md，agent 和用户共用的头脑风暴层，
+      // 走 task-notes 路由可编辑可删）；null = 项目级灵感便签（assets/notes/，
+      // 走 notes 路由）。⚠️ 判据曾是 `startsWith('tasks/')` —— 扁平化后便利贴
+      // 住 notes/，恒 null：编辑按钮消失、删除打到 assets/notes 的错端点
+      // 静默 404（2026-08-14 扁平残留普查抓到）。
       if (a.kind === 'note') {
         out.push({
           id: a.path, type: 'note', sid,
-          noteTask: a.path.startsWith('tasks/') ? a.path.split('/')[1] : null,
+          noteTask: a.path.startsWith('notes/') || a.path.startsWith('tasks/'),
           ...a,
         });
       }
@@ -3094,7 +3097,11 @@ export default function BoardCanvas({
                   <button onClick={async () => {
                     const o = viewer.note;
                     try {
-                      await Assets.putTaskNote(projectId, o.noteTask, o.name, viewerEdit);
+                      // ⚠️ api.js 的 putTaskNote 07-30 就改成 (pid, filename, text)
+                      // 三参了，这里一直还是四参老签名 —— noteTask 当 filename、
+                      // 文件名当正文。恰好 noteTask 同期恒 null 让编辑按钮根本不
+                      // 出现，两个 bug 互相掩护（2026-08-14 一起修）。
+                      await Assets.putTaskNote(projectId, o.name, viewerEdit);
                       setViewer(v => ({ ...v, content: viewerEdit }));
                       setViewerEdit(null);
                       reload();

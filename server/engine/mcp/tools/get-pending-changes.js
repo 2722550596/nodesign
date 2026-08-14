@@ -82,7 +82,7 @@ Each item has:
                         the user changed. You may tidy the source afterwards
                         — e.g. lift baked inline left/top into the stylesheet —
                         but only if asked or clearly beneficial.)
-- path (optional): which file the change belongs to (e.g. tasks/<t>/about.html).
+- path (optional): which file the change belongs to (workspace-relative, e.g. about.html or 稿件/about.html).
   Absent = the current session's canvas.html.
 - anchor: stable element reference (dataId / path / textHint / bbox)
 - aiContext: element role, page info, outerHTML, computed styles, siblings,
