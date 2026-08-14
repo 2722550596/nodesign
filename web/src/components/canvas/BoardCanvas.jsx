@@ -30,7 +30,8 @@ import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
-import { useStageState, splitStageCards, StageBoardLayer, StageDock, SpriteVoiceBubble } from './StageLayer.jsx';
+import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
+import { SpriteSketch, AmbientSpriteLayer, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
@@ -232,35 +233,10 @@ export default function BoardCanvas({
   const pressRef = useRef(null);   // 长按候选：{ timer, startX, startY, pointerId }
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [hoveredBinding, setHoveredBinding] = useState(null);
-  // 在场表。主精灵**常驻**（2026-08-14）：上次工作位置存 localStorage，刷新
-  // 页面精灵还站在原地（暗档）——"它住在这块板上"，不是每轮凭空出生一次。
-  const [presence, setPresence] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(`nd:sprite:${projectId}`) || 'null');
-      if (saved?.targetId) {
-        return {
-          [MAIN_AGENT_ID]: {
-            id: MAIN_AGENT_ID, kind: 'main', name: 'Claude', color: colorFor(0),
-            active: false, targetId: saved.targetId, zoneId: saved.zoneId || null,
-            message: null, at: null,
-          },
-        };
-      }
-    } catch { /* 存的坏了就当没存 */ }
-    return emptyPresence();
-  });
-  // 主精灵挪窝就记一笔（换目标才写，别的 presence 变化不碰磁盘）
-  const spriteSavedRef = useRef(null);
-  useEffect(() => {
-    const t = presence[MAIN_AGENT_ID]?.targetId;
-    if (!t || spriteSavedRef.current === t) return;
-    spriteSavedRef.current = t;
-    try {
-      localStorage.setItem(`nd:sprite:${projectId}`, JSON.stringify({
-        targetId: t, zoneId: presence[MAIN_AGENT_ID].zoneId || null,
-      }));
-    } catch { /* 配额满了就算了，常驻是锦上添花 */ }
-  }, [presence, projectId]);
+  // 在场表。（08-14 上午曾在这儿做过"主精灵 localStorage 常驻"，当天下午
+  // 被日记本范式取代：闲时精灵改为跟随用户镜头写问候/recap，不再钉在上次
+  // 工作的物件上 —— 存位置的那套连带拆除，别留空壳。）
+  const [presence, setPresence] = useState(emptyPresence);
   const toolRef = useRef('select');
   toolRef.current = tool;
   const positionedRef = useRef([]);
@@ -2339,11 +2315,48 @@ export default function BoardCanvas({
     }));
   }, []);
 
-  const { stageCards, stageBadges, voice, dismissStageCard } = useStageState({
+  const { stageCards, stageBadges, spriteLine, recap, dismissStageCard } = useStageState({
     stageRef, artifactRoots, followToObject,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
     onRawEvent: handlePresenceEvent,
   });
+
+  // ── 铅笔精灵的台词与出场（2026-08-14 日记本批）──
+  //
+  // 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端
+  // haiku 压的）→ 写它；都没有 = 在想 → 安静的几句。轮播节拍 4.2s —— 每换
+  // 一句就是一次重写动画，太快会像抽搐。
+  const toolsBusy = useMemo(() => Object.values(stageCards).some(c =>
+    c.status === 'running' && c.kind !== 'subagent' && c.kind !== 'question'), [stageCards]);
+  const [phraseTick, setPhraseTick] = useState(0);
+  useEffect(() => {
+    if (!toolsBusy) return undefined;
+    const t = setInterval(() => setPhraseTick(k => k + 1), 4200);
+    return () => clearInterval(t);
+  }, [toolsBusy]);
+  const workText = toolsBusy
+    ? TOOL_PHRASES[phraseTick % TOOL_PHRASES.length]
+    : (spriteLine?.text || THINK_PHRASES[phraseTick % THINK_PHRASES.length]);
+  // 上场即重画（定格动画的出场就是重新起稿）；换目标是"走过去"（位置过渡），不重画
+  const [workEpoch, setWorkEpoch] = useState(0);
+  const wasActiveRef = useRef(false);
+  useEffect(() => {
+    const act = !!presence[MAIN_AGENT_ID]?.active;
+    if (act && !wasActiveRef.current) setWorkEpoch(k => k + 1);
+    wasActiveRef.current = act;
+  }, [presence]);
+  // recap 持久：闲时精灵写"刚才干了什么"，刷新页面也还记得（localStorage per-project）
+  const [storedRecap, setStoredRecap] = useState(() => {
+    try { return localStorage.getItem(`nd:recap:${projectId}`) || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    if (!recap?.text) return;
+    setStoredRecap(recap.text);
+    try { localStorage.setItem(`nd:recap:${projectId}`, recap.text); } catch { /* 记不住就算了 */ }
+  }, [recap, projectId]);
+  // 问候语进场定一句，不轮换 —— 闲时的字是"留在纸上的"，不是跑马灯
+  const greeting = useMemo(() => pickGreeting(), []);
+  const ambientText = storedRecap ? `※ ${storedRecap}` : greeting;
 
   // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock
   const visibleIdSet = new Set(visibleObjects.map(o => o.id));
@@ -2796,18 +2809,26 @@ export default function BoardCanvas({
             );
           })()}
 
-          {/* 在场：谁在画布上干活（PresenceLayer.jsx）*/}
+          {/* 在场：并行子代理的小徽记（PresenceLayer.jsx，08-14 起只管子代理）*/}
           <PresenceLayer table={presence} rectOf={rectOfId} />
 
-          {/* 精灵语音泡：Claude 正在说的话，贴着主精灵的落点（跟精灵同一条
-              解析链，落点永远一致）。没位置（还没动过任何文件）就不上墙 ——
-              完整回复聊天侧栏一直有 */}
-          {voice?.text && (() => {
+          {/* 铅笔精灵 · 工作态（世界坐标）：Claude 画在正在动的物件上，旁白
+              逐字手写。换目标是走过去（位置过渡），上场才重新起稿（workEpoch）。
+              目标解析不到矩形就不画 —— 闲时那份在屏幕层跟着镜头。 */}
+          {(() => {
             const main = presence[MAIN_AGENT_ID];
-            const anchor = main?.targetId ? presenceRectFor(main, rectOfId) : null;
-            return anchor
-              ? <SpriteVoiceBubble voice={voice} anchor={anchor} boardSize={stageBounds} />
-              : null;
+            if (!main?.active || !main.targetId) return null;
+            const r = presenceRectFor(main, rectOfId);
+            if (!r) return null;
+            return (
+              <div style={{
+                position: 'absolute', left: r.x - 14, top: r.y - 56,
+                zIndex: 310, pointerEvents: 'none',
+                transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
+              }}>
+                <SpriteSketch drawKey={workEpoch} text={workText} />
+              </div>
+            );
           })()}
 
           {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）
@@ -2889,6 +2910,17 @@ export default function BoardCanvas({
 
       {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}
       <StageDock dockPanels={dockPanels} dockChips={dockChips} onDismiss={dismissStageCard} />
+
+      {/* 铅笔精灵 · 闲时（屏幕坐标）：跟着用户镜头，写 recap 或问候。落位
+          首选视口中点到顶边的中点，被产物占了换备选槽，全占不出现。
+          obstacles 直接用小地图那份矩形 —— 同一个"桌面上有什么"。 */}
+      <AmbientSpriteLayer
+        active={!presence[MAIN_AGENT_ID]?.active}
+        cam={cam}
+        viewport={camera.viewport}
+        obstacles={minimapItems}
+        text={ambientText}
+      />
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />

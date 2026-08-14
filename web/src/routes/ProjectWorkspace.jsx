@@ -46,9 +46,10 @@ const STAGE_EVENTS = new Set([
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
   'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
   'run.done', 'run.error', 'run.cancelled',
-  // 精灵语音泡（2026-08-14）：正文流同时喂画布 —— 精灵"说话"的内容源。
-  // 旁路不 return，聊天折叠照旧消费同一条
-  'run.delta.text',
+  // 铅笔精灵（2026-08-14 日记本批）：服务端压好的手写短句 + 收场 recap。
+  // （正文流 run.delta.text 曾在这儿旁路给语音泡，同日退役 —— 画布要的是
+  //   一行旁白，不是聊天镜像）
+  'run.sprite_summary', 'run.recap',
   // 子代理舞台便利贴（2026-07-30）：运行中出贴、完成翻结果。管线 1 是旁路
   // （if 不 return），这四个事件同时继续走管线 3 的聊天侧栏逻辑
   'run.task.started', 'run.task.progress', 'run.task.notification', 'run.subagent.stop',

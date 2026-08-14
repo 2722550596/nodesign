@@ -57,6 +57,7 @@ import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
+import { summarizeReply, summarizeRecap, clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
 import {
@@ -826,6 +827,16 @@ export async function runSession({
       setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
       sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
+      // recap（2026-08-14 日记本批）：闲时精灵写在画布上的"刚才干了什么/挂着
+      // 什么"。fire-and-forget、失败无声 —— 绝不影响收场。发在 run.done 之后：
+      // 前端 stale guard 只拦"另一个 run 正在跑"的旧事件，闲时照单全收。
+      summarizeRecap({
+        finalText: info?.finalText || '',
+        toolCount: sharedCtx.counters.toolCalls,
+        durationMs: sharedCtx.counters.durationMs || (Date.now() - sharedCtx.startedAt),
+      })
+        .then((line) => { if (line) sharedCtx.emit(Events.recap(line)); })
+        .catch(() => { /* 装饰性小结 */ });
       // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
       // 正名一次（只一次，用户改过名就不动）。失败不影响 turn。
       autoNameProjectFromSession(projectId, sessionId)
@@ -990,6 +1001,28 @@ export async function runSession({
     stream = query({ prompt: inputQueue, options: sdkOptions });
     attachSessionQuery(sessionId, stream);
 
+    // 铅笔精灵的手写短句（2026-08-14 日记本批）：assistant 文本一到先写首句
+    // 底稿（refined:false，零成本零延迟），haiku 精修到货再覆盖（refined:true，
+    // "墨水显影"）。子代理的话不上精灵 —— 它们有自己的舞台便利贴。
+    // 全程 fire-and-forget：精灵写不出俏皮话不能影响 run。
+    let lastSummarySrc = '';
+    const maybeSpriteSummary = (message) => {
+      if (message.parent_tool_use_id) return;
+      const text = (message.message?.content || [])
+        .filter(b => b?.type === 'text' && typeof b.text === 'string')
+        .map(b => b.text).join('\n').trim();
+      if (!text || text === lastSummarySrc) return;
+      lastSummarySrc = text;
+      const round = sharedCtx.counters.turns;
+      const draft = clampFirstClause(text);
+      if (draft) sharedCtx.emit(Events.spriteSummary(round, draft, false));
+      summarizeReply(text)
+        .then((line) => {
+          if (line && line !== draft) sharedCtx.emit(Events.spriteSummary(round, line, true));
+        })
+        .catch(() => { /* 装饰性小结，坏了无声 */ });
+    };
+
     // emitContextUsage：fire-and-forget per assistant message
     let usageInFlight = false;
     const emitContextUsage = () => {
@@ -1027,7 +1060,10 @@ export async function runSession({
 
       handleSDKMessage(sharedCtx, message);
 
-      if (message.type === 'assistant') emitContextUsage();
+      if (message.type === 'assistant') {
+        emitContextUsage();
+        maybeSpriteSummary(message);
+      }
 
       if (message.type === 'result') {
         // 计量断链修复（2026-07-30）：result message 的 usage/total_cost_usd 是
