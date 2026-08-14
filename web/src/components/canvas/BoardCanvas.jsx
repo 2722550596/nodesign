@@ -6,7 +6,7 @@ import {
   X, Trash2, BookOpen, FolderOpen, FolderInput, LogOut,
   PencilLine, ChevronsUpDown, Focus,
   Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
-  FolderPlus, StickyNote,
+  FolderPlus, StickyNote, Link2,
 } from 'lucide-react';
 import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
@@ -35,6 +35,7 @@ import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
 import PresenceLayer from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
+import LinkPopover from './LinkPopover.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
 import MoveToPopover from './MoveToPopover.jsx';
 import FolderWindow, { parentDir } from './FolderWindow.jsx';
@@ -938,6 +939,17 @@ export default function BoardCanvas({
     return null;
   }, []);
 
+  /** 给浮层/提示用的端点名字。手写字直接报内容 —— 它没有别的名字。 */
+  const titleOfId = useCallback((id) => {
+    const o = positionedRef.current.find(it => it.id === id) || objectsRef.current.find(it => it.id === id);
+    if (o) {
+      if (o.type === 'text') return `「${String(o.data?.t || '').slice(0, 14)}」`;
+      if (o.type === 'scribble') return '一笔涂鸦';
+      return o.title || id.split('/').pop() || id;
+    }
+    return id.split('/').pop() || id;   // 文件夹（zone）或还没摆上桌的产物
+  }, []);
+
   /**
    * 标注的第二个出口：**留在画布** —— 一段文字 + 一条 `annotates` 关系。
    *
@@ -1834,6 +1846,20 @@ export default function BoardCanvas({
   const [annotate, setAnnotate] = useState(null);
   /** 「移动到…」浮层：{ x, y, ids:[], current, exclude? } */
   const [moveTo, setMoveTo] = useState(null);
+  /** 连线拾取模式：{ id, title } = 起点已定，等着点目标（Esc 取消） */
+  const [linkFrom, setLinkFrom] = useState(null);
+  // 拾取模式的 Esc：捕获阶段拦住 —— 画布自己的 Esc 是「回上一层」，
+  // 不拦的话取消个连线顺便换了层
+  useEffect(() => {
+    if (!linkFrom) return undefined;
+    const key = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); setLinkFrom(null); }
+    };
+    window.addEventListener('keydown', key, true);
+    return () => window.removeEventListener('keydown', key, true);
+  }, [linkFrom]);
+  /** 建线/改线浮层：{ x, y, mode, from:{id?,title}, to:{id?,title}, bindingId?, type?, label? } */
+  const [linkPop, setLinkPop] = useState(null);
 
   const createFolderAt = useCallback(async (parent, at) => {
     try {
@@ -2026,6 +2052,9 @@ export default function BoardCanvas({
           // 窗里的东西住在窗那一层（`zoneId` 只有桌面上的卡才带）
           onClick: () => setMoveTo({ x: mx, y: my, ids: [obj.id], current: obj.zoneId ?? (winIn || '') }),
         }] : []),
+        // 连线（2026-08-14）：从这件东西拉一条关系线到画布上另一件。
+        // 全类型都给 —— 手写字/涂鸦也能当端点（标注全局化）。
+        { id: 'linkto', icon: Link2, label: '连线到…', onClick: () => setLinkFrom({ id: obj.id, title: titleOfId(obj.id) }) },
         // E3：从「垫半句话进输入框」升级成就地标注 —— 在东西上写完一句，
         // 按发送 agent 立刻来。全类型都给（图片/文件/涂鸦/手写字也算产物）。
         { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
@@ -2043,6 +2072,7 @@ export default function BoardCanvas({
           x: mx, y: my,
           target: { kind: 'folder', id: zoneId, path: zoneId, title: zoneId.split('/').pop() || zoneId, typeLabel: '文件夹' },
         }) },
+        { id: 'linkto', icon: Link2, label: '连线到…', onClick: () => setLinkFrom({ id: zoneId, title: titleOfId(zoneId) }) },
         { id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(zoneId) },
         // 文件夹在这之前**根本没有搬家入口**：卡片能拖，但拖只改画布坐标，
         // 磁盘上它永远待在原地（拖到另一张文件夹卡上也不算数）。
@@ -2504,6 +2534,19 @@ export default function BoardCanvas({
           camera.onPointerDown(e);
         }}
         onDoubleClick={(e) => { canvasTools.onDoubleClick(e); }}
+        // 连线拾取模式：捕获阶段截胡这一下点击 —— 点中物件/文件夹就是目标，
+        // 点空地/点自己 = 取消。stopPropagation 挡住卡片自己的选中/打开。
+        onClickCapture={linkFrom ? ((e) => {
+          e.preventDefault(); e.stopPropagation();
+          const tid = e.target.closest?.('[data-board-object]')?.getAttribute('data-board-object')
+            || e.target.closest?.('[data-zone-header]')?.getAttribute('data-zone-header')
+            || e.target.closest?.('[data-board-zone]')?.getAttribute('data-board-zone')
+            || null;
+          const from = linkFrom;
+          setLinkFrom(null);
+          if (!tid || tid === from.id) return;
+          setLinkPop({ x: e.clientX, y: e.clientY, mode: 'create', from, to: { id: tid, title: titleOfId(tid) } });
+        }) : undefined}
         onContextMenu={(e) => {
           if (onChrome(e)) return;                 // 工具栏上右键交给浏览器
           e.preventDefault();
@@ -2531,7 +2574,8 @@ export default function BoardCanvas({
         style={{
           position: 'absolute', inset: 0, overflow: 'hidden',
           touchAction: 'none',
-          cursor: camera.panning ? 'grabbing'
+          cursor: linkFrom ? 'crosshair'
+            : camera.panning ? 'grabbing'
             : tool === 'hand' ? 'grab'
             : tool === 'draw' ? (drawMode === 'arrange' ? 'default' : 'crosshair')
             : tool === 'text' ? 'text'
@@ -2572,6 +2616,16 @@ export default function BoardCanvas({
             height={stageBounds.h}
             hoveredId={hoveredBinding}
             onHover={setHoveredBinding}
+            onSelect={(bid, cx, cy) => {
+              const b = bindings[bid];
+              if (!b) return;
+              setLinkPop({
+                x: cx, y: cy, mode: 'edit', bindingId: bid,
+                from: { id: b.from, title: titleOfId(b.from) },
+                to: { id: b.to, title: titleOfId(b.to) },
+                type: b.type, label: b.label || '',
+              });
+            }}
           />
 
           {/* 正在画的那一笔（还没落盘，纯渲染层）*/}
@@ -2691,6 +2745,43 @@ export default function BoardCanvas({
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
+      {linkPop && (
+        <LinkPopover
+          x={linkPop.x} y={linkPop.y} mode={linkPop.mode}
+          fromTitle={linkPop.from.title} toTitle={linkPop.to.title}
+          initialType={linkPop.type || 'link'} initialLabel={linkPop.label || ''}
+          onSubmit={({ type, label }) => {
+            if (linkPop.mode === 'edit') {
+              const old = bindings[linkPop.bindingId];
+              if (!old) return;
+              const b = { ...old, type, by: old.by || 'user' };
+              if (label) b.label = label; else delete b.label;
+              setBindings(prev => ({ ...prev, [linkPop.bindingId]: b }));
+              Assets.patchBoard(projectId, { bindings: { [linkPop.bindingId]: b } }).catch(() => {});
+            } else {
+              const id = `b:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
+              const b = { type, from: linkPop.from.id, to: linkPop.to.id, by: 'user', ...(label ? { label } : {}) };
+              setBindings(prev => ({ ...prev, [id]: b }));
+              Assets.patchBoard(projectId, { bindings: { [id]: b } }).catch(() => {});
+            }
+          }}
+          onDelete={linkPop.mode === 'edit' ? (() => {
+            setBindings(prev => { const n = { ...prev }; delete n[linkPop.bindingId]; return n; });
+            Assets.patchBoard(projectId, { bindings: { [linkPop.bindingId]: null } }).catch(() => {});
+          }) : null}
+          onClose={() => setLinkPop(null)}
+        />
+      )}
+      {linkFrom && (
+        <div style={{
+          position: 'fixed', left: '50%', bottom: 76, transform: 'translateX(-50%)',
+          zIndex: 8000, padding: '6px 14px', borderRadius: 999,
+          background: COLOR.text, color: COLOR.bg,
+          fontFamily: FONT_SANS, fontSize: 12, pointerEvents: 'none', whiteSpace: 'nowrap',
+        }}>
+          连线：{linkFrom.title} ⟶ 点一个目标（Esc 取消）
+        </div>
       )}
 
       {/* 就地标注（E3）：写一句话 → 发送 → agent 立刻起一轮 */}

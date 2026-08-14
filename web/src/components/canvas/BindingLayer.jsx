@@ -88,7 +88,8 @@ export default function BindingLayer({
         const hot = hoveredId === id;
         const stroke = hot ? BINDING_ACCENT : style.stroke;
         const suffix = hot ? '-hot' : '';
-        const label = b.label || style.label;
+        // 悬停标签补一笔出处：agent 画的线标出来（用户自己画的是默认，不啰嗦）
+        const label = (b.label || style.label) + (b.by === 'agent' ? ' · agent 画的' : '');
         return (
           <g key={id}>
             {/* 命中区：透明粗线，细线也好悬停 */}
@@ -97,7 +98,14 @@ export default function BindingLayer({
               style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
               onPointerEnter={() => onHover?.(id)}
               onPointerLeave={() => onHover?.(null)}
-              onClick={(e) => { e.stopPropagation(); onSelect?.(id); }}
+              // 在 pointerdown 上选中，不等 click：容器的 pointerdown 会起相机/
+              // 框选并 setPointerCapture，pointerup 被重定向后 path 的 click
+              // 根本不生成（2026-08-14 真机踩到：hover 亮、click 永远不来）。
+              // stopPropagation 同时挡住容器手势 —— 点线就是点线，不平移。
+              onPointerDown={(e) => {
+                e.stopPropagation(); e.preventDefault();
+                onSelect?.(id, e.clientX, e.clientY);
+              }}
             />
             <path
               d={d} fill="none"

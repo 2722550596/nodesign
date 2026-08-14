@@ -50,6 +50,7 @@ import { getQuery } from '../runs/active-runs.js';
 import { mutateSpecJson } from '../../projects/workspace.js';
 import { readUiConfigFile } from '../../projects/ui-config.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
+import { relationsDigest, fileNeighborhood } from '../../lib/board-relations.js';
 import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { ensureSkillStarterFiles, listSkillIds, listSkillStarterFiles } from './skill.js';
 import {
@@ -189,6 +190,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // 中期方向：anchored Edit-first 替换 <style id="design-tokens"> +
       // <div class="__nd-deck-wrap"> 两块，省 verbatim 搬运。详见 memory
       // idea_canvas_write_flow_redesign.md
+      // 关系线邻域（2026-08-14 切片③）：agent 摸某个文件时，把连着它的线注进来。
+      // UserPromptSubmit 的全图摘要截断后，这里做精确补充。每个文件一个会话只注一次。
+      matcher: 'Read|Edit|Write',
+      hooks: [makePreToolUseBoardNeighborhoodInjector({ workspaceRoot, projectId })],
+    }, {
       matcher: 'Write',
       hooks: [
         makePreToolUseWriteCanvasReadReminder(),
@@ -222,7 +228,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // canvas.html 当前页数。把 SKILL.md 软约束（"agent 自己 turn 开头 Read
     // spec.json"）变成 SDK 硬注入 —— agent 不必每次都自觉，hook 直接喂上下文。
     UserPromptSubmit: [{
-      hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId })],
+      hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, projectId })],
     }],
 
     // PostToolUse —— 按 MCP 工具名分别注 additionalContext，引导 agent 利用
@@ -635,7 +641,37 @@ function makeSessionStartHandler({ ctx }) {
  *   - additionalContext?: string      注入后续 prompt（标记成 system 提示）
  *   - sessionTitle?: string           覆盖 session 标题（不用）
  */
-function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
+/**
+ * PreToolUse(Read|Edit|Write) —— 关系线邻域注入（2026-08-14 切片③）。
+ *
+ * agent 正要摸的文件身上如果连着线（用户手画的标注、改自/对照谱系），这一刻
+ * 就是它最相关的时刻。每个文件一个会话只注一次（线是慢变数据，重复注是噪音）；
+ * fail-soft —— 注不上不能挡工具。
+ */
+function makePreToolUseBoardNeighborhoodInjector({ workspaceRoot, projectId }) {
+  const seen = new Set();
+  return async (input) => {
+    try {
+      if (!projectId) return {};
+      const fp = input?.tool_input?.file_path;
+      if (typeof fp !== 'string' || !fp) return {};
+      const rel = toWorkspaceRel(fp, workspaceRoot);
+      if (!rel || seen.has(rel)) return {};
+      seen.add(rel);
+      const brief = await fileNeighborhood(projectId, rel, { limit: 6 });
+      if (!brief) return {};
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          additionalContext: `画布上连着 ${rel} 的关系线：\n${brief}`,
+        },
+      };
+    } catch { return {}; }
+  };
+}
+
+function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, projectId }) {
   return async (_input, _toolUseId, _options) => {
     try {
       if (!workspaceRoot) return {};
@@ -706,6 +742,19 @@ function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId }) {
       } catch {
         // notes/ 不存在：noop
       }
+
+      // 1.7 画布关系线摘要（2026-08-14 切片③）：用户/你在画布上画的连线。
+      // 用户画的排前面 —— 他专门画的线就是他想让你知道的事。手写字端点直接
+      // 带内容（标注全局化的关键一步）。没有线 = 沉默不占 prompt。
+      try {
+        const digest = await relationsDigest(projectId, { limit: 12 });
+        if (digest) {
+          parts.push(
+            `画布关系线（用户和你手动画的连线，端点跟着改名走；语义看线上的词）：\n${digest}\n`
+            + `  产出新东西后记得用 relate_on_board 把「改自/对照/接着/取材」画上去。`,
+          );
+        }
+      } catch { /* 板读不到就沉默 */ }
 
       // 2. 现有产物清单（2026-07-28：任务模型下产物住 tasks/<任务>/，这里以前只看
       //    cwd/canvas.html —— 于是每一轮都在说"还不存在，这可能是首跑"，手上明明有

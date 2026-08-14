@@ -67,6 +67,15 @@ export const BINDING_STYLES = {
     tail: 'bar',        // 两端对称 = 无向
     affinity: 40,       // 唯一一条明确要求并排的关系，贴得最紧
   },
+  link: {
+    label: '关联',
+    stroke: PAPER.pencil,
+    width: 1.1,
+    dash: null,
+    head: 'dot',        // 两端对称小圆点 = 无向；纯素线会跟涂鸦笔画混淆
+    tail: 'dot',
+    affinity: 220,
+  },
 };
 
 /** 悬停 / 选中时的强调色（状态用颜色，语义用线型） */

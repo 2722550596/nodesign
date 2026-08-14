@@ -46,6 +46,10 @@ export const BINDING_TYPES = {
   flow: { label: '接着', directed: true },
   ref: { label: '取材', directed: true },
   contrast: { label: '对照', directed: false },
+  // 关联（2026-08-14，手动连线上线时加）：五种预定义都不合身时的逃生舱。
+  // 含义由线上的 label 定义（用户写一句，agent 逐字读）。收它不违反
+  // 「纯装饰不收」——它对布局说「摆近点」（affinity），对 agent 说 label 那句话。
+  link: { label: '关联', directed: false },
 };
 
 /** 词汇表 id 列表，校验和 parity 断言都用它。 */
