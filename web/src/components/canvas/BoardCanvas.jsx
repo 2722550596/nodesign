@@ -2306,7 +2306,15 @@ export default function BoardCanvas({
   const artifactRoots = useMemo(() => (
     objects
       .filter(o => o.type === 'site' || o.type === 'world')
-      .map(o => ({ path: o.id.slice(o.id.indexOf(':') + 1), id: o.id }))
+      .map(o => ({
+        path: o.id.slice(o.id.indexOf(':') + 1),
+        id: o.id,
+        // 根站的认领子目录（页面路径的顶层段）：`刊物/第一期.html` 在服务端
+        // 算根站的页，前端解析要吃同一口径（resolveObjectId 的 claims 检查）
+        claims: o.type === 'site'
+          ? [...new Set((o.pages || []).filter(p => p.includes('/')).map(p => p.slice(0, p.indexOf('/'))))]
+          : [],
+      }))
       // ⚠️ 别写 `.filter(r => r.path)`：根站（`site:`）的 path 合法地是空串，
       // 那样写会把它整个扔出覆盖表 —— 根站项目里 index.html/style.css 全部
       // 解析成幽灵 id，精灵/光圈/舞台寻址一起失灵（2026-08-14 用户真会话

@@ -103,6 +103,26 @@ describe('resolveObjectId — 文件落到哪张卡', () => {
     it('根上的 .md 是自己的阅读卡，不归站', () => {
       expect(resolveObjectId('随笔.md', ROOT_SITE)).toBe('随笔.md');
     });
+    it('认领子目录（claims=页面路径顶层段）里的文件也归根站', () => {
+      const withClaims = [{ path: '', id: 'site:', claims: ['刊物'] }];
+      expect(resolveObjectId('刊物/第一期.html', withClaims)).toBe('site:');
+      expect(resolveObjectId('刊物/style.css', withClaims)).toBe('site:');
+      // 没被认领的子目录照旧各回各家
+      expect(resolveObjectId('稿件/草.html', withClaims)).toBe('deck:稿件/草.html');
+    });
+  });
+
+  /**
+   * 单页产物的伴生文件（2026-08-14）：`_drafts/纸本.css` 属于
+   * `site:_drafts/纸本.html` 那张卡 —— _drafts/ 刻意不是文件夹卡，
+   * 伴生文件落裸路径的话精灵/舞台卡对它彻底没有落点。
+   */
+  it('单页站的同名伴生文件归那张卡', () => {
+    const R = [{ path: '_drafts/纸本.html', id: 'site:_drafts/纸本.html' }];
+    expect(resolveObjectId('_drafts/纸本.css', R)).toBe('site:_drafts/纸本.html');
+    expect(resolveObjectId('_drafts/纸本.js', R)).toBe('site:_drafts/纸本.html');
+    // 不同名的不吸：纸本v2 是另一份试作
+    expect(resolveObjectId('_drafts/纸本v2.html', R)).toBe('deck:_drafts/纸本v2.html');
   });
 
   it('前后多余的斜杠和 ./ 前缀不影响命中', () => {

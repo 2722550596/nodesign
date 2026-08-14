@@ -77,7 +77,9 @@ async function landStill({ imgBuf, still, seed, outDir, ctx, sessionId, wallS })
     }, null, 2));
   } catch (e) { console.warn(`[paint-still] meta sidecar failed: ${e.message}`); }
 
-  try { ctx?.emit?.(Events.fileChanged(absOut, 'add')); } catch { /* fail-safe */ }
+  // 发**工作区相对路径**（fileChanged 的正字法，hooks 同款）——发绝对路径的话
+  // 前端寻址/版本记账全部静默失配（2026-08-14 普查改）
+  try { ctx?.emit?.(Events.fileChanged(path.posix.join('assets', 'generated', finalName), 'add')); } catch { /* fail-safe */ }
   try {
     ctx?.emit?.({
       type: 'run.image_generated',

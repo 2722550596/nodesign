@@ -83,7 +83,8 @@ async function landShot({ localMp4, shot, seed, backend, wallS, outDir, ctx, ses
     }, null, 2));
   } catch (e) { console.warn(`[roll-film] meta sidecar failed: ${e.message}`); }
   // MCP 工具写盘不走自动 file_changed —— 手动发，出一镜上墙一镜
-  try { ctx?.emit?.(Events.fileChanged(absOut, 'add')); } catch { /* */ }
+  // 工作区相对路径（fileChanged 正字法，2026-08-14 普查改；绝对路径=前端寻址哑弹）
+  try { ctx?.emit?.(Events.fileChanged(path.posix.join('assets', 'generated', fileName), 'add')); } catch { /* */ }
   return `[${shot.name}] assets/generated/${fileName} — ${shot.duration}s ${(sizeBytes / 1e6).toFixed(1)}MB ${Math.floor(wallS / 60)}m${wallS % 60}s ~$${cost}`;
 }
 

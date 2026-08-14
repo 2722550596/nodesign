@@ -19,6 +19,7 @@ import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace, commitWorkspace,
 } from '../projects/workspace.js';
 import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
+import { moveEntry, MoveError } from '../projects/move-entry.js';
 import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
@@ -750,78 +751,19 @@ router.post('/:pid/folders', express.json(), async (req, res, next) => {
 router.post('/:pid/move', express.json(), async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
-    const root = getSharedDir(req.params.pid);
-    const norm = (p) => String(p ?? '').replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-    const from = norm(req.body?.from);
-    const to = norm(req.body?.to);
-    if (!from) return res.status(400).json({ error: 'from required' });
-
-    const absFrom = path.resolve(root, from);
-    const absToDir = to ? path.resolve(root, to) : root;
-    const inside = (p) => p === root || p.startsWith(root + path.sep);
-    if (!inside(absFrom) || absFrom === root || !inside(absToDir)) {
-      return res.status(400).json({ error: 'path escapes workspace' });
+    // 语义（NO_MOVE_OUT 白名单史 / 产物目录不透明规则 / ①②③④ 顺序）全部住在
+    // moveEntry —— 2026-08-14 抽成唯一实现，agent 的 organize_board 共用同一份
+    const out = await moveEntry(req.params.pid, req.body?.from, req.body?.to);
+    res.json(out);                                                            // ③
+    if (out.moved) {
+      // ④ 响应之后再 commit：它只服务于稍后的对账，不该让用户多等一次 git add
+      commitWorkspace(req.params.pid, null, `move: ${out.from} → ${out.to}`, { author: 'user' })
+        .catch(err => console.warn('[git] move commit failed:', err.message));
     }
-    /**
-     * 哪些东西不许搬走。
-     *
-     * ⚠️ 2026-08-13 放开 `assets/`。原来这里挡的是整个 RESERVED_DIRS，理由是
-     * "assets/ 按 upload/generated/note 三种语义单独扫，搬出去它就不是素材了"
-     * —— 那条在「产物必须住在任务目录里」的时代成立，现在画布是一张桌面、
-     * 文件夹是收纳工具，**用户把一张生成图归到某个文件夹里是再正常不过的动作**，
-     * 拦着它才是怪的。
-     *
-     * 搬走之后它照样是图片卡：`isImage` 按扩展名算，跟它住哪儿无关。
-     * 唯一的代价是 `hasThumb` 只对 `assets/generated` 为真 —— 缩略图那条快路
-     * 用不上了，所以前端对没有缩略的图统一加 `?w=` 走响应式档（thumbSrcOf）。
-     *
-     * 仍然挡住的是**真·基础设施**：exports/（导出落点）、node_modules/、
-     * agent-memory/（记忆档）、以及点开头的 .claude / .nd / .git。
-     * notes/ 也先留着挡 —— 便签搬出 `notes/` 会从便签卡退化成普通 .md 文件卡
-     * （少了分面翻页和删除入口），那是形态变化不是位置变化，要放开得先想清楚。
-     */
-    const NO_MOVE_OUT = new Set(['exports', 'node_modules', 'agent-memory', 'notes']);
-    const guardSeg = (rel) => rel.split('/')[0];
-    if (NO_MOVE_OUT.has(guardSeg(from)) || guardSeg(from).startsWith('.')) {
-      return res.status(400).json({ error: '这个位置的东西不参与搬家' });
-    }
-    if (to && (RESERVED_DIRS.has(guardSeg(to)) || guardSeg(to).startsWith('.'))) {
-      return res.status(400).json({ error: '不能搬进这个目录' });
-    }
-    // 搬进自己肚子里（文件夹拖到它自己的子文件夹上）—— fs.rename 会报
-    // EINVAL，但那时目录树已经没法自洽了，提前拦住
-    if (to === from || to.startsWith(from + '/')) {
-      return res.status(400).json({ error: '不能把文件夹搬进它自己里面' });
-    }
-
-    const srcStat = await fs.stat(absFrom).catch(() => null);
-    if (!srcStat) return res.status(404).json({ error: 'source not found' });
-    const dirStat = await fs.stat(absToDir).catch(() => null);
-    if (!dirStat?.isDirectory()) return res.status(404).json({ error: 'target folder not found' });
-
-    // 目标目录**本身是一件产物**（整站 / 世界）时不许搬进去：它的内部结构由
-    // 形态解析器管，塞进去的东西会从产物枚举里彻底消失（既不是页面也不是卡）。
-    if (to) {
-      const m = await taskManifest(absToDir);
-      const opaque = (m?.artifacts || []).some(
-        a => a.kind === 'world' || (a.kind === KIND_SITE && !a.single && !a.root));
-      if (opaque) return res.status(400).json({ error: '这是一件产物，不是收纳文件夹' });
-    }
-
-    const base = path.basename(from);
-    const nextRel = to ? `${to}/${base}` : base;
-    if (nextRel === from) return res.json({ ok: true, from, to: from, moved: false });
-    if (await exists(path.resolve(root, nextRel))) {
-      return res.status(409).json({ error: `「${base}」在那儿已经有一个了` });
-    }
-
-    await fs.rename(absFrom, path.resolve(root, nextRel));                    // ①
-    const { board } = await renameBoardPaths(req.params.pid, [[from, nextRel]]);  // ②
-    res.json({ ok: true, from, to: nextRel, moved: true, board });            // ③
-    // ④ 响应之后再 commit：它只服务于稍后的对账，不该让用户多等一次 git add
-    commitWorkspace(req.params.pid, null, `move: ${from} → ${nextRel}`, { author: 'user' })
-      .catch(err => console.warn('[git] move commit failed:', err.message));
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (err instanceof MoveError) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 /**

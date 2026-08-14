@@ -72,10 +72,27 @@ export function resolveObjectId(filePath, artifactRoots) {
     // notes/ assets/ 等别家的地），.md 除外（根上的 md 是自己的阅读卡）。
     // 覆盖表按 path 降序，空串天然排最后 —— 子目录站点先认领，不会被吞。
     if (r.path === '') {
-      if (!p.includes('/') && !/\.md$/i.test(p)) return r.id;
+      const slash = p.indexOf('/');
+      if (slash < 0) {
+        if (!/\.md$/i.test(p)) return r.id;
+        continue;
+      }
+      // 根站的**认领子目录**（2026-08-14 二刀）：服务端收集器把"页面引用到的
+      // 一级子目录"算进根站（`刊物/第一期.html` 是它的页不是散文件），前端
+      // 覆盖表带 claims（页面路径的顶层段）跟上同一口径 —— 不带的话编辑
+      // 认领目录里的文件又是幽灵 id。
+      if (Array.isArray(r.claims) && r.claims.includes(p.slice(0, slash))) return r.id;
       continue;
     }
     if (p === r.path || p.startsWith(`${r.path}/`)) return r.id;
+    // 单页产物的伴生文件（2026-08-14）：`_drafts/纸本.css` 属于
+    // `site:_drafts/纸本.html` 那张卡 —— 同目录同名不同扩展名。不然它落进
+    // 裸路径，而 `_drafts/` 又刻意不是文件夹卡（试作各自渲卡、目录本身是
+    // 基础设施），精灵和舞台卡对它就彻底没有落点。
+    if (/\.html?$/i.test(r.path)) {
+      const stem = r.path.replace(/\.[^./]+$/, '');
+      if (p.startsWith(`${stem}.`) && !p.slice(stem.length + 1).includes('/')) return r.id;
+    }
   }
   if (/\.html?$/i.test(p)) return `deck:${p}`;
   return p;

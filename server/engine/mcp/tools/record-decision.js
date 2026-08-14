@@ -1,8 +1,8 @@
 /**
  * mcp/tools/record-decision.js — record_decision MCP tool
  *
- * agent 在做关键设计决策时调，把"做了什么 + 为什么"写成任务便利贴
- * `tasks/<任务>/notes/决策.md` 的一面（`---` 分面）。2026-07-30 起决策
+ * agent 在做关键设计决策时调，把"做了什么 + 为什么"写成共享便利贴
+ * `notes/决策.md` 的一面（`---` 分面）。2026-07-30 起决策
  * 不再进 spec.json.decisions[]：便利贴是 agent 和用户的**共享层**——
  * 用户在画布上直接看到、能翻、能改；spec.json 只是 agent 自己的暗档案，
  * 用户看不见，头脑风暴根本进不来。旧会话已有的 spec.json decisions[]
@@ -12,9 +12,8 @@
  *   - 一个 .md = 一张贴；`\n---\n` 分面，翻页看
  *   - 每面第一行 `# 标题`
  *
- * 任务定位：活跃产物（artifact-target）所在任务优先，没有就取 tasks/ 下
- * 唯一的任务目录；都没有 → 报错让 agent 先建任务（决策必须有归属，写到
- * session 根用户在桌面上看不见，等于没记）。
+ * 落点：工作区 `notes/`（扁平模型，2026-08-08 起）—— 没有"任务归属"了，
+ * 便利贴直接住项目桌面。
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
@@ -106,7 +105,9 @@ rendering, no tool needed.`,
         try {
           // MCP 工具写盘不走 PostToolUse(Write/Edit) 那条 file_changed 直发，
           // 自己补一发，前端便利贴才会当场刷新
-          ctx?.emit?.(Events.fileChanged(noteFile, 'change'));
+          // 工作区相对路径（fileChanged 正字法；曾发绝对路径=前端只吃到清单重拉，
+          // 寻址和版本 key 全失配。2026-08-14 普查改）
+          ctx?.emit?.(Events.fileChanged(`notes/${NOTE_FILE}`, 'change'));
           ctx?.emit?.({
             type: 'run.decision_recorded',
             title: title.trim(),

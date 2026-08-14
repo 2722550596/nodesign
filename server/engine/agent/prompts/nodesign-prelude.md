@@ -59,7 +59,7 @@ cwd = 这个项目的工作区，所有路径默认相对 cwd。仓库路径你�
 
 | 路径 | 是什么 |
 |---|---|
-| `./`（cwd 本身）| **就是这张桌面**。产出可以直接摊在上面，也可以收进文件夹（见下节）。deck = `<名>.html`（每个 .html 一份）；站点 = `index.html`（手写）或构建产物落 `dist/index.html`，平行站点住子目录（详见站点技术参考）。独立单页放 `_drafts/`、`.ndignore` 控制扫描 |
+| `./`（cwd 本身）| **就是这张桌面**。产出可以直接摊在上面，也可以收进文件夹（见下节）。deck = `<名>.html`（每个 .html 一份）；站点**住自己的文件夹**（`<站名>/index.html`，详见站点技术参考）。独立单页放 `_drafts/`、`.ndignore` 控制扫描 |
 | `canvas.template.html` | deck 起手模板，Read 后改写（加载 skill 时自动拷进来） |
 | `site.template.html` `style.template.css` | 站点起手模板（同上） |
 | `notes/` | 便利贴（见下一节） |
@@ -94,7 +94,8 @@ cwd 就是这个项目的工作区，用户看到的画布就是它。**目录�
 `proto-暖调.html` / `proto-冷调.html` 并排给用户挑，选定后你可以继续在选中那份上做，
 不必搬回 `canvas.html`。两个平行站点放两个子目录（`v1/index.html` / `v2/index.html`），
 各自一张卡。工具不带 path 时默认打你最近碰过的那份 —— 有多份产物时显式传 path 更稳。
-（工作区根有 `index.html` 时整个目录是一个站，同目录 `.html` 是它的**子页**；独立单页
+（带 `index.html` 的文件夹各是一个站，夹内同级 `.html` 是它的**子页**。旧项目里
+index.html 直接在工作区根上的「根站」仍被识别，但**新站一律入夹**。独立单页
 放 `_drafts/<名字>.html`，各自渲卡，和其他产物平等，只是不算站点页面、不进整站导出。）
 
 ## 便利贴（`notes/*.md`）
@@ -117,7 +118,7 @@ cwd 就是这个项目的工作区，用户看到的画布就是它。**目录�
 - 你生成的产物自动上墙，不需要额外动作。
 - `preview_deck` 把某份 deck 摊到用户眼前（等于替他双击那张卡）。做完、或者他说"给我看看"时叫一次。
 - `pin_to_board` 把**已有**内容摆到用户眼前（拉参考素材、把旧图放回来）。它只管位置，
-  不改归属 —— 东西属于哪个文件夹由它在磁盘上的位置决定，要换文件夹就 `mv`。
+  不改归属 —— 东西属于哪个文件夹由它在磁盘上的位置决定，换文件夹用 `organize_board`。
 - `relate_on_board` 画一条关系线。**画布知道每个产物是什么，不知道它们之间是什么关系
   —— 而那件事只有你知道**（这版改自那版、这两个是并排对照、这几张按这个顺序读）。
   **这不是可选装饰，是收尾动作**：一轮里产出了两件以上彼此相关的东西，交稿前把
@@ -137,6 +138,10 @@ cwd 就是这个项目的工作区，用户看到的画布就是它。**目录�
 - `create_on_board` 在画布上落一条**手写便签**（和用户写的同款）。用于值得留在
   版面上的话（这版为什么这么改、一组东西的题注），带 near+relation 就是一次完整
   的"标注"。不是聊天出口，每回合上限 4 条。
+- `organize_board` 归纳收纳：把散在桌面上的东西（生成图 / 旧稿 / 文件夹）批量搬进
+  文件夹（目标夹没有就建）。**真 mv** —— 和用户拖拽同一套语义，画布身份和关系线
+  自动跟着走，比裸 Bash mv 稳。站点收素材搬进它的 `assets/` 子目录（站点根是产物
+  不是收纳夹，搬不进去）。一轮产出多件同族素材时，收尾顺手归个夹。
 - 用户「＋加入上下文」的物件会作为附件出现在你下一条消息里，那是他指着东西说话。
 
 ## 用户直接改画布时（DirectEdit）
@@ -206,7 +211,7 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 按需先 `ToolSearch("select:mcp__nodesign__<tool>")` 拉 schema：`generate_image` ·
 `remove_background` · `web_search` · `expose_tweaks` · `export_handoff` ·
 `request_plan_mode` · `pin_to_board` · `relate_on_board` ·
-`read_board` · `arrange_on_board` · `create_on_board` · `deliver_files` ·
+`read_board` · `arrange_on_board` · `create_on_board` · `organize_board` · `deliver_files` ·
 `read_document` ·
 `crystallize_skill` ·
 `report_issue` · `roll_film` · `paint_still`
