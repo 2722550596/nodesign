@@ -21,7 +21,7 @@ const LIMIT = 600;
 const GRANDFATHERED = {
   'web/src/components/canvas/BoardCanvas.jsx': 2941,   // B1 入座 → B2 搬家 → B3 菜单表迁出后
   'web/src/routes/ProjectWorkspace.jsx': 2427,
-  'server/engine/agent/hooks.js': 1975,
+  // server/engine/agent/hooks.js 2026-08-14 拆完出表（1975 → 组装层 ~330，走 600 通用上限）
   'web/src/components/chat/Message.jsx': 1886,
   'server/engine/agent/session-loop.js': 1192,
   'server/projects/workspace.js': 1124,

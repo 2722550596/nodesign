@@ -1,0 +1,75 @@
+/**
+ * 文件改动 → 前端刷新 的两条通路（2026-08-14 可维护性行动：从 hooks.js 原样迁出）。
+ *
+ * ⚠️ `toWorkspaceRel` 2026-08-13 提到 `server/lib/workspace-path.js`：
+ * 发给前端当物件寻址依据的路径全都要过它，而那些 emit 不只在这个文件里
+ * （agent-shared 的流式 tool_input 也发 filePath）。
+ *
+ * （这里曾经有「任务 → 会话」的认领机制（2026-07-28 ~ 08-07）：会话第一次往
+ * `tasks/<任务>/` 写东西时落一个 `.nd-task.json` 记住是谁的家，还配了一个
+ * PostToolUse(Bash) 钩子扫命令行里的 `tasks/<名>`。整套随任务层一起退役 ——
+ * 产物属于项目，不属于任何一次对话。）
+ */
+import { Events } from '../events.js';
+import { toWorkspaceRel } from '../../../lib/workspace-path.js';
+import { setActiveArtifact } from '../../../lib/artifact-target.js';
+
+/**
+ * FileChanged handler（P0+ s1 C4）：agent 写文件后 SDK 触发，转发给 EventBus。
+ *
+ * input: FileChangedHookInput (sdk.d.ts:557)
+ *   - file_path: string         绝对路径或相对 cwd
+ *   - event: 'change' | 'add' | 'unlink'
+ *
+ * 不在这里做 .html 过滤 —— 全部转发让前端按需消费（C18 ContextUsageBar /
+ * C20 file changes 列表都可能用）。前端 Project.jsx 只对 canvas.html bump reloadToken。
+ *
+ * 返回 {}：不干预 SDK，不影响 agent loop。
+ */
+export function makeFileChangedHandler({ ctx, workspaceRoot }) {
+  // eslint-disable-next-line no-unused-vars
+  return async (input, _toolUseId, _options) => {
+    try {
+      // 同下 emitter：发工作区相对路径，前端拿它直接当物件 id 的路径部分
+      ctx.emit(Events.fileChanged(toWorkspaceRel(input.file_path, workspaceRoot), input.event));
+    } catch (err) {
+      console.warn(`[hooks/FileChanged] handler threw:`, err.message);
+    }
+    return {};
+  };
+}
+
+/**
+ * PostToolUse(写文件系工具) → 直发 run.file_changed（2026-07-28）。
+ *
+ * SDK 的 FileChanged hook 是 watcher 型（要先声明 watchPaths 才启动），实测从未
+ * 触发。这里走确定性路径：Write/Edit/MultiEdit/NotebookEdit 成功完成即从入参拿
+ * 路径发事件 —— agent 每写完一笔，前端立刻 reload iframe / 刷产物墙 / 打角标，
+ * 不再等 run.done。PostToolUse 只在工具成功后触发（失败走 PostToolUseFailure），
+ * 不会把写坏的半成品刷给用户。
+ */
+export function makePostToolUseFileChangedEmitter({ ctx, workspaceRoot, sharedRoot, sessionId }) {
+  // eslint-disable-next-line no-unused-vars
+  return async (input, _toolUseId, _options) => {
+    try {
+      const t = input?.tool_input;
+      const filePath = typeof t?.file_path === 'string' ? t.file_path
+        : typeof t?.notebook_path === 'string' ? t.notebook_path : null;
+      if (filePath) {
+        // 刚写的这份 html 就是"当前产物"——list_pages / screenshot / read_page
+        // 不给 path 时默认打它，子代理不必知道任务目录长什么样（artifact-target.js）。
+        // 形态（deck / site）不在这里定：resolveArtifactTarget 每次解析都按任务现状
+        // 重算，免得"先写 index.html 记成 site、后来目录变了"这种陈旧状态。
+        const rel = toWorkspaceRel(filePath, workspaceRoot);
+        setActiveArtifact(sessionId, rel);
+        // 发**工作区相对路径**：画布物件的 id 就是这个字符串。以前发绝对路径，
+        // 前端靠 `tasks/<任务>/` 这个特征段把相对部分抠出来 —— 那一层拆掉之后
+        // 绝对路径里再没有可锚定的标志，寻址静默失败（舞台卡掉 dock）。
+        ctx.emit(Events.fileChanged(rel, 'change'));
+      }
+    } catch (err) {
+      console.warn('[hooks/PostToolUse:file-changed] emit failed:', err.message);
+    }
+    return {};
+  };
+}
