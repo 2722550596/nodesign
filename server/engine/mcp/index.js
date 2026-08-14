@@ -172,7 +172,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 抠图（rembg U²-Net，server 端 spawn .venv-rembg python subprocess）
       // 任何 workspace 里的图都能抠，输出 RGBA PNG 到 assets/generated/<name>.png。
       // 跟 generate_image 解耦：generate_image 只生图，想透明叠加单独调本工具。
-      makeRemoveBackgroundTool({ workspaceRoot, sharedRoot, ctx }),
+      makeRemoveBackgroundTool({ workspaceRoot, sharedRoot, projectId, ctx }),
 
       // Agent in-loop 请求进 SDK plan mode —— emit run.plan_mode_requested
       // 给前端弹横幅，用户点 yes 走 /permission-mode endpoint 切 mode 后再 POST

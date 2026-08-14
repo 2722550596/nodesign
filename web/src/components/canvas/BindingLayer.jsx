@@ -44,6 +44,8 @@ export default function BindingLayer({
   epoch,
   width, height,      // 世界尺寸（SVG 画幅）
   hoveredId = null,
+  /** 悬停中的**物件** id（路线5）：连着它的线全部点亮 —— 关系一瞥 */
+  hotEndpointId = null,
   onHover,
   onSelect,
 }) {
@@ -88,7 +90,8 @@ export default function BindingLayer({
       </defs>
 
       {drawn.map(({ id, b, style, d, mid }) => {
-        const hot = hoveredId === id;
+        const hot = hoveredId === id
+          || (!!hotEndpointId && (b.from === hotEndpointId || b.to === hotEndpointId));
         const stroke = hot ? BINDING_ACCENT : style.stroke;
         const suffix = hot ? '-hot' : '';
         // 悬停标签补一笔出处：agent 画的线标出来（用户自己画的是默认，不啰嗦）

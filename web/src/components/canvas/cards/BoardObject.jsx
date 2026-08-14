@@ -40,16 +40,21 @@ function BoardObject({
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
   onAnnotate,
   scale = 1,
+  /** 谱系收叠（北极星路线3）：身后叠着几张旧版 + 当前展开态 */
+  stackCount = 0, stackOpen = false, onToggleStack = null,
+  /** 悬停上报（路线5）：让画布点亮连着这张卡的关系线 */
+  onHoverCard = null,
 }) {
   const [hover, setHover] = useState(false);
   // 离开宽限：pointerLeave 不立刻收工具条，等 200ms。没有这条的话，鼠标奔着
   // 按钮去的路上稍微出界一下（很容易，按钮浮在卡外）工具条就当场卸载 ——
   // 用户的原话是"鼠标一离开产物本身视图点击按钮，按钮就会消失"。
   const hoverTimer = useRef(null);
-  const armHover = () => { clearTimeout(hoverTimer.current); setHover(true); };
+  const armHover = () => { clearTimeout(hoverTimer.current); setHover(true); onHoverCard?.(o.id); };
   const disarmHover = () => {
     clearTimeout(hoverTimer.current);
     hoverTimer.current = setTimeout(() => setHover(false), 200);
+    onHoverCard?.(null);   // 线的高亮即时熄（不吃工具条那 200ms 宽限）
   };
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
   const sz = sizeOf(o);
@@ -67,7 +72,16 @@ function BoardObject({
     borderRadius: isInk ? 4 : RADIUS.xl,
     background: isInk ? (hover ? alpha(CANVAS.brass, 0.10) : 'transparent') : COLOR.bgCard,
     border: isInk ? 'none' : `1px solid ${added ? COLOR.text : COLOR.borderLt}`,
-    boxShadow: isInk ? 'none' : (hover ? '0 4px 14px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.05)'),
+    // 谱系收叠的纸叠感：两层偏移的「纸边」用 box-shadow 画（填充色一层 +
+    // 描边色一层），画在元素底下不占 DOM、不吃指针、不压自家边框
+    boxShadow: (() => {
+      const paper = isInk ? null : (hover ? '0 4px 14px rgba(0,0,0,0.12)' : '0 1px 4px rgba(0,0,0,0.05)');
+      const stack = (stackCount > 0 && !stackOpen && !isInk)
+        ? `4px 4px 0 -1px ${COLOR.bgCard}, 4px 4px 0 0 ${COLOR.borderLt}, 8px 8px 0 -1px ${COLOR.bgCard}, 8px 8px 0 0 ${COLOR.borderLt}`
+        : null;
+      const parts = [stack, paper].filter(Boolean);
+      return parts.length ? parts.join(', ') : 'none';
+    })(),
     cursor: 'grab', userSelect: 'none',
     touchAction: 'none',
     animation: POP_IN,
@@ -316,6 +330,25 @@ function BoardObject({
           </span>
           <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{formatSize(o.size)}</span>
         </div>
+      )}
+
+      {stackCount > 0 && (
+        <button
+          data-board-action
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onToggleStack?.(); }}
+          title={stackOpen ? '把旧版收回这张卡身后' : '展开身后的旧版'}
+          style={{
+            position: 'absolute', bottom: -8, left: -6,
+            background: stackOpen ? COLOR.bg : COLOR.text,
+            color: stackOpen ? COLOR.text : COLOR.bg,
+            border: `1px solid ${stackOpen ? COLOR.borderLt : COLOR.text}`,
+            borderRadius: RADIUS.md, cursor: 'pointer',
+            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, padding: '1px 6px',
+          }}
+        >
+          {stackOpen ? '收起' : `⧉ ${stackCount}`}
+        </button>
       )}
 
       {added && (

@@ -12,6 +12,7 @@ import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
 import { orderByRelations, orderWithGroups } from '../../lib/relation-order.js';
 import { pickHero } from '../../lib/hero.js';
+import { lineageFolds } from '../../lib/lineage.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -607,6 +608,20 @@ export default function BoardCanvas({
     items: [...(dirIndex.byDir.get(dir) || [])].sort((a, b) => String(a.id).localeCompare(String(b.id))),
   }), [dirIndex, folderCardOf]);
 
+  // ⚠️ 这三条声明必须在下面那个入座 memo **之前** —— memo 依赖 lineageOpen，
+  // 声明在后就是渲染时 TDZ 整页白屏（这文件的第五颗同型雷，_hook-order-check
+  // 拦下的）。谱系收叠：用户点开的链尾集合（默认全折叠，版面上只留现役版）。
+  const [lineageOpen, setLineageOpen] = useState(() => new Set());
+  const toggleLineage = useCallback((tipId) => {
+    setLineageOpen(prev => {
+      const next = new Set(prev);
+      if (next.has(tipId)) next.delete(tipId); else next.add(tipId);
+      return next;
+    });
+  }, []);
+  /** 悬停中的卡（路线5）：BindingLayer 点亮连着它的线 */
+  const [hoverCardId, setHoverCardId] = useState(null);
+
   const { positioned, folderView, contentBottom, seatFixes, noteFixes } = useMemo(() => {
     // ── 桌面这一层（根目录）有哪些文件夹 ──
     //
@@ -634,11 +649,21 @@ export default function BoardCanvas({
       }
     }
 
+    // 谱系收叠（北极星路线3）：改自链的旧版藏到现役版身后，链尾带徽标。
+    // 放在主角判断和入座**之前** —— 藏起来的不参与排座也不抢主角。
+    const folds = lineageFolds(items.map(it => String(it.id)), bindings, lineageOpen);
+    let visItems = items;
+    if (folds.hidden.size) visItems = items.filter(it => !folds.hidden.has(String(it.id)));
+    for (const it of visItems) {
+      const st = folds.stacks.get(String(it.id));
+      if (st) { it.stackCount = st.count; it.stackOpen = st.open; }
+    }
+
     // 主角判断（北极星路线1）：唯一且有证据的最高分产物卡放大一档。
     // 必须在任何 sizeOf 之前标 —— 命中/排布/渲染吃的是同一个 tier。
-    const heroId = pickHero(items.map(it => ({ id: String(it.id), type: it.type })), bindings);
+    const heroId = pickHero(visItems.map(it => ({ id: String(it.id), type: it.type })), bindings);
     if (heroId) {
-      const h = items.find(it => String(it.id) === heroId);
+      const h = visItems.find(it => String(it.id) === heroId);
       if (h) h.tier = 'hero';
     }
 
@@ -647,17 +672,18 @@ export default function BoardCanvas({
     //
     // 起排线取"已经摆好的东西（含文件夹卡）的最低边"，新来的从那底下开始铺，
     // 不会压到你摆好的版面上。
-    if (fresh.length) {
+    const visFresh = fresh.filter(it => !folds.hidden.has(String(it.id)));
+    if (visFresh.length) {
       let seatedBottom = 0;
       for (const f of folders) seatedBottom = Math.max(seatedBottom, f.y + f.h);
-      for (const it of items) {
-        if (fresh.includes(it)) continue;
+      for (const it of visItems) {
+        if (visFresh.includes(it)) continue;
         seatedBottom = Math.max(seatedBottom, it.pos.y + sizeOf(it).h);
       }
       // 字典序只是兜底；关系边（对照/关联凑相邻、接着正向、改自旧→新）
       // 决定真正的先后 —— 顺序是权威，坐标是算的（北极星切片④）。
       // 二程：多成员关系组独占成行（breakBefore），组内紧凑、组间呼吸。
-      const byId = new Map(fresh.map(it => [String(it.id), it]));
+      const byId = new Map(visFresh.map(it => [String(it.id), it]));
       const { order, breakBefore } = orderWithGroups(
         [...byId.keys()].sort((a, b) => a.localeCompare(b)),
         bindings,
@@ -671,7 +697,7 @@ export default function BoardCanvas({
         { width: DESKTOP_W - MARGIN_X * 2, xMin: MARGIN_X, yTop: seatedBottom ? seatedBottom + ROW_GAP : MARGIN_X },
       );
       const slotById = new Map(packed.slots.map(s => [s.id, s]));
-      for (const it of fresh) {
+      for (const it of visFresh) {
         const s = slotById.get(it.id);
         if (s) it.pos = { ...it.pos, x: s.x, y: s.y };
       }
@@ -680,10 +706,10 @@ export default function BoardCanvas({
 
     let bottom = 0;
     for (const f of folders) bottom = Math.max(bottom, f.y + f.h);
-    for (const it of items) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
+    for (const it of visItems) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     // 新算出来的落点交给下面那条 effect 落盘（不落的话布局会跟着交互抖，见上）
     const seatFixes = {};
-    for (const it of fresh) {
+    for (const it of visFresh) {
       if (movingRef.current.has(it.id)) continue;   // 正在搬家，别给旧 id 排座
       seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
     }
@@ -693,8 +719,8 @@ export default function BoardCanvas({
     // 只搬 kind==='text'（涂鸦坐标是内容，永不代摆）；只在有 fresh 时算，
     // 落盘后 fresh 清空 → noteFixes 清空，不会自激。
     const noteFixes = {};
-    if (fresh.length) {
-      const freshIds = new Set(fresh.map(it => String(it.id)));
+    if (visFresh.length) {
+      const freshIds = new Set(visFresh.map(it => String(it.id)));
       const textTargets = new Map();
       for (const b of Object.values(bindings || {})) {
         if (b.type !== 'annotates' || !String(b.from).startsWith('text:')) continue;
@@ -717,8 +743,8 @@ export default function BoardCanvas({
         };
       }
     }
-    return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes, noteFixes };
-  }, [dirIndex, folderCardOf, layout, zonesEff, bindings]);
+    return { positioned: visItems, folderView: folders, contentBottom: bottom, seatFixes, noteFixes };
+  }, [dirIndex, folderCardOf, layout, zonesEff, bindings, lineageOpen]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
   // 全目录树的物件（不止桌面这一层）—— 文件夹窗里的右键要按 id 找得到它们
@@ -2516,6 +2542,11 @@ export default function BoardCanvas({
         noteCount={noteCounts[obj.id] || 0}
         // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
         scale={win ? 1 : scale}
+        // 谱系收叠（路线3）：桌面上才有叠（窗里是"看里面"，全铺开）
+        stackCount={win ? 0 : (obj.stackCount || 0)}
+        stackOpen={!!obj.stackOpen}
+        onToggleStack={() => toggleLineage(obj.id)}
+        onHoverCard={win ? undefined : setHoverCardId}
       />
     );
   };
@@ -2683,6 +2714,7 @@ export default function BoardCanvas({
             width={stageBounds.w}
             height={stageBounds.h}
             hoveredId={hoveredBinding}
+            hotEndpointId={hoverCardId}
             onHover={setHoveredBinding}
             onSelect={(bid, cx, cy) => {
               const b = bindings[bid];

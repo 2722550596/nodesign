@@ -31,6 +31,8 @@
  */
 
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { patchBoard } from '../../../projects/board-store.js';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
@@ -146,7 +148,7 @@ function safeBaseName(s) {
  * @param {string|null} [deps.sharedRoot]
  * @param {object} [deps.ctx]
  */
-export function makeRemoveBackgroundTool({ workspaceRoot, sharedRoot = null, ctx } = {}) {
+export function makeRemoveBackgroundTool({ workspaceRoot, sharedRoot = null, projectId = null, ctx } = {}) {
   void ctx; // currently no event emit; sharing pattern w/ other tools
 
   return tool(
@@ -321,6 +323,21 @@ Returns: text caption with output path + image content block (preview the result
       // 7. agent 看到的相对路径（相对 cwd = sessions/<sid>/）
       // 跟 generate_image 一致：sessions/<sid>/assets 是 softlink → shared/assets
       const agentRelPath = path.posix.join('assets', 'generated', fileName);
+
+      // 7.5 自动谱系（2026-08-14 北极星路线4尾巴）：抠图产物机器可证地
+      // 「改自」原图 —— 事件驱动一次性落线（用户删了不会再长出来，跟 ref
+      // 对账层的治理规则刻意不同）。fail-soft：关系落不上不挡抠图。
+      if (projectId) {
+        try {
+          const toRel = String(inputPath)
+            .replace(/^(\.\/)+/, '')
+            .replace(/^(\.\.\/)+shared\//, '');
+          const bid = `b:auto:df:${crypto.createHash('sha1').update(`${agentRelPath}|${toRel}`).digest('hex').slice(0, 12)}`;
+          await patchBoard(projectId, {
+            bindings: { [bid]: { type: 'derives-from', from: agentRelPath, to: toRel, by: 'auto' } },
+          });
+        } catch { /* 谱系是锦上添花 */ }
+      }
 
       // 8. 返 caption + image content block 让 agent 直接 vision 看
       const caption = [
