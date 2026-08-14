@@ -63,7 +63,18 @@ export function resolveObjectId(filePath, artifactRoots) {
   if (p.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
   if (p.endsWith('agent-memory/memory.md')) return 'doc:_root';
   for (const r of (artifactRoots || [])) {
-    if (!r?.path) continue;
+    if (r?.path == null) continue;
+    // 根站（2026-08-14 空串病族又一例）：站住在工作区根上时 path 合法地是
+    // 空串，`!r.path` 那种写法会把它整个跳过 —— index.html/style.css 全都
+    // 解析成幽灵 id（deck:index.html / 裸路径），精灵落不到任何卡上，
+    // 「运行中途目标消失、之后的修改无法追踪」就是这么来的。
+    // 空前缀语义 = 根层散文件都是这个站的资产；只收根层（带 / 的路径是
+    // notes/ assets/ 等别家的地），.md 除外（根上的 md 是自己的阅读卡）。
+    // 覆盖表按 path 降序，空串天然排最后 —— 子目录站点先认领，不会被吞。
+    if (r.path === '') {
+      if (!p.includes('/') && !/\.md$/i.test(p)) return r.id;
+      continue;
+    }
     if (p === r.path || p.startsWith(`${r.path}/`)) return r.id;
   }
   if (/\.html?$/i.test(p)) return `deck:${p}`;

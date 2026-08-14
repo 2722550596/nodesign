@@ -22,6 +22,16 @@
 export function workspaceRelOf(filePath) {
   if (!filePath || typeof filePath !== 'string') return null;
   const p = filePath.replace(/\\/g, '/');
+  // 已经是工作区相对路径（run.file_changed 的 filePath 服务端过了 toWorkspaceRel）
+  // → 原样用。⚠️ 别掉进下面的老式猜测：它只认 tasks/assets/agent-memory 标志段
+  // （任务模型时代的形状），扁平化后 `稿件/主稿.html` 会被猜成 `主稿.html` ——
+  // 版本记在错的 key 上，文件夹里的产物改完 iframe 永不刷新（2026-08-14
+  // 根站病族普查顺带查实的静默病）。
+  if (!p.startsWith('/') && !/^[A-Za-z]:\//.test(p)) {
+    const rel = p.replace(/^\.\//, '').replace(/\/+$/, '');
+    return rel || null;
+  }
+  // 绝对路径（generate_image 的 absPath 这类调用方）：老式猜测
   const m = p.match(/(?:^|\/)((?:tasks|assets|agent-memory)\/.+)$/);
   if (m) return m[1];
   // 旧式会话：产物就在 cwd 根（canvas.html / spec.json …）

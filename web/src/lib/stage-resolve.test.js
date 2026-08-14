@@ -79,6 +79,32 @@ describe('resolveObjectId — 文件落到哪张卡', () => {
     expect(resolveObjectId(null, ROOTS)).toBe(null);
   });
 
+  /**
+   * 根站（2026-08-14 真会话抓到的「中途目标消失」）：站住在工作区根上时
+   * path 合法地是**空串**。曾经 `!r.path` 一刀跳过 → index.html/style.css
+   * 解析成幽灵 id（deck:index.html / 裸路径），rectFor 恒 null，精灵落不到
+   * 任何卡上且之后的修改全部失踪。空串是根站的身份，不是"没有值"。
+   */
+  describe('根站（path 为空串）', () => {
+    const ROOT_SITE = [
+      { path: '_drafts/纸本.html', id: 'site:_drafts/纸本.html' },
+      { path: '', id: 'site:' },
+    ];
+    it('根层散文件都归根站卡（index/style/模板）', () => {
+      expect(resolveObjectId('index.html', ROOT_SITE)).toBe('site:');
+      expect(resolveObjectId('style.css', ROOT_SITE)).toBe('site:');
+      expect(resolveObjectId('site.template.html', ROOT_SITE)).toBe('site:');
+    });
+    it('带 / 的路径不被根站吞：notes/assets/子目录站各回各家', () => {
+      expect(resolveObjectId('notes/决策.md', ROOT_SITE)).toBe('notes/决策.md');
+      expect(resolveObjectId('assets/generated/x.png', ROOT_SITE)).toBe('assets/generated/x.png');
+      expect(resolveObjectId('_drafts/纸本.html', ROOT_SITE)).toBe('site:_drafts/纸本.html');
+    });
+    it('根上的 .md 是自己的阅读卡，不归站', () => {
+      expect(resolveObjectId('随笔.md', ROOT_SITE)).toBe('随笔.md');
+    });
+  });
+
   it('前后多余的斜杠和 ./ 前缀不影响命中', () => {
     expect(resolveObjectId('./雾都/世界.md', ROOTS)).toBe('world:雾都');
     expect(resolveObjectId('稿件/初稿/主稿.html/', ROOTS)).toBe('deck:稿件/初稿/主稿.html');

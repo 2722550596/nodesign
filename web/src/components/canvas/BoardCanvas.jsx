@@ -2304,7 +2304,10 @@ export default function BoardCanvas({
     objects
       .filter(o => o.type === 'site' || o.type === 'world')
       .map(o => ({ path: o.id.slice(o.id.indexOf(':') + 1), id: o.id }))
-      .filter(r => r.path)
+      // ⚠️ 别写 `.filter(r => r.path)`：根站（`site:`）的 path 合法地是空串，
+      // 那样写会把它整个扔出覆盖表 —— 根站项目里 index.html/style.css 全部
+      // 解析成幽灵 id，精灵/光圈/舞台寻址一起失灵（2026-08-14 用户真会话
+      // 抓到的「中途目标消失」）。空串排降序末尾，天然让子目录站先认领。
       .sort((a, b) => b.path.length - a.path.length)
   ), [objects]);
   // ⚠️ 下面这两个必须声明在 useStageState **之前**：它把 handlePresenceEvent

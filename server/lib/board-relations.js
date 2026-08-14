@@ -87,6 +87,19 @@ export async function relationsDigest(pid, { limit = 12 } = {}) {
 function endpointMatchesRel(end, rel) {
   if (end === rel) return true;
   for (const p of KIND_PREFIXES) if (end === p + rel) return true;
+  // 目录型产物的收敛（2026-08-14 根站病族普查补上的）：站点/世界的边挂在
+  // **根卡**上，agent 摸的是里面的文件 —— 原来只做精确匹配，等于站点页的
+  // 一跳邻域从来注入不出来。按"住在这个根里"匹配；根站（root=空串）收根层
+  // 散文件（.md 除外）—— 与前端 resolveObjectId 同一条规则，两边别岔开。
+  for (const p of ['site:', 'world:']) {
+    if (!end.startsWith(p)) continue;
+    const root = end.slice(p.length);
+    if (root === '') {
+      if (!rel.includes('/') && !/\.md$/i.test(rel)) return true;
+      continue;
+    }
+    if (rel === root || rel.startsWith(`${root}/`)) return true;
+  }
   return false;
 }
 

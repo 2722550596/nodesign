@@ -16,6 +16,14 @@ describe('workspaceRelOf', () => {
     expect(workspaceRelOf('tasks/x/canvas.html')).toBe('tasks/x/canvas.html');
   });
 
+  it('扁平模型：任意文件夹的相对路径原样通过，不掉进老式标志段猜测', () => {
+    // 曾经 `稿件/主稿.html` 被猜成 `主稿.html`（老式匹配只认 tasks/assets/
+    // agent-memory）—— 版本记在错的 key 上，文件夹里的产物 iframe 永不刷新
+    expect(workspaceRelOf('稿件/主稿.html')).toBe('稿件/主稿.html');
+    expect(workspaceRelOf('./稿件/主稿.html')).toBe('稿件/主稿.html');
+    expect(workspaceRelOf('index.html')).toBe('index.html');
+  });
+
   it('旧式 cwd 根产物', () => {
     expect(workspaceRelOf('/w/sessions/s1/canvas.html')).toBe('canvas.html');
   });
