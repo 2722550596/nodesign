@@ -23,8 +23,8 @@ export function makeOrganizeBoardTool({ projectId, ctx }) {
     'organize_board',
     `Tidy the workbench canvas: move artifacts (generated images, files, folders) into a folder. Same semantics as the user dragging a card into a folder — the file really moves on disk, and its canvas identity (position, relation lines) follows automatically.
 
-Use for: grouping generated images into a folder, collecting a site's materials into <site>/assets/, un-cluttering the desktop root.
-Not for: site/world roots as destination (they are artifacts, not storage — a site takes materials in its assets/ subfolder); notes/ (sticky notes live where they live).
+Use for: grouping generated images into a folder, collecting a site's materials into <site>/assets/, un-cluttering the desktop root. Sticky notes (notes/*.md) may move too, but they become plain .md file cards outside notes/ — lose the flippable sticky form.
+Not for: site/world roots as destination (they are artifacts, not storage — a site takes materials in its assets/ subfolder).
 
 Batch: up to 16 items, moved in order, stops at first failure.`,
     {

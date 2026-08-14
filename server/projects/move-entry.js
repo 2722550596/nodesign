@@ -31,10 +31,13 @@ async function exists(p) {
 }
 
 /**
- * 哪些东西不许搬走：真·基础设施 + notes/（便签搬出去=形态退化不是位置变化）。
- * `assets/` 2026-08-13 起放开 —— 把生成图归进文件夹是再正常不过的动作。
+ * 哪些东西不许搬走：真·基础设施。
+ * `assets/` 2026-08-13 放开；`notes/` 2026-08-14 用户拍板放开 —— 便签也参与
+ * 归纳。搬出 notes/ 的 .md **明码换形态**（便签卡 → 阅读器文件卡，失去分面
+ * 翻页），这是桌面语义的自然结果不是事故；搬回 notes/ 仍被目标目录守卫挡着
+ *（RESERVED_DIRS），"升格回便签"要做的话单独开闸。
  */
-const NO_MOVE_OUT = new Set(['exports', 'node_modules', 'agent-memory', 'notes']);
+const NO_MOVE_OUT = new Set(['exports', 'node_modules', 'agent-memory']);
 
 /**
  * @param {string} pid

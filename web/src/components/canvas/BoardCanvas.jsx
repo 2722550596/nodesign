@@ -178,6 +178,12 @@ export default function BoardCanvas({
    * 回默认位置"的来源之一。
    */
   const movingRef = useRef(new Set());
+  /**
+   * 正在飞进文件夹的卡（搬家的告别动画）：旧 id 的座位改指目标文件夹中心、
+   * 卡缩小淡出，飞完才撤条目。撤早了旧物件变"无座新客"被自动入座拖去内容区
+   * 底部再消失 —— 用户看到的就是那个"扭曲的移入动画"（2026-08-14 查实）。
+   */
+  const [flyingIds, setFlyingIds] = useState(() => new Set());
   /** 正在就地改名的东西（文件夹路径 / 物件 id）—— 卡上的名字换成输入框 */
   const [renamingId, setRenamingId] = useState(null);
   const fittedKeyRef = useRef('');        // 换层之后把镜头带过去：每层只带一次
@@ -1444,14 +1450,43 @@ export default function BoardCanvas({
     movingRef.current.add(obj.id);
     const nextId = obj.id.includes(':') ? `${obj.id.split(':')[0]}:${to}` : to;
 
-    // 乐观更新：新 id 上先摆好，旧 id 撤掉。不这么做的话下一帧产物清单还没刷新，
-    // 卡片会闪一下回到旧位置
+    // 乐观更新：新 id 上先摆好。旧 id **不能直接撤**（撤掉的瞬间旧物件在
+    // 清单刷新前变成"无座新客"，自动入座把它拖去内容区底部再消失 —— 扭曲的
+    // 移入动画就是这个）。目标文件夹在本层时改成**飞进去**：旧座位改指文件夹
+    // 中心、卡缩小淡出（BoardObject 的 vanishing 态），飞完再撤条目。
+    const fz = toDir ? folderViewRef.current.find(f => f.id === toDir) : null;
     setLayout(prev => {
       const next = { ...prev };
       next[nextId] = { ...(prev[obj.id] || {}), x: at.x, y: at.y, zone: undefined };
-      delete next[obj.id];
+      if (fz) {
+        const sz = sizeOf(obj);
+        next[obj.id] = {
+          ...(prev[obj.id] || {}),
+          x: Math.round(fz.x + fz.w / 2 - sz.w / 2),
+          y: Math.round(fz.y + fz.h / 2 - sz.h / 2),
+        };
+      } else {
+        delete next[obj.id];   // 目标不在本层（窗里搬 / 搬回根）：没有可飞向的卡，即刻退场
+      }
       return next;
     });
+    if (fz) {
+      setFlyingIds(prev => new Set(prev).add(obj.id));
+      setTimeout(() => {
+        setLayout(prev => {
+          if (!(obj.id in prev)) return prev;
+          const next = { ...prev };
+          delete next[obj.id];
+          return next;
+        });
+        setFlyingIds(prev => {
+          if (!prev.has(obj.id)) return prev;
+          const next = new Set(prev);
+          next.delete(obj.id);
+          return next;
+        });
+      }, 460);
+    }
     try {
       const r = await Assets.moveEntry(projectId, from, toDir);   // ← 目录，不是新路径
       if (r?.board) {
@@ -1460,12 +1495,19 @@ export default function BoardCanvas({
         setBindings(r.board.bindings || {});
         dirtyRef.current = { objects: new Set(), zones: new Set() };
       }
-      reload();
+      // 飞行中晚一拍再重拉清单 —— reload 一到旧物件就 unmount，动画会被腰斩
+      if (fz) setTimeout(reload, 400); else reload();
     } catch (err) {
       setLayout(prev => {                       // 搬失败：身份没变，把卡放回去
         const next = { ...prev };
         next[obj.id] = { ...(next[nextId] || {}), x: obj.pos.x, y: obj.pos.y };
         delete next[nextId];
+        return next;
+      });
+      setFlyingIds(prev => {                    // 飞到一半失败：现出原形飞回来
+        if (!prev.has(obj.id)) return prev;
+        const next = new Set(prev);
+        next.delete(obj.id);
         return next;
       });
       useGlobalStore.getState().showToast(`搬不过去：${err.message}`, 'error');
@@ -2615,6 +2657,7 @@ export default function BoardCanvas({
         // 避让系统：拖拽中只有被拖的卡要逐帧跟手（关过渡），被避让的
         // 邻居保持 380ms 滑动 —— 挤开和弹回都是顺滑的
         animateLayout={!win && (!dragActive || dragRef.current?.id !== obj.id)}
+        vanishing={!win && flyingIds.has(obj.id)}
         agentActive={ringObjects.has(obj.id)}
         groupTarget={!win && dropHint?.kind === 'group' && dropHint.id === obj.id}
         // 单选一件墨类时选中态由变换控制器画（那圈框就是它的选中框），

@@ -35,6 +35,7 @@ const SCRIBBLE_INK = {
 /** 单个画布物件（按 type 分派卡片渲染 + 通用 hover 动作条）*/
 function BoardObject({
   o, projectId, currentSessionId, fileVersions, added, animateLayout = false, agentActive = false,
+  vanishing = false,
   groupTarget = false, selected = false, noteCount = 0,
   renaming = false, onRenameCommit, onRenameCancel,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
@@ -114,7 +115,15 @@ function BoardObject({
     } : null),
     // agent 改布局（pin / board.updated 重拉 / 自动入座）时位置变化以滑动呈现；
     // 用户拖拽期间关掉（要逐帧跟手）—— dragActive 经 animateLayout 传进来
-    transition: `${animateLayout ? `left 380ms ${EASE}, top 380ms ${EASE}, ` : ''}width 260ms ${EASE}, box-shadow 0.15s`,
+    transition: `${animateLayout ? `left 380ms ${EASE}, top 380ms ${EASE}, ` : ''}width 260ms ${EASE}, box-shadow 0.15s${vanishing ? `, transform 380ms ${EASE}, opacity 320ms ${EASE}` : ''}`,
+    // 飞进文件夹的告别态（搬家动画）：滑向文件夹中心的同时缩小淡出。
+    // 覆盖在 base 的所有装饰之后 —— 飞行中不吃指针、不亮悬停。
+    ...(vanishing ? {
+      opacity: 0.1,
+      transform: 'scale(0.25)',
+      transformOrigin: '50% 50%',
+      pointerEvents: 'none',
+    } : null),
   };
 
   // 按钮清单由形态表给（board-kinds.js 的 actions，顺序即渲染顺序），
