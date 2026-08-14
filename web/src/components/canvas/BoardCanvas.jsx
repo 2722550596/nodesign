@@ -11,6 +11,7 @@ import {
 import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
 import { orderByRelations, orderWithGroups } from '../../lib/relation-order.js';
+import { pickHero } from '../../lib/hero.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -631,6 +632,14 @@ export default function BoardCanvas({
         items.push(it);
         fresh.push(it);
       }
+    }
+
+    // 主角判断（北极星路线1）：唯一且有证据的最高分产物卡放大一档。
+    // 必须在任何 sizeOf 之前标 —— 命中/排布/渲染吃的是同一个 tier。
+    const heroId = pickHero(items.map(it => ({ id: String(it.id), type: it.type })), bindings);
+    if (heroId) {
+      const h = items.find(it => String(it.id) === heroId);
+      if (h) h.tier = 'hero';
     }
 
     let seatSlots = [];   // 这一趟排出的槽位（批注跟随要看行几何）

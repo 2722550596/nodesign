@@ -3,7 +3,7 @@ import { Presentation, Globe, Map as MapIcon } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../../lib/theme.js';
 import { PAPER } from '../../../lib/paper.js';
 import { SITE_VIEWPORTS, DECK_EMBED_W } from '../../../lib/board-geometry.js';
-import { ARTIFACT_HEADER_H, ARTIFACT_PREVIEW_H } from '../../../lib/board-kinds.js';
+import { ARTIFACT_HEADER_H, ARTIFACT_PREVIEW_H, HERO_SCALE } from '../../../lib/board-kinds.js';
 import { versionOfFile, versionOfSitePage } from '../../../lib/file-versions.js';
 import { formatClock } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
@@ -152,7 +152,9 @@ export default function ArtifactCard({
   const inView = useInViewport(boxRef);
   if (!face) return null;
 
-  const box = { w: DECK_EMBED_W, h: ARTIFACT_PREVIEW_H[o.type] };
+  // 主角档：画框跟 sizeOf 同一套算法（board-kinds.js），命中区和视觉必须一致
+  const hs = o.tier === 'hero' ? HERO_SCALE : 1;
+  const box = { w: Math.round(DECK_EMBED_W * hs), h: Math.round(ARTIFACT_PREVIEW_H[o.type] * hs) };
   const Icon = face.icon;
   const live = inView && scale >= PREVIEW_MIN_SCALE;
 

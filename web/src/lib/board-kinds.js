@@ -16,6 +16,9 @@ const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + pr
 
 /** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
 export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, world: 420 };
+/** 主角档放大倍数（北极星路线1）：预览区放大、顶栏不变 —— sizeOf 与
+ *  ArtifactCard 的画框都从这儿算，两处必须同源否则命中区和视觉错位 */
+export const HERO_SCALE = 1.5;
 
 /**
  * 形态能力表 —— 每种画布物件「是什么、能做什么」写在一张表里。
@@ -264,6 +267,13 @@ export function sizeOf(o) {
   const k = kindOf(o);
   if (k.backing === 'canvas' && o?.pos?.w > 0 && o?.pos?.h > 0) {
     return { w: o.pos.w, h: o.pos.h };
+  }
+  // 主角档（tier 由入座时的 pickHero 标）：预览区 ×HERO_SCALE、顶栏原高
+  if (o?.tier === 'hero' && ARTIFACT_PREVIEW_H[o?.type] != null) {
+    return {
+      w: Math.round(DECK_EMBED_W * HERO_SCALE),
+      h: ARTIFACT_HEADER_H + Math.round(ARTIFACT_PREVIEW_H[o.type] * HERO_SCALE),
+    };
   }
   // ⚠️ 这里曾经是 `(o.pos.expanded && k.sizeExpanded) || k.size`。展开态退役后
   // 存量数据里的 `expanded: true` 必须**读都不读** —— 读了老卡就会带着
