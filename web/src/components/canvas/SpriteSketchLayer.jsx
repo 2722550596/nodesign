@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PAPER } from '../../lib/paper.js';
-import { FONT_KAI } from '../../lib/theme.js';
+import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
 import { CLAUDE_BRAND, CLAUDE_PATH } from '../ui/ClaudeMark.jsx';
 
 /**
@@ -56,14 +56,19 @@ function SketchMark({ size = 44 }) {
   );
 }
 
-/** 楷体逐字显影。per-char 延迟随长度收缩：整句写完 ≤ ~1.8s，长句不拖堂。 */
-function Handwriting({ text, delay = MARK_DRAW_MS, size = 13.5, maxWidth = 300 }) {
+/**
+ * 逐字显影。笔迹用**画布手写那套栈**（TEXT_FONT_CSS.pen：拉丁走 Caveat、
+ * 中文落龙藏体）—— 精灵写的字和用户在白板上写的字必须是同一支笔
+ * （2026-08-14 用户点名：之前用楷体，太工整像印出来的）。
+ * per-char 延迟随长度收缩：整句写完 ≤ ~1.8s，长句不拖堂。
+ */
+function Handwriting({ text, delay = MARK_DRAW_MS, size = 16, maxWidth = 300 }) {
   const chars = useMemo(() => Array.from(String(text || '')), [text]);
   if (!chars.length) return null;
   const per = Math.min(60, Math.max(22, Math.round(1600 / chars.length)));
   return (
     <div style={{
-      fontFamily: FONT_KAI, fontSize: size, lineHeight: 1.65,
+      fontFamily: TEXT_FONT_CSS.pen, fontSize: size, lineHeight: 1.55,
       color: PAPER.ink2, maxWidth, wordBreak: 'break-word',
     }}>
       {chars.map((ch, i) => {
@@ -90,7 +95,10 @@ function Handwriting({ text, delay = MARK_DRAW_MS, size = 13.5, maxWidth = 300 }
  */
 export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 300 }) {
   return (
-    <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, pointerEvents: 'none' }}>
+    // ⚠️ width 必须显式给：世界容器是零宽的变换锚点（大家都显式传宽，BindingLayer
+    // 的 width/height、舞台卡的 STAGE_CARD_W 同理），绝对定位 + auto 宽在里面会
+    // 按 min-content 收缩 —— 真机症状是手写行竖排成一字一列（2026-08-14 踩到）
+    <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: size + 10 + maxWidth, pointerEvents: 'none' }}>
       <style>{KEYFRAMES}</style>
       <SketchMark size={size} />
       <div style={{ paddingTop: Math.round(size * 0.16) }}>
@@ -117,45 +125,83 @@ const SLOT_CANDIDATES = [
 
 const hitRect = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
 
-/** 屏幕候选点 → 世界矩形 → 与产物求交。第一个不压任何东西的槽赢；没有 = null。 */
+/**
+ * 屏幕候选点 → **世界坐标**槽位。精灵住在画布层（2026-08-14 用户定的：
+ * 和产物同一平面，不是覆在上面的现实层），所以槽位算出来就落成世界坐标，
+ * 之后跟着纸走。身位也按世界单位算（镜头拉远它就跟着变小，纸上的东西
+ * 本该如此）。第一个不压任何产物的槽赢；全占 = null。
+ */
 export function findAmbientSlot(cam, viewport, obstacles, candidates = SLOT_CANDIDATES) {
   if (!viewport?.w || !viewport?.h || !cam?.z) return null;
   for (const [fx, fy] of candidates) {
-    const sx = Math.round(viewport.w * fx - SPRITE_W / 2);
-    const sy = Math.round(viewport.h * fy - SPRITE_H / 2);
     const world = {
-      x: sx / cam.z - cam.x, y: sy / cam.z - cam.y,
+      x: (viewport.w * fx - SPRITE_W / 2) / cam.z - cam.x,
+      y: (viewport.h * fy - SPRITE_H / 2) / cam.z - cam.y,
       w: SPRITE_W / cam.z, h: SPRITE_H / cam.z,
     };
-    if (!(obstacles || []).some(o => hitRect(world, o))) return { x: sx, y: sy };
+    if (!(obstacles || []).some(o => hitRect(world, o))) {
+      return { x: Math.round(world.x), y: Math.round(world.y) };
+    }
   }
   return null;
 }
 
+/** 这个世界矩形当前在不在视口里（world_visible = screen/z - cam） */
+function slotVisible(slot, cam, viewport) {
+  if (!slot || !viewport?.w || !cam?.z) return false;
+  const view = { x: -cam.x, y: -cam.y, w: viewport.w / cam.z, h: viewport.h / cam.z };
+  // 身位按放置时刻的尺寸近似（缩放变了也就差一圈，判"在不在视野"够用）
+  return hitRect({ x: slot.x, y: slot.y, w: SPRITE_W, h: SPRITE_H }, view);
+}
+
+/** 精灵离开视野多久才追过来。太快 = 用户一动画布它就跳，像牛皮糖。 */
+const OFFSCREEN_RELOCATE_MS = 3000;
+
 /**
- * 闲时精灵（屏幕坐标层）。相机/视口一动，250ms 落定后重新找位：
- * 原槽还空着就原地不动（跟着镜头走），被占了就挪去备选槽并**重画**
- * （定格动画的换场就是重画，不滑移），全占就消失。
+ * 闲时精灵（**世界层**，挂在被相机变换的容器里）。
+ *
+ * 行为（2026-08-14 二版，用户对一版"动一下画布就刷新"的纠偏）：
+ *   - 首次出场：按当前视口找槽落位，画一张铅笔稿。
+ *   - 用户平移/缩放：精灵**钉在纸上不动**（世界坐标白送这件事），零刷新。
+ *   - 它离开视野持续 3 秒：追到当前视口重新找槽、重新起稿；
+ *     3 秒内视野又扫回来就当无事发生。
+ *   - 追过来时视口全被产物占着：留在原地（原地=视野外=等于不显示，
+ *     正好落在"实在没空位就不显示"的规矩上），下次视野变化再试。
  */
 export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text }) {
-  const [slot, setSlot] = useState(null);
+  const [slot, setSlot] = useState(null);      // 世界坐标
   const [drawKey, setDrawKey] = useState(0);
-  const timer = useRef(null);
+  const stateRef = useRef({});
+  stateRef.current = { cam, viewport, obstacles };
+  const offTimer = useRef(null);
 
   useEffect(() => {
-    if (!active) { setSlot(null); return undefined; }
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      const next = findAmbientSlot(cam, viewport, obstacles);
-      setSlot(prev => {
-        if (!next) return null;
-        if (prev && Math.abs(prev.x - next.x) < 8 && Math.abs(prev.y - next.y) < 8) return prev;
-        setDrawKey(k => k + 1);   // 换了地方：重新起一张铅笔稿
-        return next;
-      });
-    }, 250);
-    return () => clearTimeout(timer.current);
-  }, [active, cam.x, cam.y, cam.z, viewport.w, viewport.h, obstacles]);
+    if (!active || !viewport?.w || !cam?.z) {
+      clearTimeout(offTimer.current); offTimer.current = null;
+      return undefined;
+    }
+    if (!slot) {
+      const first = findAmbientSlot(cam, viewport, obstacles);
+      if (first) { setDrawKey(k => k + 1); setSlot(first); }
+      return undefined;
+    }
+    if (slotVisible(slot, cam, viewport)) {
+      clearTimeout(offTimer.current); offTimer.current = null;
+    } else if (!offTimer.current) {
+      // ⚠️ 计时器不进 effect cleanup —— cleanup 每次相机变化都跑，进去的话
+      // 用户持续平移时 3 秒永远数不满。只在可见/下场时显式清。
+      offTimer.current = setTimeout(() => {
+        offTimer.current = null;
+        const { cam: c, viewport: vp, obstacles: obs } = stateRef.current;
+        const next = findAmbientSlot(c, vp, obs);
+        if (next) { setDrawKey(k => k + 1); setSlot(next); }
+      }, OFFSCREEN_RELOCATE_MS);
+    }
+    return undefined;
+  }, [active, cam, viewport, obstacles, slot]);
+
+  // 卸载兜底：不走上面的显式清理路径时别让计时器对着空组件开枪
+  useEffect(() => () => clearTimeout(offTimer.current), []);
 
   if (!active || !slot || !text) return null;
   return (

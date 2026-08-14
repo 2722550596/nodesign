@@ -11,9 +11,10 @@
 import { FONT_KAI, FONT_MONO } from './theme.js';
 
 export const TEXT_FONT_CSS = {
-  // 手写（默认）：龙藏体，硬笔字 —— "白板上随手写的一句"就该长这样。
-  // 回落链放楷体：字体还在路上（2.9MB swap）或极少数字缺字时不至于跳成黑体。
-  pen: `'Long Cang ND', ${FONT_KAI}`,
+  // 手写（默认）：拉丁字符走 Caveat（龙藏的英文字形糙），中文落龙藏体硬笔字
+  // —— "白板上随手写的一句"就该长这样。回落链放楷体：字体还在路上
+  // （龙藏 2.9MB swap）或极少数字缺字时不至于跳成黑体。
+  pen: `'Caveat ND', 'Long Cang ND', ${FONT_KAI}`,
   kai: FONT_KAI,
   // 黑体给的是**真黑体栈**，不是 FONT_SANS —— 那个常量全站指向楷体
   // （theme.js:114），用它的话设置面板里"楷体/黑体"是同一张脸（2026-08-13 修）

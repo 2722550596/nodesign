@@ -2812,6 +2812,18 @@ export default function BoardCanvas({
           {/* 在场：并行子代理的小徽记（PresenceLayer.jsx，08-14 起只管子代理）*/}
           <PresenceLayer table={presence} rectOf={rectOfId} />
 
+          {/* 铅笔精灵 · 闲时（世界层 —— 用户定的：和产物同一平面，画在纸上）。
+              平移缩放它钉在纸上不动；离开视野满 3 秒才追到当前视口重新落位。
+              落位首选视口中点到顶边的中点，被产物占了换备选槽，全占不出现。
+              obstacles 直接用小地图那份矩形 —— 同一个"桌面上有什么"。 */}
+          <AmbientSpriteLayer
+            active={!presence[MAIN_AGENT_ID]?.active}
+            cam={cam}
+            viewport={camera.viewport}
+            obstacles={minimapItems}
+            text={ambientText}
+          />
+
           {/* 铅笔精灵 · 工作态（世界坐标）：Claude 画在正在动的物件上，旁白
               逐字手写。换目标是走过去（位置过渡），上场才重新起稿（workEpoch）。
               目标解析不到矩形就不画 —— 闲时那份在屏幕层跟着镜头。 */}
@@ -2910,17 +2922,6 @@ export default function BoardCanvas({
 
       {/* 舞台 dock（屏幕坐标系，StageLayer.jsx）*/}
       <StageDock dockPanels={dockPanels} dockChips={dockChips} onDismiss={dismissStageCard} />
-
-      {/* 铅笔精灵 · 闲时（屏幕坐标）：跟着用户镜头，写 recap 或问候。落位
-          首选视口中点到顶边的中点，被产物占了换备选槽，全占不出现。
-          obstacles 直接用小地图那份矩形 —— 同一个"桌面上有什么"。 */}
-      <AmbientSpriteLayer
-        active={!presence[MAIN_AGENT_ID]?.active}
-        cam={cam}
-        viewport={camera.viewport}
-        obstacles={minimapItems}
-        text={ambientText}
-      />
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
