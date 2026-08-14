@@ -16,10 +16,10 @@ describe('endpointMatchesRel —— 端点命中', () => {
     expect(endpointMatchesRel('deck:主稿.html', '别稿.html')).toBe(false);
   });
 
-  it('目录型收敛：站点/世界里的文件命中根卡（十一批修的）', () => {
+  it('目录型收敛：站点里的文件命中根卡（十一批修的）', () => {
     expect(endpointMatchesRel('site:鉴赏页', '鉴赏页/index.html')).toBe(true);
     expect(endpointMatchesRel('site:鉴赏页', '鉴赏页/posts/a.html')).toBe(true);
-    expect(endpointMatchesRel('world:雾都', '雾都/世界/酒馆/角色.md')).toBe(true);
+    expect(endpointMatchesRel('site:观察日志', '观察日志/posts/一月.html')).toBe(true);
     expect(endpointMatchesRel('site:鉴赏页', '别处/index.html')).toBe(false);
   });
 

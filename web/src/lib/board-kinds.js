@@ -15,7 +15,7 @@ export const ARTIFACT_HEADER_H = 28;
 const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + previewH });
 
 /** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, world: 420 };
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400 };
 /** 主角档放大倍数（北极星路线1）：预览区放大、顶栏不变 —— sizeOf 与
  *  ArtifactCard 的画框都从这儿算，两处必须同源否则命中区和视觉错位 */
 export const HERO_SCALE = 1.5;
@@ -130,17 +130,6 @@ export const KINDS = {
     legacyBucket: 'art',
   },
 
-  world: {
-    label: '世界',
-    backing: 'file',
-    chrome: 'card',
-    card: 'artifact',
-    size: artifactCard(ARTIFACT_PREVIEW_H.world),
-    reader: null,
-    primary: 'open',
-    actions: ['add'],
-    legacyBucket: 'art',
-  },
 
   image: {
     chrome: 'card',

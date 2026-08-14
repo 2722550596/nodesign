@@ -162,14 +162,14 @@ router.get(['/:pid/exports/items', '/:pid/sessions/:sid/exports/items'], async (
     // 而 artifact-target 在任务层拆掉后 task 恒 null（兼容字段）—— 那条
     // walkTaskFiles 分支从扁平化起就是死路，站点导出清单只剩入口页 + 引用图，
     // 子页 / 样式表 / 试作**全部静默缺席**。现按产物根收：
-    //   - 住文件夹的站/世界：整个产物目录（maxDepth 4）
+    //   - 住文件夹的站：整个产物目录（maxDepth 4）
     //   - 根站（artifactRel='.'）：工作区根还住着 notes/ assets/ 别的产物，
     //     全扫会把别家打包进去 —— 只收根层散文件（.md 除外，同前端
     //     resolveObjectId 的认领规则）+ `_drafts/`；引用图由下面的扫描补
     //   - deck / 单页站：本体一份（扁平后它住的文件夹是用户的收纳空间，
     //     可能装着不相干的东西，不能整夹打包）
     const isSite = target.ok && target.kind === KIND_SITE;
-    const isDirArtifact = target.ok && (isSite || target.kind === 'world') && !target.artifact?.single;
+    const isDirArtifact = target.ok && isSite && !target.artifact?.single;
     if (isDirArtifact) {
       const rootRel = target.artifactRel === '.' ? '' : target.artifactRel;
       const files = await walkTaskFiles(target.artifactDir, {

@@ -15,7 +15,7 @@
  *     │   ├── assets/                上传素材 + 生成图
  *     │   ├── .nd/<sid>/             会话私档（spec.json / design-plan.md）
  *     │   ├── .git/                  项目历史
- *     │   └── <产物…>                 canvas.html / index.html / notes/ / 世界/ …
+ *     │   └── <产物…>                 canvas.html / index.html / notes/ …
  *     └── sessions/                  扁平化前的旧结构，迁移后只剩空壳（不删，留退路）
  *
  * ## 为什么 cwd 是工作区，不是 sessions/<sid>/（2026-08-07 改）
@@ -398,7 +398,7 @@ export function encodeCwdForSDK(cwd) {
  *   1. `tasks/<任务>/*` → 工作区根。**只有一个任务时摊平**（线上 13 个有任务的
  *      项目全是这种），多个任务时各自变成一个顶层文件夹 —— 那样绝不撞名，
  *      html 里的相对引用也原封不动。
- *   2. 任务自己的 `.git`（world 形态有）→ 工作区的 `.git`，世界的历史不丢。
+ *   2. 任务自己的 `.git`（旧形态留下的）→ 工作区的 `.git`，历史不丢。
  *   3. `.nd-task.json` 删掉：它记的是"这个任务属于哪个会话"，正是要废的那条绑定。
  *   4. `sessions/<sid>/{spec.json, design-plan.md}` → `.nd/<sid>/`。
  *   5. `sessions/<sid>/canvas.html`（旧式单 deck 会话）→ 工作区根。
@@ -643,7 +643,6 @@ function claudeConfigDir() {
  *   `deck:task/<t>/x.html` → `deck:x.html`
  *   `site:task/<t>`        → `site:.`          （`.` = 产物根就是工作区根）
  *   `site:task/<t>/v2`     → `site:v2`
- *   `world:task/<t>`       → `world:.`
  *   `deck:<会话uuid>`       → 丢弃（会话 deck 这个概念随绑定一起废）
  *
  * 关系线的两个端点用同一张表改，改完两端还在才留 —— 否则线会挂在空气上。
@@ -656,7 +655,7 @@ async function rewriteBoardIds(file, renames, log) {
   const mapId = (id) => {
     if (typeof id !== 'string') return null;
     if (SESSION_DECK_RE.test(id)) return null;                 // 会话 deck 退役
-    const m = id.match(/^(deck|site|world):task\/([^/]+)(?:\/(.*))?$/);
+    const m = id.match(/^(deck|site):task\/([^/]+)(?:\/(.*))?$/);
     if (m) {
       const [, type, task, rest] = m;
       const seat = renames.get(`task/${task}`);
@@ -665,7 +664,6 @@ async function rewriteBoardIds(file, renames, log) {
       if (!seat) return null;
       const under = (p) => `${seat}/${p}`;
       if (type === 'deck') return `deck:${under(rest || 'canvas.html')}`;
-      if (type === 'world') return `world:${seat}`;
       return `site:${rest ? under(rest) : seat}`;
     }
     for (const [oldPrefix, newPrefix] of renames) {
@@ -974,7 +972,7 @@ async function deriveFolderRenames(root, filePairs) {
 }
 
 /**
- * 任务目录自己的 git（2026-08-01，world 形态需要）。
+ * 任务目录自己的 git。
  *
  * 为什么不复用 per-session git：**它根本盖不到任务文件。** git 仓在
  * `sessions/<sid>/.git`，而任务物理上在 `shared/tasks/`，会话里的 `tasks/` 只是
@@ -983,12 +981,12 @@ async function deriveFolderRenames(root, filePairs) {
  * tasks 就是个 120000 blob，且仓里只有一条 init commit。
  *
  * 就算能盖到也不该复用：session 仓的 checkout 会把 spec.json、notes 这些**会话
- * 状态**一起回退，而 world 要的回退是「世界回到三轮之前」，粒度完全不同。
+ * 状态**一起回退，而任务级的回退要的是「这份产物回到几步之前」，粒度不同。
  *
- * 世界的历史 = 这个仓的 log。RP 的「回退三轮」是 checkout，小说的「这条线不要
- * 了」是 branch。所以每一回合结束都要落一条，不然回退没有落点。
+ * 懒初始化：第一次提交时才 init，没人调用就永远不会有 .git。
  *
- * 懒初始化：第一次提交时才 init，非 world 任务永远不会有 .git。
+ * ⚠️ 目前没有调用方（唯一的消费者随 world 形态一起拆了，2026-08-14）。留着是
+ * 因为它跟形态无关 —— 下一个需要"按产物回退"的形态直接用，别再造一遍。
  *
  * @returns {Promise<string|null>} commit hash；没有改动返回 null
  */

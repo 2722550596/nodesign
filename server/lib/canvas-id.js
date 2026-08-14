@@ -12,7 +12,7 @@ export function normalizeCanvasId(raw) {
   if (!id || id.includes('..')) return null;
   if (id.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
   if (id.endsWith('agent-memory/memory.md')) return 'doc:_root';
-  if (!/^(deck|site|world|doc|text|scribble):/.test(id) && /\.html?$/i.test(id)) return `deck:${id}`;
+  if (!/^(deck|site|doc|text|scribble):/.test(id) && /\.html?$/i.test(id)) return `deck:${id}`;
   return id;
 }
 

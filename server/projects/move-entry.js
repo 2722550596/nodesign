@@ -80,13 +80,13 @@ export async function moveEntry(pid, fromRaw, toRaw, { createFolder = false } = 
     dirStat = await fs.stat(absToDir);
   }
 
-  // 目标目录**本身是一件产物**（整站 / 世界）时不许搬进去：它的内部结构由
+  // 目标目录**本身是一件产物**（整站）时不许搬进去：它的内部结构由
   // 形态解析器管，塞进去的东西会从产物枚举里彻底消失（既不是页面也不是卡）。
   // 站点收素材的正路是它的 assets/ 子目录（那一层不是产物根，照常放行）。
   if (to) {
     const m = await taskManifest(absToDir);
     const opaque = (m?.artifacts || []).some(
-      a => a.kind === 'world' || (a.kind === KIND_SITE && !a.single && !a.root));
+      a => a.kind === KIND_SITE && !a.single && !a.root);
     if (opaque) throw new MoveError(400, '这是一件产物，不是收纳文件夹（站点收素材放它的 assets/ 子目录）');
   }
 

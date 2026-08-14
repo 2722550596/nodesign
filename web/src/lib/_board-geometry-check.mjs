@@ -85,7 +85,7 @@ const m = (id, type) => ({ id, ...SIZES[type] });
 
 // ── 数学上不可能重叠（这是拆掉避让系统的依据）──
 {
-  const types = ['deck', 'doc', 'file', 'image', 'note', 'site', 'world'];
+  const types = ['deck', 'doc', 'file', 'image', 'note', 'site'];
   const many = Array.from({ length: 60 }, (_, i) => m(`n${i}`, types[i % types.length]));
   const { slots } = packRow(many, BOX);
   let hits = 0;

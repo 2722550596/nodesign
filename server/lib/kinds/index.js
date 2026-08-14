@@ -25,24 +25,16 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import deck from './deck.js';
 import site from './site.js';
-import world from './world.js';
 import { isReservedFile } from '../task-scan.js';
 
-export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site, [world.id]: world });
+export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site });
 
 export { RESERVED_DIRS, isReservedFile } from '../task-scan.js';
 
 /**
- * 判定优先级：world 最前，然后 canvas.html 在 index.html 之前
- * （一个任务只做一种形态）。
- *
- * world 排最前不是偏好，是必须（2026-08-01）：world 任务里迟早会出现 .html
- * ——导出的仿书、agent 写的预览页、试作。deck 认任务根顶层任意 .html，site 认
- * index.html 和 dist/ 之类构建目录，两个都会把一个世界抢走判成自己。world 的
- * 判定证据（世界.md / marker.kind）比它们强且不会误伤别的形态，所以放最前
- * 短路掉后面的判定最安全。
+ * 判定优先级：canvas.html 在 index.html 之前（一个任务只做一种形态）。
  */
-const KIND_ORDER = [world.id, deck.id, site.id];
+const KIND_ORDER = [deck.id, site.id];
 
 export function kindDef(kind) {
   return KINDS[kind] || null;
@@ -52,10 +44,9 @@ export function kindDef(kind) {
  * 这个形态有没有某项能力。
  *
  * 加这层是因为代码里反复在问的其实不是「这是不是站点」，而是「这东西能不能
- * 用浏览器打开」。deck 和 site 都能，world 不能（入口是 markdown，内容是文件夹
- * 树）。以前没有 world 时两个问题的答案恰好一样，所以到处写 `kind === KIND_SITE`
- * 也没出事；world 一进来就露馅了 —— screenshot / read_page / query_elements /
- * list_pages / get_computed_styles 全都会拿一份 .md 去喂 playwright。
+ * 用浏览器打开」。现在两种形态都能，但形态一多，`kind === KIND_SITE` 这种写法
+ * 就会误伤 —— 感知工具（screenshot / read_page / query_elements）该问能力，
+ * 不该问形态名。
  *
  * 只声明**当前真的有人查**的能力，不预先铺一张能力表。
  *
@@ -125,17 +116,9 @@ async function hasLooseHtml(root) {
 export async function taskManifest(taskDir) {
   const marker = await readTaskMarker(taskDir);
 
-  // world 先判且**命中即独占**（2026-08-01）：世界是一个整体，`世界/` 里的地点和
-  // 角色是它的内部结构，不是并列产物。不独占的话，世界里任何一个 .html（导出的
-  // 仿书、预览页、试作）都会让 manifest 里凭空多出 deck / site 卡，画布上就是
-  // 世界旁边挂着几张来路不明的卡片。detectTaskKind 是首个命中即返回所以本来就
-  // 安全，这里的多产物循环是并列跑的，得显式短路。
-  const worldInsts = await world.discoverInstances(taskDir, marker);
-  const siteInsts = worldInsts.length ? [] : await site.discoverInstances(taskDir, marker);
+  const siteInsts = await site.discoverInstances(taskDir, marker);
   const rootSite = siteInsts.find(i => !i.single && !i.srcRoot);
-  const deckInsts = worldInsts.length
-    ? []
-    : await deck.discoverInstances(taskDir, marker, { rootSiteExists: !!rootSite });
+  const deckInsts = await deck.discoverInstances(taskDir, marker, { rootSiteExists: !!rootSite });
 
   const decorate = (def) => (m) => ({
     ...m,
@@ -144,11 +127,8 @@ export async function taskManifest(taskDir) {
     exportFormats: m.single ? def.exportFormats.filter(f => f !== 'site') : def.exportFormats,
   });
   const artifacts = [];
-  // 顺序 = 无更好信号时的默认偏好：world（独占，命中时后两者为空）→ deck
-  // （canvas.html 排头，兼容旧判定链 deck 先于 site）→ 目录站点 → 单页
-  for (const i of worldInsts) {
-    artifacts.push(decorate(world)(await world.instanceManifest(taskDir, marker, i)));
-  }
+  // 顺序 = 无更好信号时的默认偏好：deck（canvas.html 排头，兼容旧判定链 deck
+  // 先于 site）→ 目录站点 → 单页
   for (const i of deckInsts) {
     artifacts.push(decorate(deck)(await deck.instanceManifest(taskDir, marker, i)));
   }
@@ -190,9 +170,8 @@ export function artifactOfPath(manifest, relInTask) {
   const files = manifest.artifacts.filter(a => a.file);
   const hit = files.find(a => a.file === rel);
   if (hit) return hit;
-  // 目录型产物（site 的目录站、world 的世界）。判据用「没有 file 字段」而不是
-  // 写死 kind —— 注册表的意义就是别在寻址层再列一遍形态名（2026-08-01 加 world
-  // 时改的；改前只认 site，world 任务的路径寻址会全部落空）。
+  // 目录型产物（site 的目录站）。判据用「没有 file 字段」而不是写死 kind ——
+  // 注册表的意义就是别在寻址层再列一遍形态名。
   const dirs = manifest.artifacts
     .filter(a => !a.file)
     // 子目录站（srcRoot 非空）优先精确匹配，根站（srcRoot=''）最后兜底

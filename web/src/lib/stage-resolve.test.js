@@ -26,7 +26,7 @@ const ROOTS = [
   { path: '鉴赏页/v2', id: 'site:鉴赏页/v2' },     // 子目录站排在父站前面
   { path: '伊蕾娜手账研究站', id: 'site:伊蕾娜手账研究站' },
   { path: '鉴赏页', id: 'site:鉴赏页' },
-  { path: '雾都', id: 'world:雾都' },
+  { path: '观察日志', id: 'site:观察日志' },
 ];
 
 describe('resolveObjectId — 文件落到哪张卡', () => {
@@ -50,9 +50,9 @@ describe('resolveObjectId — 文件落到哪张卡', () => {
   });
 
   it('世界目录同理：立绘和地点 .md 都贴世界卡', () => {
-    expect(resolveObjectId('雾都/世界.md', ROOTS)).toBe('world:雾都');
-    expect(resolveObjectId('雾都/世界/旧钟酒馆/角色.md', ROOTS)).toBe('world:雾都');
-    expect(resolveObjectId('雾都/立绘/维克多.webp', ROOTS)).toBe('world:雾都');
+    expect(resolveObjectId('观察日志/index.html', ROOTS)).toBe('site:观察日志');
+    expect(resolveObjectId('观察日志/posts/一月.html', ROOTS)).toBe('site:观察日志');
+    expect(resolveObjectId('观察日志/assets/图.webp', ROOTS)).toBe('site:观察日志');
   });
 
   it('不在任何产物里的 .html = 一份 deck（根上和文件夹里平等）', () => {
@@ -126,7 +126,7 @@ describe('resolveObjectId — 文件落到哪张卡', () => {
   });
 
   it('前后多余的斜杠和 ./ 前缀不影响命中', () => {
-    expect(resolveObjectId('./雾都/世界.md', ROOTS)).toBe('world:雾都');
+    expect(resolveObjectId('./观察日志/index.html', ROOTS)).toBe('site:观察日志');
     expect(resolveObjectId('稿件/初稿/主稿.html/', ROOTS)).toBe('deck:稿件/初稿/主稿.html');
   });
 });
@@ -135,14 +135,14 @@ describe('zoneOfObjectId — 物件住在哪个文件夹', () => {
   it('剥掉 kind 前缀后取上级目录', () => {
     expect(zoneOfObjectId('deck:稿件/初稿/主稿.html')).toBe('稿件/初稿');
     expect(zoneOfObjectId('site:鉴赏页/v2')).toBe('鉴赏页');
-    expect(zoneOfObjectId('world:雾都/子世界')).toBe('雾都');
+    expect(zoneOfObjectId('site:文章区/观察日志')).toBe('文章区');
     expect(zoneOfObjectId('assets/generated/a.webp')).toBe('assets/generated');
   });
 
   it('住在工作区根上的 → null（桌面本身不是文件夹）', () => {
     expect(zoneOfObjectId('deck:主稿.html')).toBe(null);
     expect(zoneOfObjectId('site:伊蕾娜手账研究站')).toBe(null);
-    expect(zoneOfObjectId('world:雾都')).toBe(null);
+    expect(zoneOfObjectId('site:观察日志')).toBe(null);
   });
 
   it('项目区的文档不归任何文件夹', () => {

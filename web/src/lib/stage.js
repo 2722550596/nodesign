@@ -111,7 +111,7 @@ export function resolveObjectId(filePath, artifactRoots) {
 export function zoneOfObjectId(objectId) {
   if (!objectId || typeof objectId !== 'string') return null;
   if (objectId.startsWith('doc:')) return null;
-  // kind 前缀只认字母（`deck:` `site:` `world:`）—— 路径里的冒号不算前缀，
+  // kind 前缀只认字母（`deck:` `site:`）—— 路径里的冒号不算前缀，
   // 判据跟 server/projects/board-store.js 的 mapId 保持一致
   const c = objectId.indexOf(':');
   const p = (c > 0 && /^[a-z]+$/.test(objectId.slice(0, c))) ? objectId.slice(c + 1) : objectId;

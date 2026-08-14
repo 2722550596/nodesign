@@ -296,7 +296,6 @@ export default function BoardCanvas({
     // **id = kind 前缀 + 工作区相对路径**（2026-08-08）：
     //   deck   `deck:主稿.html`、`deck:鉴赏页/初稿/主稿.html`
     //   站点   `site:伊蕾娜手账研究站`；单页 `site:鉴赏页/_drafts/试作.html`
-    //   世界   `world:雾都`
     //   文件夹 就是路径本身，`鉴赏页/初稿`
     //
     // 画布上的身份和磁盘上的位置是**同一个字符串**。代价是"移动 = 换身份"，
@@ -306,22 +305,7 @@ export default function BoardCanvas({
     // 接住。这三条缺一个，症状都是"摆好的版面偶尔自己回到默认位置"。
     for (const t of tasks) {
       for (const a of (t.artifacts || [])) {
-        if (a.kind === 'world') {
-          // 一个文件夹一个世界（world 命中即独占，见 kinds/index.js），所以 id
-          // 不带产物后缀。nodes 是地图本身，不是布局属性 —— 它描述的是磁盘上
-          // 的文件夹树，画布只负责把它画出来。
-          out.push({
-            id: `world:${a.root || t.id}`,
-            type: 'world',
-            task: t.id,
-            base: a.base || a.root || t.id,
-            entry: a.entryRel || '世界.md',
-            nodes: a.nodes || [],
-            exports: a.exports,
-            title: a.title || t.title,
-            mtime: t.mtime,
-          });
-        } else if (a.kind === 'site') {
+        if (a.kind === 'site') {
           out.push({
             id: `site:${a.single ? a.entryRel : (a.root || t.id)}`,
             type: 'site',
@@ -1337,15 +1321,7 @@ export default function BoardCanvas({
   handleDeleteNoteRef.current = handleDeleteNote;
 
   const focusDeck = (o) => {
-    if (o.type === 'world') {
-      // 世界窗（2026-08-07）：地图 + 世界书两个视图，跟 deck / 站点同一副外壳。
-      // 在这之前这里落到「开那份 .md」—— 因为当时压根没有世界窗。
-      onFocusDeck?.({
-        kind: 'world', task: o.task, base: o.base || o.task,
-        entry: o.entry || '世界.md', title: o.title, nodes: o.nodes,
-        exports: o.exports,
-      });
-    } else if (o.type === 'site') {
+    if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
       onFocusDeck?.({
@@ -1901,7 +1877,7 @@ export default function BoardCanvas({
    */
   const artifactRoots = useMemo(() => (
     objects
-      .filter(o => o.type === 'site' || o.type === 'world')
+      .filter(o => o.type === 'site')
       .map(o => ({
         path: o.id.slice(o.id.indexOf(':') + 1),
         id: o.id,

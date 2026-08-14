@@ -45,7 +45,7 @@ Endpoints are canvas ids — a kind prefix plus the workspace-relative path,
 exactly as the file sits on disk:
 - a file: 'assets/generated/x.webp', 'notes/灵感.md'
 - a deck: 'deck:海报/proto-暖调.html'
-- a site: 'site:伊蕾娜手账研究站'   a world: 'world:雾都'
+- a site: 'site:伊蕾娜手账研究站'
 - a folder: just its path, '海报' or '海报/初稿'
 
 Use it right after you produce something that relates to earlier work:

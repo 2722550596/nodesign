@@ -79,8 +79,8 @@ export function makePreToolUseHybridReferenceInjector({ workspaceRoot } = {}) {
     const rel = workspaceRoot ? toWorkspaceRel(fp, workspaceRoot) : fp;
     const kind = workspaceRoot ? await kindOfPath(workspaceRoot, rel) : KIND_DECK;
     // 触发条件从「写 .html」改成「写的文件跟这个形态的入口同类型」（2026-08-01）。
-    // 写死 .html 的年代只有 deck 和 site，两者入口都是 html 所以恰好没错；world
-    // 的入口是 世界.md，于是它的技术参考**永远不会被注入**，agent 一辈子不知道
+    // 写死 .html 的年代只有 deck 和 site，两者入口都是 html 所以恰好没错；非 html 入口的形态
+    // 的入口不是 .html，于是它的技术参考**永远不会被注入**，agent 一辈子不知道
     // 目录结构该长什么样。扩展名从注册表的 entryFile 推，加形态不用再回来改。
     const wantExt = path.extname(kindDef(kind)?.entryFile || '.html').toLowerCase();
     if (path.extname(fp).toLowerCase() !== wantExt) return {};

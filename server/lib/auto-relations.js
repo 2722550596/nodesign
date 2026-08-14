@@ -74,7 +74,6 @@ export async function reconcileAutoRefs(pid, workspaceRoot, tasks) {
   const desired = new Map();
   for (const t of tasks || []) {
     for (const a of t.artifacts || []) {
-      if (a.kind === 'world') continue;
       // 产物身份（与 BoardCanvas 的物件 id 同一拼法）
       const fromId = a.kind === 'deck'
         ? `deck:${a.file}`

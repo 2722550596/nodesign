@@ -453,7 +453,7 @@ export function renameBoardPaths(pid, pairs) {
     const mapId = (id) => {
       if (typeof id !== 'string' || !id) return id;
       const c = id.indexOf(':');
-      // kind 前缀只认字母（`deck:` `site:` `world:`）—— 路径里的冒号不算前缀
+      // kind 前缀只认字母（`deck:` `site:`）—— 路径里的冒号不算前缀
       const prefix = c > 0 && /^[a-z]+$/.test(id.slice(0, c)) ? id.slice(0, c + 1) : '';
       const p = id.slice(prefix.length);
       for (const [from, to] of clean) {

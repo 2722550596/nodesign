@@ -45,7 +45,7 @@ export function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, pro
       parts.push(
         `你的 cwd 是 ${workspaceRoot} —— 这是**项目工作区**，产物直接住这儿。\n`
         + `关键路径（用 ./ 相对路径访问，全是真目录，没有软链）：\n`
-        + `  ./                         产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css；世界 → 世界.md\n`
+        + `  ./                         产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css\n`
         + `  ./notes/                   便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
         + `  ./assets/                  用户上传素材 + 你 curl 下载的资源\n`
         + `  ./.claude/agent-memory/    跨项目长期记忆\n`
@@ -125,8 +125,7 @@ export function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, pro
         if (artifacts.length === 0) {
           parts.push(
             '这个工作区还没有产物 —— 直接在工作区根上写：'
-            + `deck 写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}，`
-            + `世界（角色扮演）写 ${ENTRY_FILE.world}。`,
+            + `deck 写 ${ENTRY_FILE[KIND_DECK]}，站点写 ${ENTRY_FILE[KIND_SITE]}。`,
           );
         } else {
           const active = getActiveArtifact(sessionId)?.path || null;

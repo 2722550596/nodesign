@@ -9,7 +9,6 @@ import { formatClock } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
 import { joinRel } from '../../../lib/paths.js';
 import LiveFrame from '../LiveFrame.jsx';
-import WorldMap from '../WorldMap.jsx';
 
 /**
  * ArtifactCard —— deck / 站点 / 世界共用的那张卡（2026-08-13）
@@ -101,27 +100,6 @@ export const ARTIFACT_FACES = {
     },
   },
 
-  world: {
-    // ⚠️ 图标不跟站点共用 `Globe`：桌面上要一眼分得出这张卡是站点还是世界，
-    // 而在 2026-08-13 之前它俩长得一模一样。
-    icon: MapIcon,
-    tip: '双击打开这个世界',
-    summary: (o) => {
-      const n = o.nodes || [];
-      if (!n.length) return '世界 · 地图还是空的';
-      // 容器不算地点（收纳态，设计上明确不是地点）。**口径必须跟服务端
-      // describe() 一致** —— 两处对不上会像 bug。
-      const p = n.filter(x => x.type === 'place').length;
-      const c = n.filter(x => x.type === 'character').length;
-      return `世界 · ${p} 地点 / ${c} 角色`;
-    },
-    /** 地图比框高就自己滚，不去顶别人的位置（布局按固定矩形排布） */
-    scrollable: true,
-    wheel: 'element',
-    Preview: ({ o, projectId }) => (
-      <WorldMap projectId={projectId} base={o.base || o.task} nodes={o.nodes} />
-    ),
-  },
 };
 
 /**
@@ -164,7 +142,6 @@ export default function ArtifactCard({
    * 相机（React 合成事件走根委托，拦不到人家的原生监听）。
    *   - Ctrl/⌘+滚轮放行：那是缩放手势，属于相机
    *   - site：转发进 iframe（同源，contentWindow.scrollBy）
-   *   - world：滚 box 自己（overflowY:auto 的那层）
    *   - deck：16:9 整幅在框里，没有可滚的，不拦（滚轮照旧平移画布）
    */
   const wheelMode = face?.wheel && inView && scale >= PREVIEW_MIN_SCALE ? face.wheel : null;

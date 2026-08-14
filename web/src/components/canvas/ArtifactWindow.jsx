@@ -67,7 +67,7 @@ export const ARTIFACT_WINDOW_Z = 500;
 const CHROME_H = 30;
 
 export default function ArtifactWindow({
-  /** 'deck' | 'site' | 'world' —— 决定工具条位置存在哪个槽位 */
+  /** 'deck' | 'site' —— 决定工具条位置存在哪个槽位 */
   kind,
   title,
   /** 身份牌上标题右边的小字（站点写当前页，世界写地点/角色计数） */

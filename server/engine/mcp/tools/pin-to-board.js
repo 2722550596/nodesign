@@ -7,7 +7,7 @@
  * 物件 id 约定（与前端 BoardCanvas 派生一致）：**id = kind 前缀 + 工作区相对路径**
  *   - 普通文件（图片 / 便签 / 数据）：路径本身，`assets/generated/a.webp`
  *   - deck：`deck:<路径>`，如 `deck:稿件/主稿.html`
- *   - 站点 / 世界：`site:<目录>` / `world:<目录>`
+ *   - 站点：`site:<目录>`
  *   - 项目文档：`doc:_root`（记忆）/ `doc:brand`（品牌档案）
  *
  * ## 2026-08-13：这个工具的职权范围缩小了
@@ -63,7 +63,7 @@ where the file is on disk. To move it, \`mv\` the file; the canvas follows.
 
 Paths are workspace-relative, exactly as they are on disk. Accepted forms:
 - any file path: 'assets/generated/hero.webp', 'notes/灵感.md', '稿件/数据.csv'
-- a deck: 'deck:<path>.html'   a site: 'site:<dir>'   a world: 'world:<dir>'
+- a deck: 'deck:<path>.html'   a site: 'site:<dir>'
   (a bare '<path>.html' is read as a deck)
 - '.claude/agent-memory/memory.md' (project memory) / '.../brand/memory.md' (brand doc)`,
     {
@@ -86,9 +86,9 @@ Paths are workspace-relative, exactly as they are on disk. Accepted forms:
         }
         if (objectId.endsWith('agent-memory/brand/memory.md')) objectId = 'doc:brand';
         else if (objectId.endsWith('agent-memory/memory.md')) objectId = 'doc:_root';
-        else if (!/^(deck|site|world|doc):/.test(objectId)) {
+        else if (!/^(deck|site|doc):/.test(objectId)) {
           // 裸路径：.html 是一份 deck，其余（图片 / 便签 / 数据文件）id 就是路径。
-          // 站点和世界的目录要显式写 `site:` / `world:` —— 光看路径分不出
+          // 站点的目录要显式写 `site:` —— 光看路径分不出
           // "一个收纳文件夹"和"一件目录型产物"，猜错了钉上去的是个不存在的 id。
           if (sharedRoot) {
             const abs = path.join(sharedRoot, objectId);

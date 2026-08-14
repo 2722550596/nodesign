@@ -42,7 +42,7 @@ function tilt(id) {
 }
 
 /** 形态的中文说法沿用产品里已有的叫法：deck 保持英文（用户自己就这么说） */
-const KIND_WORD = { deck: ['份', 'deck'], site: ['个', '站点'], world: ['个', '世界'] };
+const KIND_WORD = { deck: ['份', 'deck'], site: ['个', '站点'] };
 
 /** 「这个项目里躺着什么」。stats 还没回来时返回 null —— 宁可空着也不填假话 */
 function inventory(st) {

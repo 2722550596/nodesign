@@ -424,7 +424,6 @@ router.get('/:pid/artifacts', async (req, res, next) => {
             pages: a.pages,                  // 站点内部路径，相对站根，不加前缀
             title: a.title,
             exports: a.exportFormats,
-            // world 的地图（`世界/` 递归扫出的嵌套节点平列表，带 parent）。
             // 其余形态没有这个字段，前端按 kind 分支取用。
             nodes: a.nodes,
             truncated: a.truncated,   // 撞深度上限被截断的目录，要让人看见

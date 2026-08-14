@@ -9,7 +9,6 @@ import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 // 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
 const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
 const SiteWindow = lazy(() => import('./SiteWindow.jsx'));
-const WorldWindow = lazy(() => import('./WorldWindow.jsx'));
 
 /**
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
@@ -90,26 +89,17 @@ export default function CanvasFrame({
   // 但内容层各是各的：deck 是等比 letterbox 的设计稿，站点按真实设备宽取景，
   // 世界是地图 + 世界书。同一时刻只开一扇。
   const [siteSrc, setSiteSrc] = useState(null);
-  const [worldSrc, setWorldSrc] = useState(null);
 
   // BoardCanvas ✏️ 入口：
   //   { kind:'session' } | { kind:'task', task, file, title }
-  //   { kind:'site', task, base, entry, title, pages, built } | { kind:'world', task, base, entry, title, nodes }
+  //   { kind:'site', task, base, entry, title, pages, built }
   const openDeck = (desc) => {
     if (desc?.kind === 'site') {
       setSiteSrc(desc);
-      setWorldSrc(null);
-      setDeckOpen(false);
-      return;
-    }
-    if (desc?.kind === 'world') {
-      setWorldSrc(desc);
-      setSiteSrc(null);
       setDeckOpen(false);
       return;
     }
     setSiteSrc(null);
-    setWorldSrc(null);
     setDeckTaskSrc(desc?.kind === 'task' ? desc : null);
     setDeckTab('edit');
     setDeckOpen(true);
@@ -193,7 +183,7 @@ export default function CanvasFrame({
   }, []);
 
   // 有窗开着 = 屏幕被一件产物占满，外层据此收掉顶栏的浮现
-  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!worldSrc;
+  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc;
   useEffect(() => { onWindowOpenChange?.(!!windowOpen); }, [windowOpen, onWindowOpenChange]);
 
   return (
@@ -222,7 +212,7 @@ export default function CanvasFrame({
           onWindowToolbarGroups={reportWinGroups}
           noteCounts={boardNoteCounts}
           // 跟顶栏收起用**同一个** windowOpen —— 以前这里是宽松版
-          // （`deckOpen || site || world`），而窗真正渲染用的是严格版，两处
+          // （`deckOpen || site`），而窗真正渲染用的是严格版，两处
           // 各写一遍：deckOpen 为真但窗没渲染的那一瞬，画布工具栏和小地图
           // 都藏了、窗也没出来，屏幕上一个工具都没有。
           deckOpen={windowOpen}
@@ -309,23 +299,6 @@ export default function CanvasFrame({
           </Suspense>
         )}
 
-        {worldSrc && (
-          <Suspense fallback={null}>
-            <WorldWindow
-              projectId={projectId}
-              task={worldSrc.task}
-              base={worldSrc.base}
-              entry={worldSrc.entry}
-              title={worldSrc.title}
-              nodes={worldSrc.nodes}
-              artifactExports={worldSrc.exports}
-              onExport={onExport}
-              fileVersions={fileVersions}
-              onClose={() => setWorldSrc(null)}
-              onToolbarGroups={reportWinGroups}
-            />
-          </Suspense>
-        )}
         {/* 全项目唯一那条工具栏。**渲染在最后 = 层级压在产物窗之上**
             （窗是 z:500 的绝对层，工具栏得盖得住它），内容跟焦点走。 */}
         <FloatingToolbar

@@ -792,30 +792,6 @@ export async function runSession({
     return run.id;
   };
 
-  /**
-   * 把这个 workspace 里所有 world 任务各落一条 commit。
-   *
-   * 逐个任务而不是整个 workspace 一把梭：每个世界是独立的历史，回退一个世界
-   * 不该动到另一个。commitTaskWorkspace 内部有 per-taskDir mutex，用户同时在
-   * 画布上编辑同一份文件也不会撞 index.lock。
-   */
-  const commitWorldTasks = async (root, status) => {
-    const m = await taskManifest(root);
-    const worlds = (m?.artifacts || []).filter(a => a.kind === 'world');
-    if (!worlds.length) return;
-    const tag = status === 'success' ? '' : `（${status}）`;
-    const msg = `回合 ${new Date().toISOString().slice(0, 19).replace('T', ' ')}${tag}`;
-    // 提交**每个世界自己那个仓**，不是工作区根。
-    //
-    // 2026-08-07 cwd 收敛成工作区之后这里传的 root 变成了工作区根，于是
-    // commitTaskWorkspace 提交的是项目仓 —— 世界自己的历史从那天起就冻住了，
-    // 而那正是它的撤销机制（RP 的「回退三轮」是 checkout，小说的「这条线不要了」
-    // 是 branch）。一句报错都没有，因为提交本身成功了，只是提交错了地方。
-    for (const w of worlds) {
-      const dir = w.root ? path.join(root, w.root) : root;
-      await commitTaskWorkspace(dir, msg);
-    }
-  };
 
   const finishTurn = async (status, info) => {
     if (!activeTurnRunId) return;
@@ -864,21 +840,6 @@ export async function runSession({
       try { markRunFailed(runId, info?.message || 'unknown'); } catch { /* */ }
       sharedCtx.emit(Events.error(info?.message || 'unknown', info?.code, info?.stack));
     }
-    // world 任务：一回合一条 git commit（2026-08-01）。
-    //
-    // 这不是「顺手存个档」，是这个形态的撤销机制本身：世界状态就是文件，
-    // 所以世界的历史就是这个仓的 log。没有逐回合的落点，RP 的「回退三轮」和
-    // 小说的「这条线不要了」都没有可 checkout 的东西。
-    //
-    // 只对 world 做：deck / site 任务现在没有 per-task 仓，给它们凭空加上是
-    // 影响存量用户的行为变更，跟本阶段无关。失败只 warn —— 一个 commit 落不下
-    // 不该让已经跑完的 turn 变成失败。
-    if (wsRoot) {
-      commitWorldTasks(wsRoot, status).catch(
-        (err) => console.warn('[world/git] commit failed:', err.message),
-      );
-    }
-
     // 工作区一轮一条 commit（2026-08-08）。
     //
     // 在这之前**只有"用户在画布上直接编辑 HTML"那一条路会提交**（canvas.js 的

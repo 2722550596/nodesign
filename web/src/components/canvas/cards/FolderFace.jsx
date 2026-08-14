@@ -36,7 +36,6 @@ const TILE_ICON = {
   note: StickyNote,
   deck: Presentation,
   site: Globe,
-  world: MapIcon,
 };
 
 /** 每张文件夹卡最多挂几个 iframe 缩略（deck / 站点） */

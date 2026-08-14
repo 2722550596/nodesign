@@ -6,7 +6,7 @@
  *
  * **① 产物有形态（kind），文件就是真相。** 判定规则在 kinds/ 注册表：
  *    canvas.html → deck；index.html（工作区根 / 声明的产物根 / 约定构建目录）
- *    → site；`世界.md` → world。
+ *    → site。
  *
  * **② 寻址永远带着 kind 一起返回。** 下游（截图 / 分页 / 导出 / fit 注入）必须
  *    能看见"这是 deck 还是 site"，才可能给出对的行为。kind 每次 resolve 按工作区
@@ -234,15 +234,14 @@ export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
  *   if (gate) return err(gate);
  *
  * 不把它塞进 resolveArtifactTarget 内部，是因为导出、寻址这些**正当**需要拿到
- * world 目标的调用方也走那个函数，在源头拦会误伤。
+ * 不可浏览目标的调用方也走那个函数，在源头拦会误伤。
  *
  * @returns {string|null} 不可浏览时返回给 agent 的说明，可浏览返回 null
  */
 export function requireBrowsable(target) {
   if (!target?.kind || can(target.kind, 'browsable')) return null;
   return `${target.relPath || target.kind} 是 ${target.kind} 形态，没有可以用浏览器打开的入口，`
-    + '截图 / 读页面 / 查元素这类工具对它没有意义。世界的内容直接 Read 文件即可：'
-    + '世界书是 世界.md，地图是 世界/ 下的文件夹树，角色状态在各自的 角色.md。';
+    + '截图 / 读页面 / 查元素这类工具对它没有意义。直接 Read 它的文件。';
 }
 
 /** 给各工具复用的 path 参数描述（保持措辞一致） */

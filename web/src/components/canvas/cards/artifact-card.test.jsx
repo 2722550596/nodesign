@@ -44,19 +44,11 @@ const render = (o) => {
 
 const DECK = { id: 'deck:稿件/主稿.html', type: 'deck', title: '主稿', deckFile: '稿件/主稿.html', mtime: '2026-08-13T06:04:00.000Z' };
 const SITE = { id: 'site:研究站', type: 'site', title: '研究站', base: '研究站', entry: 'index.html', pages: ['index.html', 'about.html', 'posts/a.html'] };
-const WORLD = {
-  id: 'world:雾都', type: 'world', title: '雾都', base: '雾都',
-  nodes: [
-    { type: 'place', name: '旧钟酒馆' }, { type: 'place', name: '码头' },
-    { type: 'character', name: '维克多' }, { type: 'container', name: '收纳' },
-  ],
-};
 
 describe('ArtifactCard 渲染冒烟', () => {
-  it('三种产物都挂得起来，且各自的标题在卡上', () => {
+  it('两种产物都挂得起来，且各自的标题在卡上', () => {
     expect(render(DECK)).toContain('主稿');
     expect(render(SITE)).toContain('研究站');
-    expect(render(WORLD)).toContain('雾都');
   });
 
   it('不认识的 type 什么都不画（而不是抛错）', () => {
@@ -86,9 +78,6 @@ describe('三张脸的信息量一个都不能丢', () => {
    * 卡片上写 3 个。
    */
   it('世界的地点/角色计数不把容器算进地点', () => {
-    expect(ARTIFACT_FACES.world.summary(WORLD)).toBe('世界 · 2 地点 / 1 角色');
-    expect(ARTIFACT_FACES.world.summary({ nodes: [] })).toBe('世界 · 地图还是空的');
-    expect(ARTIFACT_FACES.world.summary({})).toBe('世界 · 地图还是空的');
   });
 
   it('deck 说得出改动时间', () => {

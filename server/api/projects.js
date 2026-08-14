@@ -77,7 +77,7 @@ router.get('/stats', async (req, res, next) => {
     await Promise.all(projects.map(async (p) => {
       // 首页卡上的"有几件东西"。扁平化前数的是任务数（每项目恒为 1，
       // 所以那张卡上永远写着 1），现在数**产物**——一个项目里并排的 deck /
-      // 站点 / 世界各算一件，这才是用户眼里的"这个项目里有什么"。
+      // 目录型产物各算一件，这才是用户眼里的"这个项目里有什么"。
       let artifacts = [];
       try {
         artifacts = (await taskManifest(getSharedDir(p.id)))?.artifacts || [];

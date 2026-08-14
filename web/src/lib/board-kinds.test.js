@@ -47,7 +47,6 @@ const LEGACY_SIZES = {
   file: { w: 224, h: 40 },
   site: { w: 240, h: 88 },
   siteExpanded: { w: 640, h: 28 + 400 },
-  world: { w: 240, h: 88 },
   worldExpanded: { w: 640, h: 28 + 420 },
 };
 
@@ -66,7 +65,6 @@ const LEGACY_SIZES = {
 const CALIBRATED = {
   deck: { w: 240, h: 56 },
   site: { w: 240, h: 56 },
-  world: { w: 240, h: 56 },
   file: { w: 224, h: 32 },
 };
 const expectedSize = (k) => CALIBRATED[k] || LEGACY_SIZES[k];
@@ -78,7 +76,6 @@ const expectedSize = (k) => CALIBRATED[k] || LEGACY_SIZES[k];
 const ONLY_SIZE = {
   deck: LEGACY_SIZES.deckExpanded,
   site: LEGACY_SIZES.siteExpanded,
-  world: LEGACY_SIZES.worldExpanded,
 };
 
 function legacySizeOf(o) {
@@ -105,7 +102,7 @@ function legacyPrimary(o) {
   if (o.type === 'doc' || o.type === 'note') return 'read';
   if (o.type === 'image') return 'detail';
   if (o.type === 'file') return md ? 'read' : 'openFile';
-  if (o.type === 'deck' || o.type === 'site' || o.type === 'world') return 'open';
+  if (o.type === 'deck' || o.type === 'site') return 'open';
   return undefined;
 }
 
@@ -117,8 +114,6 @@ const SAMPLES = [
   { label: 'deck 带存量 expanded', o: { type: 'deck', pos: { expanded: true } } },
   { label: 'site', o: { type: 'site', pos: {} } },
   { label: 'site 带存量 expanded', o: { type: 'site', pos: { expanded: true } } },
-  { label: 'world', o: { type: 'world', pos: {} } },
-  { label: 'world 带存量 expanded', o: { type: 'world', pos: { expanded: true } } },
   { label: 'image', o: { type: 'image', name: 'a.webp', ext: '.webp' } },
   { label: 'note', o: { type: 'note', name: '灵感.md', ext: '.md' } },
   { label: 'file 普通', o: { type: 'file', name: 'a.zip', ext: '.zip' } },
@@ -223,7 +218,7 @@ describe('两条轴', () => {
 describe('派生判定', () => {
   it('走统一方卡的就是那三种产物', () => {
     const artifacts = Object.keys(KINDS).filter(k => cardOf({ type: k }) === 'artifact');
-    expect(artifacts.sort()).toEqual(['deck', 'site', 'world']);
+    expect(artifacts.sort()).toEqual(['deck', 'site']);
   });
 
   /**
@@ -260,7 +255,7 @@ describe('派生判定', () => {
   it('收纳带分摞与重构前一致', () => {
     // 老代码：doc→doc、deck→deck、file→file、其余→art
     for (const t of ['doc', 'deck', 'file']) expect(legacyBucketOf({ type: t })).toBe(t);
-    for (const t of ['note', 'image', 'site', 'world']) expect(legacyBucketOf({ type: t })).toBe('art');
+    for (const t of ['note', 'image', 'site']) expect(legacyBucketOf({ type: t })).toBe('art');
     expect(legacyBucketOf({ type: 'wat' })).toBe('file');   // 未知按 file
   });
 
