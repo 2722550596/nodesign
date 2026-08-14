@@ -31,7 +31,7 @@ import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
-import { SpriteSketch, AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
+import { AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
 import { usePhantoms, claimPhantomSeat, PhantomImageCard } from './PhantomLayer.jsx';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
@@ -2359,30 +2359,25 @@ export default function BoardCanvas({
     obstaclesRef: phantomObstaclesRef, contentBottomRef: phantomBottomRef,
   });
 
-  // ── 铅笔精灵的台词与出场（2026-08-14 日记本批）──
+  // ── 铅笔精灵的台词与出场（2026-08-14 日记本批；五批收敛成单精灵层）──
   //
   // 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端
-  // haiku 压的）→ 写它；都没有 = 在想 → 安静的几句。轮播节拍 4.2s —— 每换
+  // haiku 压的）→ 写它；都没有 = 在想 → 思考旁白轮播。轮播节拍 4.2s —— 每换
   // 一句就是一次重写动画，太快会像抽搐。
+  // ⚠️ 轮播计时挂在**活跃**上不是"工具在跑"上：纯思考阶段也要有话说 ——
+  // 只挂 toolsBusy 的话 thinking 台词永远停在第一句（用户报的活跃真空之一）。
+  const mainActive = !!presence[MAIN_AGENT_ID]?.active;
   const toolsBusy = useMemo(() => Object.values(stageCards).some(c =>
     c.status === 'running' && c.kind !== 'subagent' && c.kind !== 'question'), [stageCards]);
   const [phraseTick, setPhraseTick] = useState(0);
   useEffect(() => {
-    if (!toolsBusy) return undefined;
+    if (!mainActive) return undefined;
     const t = setInterval(() => setPhraseTick(k => k + 1), 4200);
     return () => clearInterval(t);
-  }, [toolsBusy]);
+  }, [mainActive]);
   const workText = toolsBusy
     ? TOOL_PHRASES[phraseTick % TOOL_PHRASES.length]
     : (spriteLine?.text || THINK_PHRASES[phraseTick % THINK_PHRASES.length]);
-  // 上场即重画（定格动画的出场就是重新起稿）；换目标是"走过去"（位置过渡），不重画
-  const [workEpoch, setWorkEpoch] = useState(0);
-  const wasActiveRef = useRef(false);
-  useEffect(() => {
-    const act = !!presence[MAIN_AGENT_ID]?.active;
-    if (act && !wasActiveRef.current) setWorkEpoch(k => k + 1);
-    wasActiveRef.current = act;
-  }, [presence]);
   // recap 持久：闲时精灵写"刚才干了什么"，刷新页面也还记得（localStorage per-project）
   const [storedRecap, setStoredRecap] = useState(() => {
     try { return localStorage.getItem(`nd:recap:${projectId}`) || ''; } catch { return ''; }
@@ -2848,43 +2843,24 @@ export default function BoardCanvas({
           {/* 在场：并行子代理的小徽记（PresenceLayer.jsx，08-14 起只管子代理）*/}
           <PresenceLayer table={presence} rectOf={rectOfId} />
 
-          {/* 铅笔精灵 · 闲时（世界层 —— 用户定的：和产物同一平面，画在纸上）。
-              平移缩放它钉在纸上不动；离开视野满 3 秒才追到当前视口重新落位。
-              落位首选视口中点到顶边的中点，被产物占了换备选槽，全占不出现。
+          {/* 铅笔精灵（唯一挂载，2026-08-14 五批）：有工作目标贴目标，没有就
+              槽位（闲时/纯思考/无文件工具都在槽位上活着 —— 活跃真空修复）。
+              活跃换转轮图标+工作台词；quiet=输入行开着时精灵闭嘴让位。
               obstacles 直接用小地图那份矩形 —— 同一个"桌面上有什么"。 */}
           <AmbientSpriteLayer
-            active={!presence[MAIN_AGENT_ID]?.active}
+            agentActive={mainActive}
+            workAnchor={(() => {
+              const main = presence[MAIN_AGENT_ID];
+              if (!main?.active || !main.targetId) return null;
+              return presenceRectFor(main, rectOfId);
+            })()}
             cam={cam}
             viewport={camera.viewport}
             obstacles={minimapItems}
-            text={ambientText}
+            text={mainActive ? workText : ambientText}
+            quiet={!!spriteAsk}
             onAsk={onSpriteSay ? setSpriteAsk : undefined}
           />
-
-          {/* 铅笔精灵 · 工作态（世界坐标）：Claude 画在正在动的物件上，旁白
-              逐字手写。换目标是走过去（位置过渡），上场才重新起稿（workEpoch）。
-              目标解析不到矩形就不画 —— 闲时那份在屏幕层跟着镜头。 */}
-          {(() => {
-            const main = presence[MAIN_AGENT_ID];
-            if (!main?.active || !main.targetId) return null;
-            const r = presenceRectFor(main, rectOfId);
-            if (!r) return null;
-            return (
-              <div style={{
-                position: 'absolute', left: r.x - 14, top: r.y - 56,
-                zIndex: 310, pointerEvents: 'none',
-                transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
-              }}>
-                <SpriteSketch
-                  drawKey={workEpoch} text={workText}
-                  // agent 活跃：星芒换放射条脉冲（顺时针逐根收缩展开）
-                  active
-                  // 干活时也能递话：走 handleSend 的追加/排队语义
-                  onMarkClick={onSpriteSay ? () => setSpriteAsk({ x: r.x + 40, y: r.y - 6 }) : undefined}
-                />
-              </div>
-            );
-          })()}
 
           {/* 精灵对话输入行：点星芒浮出的那道铅笔虚线 */}
           {spriteAsk && (

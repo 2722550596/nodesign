@@ -28,50 +28,45 @@ const KEYFRAMES = `
   @keyframes ndSketchDraw { to { stroke-dashoffset: 0; } }
   @keyframes ndSketchFill { to { opacity: 0.94; } }
   @keyframes ndInkIn      { to { opacity: 1; } }
-  @keyframes ndRayIn      { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }
-  @keyframes ndRayPulse   { 0%, 26%, 100% { transform: scale(1); } 10% { transform: scale(0.45); } }
+  @keyframes ndSpRot {
+    8.3% { transform: rotate(30deg); } 16.6% { transform: rotate(60deg); }
+    25% { transform: rotate(90deg); } 33.3% { transform: rotate(120deg); }
+    41.6% { transform: rotate(150deg); } 50% { transform: rotate(180deg); }
+    58.3% { transform: rotate(210deg); } 66.6% { transform: rotate(240deg); }
+    75% { transform: rotate(270deg); } 83.3% { transform: rotate(300deg); }
+    91.6% { transform: rotate(330deg); } 100% { transform: rotate(360deg); }
+  }
 `;
 
 /** 描线用时（手写文字的起笔时刻拿它当 delay，字总在图标成形后才落） */
 const MARK_DRAW_MS = 760;
 
-/**
- * 放射条几何：官方星芒是一整条闭合轮廓（一个 path 描完整个形），单根光条
- * 没法从里面拆出来动。所以活跃态换一副**由 11 根独立射线搭的星芒**——角度和
- * 长短手调到接近官方标的错落感，视觉上读作同一个东西"活"了起来。
- * 顺时针序（屏幕坐标 y 向下，角度递增即顺时针），index 直接当动画相位。
- */
-const RAYS = [
-  [-90, 11.4], [-57, 9.8], [-28, 11.7], [-4, 9.4], [24, 11.0], [52, 9.6],
-  [80, 11.5], [112, 10.0], [140, 11.6], [168, 9.5], [-136, 10.8],
+/** 放射条的阶梯透明度（尾迹朝逆时针淡出 → 视觉上顺时针追） */
+const SPIN_BARS = [
+  [0, 0.14], [30, 0.29], [60, 0.43], [90, 0.57], [120, 0.71], [150, 0.86], [180, 1],
 ];
-const RAY_INNER = 2.4;
 
-/** 活跃态：放射条顺时针逐根收缩-展开（用户点名的动画）。
- *  transform-box: view-box → transform-origin 50% = 星芒中心，scale 即"缩回中心"。 */
-function RayMark({ size }) {
+/**
+ * 活跃态转轮：svg-spinners 的 bars-rotate-fade（MIT © Utkarsh Verma，
+ * github.com/n3r4zzurr0/svg-spinners）—— 放射条带渐隐尾迹、30° 步进顺时针，
+ * `step-end` 一格一格转正好是定格动画的手感（一版手搓的 11 根射线被用户
+ * 判丑，2026-08-14 换现成资源）。中心嵌官方星芒 —— 转的是光条，Claude 不转。
+ */
+function SpinnerMark({ size }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"
       style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}>
-      {RAYS.map(([deg, outer], i) => {
-        const a = (deg * Math.PI) / 180;
-        const x1 = 12 + RAY_INNER * Math.cos(a); const y1 = 12 + RAY_INNER * Math.sin(a);
-        const x2 = 12 + outer * Math.cos(a); const y2 = 12 + outer * Math.sin(a);
-        return (
-          <path
-            key={i}
-            d={`M ${x1.toFixed(2)} ${y1.toFixed(2)} L ${x2.toFixed(2)} ${y2.toFixed(2)}`}
-            stroke={CLAUDE_BRAND} strokeWidth={2.1} strokeLinecap="round" fill="none"
-            style={{
-              transformBox: 'view-box', transformOrigin: '50% 50%',
-              // 出场：顺时针逐根冒出（也是这形态自己的"描线"）；随后无限脉冲，
-              // 相位按序错开 —— 收缩波顺时针转圈
-              animation: `ndRayIn 280ms ease both ${i * 45}ms, `
-                + `ndRayPulse 1.6s linear infinite ${Math.round(600 + (i / RAYS.length) * 1600)}ms`,
-            }}
+      <g fill={CLAUDE_BRAND} style={{ transformOrigin: 'center', animation: 'ndSpRot .9s step-end infinite' }}>
+        {SPIN_BARS.map(([deg, op]) => (
+          <rect
+            key={deg} x="11" y="0.5" width="2" height="4.6" rx="1" opacity={op}
+            transform={deg ? `rotate(${deg} 12 12)` : undefined}
           />
-        );
-      })}
+        ))}
+      </g>
+      <g transform="translate(6.24 6.24) scale(0.48)">
+        <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} opacity="0.95" />
+      </g>
     </svg>
   );
 }
@@ -112,7 +107,7 @@ function SketchMark({ size = 44, active = false, onClick }) {
         cursor: pressable ? 'pointer' : undefined,
       }}
     >
-      {active ? <RayMark size={size} /> : (
+      {active ? <SpinnerMark size={size} /> : (
         <svg
           width={size} height={size} viewBox="0 0 24 24"
           aria-hidden="true" style={{ display: 'block', overflow: 'visible' }}
@@ -174,7 +169,7 @@ function Handwriting({ text, delay = MARK_DRAW_MS, size = 26, maxWidth = 340 }) 
  * 精灵本体：图标 + 手写行。`drawKey` 变化 = 整体重画（换了地方/重新出场）；
  * 只有 `text` 变 = 图标原地不动、那行字重写 —— 像在同一页上划掉重写。
  */
-export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 340, active = false, onMarkClick }) {
+export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 340, active = false, quiet = false, onMarkClick }) {
   return (
     // ⚠️ width 必须显式给：世界容器是零宽的变换锚点（大家都显式传宽，BindingLayer
     // 的 width/height、舞台卡的 STAGE_CARD_W 同理），绝对定位 + auto 宽在里面会
@@ -182,9 +177,13 @@ export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 340, act
     <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: size + 10 + maxWidth, pointerEvents: 'none' }}>
       <style>{KEYFRAMES}</style>
       <SketchMark size={size} active={active} onClick={onMarkClick} />
-      <div style={{ paddingTop: Math.round(size * 0.04) }}>
-        <Handwriting key={text} text={text} maxWidth={maxWidth} />
-      </div>
+      {/* quiet = 用户正往输入行里写字：精灵的话让位（recap 一长会盖住输入行，
+          而且"它闭嘴听你说"本来就是对的礼节） */}
+      {!quiet && (
+        <div style={{ paddingTop: Math.round(size * 0.04) }}>
+          <Handwriting key={text} text={text} maxWidth={maxWidth} />
+        </div>
+      )}
     </div>
   );
 }
@@ -279,17 +278,19 @@ function slotVisible(slot, cam, viewport) {
 const OFFSCREEN_RELOCATE_MS = 3000;
 
 /**
- * 闲时精灵（**世界层**，挂在被相机变换的容器里）。
+ * 精灵层（**世界层**，挂在被相机变换的容器里）。2026-08-14 五批起是**唯一**
+ * 的精灵家：工作/闲时不再是两个挂载点 —— 那套的缝隙正是用户报的"活跃真空"
+ * （run 早期 / 纯思考 / 无文件工具阶段既没有目标矩形也不算闲，精灵整段消失，
+ * 放射条动画从来没机会出现）。
  *
- * 行为（2026-08-14 二版，用户对一版"动一下画布就刷新"的纠偏）：
- *   - 首次出场：按当前视口找槽落位，画一张铅笔稿。
- *   - 用户平移/缩放：精灵**钉在纸上不动**（世界坐标白送这件事），零刷新。
- *   - 它离开视野持续 3 秒：追到当前视口重新找槽、重新起稿；
- *     3 秒内视野又扫回来就当无事发生。
- *   - 追过来时视口全被产物占着：留在原地（原地=视野外=等于不显示，
- *     正好落在"实在没空位就不显示"的规矩上），下次视野变化再试。
+ * 位置只有一条决策链：
+ *   - workAnchor 给了（agent 正在动某件东西且解析得到矩形）→ 贴着它（位置
+ *     过渡"走过去"），槽位状态冻结在原地
+ *   - 没有 anchor → 槽位逻辑：首次出场按视口找槽；平移缩放钉在纸上不动；
+ *     离开视野 3 秒才追过来重新落位重画；视口全被占就不出现。
+ *     **活跃与否不影响这条链** —— 活跃只换图标（转轮）和台词。
  */
-export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text, onAsk }) {
+export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam, viewport, obstacles, text, quiet = false, onAsk }) {
   const [slot, setSlot] = useState(null);      // 世界坐标
   const [drawKey, setDrawKey] = useState(0);
   const stateRef = useRef({});
@@ -297,7 +298,8 @@ export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text, onA
   const offTimer = useRef(null);
 
   useEffect(() => {
-    if (!active || !viewport?.w || !cam?.z) {
+    if (workAnchor || !viewport?.w || !cam?.z) {
+      // 贴着目标时槽位冻结：回到无目标态再说
       clearTimeout(offTimer.current); offTimer.current = null;
       return undefined;
     }
@@ -310,7 +312,7 @@ export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text, onA
       clearTimeout(offTimer.current); offTimer.current = null;
     } else if (!offTimer.current) {
       // ⚠️ 计时器不进 effect cleanup —— cleanup 每次相机变化都跑，进去的话
-      // 用户持续平移时 3 秒永远数不满。只在可见/下场时显式清。
+      // 用户持续平移时 3 秒永远数不满。只在可见/换态时显式清。
       offTimer.current = setTimeout(() => {
         offTimer.current = null;
         const { cam: c, viewport: vp, obstacles: obs } = stateRef.current;
@@ -319,18 +321,26 @@ export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text, onA
       }, OFFSCREEN_RELOCATE_MS);
     }
     return undefined;
-  }, [active, cam, viewport, obstacles, slot]);
+  }, [workAnchor, cam, viewport, obstacles, slot]);
 
   // 卸载兜底：不走上面的显式清理路径时别让计时器对着空组件开枪
   useEffect(() => () => clearTimeout(offTimer.current), []);
 
-  if (!active || !slot || !text) return null;
+  const at = workAnchor
+    ? { x: Math.round(workAnchor.x - 14), y: Math.round(workAnchor.y - 56) }
+    : slot;
+  if (!at || !text) return null;
   return (
-    <div style={{ position: 'absolute', left: slot.x, top: slot.y, zIndex: 305, pointerEvents: 'none' }}>
+    <div style={{
+      position: 'absolute', left: at.x, top: at.y, zIndex: 305, pointerEvents: 'none',
+      // 目标间移动是"走过去"；槽位重落走 drawKey 重画（定格换场），过渡不碍事
+      transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
+    }}>
       <SpriteSketch
-        drawKey={drawKey} text={text}
-        // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下）
-        onMarkClick={onAsk ? () => onAsk({ x: slot.x + 54, y: slot.y + 50 }) : undefined}
+        drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
+        // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
+        // 从**当前落点**算 —— recap 长文遮挡输入行的病由 quiet 让位治）
+        onMarkClick={onAsk ? () => onAsk({ x: at.x + 54, y: at.y + 50 }) : undefined}
       />
     </div>
   );
