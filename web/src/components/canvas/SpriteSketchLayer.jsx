@@ -30,12 +30,10 @@ const KEYFRAMES = `
   @keyframes ndSketchFill { to { opacity: 0.94; } }
   @keyframes ndInkIn      { to { opacity: 1; } }
   @keyframes ndRayPulse {
-    0% { transform: scale(1); }
-    5% { transform: scale(1.07); }
-    10% { transform: scale(0.6); }
-    15% { transform: scale(1.13); }
-    21% { transform: scale(0.96); }
-    27% { transform: scale(1); }
+    0%   { transform: scale(1);    animation-timing-function: cubic-bezier(0.2, 0.65, 0.45, 1); }
+    11%  { transform: scale(0.74); animation-timing-function: linear; }
+    16%  { transform: scale(0.74); animation-timing-function: cubic-bezier(0.3, 2.2, 0.4, 1); }
+    34%  { transform: scale(1); }
     100% { transform: scale(1); }
   }
 `;
@@ -67,19 +65,26 @@ const RAY_WEDGES = [
 ];
 
 /**
- * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 100ms = 1.2s。
- * 脉冲本身不是匀速（用户纠偏"太均匀没弹性"）：先反向一挤蓄力（1.07）→
- * 压到底（0.6）→ 弹过头（1.13）→ 回摆落定 —— 弹簧的相位表，不是节拍器。
+ * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 70ms ≈ 0.84s（用户要的
+ * "顺时针转得快一点"调这个）。
+ *
+ * 脉冲三段 = 挤压 → 蓄压 → 释放（用户点名的感觉，三版定案）：
+ *   收（0→11%）：减速压进去（ease-out 形）—— 越压阻力越大，不是砸下去；
+ *   憋（11→16%）：在 0.74 停一拍 —— 压力握在手里的那一瞬；
+ *   放（16→34%）：back-out 回弹缓动一口气释放，冲过 1 一点再落定 ——
+ *     过冲由**曲线**自己完成，不是关键帧硬跳。
+ * ⚠️ 这一段不能用 step-end：定格跳帧表达不了弹性（二版失败的根因 ——
+ * 三四个瞬移帧看起来是抖动不是弹簧）。描线/显影那些照旧定格。
  */
-const RAY_STEP_MS = 100;
+const RAY_STEP_MS = 70;
 
 /**
- * 活跃态：**星芒自己的触点**顺时针逐个收缩回弹（用户点名要的就是矢量图
+ * 活跃态：**星芒自己的触点**顺时针逐个挤压-释放（用户点名要的就是矢量图
  * 本身在动 —— 先后两版都跑偏：手搓射线丢了官方形状、外挂转轮又没动到
  * 图标本身）。做法是把官方 path 按触点裁成 12 片，每片绕图心 scale 收放，
- * 起拍按顺时针错开成一圈行波；`step-end` 三帧定格（1 → 0.7 → 0.84 → 1），
- * 保住铅笔定格的手感。纯色填充下扇区叠缝不可见；圆心垫一小片静态星芒，
- * 兜住各片缩放时谷底可能开出的细缝。
+ * 起拍按顺时针错开成一圈行波；脉冲曲线（挤压→蓄压→释放）见 RAY_STEP_MS
+ * 那段注释。纯色填充下扇区叠缝不可见；圆心垫一小片静态星芒，兜住各片
+ * 缩放时谷底可能开出的细缝。
  */
 function SpinnerMark({ size }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
@@ -107,7 +112,9 @@ function SpinnerMark({ size }) {
             // transform-box: view-box —— 不写的话 SVG 里 scale 不绕图心
             // （三件套那批踩过）；负 delay = 一上场行波就已经在半路，没有起手僵直
             transformOrigin: '12px 12px', transformBox: 'view-box',
-            animation: `ndRayPulse ${period}ms step-end infinite`,
+            // 缓动写在 keyframes 里逐段给（挤压/蓄压/释放各一条曲线），
+            // 这里的 linear 只是不碍事的底
+            animation: `ndRayPulse ${period}ms linear infinite`,
             animationDelay: `${i * RAY_STEP_MS - period}ms`,
           }}
         >
