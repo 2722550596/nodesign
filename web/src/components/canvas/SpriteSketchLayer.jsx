@@ -36,6 +36,11 @@ const KEYFRAMES = `
     34%  { transform: scale(1); }
     100% { transform: scale(1); }
   }
+  @keyframes ndCoreBreath {
+    0%   { transform: scale(1); }
+    50%  { transform: scale(1.1); }
+    100% { transform: scale(1); }
+  }
 `;
 
 /** 描线用时（手写文字的起笔时刻拿它当 delay，字总在图标成形后才落） */
@@ -65,8 +70,8 @@ const RAY_WEDGES = [
 ];
 
 /**
- * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 70ms ≈ 0.84s（用户要的
- * "顺时针转得快一点"调这个）。
+ * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 85ms ≈ 1.0s（转速旋钮就是
+ * 这个数：70 被判"太快"、100 被判"太慢"，85 是二分出来的）。
  *
  * 脉冲三段 = 挤压 → 蓄压 → 释放（用户点名的感觉，三版定案）：
  *   收（0→11%）：减速压进去（ease-out 形）—— 越压阻力越大，不是砸下去；
@@ -76,7 +81,7 @@ const RAY_WEDGES = [
  * ⚠️ 这一段不能用 step-end：定格跳帧表达不了弹性（二版失败的根因 ——
  * 三四个瞬移帧看起来是抖动不是弹簧）。描线/显影那些照旧定格。
  */
-const RAY_STEP_MS = 70;
+const RAY_STEP_MS = 85;
 
 /**
  * 活跃态：**星芒自己的触点**顺时针逐个挤压-释放（用户点名要的就是矢量图
@@ -102,7 +107,16 @@ function SpinnerMark({ size }) {
         {/* 垫片 6.8：星芒中央那坨的谷底最深到 ~7，5.2 时收缩会在圆心咬出缺口 */}
         <clipPath id={`ndraycore${uid}`}><circle cx="12" cy="12" r="6.8" /></clipPath>
       </defs>
-      <g clipPath={`url(#ndraycore${uid})`}>
+      {/* 中心也参与运动（2026-08-14 用户点名）：每转一圈呼吸一次。只向外
+          鼓（scale ≥ 1）—— 它同时还是谷底缺缝的补丁，向内缩就把当初垫它
+          要盖的缝重新亮出来了。 */}
+      <g
+        clipPath={`url(#ndraycore${uid})`}
+        style={{
+          transformOrigin: '12px 12px', transformBox: 'view-box',
+          animation: `ndCoreBreath ${period}ms ease-in-out infinite`,
+        }}
+      >
         <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} />
       </g>
       {RAY_WEDGES.map((d, i) => (
