@@ -31,7 +31,7 @@ import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
-import { SpriteSketch, AmbientSpriteLayer, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
+import { SpriteSketch, AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
@@ -126,6 +126,9 @@ export default function BoardCanvas({
    * 聊天栏长什么样。
    */
   onAskAgent,
+  /** 精灵对话通道（2026-08-14）：点星芒就地写一句，text 原样递给会话
+   *  （外层接 handleSend —— 跟聊天框同一条路，跑动中就是追加/排队语义） */
+  onSpriteSay,
   /**
    * 就地标注（2026-08-13，E3）：右键物件/文件夹 →「标注给 agent」→ 浮层里
    * 写一句话直接发送，agent 立刻起一轮。参数 `{ target: { kind, id, title,
@@ -237,6 +240,8 @@ export default function BoardCanvas({
   // 被日记本范式取代：闲时精灵改为跟随用户镜头写问候/recap，不再钉在上次
   // 工作的物件上 —— 存位置的那套连带拆除，别留空壳。）
   const [presence, setPresence] = useState(emptyPresence);
+  /** 精灵输入行（对话通道）：{x,y} 世界坐标，null = 收起 */
+  const [spriteAsk, setSpriteAsk] = useState(null);
   const toolRef = useRef('select');
   toolRef.current = tool;
   const positionedRef = useRef([]);
@@ -2822,6 +2827,7 @@ export default function BoardCanvas({
             viewport={camera.viewport}
             obstacles={minimapItems}
             text={ambientText}
+            onAsk={onSpriteSay ? setSpriteAsk : undefined}
           />
 
           {/* 铅笔精灵 · 工作态（世界坐标）：Claude 画在正在动的物件上，旁白
@@ -2838,10 +2844,25 @@ export default function BoardCanvas({
                 zIndex: 310, pointerEvents: 'none',
                 transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
               }}>
-                <SpriteSketch drawKey={workEpoch} text={workText} />
+                <SpriteSketch
+                  drawKey={workEpoch} text={workText}
+                  // agent 活跃：星芒换放射条脉冲（顺时针逐根收缩展开）
+                  active
+                  // 干活时也能递话：走 handleSend 的追加/排队语义
+                  onMarkClick={onSpriteSay ? () => setSpriteAsk({ x: r.x + 40, y: r.y - 6 }) : undefined}
+                />
               </div>
             );
           })()}
+
+          {/* 精灵对话输入行：点星芒浮出的那道铅笔虚线 */}
+          {spriteAsk && (
+            <SpriteAskInput
+              x={spriteAsk.x} y={spriteAsk.y}
+              onSubmit={(t) => onSpriteSay?.(t)}
+              onClose={() => setSpriteAsk(null)}
+            />
+          )}
 
           {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）
               单独一层浮在所有物件之上 —— 物件的 z 是会长的（pin_to_board 每次

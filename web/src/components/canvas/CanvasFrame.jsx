@@ -56,6 +56,7 @@ export default function CanvasFrame({
   onAddToContext,
   onAskAgent,
   onAnnotate,
+  onSpriteSay,
   artifactRefreshToken,
   fileVersions,
   boardVersion,
@@ -212,6 +213,7 @@ export default function CanvasFrame({
           onAddToContext={onAddToContext}
           onAskAgent={onAskAgent}
           onAnnotate={onAnnotate}
+          onSpriteSay={onSpriteSay}
           apiRef={boardApiRef}
           onUiState={onBoardUiState}
           stageRef={stageRef}

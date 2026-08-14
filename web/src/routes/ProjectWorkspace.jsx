@@ -2110,6 +2110,10 @@ export default function ProjectWorkspace() {
             comments={comments.filter(c => !c.board)}
             boardNoteCounts={boardNoteCounts}
             onAnnotate={handleAnnotate}
+            // 精灵对话通道（2026-08-14）：星芒下写的一句原样进会话 —— 跟聊天框
+            // 同一条 handleSend，跑动中自然是追加/排队语义。刻意**不**开聊天抽屉：
+            // 日记本范式的回条是精灵手写短句，全文想看再自己开侧栏
+            onSpriteSay={(text) => handleSend(text)}
             onAddComment={handleAddComment}
             onResolveComment={handleResolveComment}
             onDeleteComment={handleDeleteComment}

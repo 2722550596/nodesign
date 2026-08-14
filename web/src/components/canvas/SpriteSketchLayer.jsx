@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PAPER } from '../../lib/paper.js';
 import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
+import { isImeEnter } from '../../lib/helpers.js';
 import { CLAUDE_BRAND, CLAUDE_PATH } from '../ui/ClaudeMark.jsx';
 
 /**
@@ -27,32 +28,112 @@ const KEYFRAMES = `
   @keyframes ndSketchDraw { to { stroke-dashoffset: 0; } }
   @keyframes ndSketchFill { to { opacity: 0.94; } }
   @keyframes ndInkIn      { to { opacity: 1; } }
+  @keyframes ndRayIn      { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }
+  @keyframes ndRayPulse   { 0%, 26%, 100% { transform: scale(1); } 10% { transform: scale(0.45); } }
 `;
 
 /** 描线用时（手写文字的起笔时刻拿它当 delay，字总在图标成形后才落） */
 const MARK_DRAW_MS = 760;
 
-function SketchMark({ size = 44 }) {
+/**
+ * 放射条几何：官方星芒是一整条闭合轮廓（一个 path 描完整个形），单根光条
+ * 没法从里面拆出来动。所以活跃态换一副**由 11 根独立射线搭的星芒**——角度和
+ * 长短手调到接近官方标的错落感，视觉上读作同一个东西"活"了起来。
+ * 顺时针序（屏幕坐标 y 向下，角度递增即顺时针），index 直接当动画相位。
+ */
+const RAYS = [
+  [-90, 11.4], [-57, 9.8], [-28, 11.7], [-4, 9.4], [24, 11.0], [52, 9.6],
+  [80, 11.5], [112, 10.0], [140, 11.6], [168, 9.5], [-136, 10.8],
+];
+const RAY_INNER = 2.4;
+
+/** 活跃态：放射条顺时针逐根收缩-展开（用户点名的动画）。
+ *  transform-box: view-box → transform-origin 50% = 星芒中心，scale 即"缩回中心"。 */
+function RayMark({ size }) {
   return (
-    <svg
-      width={size} height={size} viewBox="0 0 24 24"
-      aria-hidden="true" style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}
-    >
-      {/* 铅笔稿：描完不撤 —— 橙色显影后底下透出一点铅笔线，正是手绘的破绽感 */}
-      <path
-        d={CLAUDE_PATH} pathLength="1"
-        fill="none" stroke={PAPER.ink2} strokeWidth={0.55}
-        strokeLinecap="round"
-        style={{
-          strokeDasharray: 1, strokeDashoffset: 1,
-          animation: `ndSketchDraw ${MARK_DRAW_MS}ms steps(14, end) forwards`,
-        }}
-      />
-      <path
-        d={CLAUDE_PATH} fill={CLAUDE_BRAND}
-        style={{ opacity: 0, animation: 'ndSketchFill 420ms steps(6, end) 640ms forwards' }}
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"
+      style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}>
+      {RAYS.map(([deg, outer], i) => {
+        const a = (deg * Math.PI) / 180;
+        const x1 = 12 + RAY_INNER * Math.cos(a); const y1 = 12 + RAY_INNER * Math.sin(a);
+        const x2 = 12 + outer * Math.cos(a); const y2 = 12 + outer * Math.sin(a);
+        return (
+          <path
+            key={i}
+            d={`M ${x1.toFixed(2)} ${y1.toFixed(2)} L ${x2.toFixed(2)} ${y2.toFixed(2)}`}
+            stroke={CLAUDE_BRAND} strokeWidth={2.1} strokeLinecap="round" fill="none"
+            style={{
+              transformBox: 'view-box', transformOrigin: '50% 50%',
+              // 出场：顺时针逐根冒出（也是这形态自己的"描线"）；随后无限脉冲，
+              // 相位按序错开 —— 收缩波顺时针转圈
+              animation: `ndRayIn 280ms ease both ${i * 45}ms, `
+                + `ndRayPulse 1.6s linear infinite ${Math.round(600 + (i / RAYS.length) * 1600)}ms`,
+            }}
+          />
+        );
+      })}
     </svg>
+  );
+}
+
+/**
+ * 星芒本体。idle = 铅笔描线成形 + 橙显影；active = 放射条脉冲。
+ * onClick 给了就可点（对话通道）：按下先来一记"收缩回弹"（Web Animations API
+ * 直接在节点上放动画 —— CSS 类名重触发要靠 remount，会把描线动画一起重播）。
+ * 动作放在 pointerdown：画布容器的手势会 setPointerCapture，click 根本不生成
+ * （BindingLayer 2026-08-14 踩过的同一个坑）。
+ */
+function SketchMark({ size = 44, active = false, onClick }) {
+  const wrapRef = useRef(null);
+  const pressable = typeof onClick === 'function';
+  const press = (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    try {
+      wrapRef.current?.animate([
+        { transform: 'scale(1)' },
+        { transform: 'scale(0.72)', offset: 0.35 },
+        { transform: 'scale(1.1)', offset: 0.7 },
+        { transform: 'scale(1)' },
+      ], { duration: 260, easing: 'ease' });
+    } catch { /* 老浏览器没有 WAAPI：没动画也得能点 */ }
+    onClick(e);
+  };
+  return (
+    <span
+      ref={wrapRef}
+      onPointerDown={pressable ? press : undefined}
+      title={pressable ? '写一句给 Claude' : undefined}
+      style={{
+        display: 'block', flexShrink: 0,
+        // 命中垫：镜头拉远星芒只剩十几像素，裸命中区点不中很沮丧
+        padding: 8, margin: -8,
+        pointerEvents: pressable ? 'auto' : 'none',
+        cursor: pressable ? 'pointer' : undefined,
+      }}
+    >
+      {active ? <RayMark size={size} /> : (
+        <svg
+          width={size} height={size} viewBox="0 0 24 24"
+          aria-hidden="true" style={{ display: 'block', overflow: 'visible' }}
+        >
+          {/* 铅笔稿：描完不撤 —— 橙色显影后底下透出一点铅笔线，正是手绘的破绽感 */}
+          <path
+            d={CLAUDE_PATH} pathLength="1"
+            fill="none" stroke={PAPER.ink2} strokeWidth={0.55}
+            strokeLinecap="round"
+            style={{
+              strokeDasharray: 1, strokeDashoffset: 1,
+              animation: `ndSketchDraw ${MARK_DRAW_MS}ms steps(14, end) forwards`,
+            }}
+          />
+          <path
+            d={CLAUDE_PATH} fill={CLAUDE_BRAND}
+            style={{ opacity: 0, animation: 'ndSketchFill 420ms steps(6, end) 640ms forwards' }}
+          />
+        </svg>
+      )}
+    </span>
   );
 }
 
@@ -62,13 +143,13 @@ function SketchMark({ size = 44 }) {
  * （2026-08-14 用户点名：之前用楷体，太工整像印出来的）。
  * per-char 延迟随长度收缩：整句写完 ≤ ~1.8s，长句不拖堂。
  */
-function Handwriting({ text, delay = MARK_DRAW_MS, size = 16, maxWidth = 300 }) {
+function Handwriting({ text, delay = MARK_DRAW_MS, size = 26, maxWidth = 340 }) {
   const chars = useMemo(() => Array.from(String(text || '')), [text]);
   if (!chars.length) return null;
   const per = Math.min(60, Math.max(22, Math.round(1600 / chars.length)));
   return (
     <div style={{
-      fontFamily: TEXT_FONT_CSS.pen, fontSize: size, lineHeight: 1.55,
+      fontFamily: TEXT_FONT_CSS.pen, fontSize: size, lineHeight: 1.45,
       color: PAPER.ink2, maxWidth, wordBreak: 'break-word',
     }}>
       {chars.map((ch, i) => {
@@ -93,26 +174,66 @@ function Handwriting({ text, delay = MARK_DRAW_MS, size = 16, maxWidth = 300 }) 
  * 精灵本体：图标 + 手写行。`drawKey` 变化 = 整体重画（换了地方/重新出场）；
  * 只有 `text` 变 = 图标原地不动、那行字重写 —— 像在同一页上划掉重写。
  */
-export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 300 }) {
+export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 340, active = false, onMarkClick }) {
   return (
     // ⚠️ width 必须显式给：世界容器是零宽的变换锚点（大家都显式传宽，BindingLayer
     // 的 width/height、舞台卡的 STAGE_CARD_W 同理），绝对定位 + auto 宽在里面会
     // 按 min-content 收缩 —— 真机症状是手写行竖排成一字一列（2026-08-14 踩到）
     <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: size + 10 + maxWidth, pointerEvents: 'none' }}>
       <style>{KEYFRAMES}</style>
-      <SketchMark size={size} />
-      <div style={{ paddingTop: Math.round(size * 0.16) }}>
+      <SketchMark size={size} active={active} onClick={onMarkClick} />
+      <div style={{ paddingTop: Math.round(size * 0.04) }}>
         <Handwriting key={text} text={text} maxWidth={maxWidth} />
       </div>
     </div>
   );
 }
 
+/**
+ * 对话通道的输入行（2026-08-14，用户拍板"icon 也是跟 agent 说话的口子"）：
+ * 点星芒 → 精灵脚下浮出一道铅笔虚线，直接打字。没有框没有按钮 ——
+ * 在纸上写字给它，Enter 递过去（里德尔日记的吸墨面）。
+ * 世界坐标由 BoardCanvas 摆；Esc / 失焦收起。
+ */
+export function SpriteAskInput({ x, y, width = 350, onSubmit, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+  return (
+    <div
+      style={{ position: 'absolute', left: x, top: y, width, zIndex: 320, pointerEvents: 'auto' }}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={ref}
+        placeholder="写一句给 Claude…"
+        style={{
+          width: '100%', border: 0, outline: 'none', background: 'transparent',
+          borderBottom: `1.5px dashed ${PAPER.pencil}`,
+          fontFamily: TEXT_FONT_CSS.pen, fontSize: 24, color: PAPER.ink,
+          padding: '2px 4px',
+        }}
+        onKeyDown={(e) => {
+          // 拦住：画布上单键换工具、Esc 回上层 —— 不拦就变成打字换工具
+          // （产物卡改名输入框同一套拦法）
+          e.stopPropagation();
+          if (e.key === 'Enter' && !isImeEnter(e)) {
+            const t = e.currentTarget.value.trim();
+            if (t) onSubmit?.(t);
+            onClose?.();
+          }
+          if (e.key === 'Escape') onClose?.();
+        }}
+        onBlur={() => onClose?.()}
+      />
+    </div>
+  );
+}
+
 // ── 闲时：跟镜头找空位 ──
 
-/** 精灵的屏幕身位（找空位按它的外接矩形算） */
-const SPRITE_W = 340;
-const SPRITE_H = 70;
+/** 精灵的身位（找空位按它的外接矩形算；字号放大后 2026-08-14 二调） */
+const SPRITE_W = 400;
+const SPRITE_H = 100;
 
 /**
  * 备选槽（视口比例坐标）。第一个就是用户点名的落点：视口中点到顶边这条线
@@ -168,7 +289,7 @@ const OFFSCREEN_RELOCATE_MS = 3000;
  *   - 追过来时视口全被产物占着：留在原地（原地=视野外=等于不显示，
  *     正好落在"实在没空位就不显示"的规矩上），下次视野变化再试。
  */
-export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text }) {
+export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text, onAsk }) {
   const [slot, setSlot] = useState(null);      // 世界坐标
   const [drawKey, setDrawKey] = useState(0);
   const stateRef = useRef({});
@@ -206,7 +327,11 @@ export function AmbientSpriteLayer({ active, cam, viewport, obstacles, text }) {
   if (!active || !slot || !text) return null;
   return (
     <div style={{ position: 'absolute', left: slot.x, top: slot.y, zIndex: 305, pointerEvents: 'none' }}>
-      <SpriteSketch drawKey={drawKey} text={text} />
+      <SpriteSketch
+        drawKey={drawKey} text={text}
+        // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下）
+        onMarkClick={onAsk ? () => onAsk({ x: slot.x + 54, y: slot.y + 50 }) : undefined}
+      />
     </div>
   );
 }
