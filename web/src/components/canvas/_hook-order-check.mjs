@@ -30,9 +30,22 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// ProjectWorkspace 2026-08-13 加入：会话收敛把 effect 放到了 `project` 声明
-// 之前，真栽了第五次 —— 这份名单该覆盖所有"hook 密集"的大文件
-const FILES = ['BoardCanvas.jsx', 'StageLayer.jsx', 'CanvasFrame.jsx', 'useBoardCamera.js', 'useCanvasTools.js', 'useBoardData.js', '../../routes/ProjectWorkspace.jsx'];
+// 2026-08-14 可维护性行动：名单制退役，**全量扫描** web/src 下所有 .jsx/.js
+// （node_modules/测试文件除外）。名单制的问题被第五次 TDZ 证明过 ——
+// 新文件不进名单就是裸奔，而这个检查宁可漏报不误报，扫全量没有代价。
+const SRC_ROOT = path.resolve(here, '../..');
+function collectFiles(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) { collectFiles(p, out); continue; }
+    if (!/\.(jsx|js)$/.test(e.name) || /\.test\./.test(e.name)) continue;
+    // 只扫真的用 hook 的文件，别的没有 TDZ-依赖问题可查
+    if (/use(State|Ref|Memo|Callback|Effect|LayoutEffect)\(/.test(fs.readFileSync(p, 'utf8'))) out.push(p);
+  }
+  return out;
+}
+const FILES = collectFiles(SRC_ROOT).map(p => path.relative(here, p));
 
 /** 组件体那一层的 `const x` / `let x` / `const { a, b } =` → { 名字: 行号 } */
 function declLines(lines) {
