@@ -6,6 +6,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 
 export function boxConfig() {
   const target = process.env.NODESIGN_H3BOX_SSH || '';
@@ -49,6 +50,15 @@ export function runBox(box, bin, args, { timeoutMs = 240_000, signal } = {}) {
   });
 }
 
+// 连接复用：首连付一次完整握手（跨境实测 ~4s），之后 10 分钟内的 ssh/scp 走同一条
+// 隧道，每次 ~0.1s。socket 名带主机+端口，换租新盒（端口必变）不会撞旧 socket；
+// master 空闲 10 分钟自灭，盒子重启后 auto 会自动弃掉死 socket 重连。
+const CTRL = [
+  '-o', 'ControlMaster=auto',
+  '-o', `ControlPath=${os.tmpdir()}/h3box-cm-%r@%h-%p`,
+  '-o', 'ControlPersist=600',
+];
+
 /** ssh 公共参数（-p 端口）；scp 用 scpArgs（-P 端口） */
-export const sshArgs = (box) => ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', '-p', box.port, box.target];
-export const scpArgs = (box) => ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', '-P', box.port];
+export const sshArgs = (box) => [...CTRL, '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', '-p', box.port, box.target];
+export const scpArgs = (box) => [...CTRL, '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', '-P', box.port];
