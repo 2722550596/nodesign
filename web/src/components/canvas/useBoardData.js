@@ -38,6 +38,7 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
   const [layout, setLayout] = useState({});
   const [zones, setZones] = useState({});
   const [bindings, setBindings] = useState({});   // board.json 的关系表
+  const [boardHero, setBoardHero] = useState(null);   // 显式主角覆盖（agent feature 立的）
   // 项目区顶带的摘要（指引全文 / 文件数）
   const [guideText, setGuideText] = useState('');
   const [fileCount, setFileCount] = useState(null);
@@ -72,6 +73,7 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
       setLayout(b.board.objects || {});
       setBindings(b.board.bindings || {});
       setZones(b.board.zones || {});
+      setBoardHero(b.board.hero || null);
       // 桌面化：board.json 的 size 不再决定画布大小 —— 桌面宽度固定、高度随内容
       const zs = Object.values(b.board.objects || {}).map(o => o.z || 0);
       zMaxRef.current = Math.max(10, ...zs);
@@ -127,7 +129,7 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
 
   return {
     artifacts, tasks, folders, sessions, memoryDocs,
-    layout, setLayout, zones, setZones, bindings, setBindings,
+    layout, setLayout, zones, setZones, bindings, setBindings, boardHero,
     guideText, fileCount,
     reload, scheduleSave, patchLayout,
     layoutRef, zonesRef, dirtyRef, layoutLoadedRef, zMaxRef,

@@ -32,6 +32,7 @@ import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
 import { SpriteSketch, AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
+import { usePhantoms, claimPhantomSeat, PhantomImageCard } from './PhantomLayer.jsx';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
@@ -143,7 +144,7 @@ export default function BoardCanvas({
   // 派生（objects/folderView）留在本组件：它跟拖拽、影子区缠在一起。
   const {
     artifacts, tasks, folders, sessions, memoryDocs,
-    layout, setLayout, zones, setZones, bindings, setBindings,
+    layout, setLayout, zones, setZones, bindings, setBindings, boardHero,
     guideText, fileCount,
     reload, scheduleSave, patchLayout,
     layoutRef, zonesRef, dirtyRef, layoutLoadedRef, zMaxRef,
@@ -631,6 +632,13 @@ export default function BoardCanvas({
   /** 悬停中的卡（路线5）：BindingLayer 点亮连着它的线 */
   const [hoverCardId, setHoverCardId] = useState(null);
 
+  // 幻影表（PhantomLayer.jsx）：生图占位的座位账本。ref 给入座 memo 消费
+  // （认领时在 memo 里标 consumedBy —— movingRef 同款用法），state 由
+  // usePhantoms 管（声明在 useStageState 之后，它要吃 stageCards）。
+  const phantomsRef = useRef(new Map());
+  const phantomObstaclesRef = useRef([]);
+  const phantomBottomRef = useRef(0);
+
   const { positioned, folderView, contentBottom, seatFixes, noteFixes } = useMemo(() => {
     // ── 桌面这一层（根目录）有哪些文件夹 ──
     //
@@ -670,7 +678,10 @@ export default function BoardCanvas({
 
     // 主角判断（北极星路线1）：唯一且有证据的最高分产物卡放大一档。
     // 必须在任何 sizeOf 之前标 —— 命中/排布/渲染吃的是同一个 tier。
-    const heroId = pickHero(visItems.map(it => ({ id: String(it.id), type: it.type })), bindings);
+    // 显式主角（agent feature 立的 board.hero）压过推断；不在这一层就回落自动
+    const heroId = (boardHero && visItems.some(it => String(it.id) === boardHero))
+      ? boardHero
+      : pickHero(visItems.map(it => ({ id: String(it.id), type: it.type })), bindings);
     if (heroId) {
       const h = visItems.find(it => String(it.id) === heroId);
       if (h) h.tier = 'hero';
@@ -681,7 +692,16 @@ export default function BoardCanvas({
     //
     // 起排线取"已经摆好的东西（含文件夹卡）的最低边"，新来的从那底下开始铺，
     // 不会压到你摆好的版面上。
-    const visFresh = fresh.filter(it => !folds.hidden.has(String(it.id)));
+    let visFresh = fresh.filter(it => !folds.hidden.has(String(it.id)));
+    // 座位过户（2026-08-14 幻影入座）：新来的图先问幻影表 —— 生图占位卡
+    // 在哪儿等，成品就坐哪儿，不跳位。认领即标记（ref 用法同 movingRef）。
+    const adopted = [];
+    for (const it of visFresh) {
+      if (it.type !== 'image') continue;
+      const seat = claimPhantomSeat(phantomsRef, it.id);
+      if (seat) { it.pos = { ...it.pos, ...seat }; adopted.push(it); }
+    }
+    if (adopted.length) visFresh = visFresh.filter(it => !adopted.includes(it));
     if (visFresh.length) {
       let seatedBottom = 0;
       for (const f of folders) seatedBottom = Math.max(seatedBottom, f.y + f.h);
@@ -717,8 +737,9 @@ export default function BoardCanvas({
     for (const f of folders) bottom = Math.max(bottom, f.y + f.h);
     for (const it of visItems) bottom = Math.max(bottom, it.pos.y + sizeOf(it).h);
     // 新算出来的落点交给下面那条 effect 落盘（不落的话布局会跟着交互抖，见上）
+    // 过户来的座位（adopted）同样要落盘 —— 它就是这张图的正式座位
     const seatFixes = {};
-    for (const it of visFresh) {
+    for (const it of [...visFresh, ...adopted]) {
       if (movingRef.current.has(it.id)) continue;   // 正在搬家，别给旧 id 排座
       seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
     }
@@ -753,9 +774,15 @@ export default function BoardCanvas({
       }
     }
     return { positioned: visItems, folderView: folders, contentBottom: bottom, seatFixes, noteFixes };
-  }, [dirIndex, folderCardOf, layout, zonesEff, bindings, lineageOpen]);
+  }, [dirIndex, folderCardOf, layout, zonesEff, bindings, lineageOpen, boardHero]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
+  // 幻影找座的障碍表与起排线（跟这一趟入座同一份现实）
+  phantomObstaclesRef.current = [
+    ...folderView.map(f => ({ x: f.x, y: f.y, w: f.w, h: f.h })),
+    ...positioned.map(o => { const sz = sizeOf(o); return { x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h }; }),
+  ];
+  phantomBottomRef.current = contentBottom;
   // 全目录树的物件（不止桌面这一层）—— 文件夹窗里的右键要按 id 找得到它们
   objectsRef.current = objects;
 
@@ -2326,6 +2353,12 @@ export default function BoardCanvas({
     onRawEvent: handlePresenceEvent,
   });
 
+  // 幻影表：出生（stageCards 出 image 条目）→ 找座 → 等过户 / 蒸发
+  const phantoms = usePhantoms({
+    stageCards, phantomsRef,
+    obstaclesRef: phantomObstaclesRef, contentBottomRef: phantomBottomRef,
+  });
+
   // ── 铅笔精灵的台词与出场（2026-08-14 日记本批）──
   //
   // 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端
@@ -2363,19 +2396,12 @@ export default function BoardCanvas({
   const greeting = useMemo(() => pickGreeting(), []);
   const ambientText = storedRecap ? `※ ${storedRecap}` : greeting;
 
-  // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock
+  // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock。
+  // （image 卡 2026-08-14 迁出 —— 幻影入座见 PhantomLayer.jsx，occupancy 参数
+  //   连同它的唯一消费方 placeImageCard 一起拆除）
   const visibleIdSet = new Set(visibleObjects.map(o => o.id));
-  // 区内已占的矩形：生图占位卡据此避开已经摆好的图（跟物件之间的防遮盖同一套判定）
-  const stageOccupancy = new Map();
-  for (const o of visibleObjects) {
-    if (!o.zoneId) continue;
-    const sz = sizeOf(o);
-    const arr = stageOccupancy.get(o.zoneId) || [];
-    arr.push({ x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h });
-    stageOccupancy.set(o.zoneId, arr);
-  }
   const { anchoredCards, dockPanels, dockChips } = splitStageCards({
-    stageCards, positioned, visibleIdSet, visibleZones, focusZone: '', occupancy: stageOccupancy,
+    stageCards, positioned, visibleIdSet, visibleZones, focusZone: '',
   });
 
   // agent 此刻在动谁：橙色光圈套在目标外圈（物件还没上墙就套它落脚的工作区）。
@@ -2758,6 +2784,11 @@ export default function BoardCanvas({
 
           {/* 吸附预览：松手后物件将落到的格位（虚线 ghost）*/}
           {visibleObjects.map((o) => renderObjectCard(o))}
+
+          {/* 生图幻影（PhantomLayer.jsx）：占位卡在纸面层等图，真图落地座位
+              过户。consumedBy 是认领时在 memo 里就地标的 —— 渲染当帧过滤，
+              不等状态清扫，过户瞬间幻影即隐 */}
+          {phantoms.filter(p => !p.consumedBy).map(p => <PhantomImageCard key={p.blockId} p={p} />)}
 
 
           {/* 关系线（世界坐标，铺在物件之下）*/}

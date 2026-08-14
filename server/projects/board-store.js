@@ -152,6 +152,9 @@ function sanitizeObject(o, size) {
     ...(o.expanded ? { expanded: true } : {}),
     // 显式归属：'' = 明确无归属（覆盖 sid 派生），非空 = 所属工作区 id
     ...(typeof o.zone === 'string' && o.zone.length <= 300 ? { zone: o.zone } : {}),
+    // 出处（2026-08-14 agent 摆位/建元素）：agent 落的座/写的字标出来，
+    // 用户的是默认不标 —— 跟关系线的 by 同一条纪律
+    ...(o.by === 'agent' ? { by: 'agent' } : {}),
     ...(kind ? { kind, data } : {}),
   };
 }
@@ -233,7 +236,10 @@ function sanitizeBoard(raw) {
     const s = sanitizeBinding(b);
     if (s) { bindings[id] = s; bCount += 1; }
   }
-  return { size, zones, objects, bindings };
+  // 主角覆盖（2026-08-14 agent 摆位）：显式立的主角压过前端 pickHero 的推断。
+  // 存 id 不存理由 —— 理由在会话里，画布只要知道谁站 C 位
+  const hero = typeof raw?.hero === 'string' && raw.hero.length <= 300 ? raw.hero : null;
+  return { size, zones, objects, bindings, ...(hero ? { hero } : {}) };
 }
 
 export async function readBoard(pid) {
@@ -310,12 +316,18 @@ export function patchBoard(pid, patch) {
         if (board.bindings[id] || Object.keys(board.bindings).length < MAX_BINDINGS) board.bindings[id] = fixed;
       }
     }
+    // 主角覆盖：null = 撤销（回到 pickHero 自动推断），字符串 = 显式立主角
+    if (patch?.hero !== undefined) {
+      if (patch.hero === null) delete board.hero;
+      else if (typeof patch.hero === 'string' && patch.hero.length <= 300) board.hero = fwd(patch.hero);
+    }
     // 端点被删掉的线一起清掉，否则画布上留一条连向虚空的线。放在最后：
     // 这一趟才看得到本次删除的全貌（同一个 patch 里可能既删物件又加线）。
     if (removed.size) {
       for (const [id, b] of Object.entries(board.bindings)) {
         if (removed.has(b.from) || removed.has(b.to)) delete board.bindings[id];
       }
+      if (board.hero && removed.has(board.hero)) delete board.hero;
     }
     await writeBoard(pid, board);
     return board;
