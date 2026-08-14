@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { Pin } from 'lucide-react';
 import { INK_SURFACE } from '../../lib/paper.js';
 import ToolbarButton from './ToolbarButton.jsx';
 import { FONT_SANS, FONT_SIZE, GAP } from '../../lib/theme.js';
@@ -87,6 +88,11 @@ export default function FloatingToolbar({
    * （相机缩放 / 换工具这类"正在用它"的信号）、以及指针悬在它身上。
    */
   autoHide = false,
+  /**
+   * 末尾长一枚图钉（2026-08-14，与 AI 悬浮卡同一套语义）：钉住 = 不自动收，
+   * 常驻可见；状态记 localStorage（按 id），换页还记得。只在 autoHide 时有意义。
+   */
+  pinnable = false,
   /** 值一变就唤出来（传个计数器或状态串） */
   wake = null,
   /** 组之间的堆叠方向。参考图是竖着堆两条，所以默认 column */
@@ -174,7 +180,21 @@ export default function FloatingToolbar({
    *   ③ 指针悬在它身上（露出来之后不能因为超时又缩回去）
    * 刚进画布时先亮一会儿再收，否则新用户根本不知道有这么条东西。
    */
-  const [revealed, setRevealed] = useState(!autoHide);
+  // 图钉：钉住 = 关掉 autoHide。按 id 记 localStorage —— 这是用户的一次性表态，
+  // 不是会话状态，刷新页面还得记得。
+  const [pinned, setPinned] = useState(() => {
+    try { return pinnable && localStorage.getItem(`nd:tb-pin:${id || 'x'}`) === '1'; } catch { return false; }
+  });
+  const togglePin = useCallback(() => {
+    setPinned(prev => {
+      const next = !prev;
+      try { localStorage.setItem(`nd:tb-pin:${id || 'x'}`, next ? '1' : '0'); } catch { /* 记不住就算了 */ }
+      return next;
+    });
+  }, [id]);
+  const effAutoHide = autoHide && !pinned;
+
+  const [revealed, setRevealed] = useState(!effAutoHide);
   const hoverRef = useRef(false);
   const hideTimer = useRef(null);
   const scheduleHide = useCallback(() => {
@@ -182,13 +202,18 @@ export default function FloatingToolbar({
     hideTimer.current = setTimeout(() => { if (!hoverRef.current) setRevealed(false); }, AUTOHIDE_DELAY);
   }, []);
   useEffect(() => {
-    if (!autoHide) return undefined;
+    if (!effAutoHide) {
+      // 刚钉住（或本来就不自动收）：立刻亮出来，把挂着的收起定时器掐掉
+      clearTimeout(hideTimer.current);
+      setRevealed(true);
+      return undefined;
+    }
     setRevealed(true);
     scheduleHide();
     return () => clearTimeout(hideTimer.current);
-  }, [autoHide, wake, scheduleHide]);
+  }, [effAutoHide, wake, scheduleHide]);
   useEffect(() => {
-    if (!autoHide) return undefined;
+    if (!effAutoHide) return undefined;
     const onMove = (e) => {
       const bounds = boundsRef?.current;
       if (!bounds) return;
@@ -200,7 +225,7 @@ export default function FloatingToolbar({
     };
     window.addEventListener('pointermove', onMove, { passive: true });
     return () => window.removeEventListener('pointermove', onMove);
-  }, [autoHide, boundsRef, scheduleHide]);
+  }, [effAutoHide, boundsRef, scheduleHide]);
 
   const onPointerDown = useCallback((e) => {
     if (dock) return;               // 钉住的不给拖
@@ -312,7 +337,7 @@ export default function FloatingToolbar({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onPointerEnter={() => { hoverRef.current = true; clearTimeout(hideTimer.current); setRevealed(true); }}
-      onPointerLeave={() => { hoverRef.current = false; if (autoHide) scheduleHide(); }}
+      onPointerLeave={() => { hoverRef.current = false; if (effAutoHide) scheduleHide(); }}
       style={{
         position: 'absolute', left: pos.x, top: pos.y,
         zIndex: zIndex ?? (panel?.zIndex || 400),
@@ -335,6 +360,19 @@ export default function FloatingToolbar({
       {groups.filter(g => g && (g.node || g.items?.length)).map(g => (
         <ToolGroup key={g.id} group={g} />
       ))}
+      {/* 图钉：跟其他组同一种墨面容器，永远排在最末 —— 它管的是这条工具栏
+          自己，不跟内容组抢位置 */}
+      {pinnable && autoHide && (
+        <ToolGroup group={{
+          id: '_pin',
+          variant: 'plain',
+          items: [{
+            id: 'pin', icon: Pin, active: pinned,
+            title: pinned ? '取消固定（贴近底边才浮现）' : '固定工具栏（常驻可见）',
+            onClick: togglePin,
+          }],
+        }} />
+      )}
     </div>
   );
 }

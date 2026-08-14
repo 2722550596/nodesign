@@ -97,6 +97,14 @@ export default function BindingLayer({
         // 悬停标签补一笔出处：agent 画的线标出来（用户自己画的是默认，不啰嗦）
         const label = (b.label || style.label)
           + (b.by === 'agent' ? ' · agent 画的' : b.by === 'auto' ? ' · 自动' : '');
+        // 常显标签（2026-08-14，用户点名线"太不显眼"）：手画的线平时就把词
+        // 挂在线上 —— 线型语义只有作者自己记得，词才是给别人看的。两个例外：
+        //   - 批注线不常显（那段文字本身就是标签，再标"批注"是废话）
+        //   - 自动线不常显（一站引三十张图，全挂词就是弹幕）
+        // 除非作者写了自定义 label —— 写了就是想让人看见。
+        const restLabel = b.label
+          || (b.by !== 'auto' && b.type !== 'annotates' ? style.label : null);
+        const shownLabel = hot ? label : restLabel;
         return (
           <g key={id}>
             {/* 命中区：透明粗线，细线也好悬停 */}
@@ -124,20 +132,22 @@ export default function BindingLayer({
               markerStart={style.tail ? `url(#nd-b-${b.type}-tail${suffix})` : undefined}
               style={{ transition: 'stroke 0.14s, stroke-width 0.14s' }}
             />
-            {/* 线上的字：只在悬停时出，平时线自己说话（线型即语义）。
-                否则一屏十几条线全挂着标签，画面就毁了。 */}
-            {hot && label && (
+            {/* 线上的字：手画的线常显（restLabel），悬停放大并补出处。
+                自动线仍是悬停才出 —— 弹幕化的教训写在上面。 */}
+            {shownLabel && (
               <g transform={`translate(${mid.x} ${mid.y})`}>
                 <text
                   textAnchor="middle" dominantBaseline="middle"
                   style={{
-                    fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-                    fill: PAPER.ink,
+                    fontFamily: FONT_SANS,
+                    fontSize: hot ? FONT_SIZE.xs : FONT_SIZE.xxs,
+                    fill: hot ? PAPER.ink : PAPER.ink2,
                     paintOrder: 'stroke',
                     stroke: PAPER.paper, strokeWidth: 4, strokeLinejoin: 'round',
+                    transition: 'font-size 0.14s, fill 0.14s',
                   }}
                 >
-                  {label}
+                  {shownLabel}
                 </text>
               </g>
             )}
@@ -162,32 +172,33 @@ function markerDef(key, shape, color, flipped = false) {
   const rot = flipped ? 'auto-start-reverse' : 'auto';
   const common = { id, orient: rot, markerUnits: 'userSpaceOnUse' };
 
+  // 2026-08-14 随线宽整体放大一号（细线端头配粗线像铅笔头装在钢笔上）
   if (shape === 'dot') {
     return (
-      <marker key={id} {...common} markerWidth={7} markerHeight={7} refX={3.5} refY={3.5}>
-        <circle cx={3.5} cy={3.5} r={2.6} fill={color} />
+      <marker key={id} {...common} markerWidth={9} markerHeight={9} refX={4.5} refY={4.5}>
+        <circle cx={4.5} cy={4.5} r={3.4} fill={color} />
       </marker>
     );
   }
   if (shape === 'bar') {
     return (
-      <marker key={id} {...common} markerWidth={8} markerHeight={10} refX={2} refY={5}>
-        <rect x={1} y={0.6} width={1.8} height={8.8} rx={0.9} fill={color} />
+      <marker key={id} {...common} markerWidth={9} markerHeight={12} refX={2.5} refY={6}>
+        <rect x={1} y={0.8} width={2.4} height={10.4} rx={1.2} fill={color} />
       </marker>
     );
   }
   if (shape === 'arrow-open') {
     return (
-      <marker key={id} {...common} markerWidth={11} markerHeight={11} refX={9} refY={5.5}>
-        <path d="M 2 1.5 L 9 5.5 L 2 9.5" fill="none" stroke={color} strokeWidth={1.4}
+      <marker key={id} {...common} markerWidth={13} markerHeight={13} refX={10.5} refY={6.5}>
+        <path d="M 2.5 2 L 10.5 6.5 L 2.5 11" fill="none" stroke={color} strokeWidth={1.9}
           strokeLinecap="round" strokeLinejoin="round" />
       </marker>
     );
   }
   // arrow（实心）
   return (
-    <marker key={id} {...common} markerWidth={10} markerHeight={10} refX={8.5} refY={5}>
-      <path d="M 1 1.2 L 9 5 L 1 8.8 z" fill={color} />
+    <marker key={id} {...common} markerWidth={12} markerHeight={12} refX={10} refY={6}>
+      <path d="M 1.2 1.4 L 10.8 6 L 1.2 10.6 z" fill={color} />
     </marker>
   );
 }

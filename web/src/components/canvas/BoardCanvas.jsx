@@ -30,13 +30,13 @@ import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
-import { useStageState, splitStageCards, StageBoardLayer, StageDock } from './StageLayer.jsx';
-import { zoneOfObjectId } from '../../lib/stage.js';
+import { useStageState, splitStageCards, StageBoardLayer, StageDock, SpriteVoiceBubble } from './StageLayer.jsx';
+import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
-import PresenceLayer from './PresenceLayer.jsx';
+import PresenceLayer, { rectFor as presenceRectFor } from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import LinkPopover from './LinkPopover.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
@@ -232,7 +232,35 @@ export default function BoardCanvas({
   const pressRef = useRef(null);   // 长按候选：{ timer, startX, startY, pointerId }
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [hoveredBinding, setHoveredBinding] = useState(null);
-  const [presence, setPresence] = useState(emptyPresence);
+  // 在场表。主精灵**常驻**（2026-08-14）：上次工作位置存 localStorage，刷新
+  // 页面精灵还站在原地（暗档）——"它住在这块板上"，不是每轮凭空出生一次。
+  const [presence, setPresence] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`nd:sprite:${projectId}`) || 'null');
+      if (saved?.targetId) {
+        return {
+          [MAIN_AGENT_ID]: {
+            id: MAIN_AGENT_ID, kind: 'main', name: 'Claude', color: colorFor(0),
+            active: false, targetId: saved.targetId, zoneId: saved.zoneId || null,
+            message: null, at: null,
+          },
+        };
+      }
+    } catch { /* 存的坏了就当没存 */ }
+    return emptyPresence();
+  });
+  // 主精灵挪窝就记一笔（换目标才写，别的 presence 变化不碰磁盘）
+  const spriteSavedRef = useRef(null);
+  useEffect(() => {
+    const t = presence[MAIN_AGENT_ID]?.targetId;
+    if (!t || spriteSavedRef.current === t) return;
+    spriteSavedRef.current = t;
+    try {
+      localStorage.setItem(`nd:sprite:${projectId}`, JSON.stringify({
+        targetId: t, zoneId: presence[MAIN_AGENT_ID].zoneId || null,
+      }));
+    } catch { /* 配额满了就算了，常驻是锦上添花 */ }
+  }, [presence, projectId]);
   const toolRef = useRef('select');
   toolRef.current = tool;
   const positionedRef = useRef([]);
@@ -2293,17 +2321,25 @@ export default function BoardCanvas({
     followToObject(who.targetId);
   }, [presence, followToObject, followAgent]);
 
-  // 在场表：从同一条事件流归约出"谁在哪干活"（board-presence.js，19 条测试）。
-  // 解析器用画布自己的寻址规则（zoneOfObjectId），跟舞台卡贴物件同一套口径。
+  // 在场表：从同一条事件流归约出"谁在哪干活"（board-presence.js）。
+  //
+  // ⚠️ 解析器必须过 `resolveObjectId`，跟舞台卡贴物件**同一套口径**。这里曾
+  // 拿裸路径直接当物件 id —— 而 deck 的 id 带 `deck:` 前缀、站点/世界里的
+  // 文件要收敛到根产物的卡：裸路径对不上任何一张卡，rectOf 恒 null，精灵
+  // 在这些目标上**从来没出现过**（2026-08-14 查实：「追踪器经常指不出工作
+  // 对象」的主病根）。artifactRoots 走 ref —— 回调保持稳定引用，产物列表
+  // 刷新不重建事件管线。
+  const artifactRootsRef = useRef(artifactRoots);
+  artifactRootsRef.current = artifactRoots;
   const handlePresenceEvent = useCallback((evt) => {
     setPresence(prev => reducePresence(prev, evt, (file) => {
-      if (!file) return null;
-      const objectId = String(file);
+      const objectId = resolveObjectId(file, artifactRootsRef.current);
+      if (!objectId) return null;
       return { objectId, zoneId: zoneOfObjectId(objectId) };
     }));
   }, []);
 
-  const { stageCards, stageBadges, dismissStageCard } = useStageState({
+  const { stageCards, stageBadges, voice, dismissStageCard } = useStageState({
     stageRef, artifactRoots, followToObject,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
     onRawEvent: handlePresenceEvent,
@@ -2382,7 +2418,7 @@ export default function BoardCanvas({
           return {
             ...prev,
             [MAIN_AGENT_ID]: {
-              id: MAIN_AGENT_ID, kind: 'main', name: '助手', color: colorFor(0),
+              id: MAIN_AGENT_ID, kind: 'main', name: 'Claude', color: colorFor(0),
               at: null,
               ...cur,
               active: true, targetId, zoneId: zoneOfObjectId(targetId), message: '收到，来了',
@@ -2762,6 +2798,17 @@ export default function BoardCanvas({
 
           {/* 在场：谁在画布上干活（PresenceLayer.jsx）*/}
           <PresenceLayer table={presence} rectOf={rectOfId} />
+
+          {/* 精灵语音泡：Claude 正在说的话，贴着主精灵的落点（跟精灵同一条
+              解析链，落点永远一致）。没位置（还没动过任何文件）就不上墙 ——
+              完整回复聊天侧栏一直有 */}
+          {voice?.text && (() => {
+            const main = presence[MAIN_AGENT_ID];
+            const anchor = main?.targetId ? presenceRectFor(main, rectOfId) : null;
+            return anchor
+              ? <SpriteVoiceBubble voice={voice} anchor={anchor} boardSize={stageBounds} />
+              : null;
+          })()}
 
           {/* 舞台层（板内坐标系）：角标 + 贴物件卡（StageLayer.jsx）
               单独一层浮在所有物件之上 —— 物件的 z 是会长的（pin_to_board 每次

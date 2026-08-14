@@ -125,8 +125,43 @@ describe('位置与话', () => {
 
   it('不认识的事件原样返回同一引用', () => {
     const a = run([{ type: 'run.start' }]);
-    expect(reducePresence(a, { type: 'run.delta.tool_input' }, resolve)).toBe(a);
+    expect(reducePresence(a, { type: 'run.deck_preview' }, resolve)).toBe(a);
     expect(reducePresence(a, {}, resolve)).toBe(a);
+  });
+
+  /**
+   * 开写就位（2026-08-14）：Edit/Write 入参流出 filePath 的那一拍精灵就该
+   * 挪过去，不等 file_changed —— 大文件一写十几秒，只听写完信号的话精灵
+   * 全程站在上一个目标上，用户看到的就是「追踪不及时」。
+   */
+  it('delta.tool_input 的 filePath 一到就更新位置（不等写完）', () => {
+    const t = run([
+      { type: 'run.start' },
+      { type: 'run.delta.tool_input', blockId: 'b1', name: 'Write', filePath: 'tasks/甲/x.md' },
+    ]);
+    expect(t[MAIN_AGENT_ID].targetId).toBe('tasks/甲/x.md');
+  });
+
+  it('delta.tool_input 没带 filePath（纯文本增量拍）不动位置', () => {
+    const a = run([
+      { type: 'run.start' },
+      { type: 'run.delta.tool_input', blockId: 'b1', name: 'Write', filePath: 'tasks/甲/x.md' },
+    ]);
+    const b = reducePresence(a, { type: 'run.delta.tool_input', blockId: 'b1', name: 'Write', append: 'x' }, resolve);
+    expect(b).toBe(a);
+  });
+});
+
+describe('常驻（2026-08-14）', () => {
+  it('run.done 下场但位置留着；下一轮 run.start 从老位置起跑', () => {
+    const t = run([
+      { type: 'run.start' },
+      { type: 'run.file_changed', filePath: 'tasks/甲/x.md' },
+      { type: 'run.done' },
+      { type: 'run.start' },
+    ]);
+    expect(t[MAIN_AGENT_ID].active).toBe(true);
+    expect(t[MAIN_AGENT_ID].targetId).toBe('tasks/甲/x.md');
   });
 });
 

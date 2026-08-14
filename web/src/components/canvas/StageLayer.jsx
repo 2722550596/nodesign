@@ -6,6 +6,7 @@ import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, t
 import { ZONE, STAGE_CARD_W, POP_IN } from '../../lib/board-geometry.js';
 import { sizeOf } from '../../lib/board-kinds.js';
 import { AskUserQuestionView } from '../chat/Message.jsx';
+import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
 
 // 生图占位卡的身位（4:3 图区 + 一行说明），铺坑位时按它算行列
 const SHIMMER_W = 200;
@@ -42,6 +43,11 @@ export function useStageState({
 }) {
   const [stageCards, setStageCards] = useState({});
   const [stageBadges, setStageBadges] = useState({});
+  // 精灵语音（2026-08-14）：主 agent 正文流的尾巴。它是精灵"正在说的话"，
+  // 贴着精灵显示（SpriteVoiceBubble）—— 代码卡管"正在写的东西"，这个管
+  // "正在说的话"，两个一起才是完整的输出框。
+  const [voice, setVoice] = useState(null);   // { round, text, running }
+  const voiceTimerRef = useRef(null);
   const followedBlocksRef = useRef(new Set());   // 每张舞台卡只推一次镜头
   // Task/Agent 工具入参里的 subagent_type（真名）。task_started 的 taskType 可能
   // 是 'local_agent' 泛名，tool_use 快照和 task.started 到达顺序不定 → 两头接
@@ -72,6 +78,18 @@ export function useStageState({
   const handleStageEvent = useCallback((evt) => {
     onRawEventRef.current?.(evt);
     switch (evt.type) {
+      case 'run.delta.text': {
+        // 子代理的话不进语音泡 —— 它们有自己的舞台便利贴，两处同播会打架
+        if (evt.parentToolUseId || !evt.text) return;
+        clearTimeout(voiceTimerRef.current);
+        setVoice(prev => {
+          const cont = prev && prev.round === evt.round;
+          // 只留尾巴：语音泡是"正在说"的直播窗，不是聊天记录的副本
+          const text = ((cont ? prev.text : '') + evt.text).slice(-1600);
+          return { round: evt.round ?? null, text, running: true };
+        });
+        break;
+      }
       case 'run.tool_use.started': {
         const kind = stageKindOf(evt.name);
         if (!kind || !evt.blockId) return;
@@ -272,6 +290,11 @@ export function useStageState({
         }, 900);
         followedBlocksRef.current.clear();
         pendingAgentTypeRef.current.clear();
+        // 语音泡收场：话说完了再挂一小会儿（用户可能刚扫到一半），然后蒸发。
+        // 完整回复永远在聊天侧栏，这里只是直播窗
+        setVoice(prev => (prev ? { ...prev, running: false } : prev));
+        clearTimeout(voiceTimerRef.current);
+        voiceTimerRef.current = setTimeout(() => setVoice(null), 8000);
         break;
       }
       default: break;
@@ -293,7 +316,71 @@ export function useStageState({
     });
   }, []);
 
-  return { stageCards, stageBadges, dismissStageCard };
+  return { stageCards, stageBadges, voice, dismissStageCard };
+}
+
+// ── 精灵语音泡（2026-08-14）──
+
+/**
+ * 精灵"正在说的话"。贴着主精灵的落点摆（BoardCanvas 算好 anchor 矩形传进来），
+ * 左侧优先、放不下翻到右侧 —— 跟代码卡的侧翻同一套习惯，两个框一左一右
+ * 围着目标物件，读法是"精灵在这儿，一边说一边写"。
+ *
+ * 视觉上它跟改造后的代码卡是一族：同一枚 Claude 星芒当头，一个纸面（说人话
+ * 的地方），一个墨面（机器写的东西）。字体也按这个分：正文 FONT_SANS。
+ */
+const VOICE_W = 300;
+
+export function SpriteVoiceBubble({ voice, anchor, boardSize }) {
+  const bodyRef = useRef(null);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [voice?.text]);
+  if (!voice?.text || !anchor) return null;
+
+  let x = anchor.x - VOICE_W - 18;
+  if (x < 12) x = Math.min(anchor.x + anchor.w + 18, (boardSize?.w || Infinity) - VOICE_W - 12);
+  const y = Math.max(12, anchor.y - 6);
+
+  return (
+    <div
+      data-stage="voice"
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{
+        position: 'absolute', left: x, top: y, width: VOICE_W,
+        zIndex: 320, pointerEvents: 'auto',
+        background: COLOR.bgCard,
+        borderRadius: RADIUS.xxl,
+        boxShadow: `0 0 0 1.5px ${alpha(CLAUDE_BRAND, voice.running ? 0.55 : 0.28)}, 0 10px 28px rgba(60,48,20,0.22)`,
+        opacity: voice.running ? 1 : 0.82,
+        transition: 'opacity 500ms ease, box-shadow 300ms ease',
+        animation: POP_IN,
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: GAP.sm,
+        padding: `${GAP.sm}px ${GAP.base}px`,
+        borderBottom: `1px solid ${alpha(CLAUDE_BRAND, 0.18)}`,
+      }}>
+        <ClaudeMark size={13} />
+        <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text, flex: 1 }}>
+          Claude
+        </span>
+        {voice.running && (
+          <span style={{ width: 10, height: 10, border: `1.5px solid ${alpha(CLAUDE_BRAND, 0.35)}`, borderTopColor: CLAUDE_BRAND, borderRadius: RADIUS.round, animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
+        )}
+      </div>
+      <div ref={bodyRef} style={{ maxHeight: 168, overflowY: 'auto', padding: `${GAP.md}px ${GAP.base}px` }}>
+        <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, lineHeight: 1.7, color: COLOR.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {voice.text}
+          {voice.running && (
+            <span style={{ display: 'inline-block', width: 6, height: 11, marginLeft: GAP.xxs, verticalAlign: '-2px', background: CLAUDE_BRAND, animation: 'ndCaret 900ms step-end infinite' }} />
+          )}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 // ── 渲染分流 ──
@@ -510,13 +597,19 @@ function StageCard({ card, obj, zoneRect, slot = 0, pos, boardSize, scale = 1, o
   );
 }
 
-/** 舞台卡内容体（代码直播 / 终端）—— 板内锚定与 dock 共用 */
+/**
+ * 舞台卡内容体（代码直播 / 终端）—— 板内锚定与 dock 共用。
+ *
+ * 2026-08-14 起它是**精灵的输出框**：头上一枚 Claude 星芒 + 跑动时描
+ * 品牌橙边 —— 跟精灵徽记、语音泡同一个身份。墨面正文不动：机器写的
+ * 东西保持等宽墨底，这条是设计语言的底线，换身份不换物料。
+ */
 function StageCardBody({ card, scale = 1, onDismiss }) {
   if (card.kind === 'image') return <ShimmerCard card={card} onDismiss={onDismiss} />;
   if (card.kind === 'subagent') return <SubagentStickyCard card={card} onDismiss={onDismiss} scale={scale} />;
   const running = card.status === 'running';
   const isTerm = card.kind === 'terminal';
-  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : alpha(CANVAS.brass, 0.65);
+  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : alpha(CLAUDE_BRAND, 0.7);
   const label = card.tool === 'Edit' ? '修改' : card.tool === 'Write' ? '写入' : toolLabelOf(card.tool);
   return (
     <div
@@ -530,7 +623,8 @@ function StageCardBody({ card, scale = 1, onDismiss }) {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.base}px`, background: 'rgba(255,255,255,0.06)' }}>
-        {isTerm ? <Terminal size={11} color="#c8b98c" /> : <PencilLine size={11} color="#c8b98c" />}
+        <ClaudeMark size={12} />
+        {isTerm ? <Terminal size={10} color="#c8b98c" /> : <PencilLine size={10} color="#c8b98c" />}
         <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: TERM.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {isTerm ? (card.command || 'bash') : `${label} · ${fileNameOf(card.filePath) || '…'}`}
         </span>

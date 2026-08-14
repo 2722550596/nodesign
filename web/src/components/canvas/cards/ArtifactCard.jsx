@@ -76,7 +76,10 @@ export const ARTIFACT_FACES = {
      * 站点按真实设备宽渲染再等比缩，取顶部一屏。**不套 1920×1080 固定画框** ——
      * 站点高度不定，套死比例只会把长页裁掉一半还显示成"设计稿"。
      */
-    Preview: ({ o, projectId, fileVersions, box }) => {
+    /** 滚轮策略（2026-08-14）：站点是长页，预览态的滚动条以前形同虚设 ——
+     *  iframe pointerEvents:none，滚轮全被相机吃掉。现在滚轮转发进 iframe。 */
+    wheel: 'iframe',
+    Preview: ({ o, projectId, fileVersions, box, frameRef }) => {
       const deviceW = SITE_VIEWPORTS[0].w;
       const scale = box.w / deviceW;
       // 根站的 base 合法地是空串（扁平化后站点长在工作区根上），硬拼 `/` 会造出
@@ -86,6 +89,7 @@ export const ARTIFACT_FACES = {
       return (
         <LiveFrame
           title={`site-${o.id}`}
+          frameRef={frameRef}
           src={`${Assets.artifactFileUrl(projectId, joinRel(base, entry))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
           style={{
             width: deviceW, height: Math.round(box.h / scale), border: 0,
@@ -113,6 +117,7 @@ export const ARTIFACT_FACES = {
     },
     /** 地图比框高就自己滚，不去顶别人的位置（布局按固定矩形排布） */
     scrollable: true,
+    wheel: 'element',
     Preview: ({ o, projectId }) => (
       <WorldMap projectId={projectId} base={o.base || o.task} nodes={o.nodes} />
     ),
@@ -149,7 +154,37 @@ export default function ArtifactCard({
 }) {
   const face = ARTIFACT_FACES[o.type];
   const boxRef = useRef(null);
+  const frameRef = useRef(null);
   const inView = useInViewport(boxRef);
+
+  /**
+   * 预览态的滚轮（2026-08-14）：以前这块的滚动条形同虚设 —— 相机在祖先节点上
+   * 原生监听 wheel 且无条件 preventDefault，卡内滚动的默认行为被整个吃掉。
+   * 修法只能也用**原生监听**：DOM 冒泡先到后代，这里 stopPropagation 就拦住了
+   * 相机（React 合成事件走根委托，拦不到人家的原生监听）。
+   *   - Ctrl/⌘+滚轮放行：那是缩放手势，属于相机
+   *   - site：转发进 iframe（同源，contentWindow.scrollBy）
+   *   - world：滚 box 自己（overflowY:auto 的那层）
+   *   - deck：16:9 整幅在框里，没有可滚的，不拦（滚轮照旧平移画布）
+   */
+  const wheelMode = face?.wheel && inView && scale >= PREVIEW_MIN_SCALE ? face.wheel : null;
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || !wheelMode) return undefined;
+    const onWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) return;
+      e.stopPropagation();
+      e.preventDefault();
+      if (wheelMode === 'iframe') {
+        try { frameRef.current?.contentWindow?.scrollBy(0, e.deltaY); } catch { /* 跨源不滚 */ }
+      } else {
+        el.scrollTop += e.deltaY;
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [wheelMode]);
+
   if (!face) return null;
 
   // 主角档：画框跟 sizeOf 同一套算法（board-kinds.js），命中区和视觉必须一致
@@ -215,7 +250,7 @@ export default function ArtifactCard({
         }}
       >
         {live
-          ? <face.Preview o={o} projectId={projectId} fileVersions={fileVersions} box={box} />
+          ? <face.Preview o={o} projectId={projectId} fileVersions={fileVersions} box={box} frameRef={frameRef} />
           : (
             /* 没挂预览时不留一块空白 —— 空白看着像"这件东西坏了"。
                给一张空白横线纸加形态图标（同首页那张 .ndd-shot.empty），

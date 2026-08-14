@@ -20,11 +20,13 @@ import { CANVAS } from './theme.js';
  *   对照 contrast      实线 + 两端短横      无向，端头对称才读得出"并列"
  */
 
+// 2026-08-14 加粗一档（用户点名"太不显眼"）：原版线宽 1~1.6 在缩小的镜头下
+// 细得像卡片描边的毛刺。加粗保持相对秩序不变 —— 改自最重、批注最轻。
 export const BINDING_STYLES = {
   'derives-from': {
     label: '改自',
-    stroke: PAPER.ink2,
-    width: 1.6,
+    stroke: PAPER.ink,
+    width: 2.4,
     dash: null,
     head: 'arrow',      // 终点实心箭头
     tail: null,
@@ -33,8 +35,8 @@ export const BINDING_STYLES = {
   },
   annotates: {
     label: '批注',
-    stroke: PAPER.pencil,
-    width: 1,
+    stroke: PAPER.ink2,
+    width: 1.4,
     dash: '3 4',
     head: 'dot',
     tail: null,
@@ -43,7 +45,7 @@ export const BINDING_STYLES = {
   flow: {
     label: '接着',
     stroke: PAPER.ink2,
-    width: 1.4,
+    width: 2,
     dash: null,
     head: 'arrow-open',
     tail: null,
@@ -52,7 +54,7 @@ export const BINDING_STYLES = {
   ref: {
     label: '取材',
     stroke: PAPER.pencil,
-    width: 1.2,
+    width: 1.6,
     dash: '1 5',
     head: 'arrow-open',
     tail: null,
@@ -61,7 +63,7 @@ export const BINDING_STYLES = {
   contrast: {
     label: '对照',
     stroke: CANVAS.brass,
-    width: 1.4,
+    width: 2,
     dash: null,
     head: 'bar',
     tail: 'bar',        // 两端对称 = 无向
@@ -69,8 +71,8 @@ export const BINDING_STYLES = {
   },
   link: {
     label: '关联',
-    stroke: PAPER.pencil,
-    width: 1.1,
+    stroke: PAPER.ink2,
+    width: 1.8,
     dash: null,
     head: 'dot',        // 两端对称小圆点 = 无向；纯素线会跟涂鸦笔画混淆
     tail: 'dot',

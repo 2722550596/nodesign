@@ -334,6 +334,10 @@ export default function CanvasFrame({
           // 510 = ARTIFACT_WINDOW_Z(500) + 10。写常量不 import ——
           // ArtifactWindow 是懒加载的，为一个数字把它拖进主包不值
           zIndex={510}
+          // 贴边浮现（2026-08-14，用户点名跟 AI 悬浮卡同一套手感）：平时收着，
+          // 鼠标到底缘那条带就出来；末尾的图钉钉住 = 常驻
+          autoHide
+          pinnable
           groups={winGroups || boardGroups}
         />
 

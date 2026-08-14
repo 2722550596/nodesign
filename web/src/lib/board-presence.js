@@ -60,7 +60,7 @@ export function emptyPresence() {
  * - `run.start`            主 agent 上场
  * - `run.task.started`     一个子代理上场（带 subagent_type 当名字）
  * - `run.task.notification`/`run.subagent.stop` 子代理下场
- * - `run.file_changed`     谁在动哪个文件 → 更新它的位置
+ * - `run.delta.tool_input` / `run.file_changed`  谁在动哪个文件 → 更新它的位置
  * - `run.tool_use`         正在做什么 → 更新它那句话
  * - `run.done` / `run.error` 全体下场
  *
@@ -79,13 +79,17 @@ export function reducePresence(table, evt, resolve) {
 
   switch (t) {
     case 'run.start': {
-      if (table[MAIN_AGENT_ID]?.active) return table;
+      const cur = table[MAIN_AGENT_ID];
+      if (cur?.active) return table;
       return {
         ...table,
         [MAIN_AGENT_ID]: {
-          id: MAIN_AGENT_ID, kind: 'main', name: '助手',
+          id: MAIN_AGENT_ID, kind: 'main', name: 'Claude',
           color: colorFor(0), active: true,
-          targetId: null, zoneId: null, message: null, at: evt.at || null,
+          // 常驻（2026-08-14）：上一轮的落点不清零 —— 精灵从"住的地方"起飞
+          // 滑向新目标，而不是凭空消失再冒出来。
+          targetId: cur?.targetId ?? null, zoneId: cur?.zoneId ?? null,
+          message: null, at: evt.at || null,
         },
       };
     }
@@ -114,6 +118,15 @@ export function reducePresence(table, evt, resolve) {
       return { ...table, [id]: { ...table[id], active: false, message: null } };
     }
 
+    // 谁在动哪个文件 → 更新它的位置。两个来源：
+    //   run.delta.tool_input  Edit/Write 入参正在流（filePath 是工作区相对路径，
+    //                         路径闭合就发、只发一次）—— 精灵**开写就位**，不等
+    //                         写完。只听 file_changed 的话，一个大文件写十几秒，
+    //                         精灵全程站在上一个目标上（2026-08-14「追踪不及时」
+    //                         的另一半病根；run.delta.tool_use 不听 —— 那条快照
+    //                         里的 file_path 是绝对路径，前端解析不了）。
+    //   run.file_changed      写完落盘（权威，兜住非流式工具写的文件）。
+    case 'run.delta.tool_input':
     case 'run.file_changed': {
       const cur = table[who];
       if (!cur) return table;
