@@ -19,7 +19,7 @@ const LIMIT = 600;
 
 /** 老户冻结上限（= 2026-08-14 现状）。只许调低。 */
 const GRANDFATHERED = {
-  'web/src/components/canvas/BoardCanvas.jsx': 3037,   // B1 入座 → B2 搬家家族迁出后
+  'web/src/components/canvas/BoardCanvas.jsx': 2941,   // B1 入座 → B2 搬家 → B3 菜单表迁出后
   'web/src/routes/ProjectWorkspace.jsx': 2427,
   'server/engine/agent/hooks.js': 1975,
   'web/src/components/chat/Message.jsx': 1886,

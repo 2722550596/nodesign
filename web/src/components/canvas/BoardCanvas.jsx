@@ -1,13 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import {
-  Plus, ExternalLink,
-  X, Trash2, BookOpen, FolderOpen, FolderInput, LogOut,
-  PencilLine, ChevronsUpDown, Focus,
-  Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, MessageSquarePlus, LayoutGrid,
-  FolderPlus, StickyNote, Link2,
-} from 'lucide-react';
+import { Plus, ExternalLink, X, BookOpen, LogOut, PencilLine, ChevronsUpDown, Focus, Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid } from 'lucide-react';
 import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
 import { orderWithGroups } from '../../lib/relation-order.js';
@@ -19,7 +13,7 @@ import {
   EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, primaryOf, readerOf, canAddToContext, isFileBacked,
+  SIZES, sizeOf, actionsOf, primaryOf, readerOf, isFileBacked,
   chromeOf, cardOf, labelOf,
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
@@ -33,6 +27,7 @@ import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBo
 import { AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
 import { usePhantoms, claimPhantomSeat, PhantomImageCard } from './PhantomLayer.jsx';
 import { useBoardMoves } from './useBoardMoves.js';
+import { buildBoardMenu } from './canvas-menus.js';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
 import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
@@ -1866,112 +1861,20 @@ export default function BoardCanvas({
      */
     const sel = selectedIdsRef.current;
     const batch = sel.length > 1 && sel.includes(objId || zoneId);
+    const objs = batch ? sel.map(id => positionedRef.current.find(o => o.id === id)).filter(Boolean) : [];
+    const zones = batch ? sel.filter(id => zonesEffRef.current[id]) : [];
 
-    let items;
-    if (batch) {
-      const objs = sel.map(id => positionedRef.current.find(o => o.id === id)).filter(Boolean);
-      const zones = sel.filter(id => zonesEffRef.current[id]);
-      const addable = objs.filter(canAddToContext);
-      const movable = [...objs.filter(isFileBacked).map(o => o.id), ...zones];
-      items = [
-        {
-          id: 'move', icon: FolderInput, label: `移动到…`, hint: `${movable.length} 件`,
-          disabled: !movable.length,
-          onClick: () => setMoveTo({ x: mx, y: my, ids: movable, current: '', exclude: zones }),
-        },
-        {
-          id: 'add', icon: Plus, label: '加入上下文', hint: `${addable.length} 件`,
-          disabled: !addable.length,
-          onClick: () => addable.forEach(handleAdd),
-        },
-        {
-          id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理',
-          onClick: () => setAnnotate({
-            x: mx, y: my,
-            target: { kind: 'multi', id: sel[0], title: `${sel.length} 件`, typeLabel: '选中' },
-            targets: [
-              ...objs.map(annotTargetOf),
-              ...zones.map(z => ({ kind: 'folder', id: z, path: z, title: z.split('/').pop() || z, typeLabel: '文件夹' })),
-            ],
-          }),
-        },
-        { divider: true },
-        {
-          id: 'del', icon: Trash2, label: '删除', danger: true, hint: `${sel.length} 件`,
-          // 批量删除加一道确认：单件删错了还能从 git 里捞，一次删十件是另一
-          // 个量级的事故，而这个菜单项就挨着"移动到…"
-          onClick: () => {
-            if (!window.confirm(`删掉这 ${sel.length} 件？`)) return;
-            objs.forEach(o => handleDeleteNote(o));
-            zones.forEach(z => handleDeleteFolder(z, z.split('/').pop()));
-          },
-        },
-      ];
-    } else if (obj) {
-      items = [
-        { id: 'open', icon: FolderOpen, label: '打开', onClick: () => primaryOpenRef.current?.(obj) },
-        // 改名只给磁盘上真有位置的（涂鸦 / 手写文字没有文件可改）
-        ...(isFileBacked(obj) ? [{ id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(obj.id) }] : []),
-        ...(canAddToContext(obj) ? [{ id: 'add', icon: Plus, label: '加入上下文', onClick: () => handleAdd(obj) }] : []),
-        // 搬家的**唯一显式入口**（拖到空地搬出去那条 2026-08-13 撤了，见
-        // onPointerUp 上面那段墓志铭）。画布原生物件没有磁盘位置，不给。
-        ...(isFileBacked(obj) ? [{
-          id: 'move', icon: FolderInput, label: '移动到…',
-          // 窗里的东西住在窗那一层（`zoneId` 只有桌面上的卡才带）
-          onClick: () => setMoveTo({ x: mx, y: my, ids: [obj.id], current: obj.zoneId ?? (winIn || '') }),
-        }] : []),
-        // 连线（2026-08-14）：从这件东西拉一条关系线到画布上另一件。
-        // 全类型都给 —— 手写字/涂鸦也能当端点（标注全局化）。
-        { id: 'linkto', icon: Link2, label: '连线到…', onClick: () => setLinkFrom({ id: obj.id, title: titleOfId(obj.id) }) },
-        // E3：从「垫半句话进输入框」升级成就地标注 —— 在东西上写完一句，
-        // 按发送 agent 立刻来。全类型都给（图片/文件/涂鸦/手写字也算产物）。
-        { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
-          x: mx, y: my,
-          target: annotTargetOf(obj),
-        }) },
-        { divider: true },
-        { id: 'del', icon: Trash2, label: '删除', danger: true, onClick: () => handleDeleteNote(obj) },
-      ];
-    } else if (zoneId) {
-      items = [
-        { id: 'enter', icon: FolderOpen, label: '进入', onClick: () => focusZoneAction(zoneId) },
-        { id: 'new', icon: FolderPlus, label: '在里面新建文件夹', onClick: () => createFolderAt(zoneId, null) },
-        { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => setAnnotate({
-          x: mx, y: my,
-          target: { kind: 'folder', id: zoneId, path: zoneId, title: zoneId.split('/').pop() || zoneId, typeLabel: '文件夹' },
-        }) },
-        { id: 'linkto', icon: Link2, label: '连线到…', onClick: () => setLinkFrom({ id: zoneId, title: titleOfId(zoneId) }) },
-        { id: 'rename', icon: PencilLine, label: '重命名', onClick: () => setRenamingId(zoneId) },
-        // 文件夹在这之前**根本没有搬家入口**：卡片能拖，但拖只改画布坐标，
-        // 磁盘上它永远待在原地（拖到另一张文件夹卡上也不算数）。
-        {
-          id: 'move', icon: FolderInput, label: '移动到…',
-          onClick: () => setMoveTo({
-            x: mx, y: my, ids: [zoneId],
-            current: zoneId.includes('/') ? zoneId.slice(0, zoneId.lastIndexOf('/')) : '',
-            exclude: [zoneId],     // 自己和自己的子孙不能当目标
-          }),
-        },
-        { divider: true },
-        { id: 'del', icon: Trash2, label: '删除文件夹', danger: true, onClick: () => handleDeleteFolder(zoneId, zoneId.split('/').pop()) },
-      ];
-    } else if (winIn !== null) {
-      // 文件夹窗里的空白：能做的只有"在这一层新建"。写字/涂鸦/整理画布都是
-      // 桌面那一层的动作（窗里是算出来的网格，没有"摆在哪儿"这回事）
-      items = [
-        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt(winIn, null) },
-      ];
-    } else {
-      items = [
-        // 桌面上右键就建在桌面上。文件夹**里面**新建走窗里那个按钮（它带着
-        // 自己的 dir）—— 桌面这一层永远是根，这里不需要再问"我在哪一层"
-        { id: 'new', icon: FolderPlus, label: '新建文件夹', onClick: () => createFolderAt('', at) },
-        { id: 'note', icon: StickyNote, label: '新建便利贴', hint: 'agent 能看到', onClick: () => createNoteAt(at) },
-        { divider: true },
-        { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => onAskAgent?.({ at }) },
-        { id: 'tidy', icon: LayoutGrid, label: '整理这块画布', onClick: tidyBoard },
-      ];
-    }
+    // 菜单表本体在 canvas-menus.js（B3 抽出）：这里只做命中解析和动作句柄
+    const items = buildBoardMenu(
+      { mx, my, at, obj, zoneId, winIn, batch, sel, objs, zones },
+      {
+        setMoveTo, setAnnotate, setLinkFrom, setRenamingId,
+        handleAdd, handleDeleteNote, handleDeleteFolder,
+        openObject: (o) => primaryOpenRef.current?.(o),
+        openFolder, createFolderAt, createNoteAt,
+        onAskAgent, tidyBoard, annotTargetOf, titleOfId,
+      },
+    );
     setMenu({ x: e.clientX, y: e.clientY, items });
   }, [zoneAtPoint, createFolderAt, createNoteAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent]);
 
