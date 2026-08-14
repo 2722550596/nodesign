@@ -39,6 +39,46 @@ function ensureScratch() {
   return scratchDir;
 }
 
+/**
+ * 会话尘埃清扫（2026-08-14，用户点名）：每发一次性会话都会在
+ * CLAUDE_CONFIG_DIR/projects/<scratch 目录名> 落一个 jsonl（实测 3~9KB，
+ * 别处零痕迹 —— todos/history 都不沾）。这些文件用完即垃圾（永不 resume），
+ * 但**不在收到结果时立删** —— CLI 子进程可能还有收尾写入，删早了是竞态。
+ * 做法：每次发车前扫一遍，删掉超过 10 分钟的（在跑的那发永远够新，动不到）；
+ * 外加数量兜底 —— 无论多新，只留最近 50 个。崩溃残留下次发车自动收走，
+ * 不需要独立的 cron/钩子。
+ */
+const DUST_MAX_AGE_MS = 10 * 60_000;
+const DUST_MAX_COUNT = 50;
+let lastSweep = 0;
+
+function sweepSessionDust() {
+  const now = Date.now();
+  if (now - lastSweep < 60_000) return;   // 一分钟内不重复扫
+  lastSweep = now;
+  try {
+    // CLI 的 project 目录名 = cwd 路径的分隔符/点全换成 '-'（实测
+    // /tmp/nodesign-quick-summary → -tmp-nodesign-quick-summary）
+    const dir = path.join(
+      platform.claudeConfigDir, 'projects',
+      ensureScratch().replace(/[\\/.]/g, '-'),
+    );
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => {
+        const full = path.join(dir, f);
+        try { return { full, mtime: fs.statSync(full).mtimeMs }; } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtime - a.mtime);
+    files.forEach((f, i) => {
+      if (now - f.mtime > DUST_MAX_AGE_MS || i >= DUST_MAX_COUNT) {
+        try { fs.unlinkSync(f.full); } catch { /* 正被谁摸着就下次再说 */ }
+      }
+    });
+  } catch { /* 目录还不存在 / 权限怪相：清扫是卫生不是功能，无声跳过 */ }
+}
+
 let chain = Promise.resolve();
 let queued = 0;
 
@@ -57,6 +97,7 @@ export function quickModelLine(system, prompt) {
 }
 
 async function runOnce(system, prompt) {
+  sweepSessionDust();
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
   try {
