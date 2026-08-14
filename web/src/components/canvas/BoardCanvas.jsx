@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Assets, Memory, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
+import { orderByRelations } from '../../lib/relation-order.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../lib/theme.js';
 import { PAPER, PAPER_SHADOW, paperCard } from '../../lib/paper.js';
 import {
@@ -643,7 +644,13 @@ export default function BoardCanvas({
         if (fresh.includes(it)) continue;
         seatedBottom = Math.max(seatedBottom, it.pos.y + sizeOf(it).h);
       }
-      const ordered = [...fresh].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      // 字典序只是兜底；关系边（对照/关联凑相邻、接着正向、改自旧→新）
+      // 决定真正的先后 —— 顺序是权威，坐标是算的（北极星切片④）
+      const byId = new Map(fresh.map(it => [String(it.id), it]));
+      const ordered = orderByRelations(
+        [...byId.keys()].sort((a, b) => a.localeCompare(b)),
+        bindings,
+      ).map(id => byId.get(id));
       const packed = packRow(
         ordered.map(it => { const sz = sizeOf(it); return { id: it.id, w: sz.w, h: sz.h }; }),
         { width: DESKTOP_W - MARGIN_X * 2, xMin: MARGIN_X, yTop: seatedBottom ? seatedBottom + ROW_GAP : MARGIN_X },
@@ -665,7 +672,7 @@ export default function BoardCanvas({
       seatFixes[it.id] = { x: it.pos.x, y: it.pos.y };
     }
     return { positioned: items, folderView: folders, contentBottom: bottom, seatFixes };
-  }, [dirIndex, folderCardOf, layout, zonesEff]);
+  }, [dirIndex, folderCardOf, layout, zonesEff, bindings]);
   positionedRef.current = positioned;
   folderViewRef.current = folderView;
   // 全目录树的物件（不止桌面这一层）—— 文件夹窗里的右键要按 id 找得到它们
@@ -1654,8 +1661,11 @@ export default function BoardCanvas({
     if (zv.length) {
       // 顶层文件夹进网格；嵌套的（`a/b`）不单独排 —— 它画在父文件夹里面，
       // 位置由父的排布决定，单独摆会跑到外面去
-      const tops = zv.filter(z => !z.id.includes('/'))
-        .sort((a, b) => a.y - b.y || a.x - b.x);
+      const byZid = new Map(zv.filter(z => !z.id.includes('/')).map(z => [z.id, z]));
+      const tops = orderByRelations(
+        [...byZid.values()].sort((a, b) => a.y - b.y || a.x - b.x).map(z => z.id),
+        bindings,
+      ).map(id => byZid.get(id));
       const GAP_X = 24; const GAP_Y = 24;
       const maxW = DESKTOP_W - MARGIN_X * 2;
       // 文件夹是**固定尺寸的方卡**（2026-08-13），排布退化成"一行一行摆格子"。
@@ -1683,7 +1693,7 @@ export default function BoardCanvas({
     useGlobalStore.getState().showToast(
       `已整理 ${targets.length} 件产物` + (zv.length ? ` · ${zv.filter(z => !z.id.includes('/')).length} 个文件夹` : ''),
       'success');
-  }, [scheduleSave]);
+  }, [scheduleSave, bindings]);
 
   const openFolderRef = useRef(null);
   openFolderRef.current = openFolder;
