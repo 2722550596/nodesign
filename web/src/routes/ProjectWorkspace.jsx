@@ -43,6 +43,12 @@ import { bumpFileVersion, versionOfFile } from '../lib/file-versions.js';
 
 // 舞台旁路消费的事件（转发进 BoardCanvas 的 stageRef，见 handleEvent 管线 1 段）
 const STAGE_EVENTS = new Set([
+  // run.start（2026-08-14 补）：在场 reducer 的上场信号。曾不在名单 —— reducer
+  // 的 run.start 案是死路，精灵只能等第一个工具事件靠"接管显形"立起来，
+  // 整个思考/开场白阶段装闲（首条消息前的长思考最明显）。
+  // run.tool_use_summary 同批补：reducer 的"正在做什么"案同样从没收到过事件
+  //（它只在 CHAT_STREAM_EVENTS，而管线 2 在管线 1 之后才 return，进这里是旁路）。
+  'run.start', 'run.tool_use_summary',
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
   'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
   'run.done', 'run.error', 'run.cancelled',
@@ -717,12 +723,22 @@ export default function ProjectWorkspace() {
             setCurrentRunId(serverRunId);
             setActiveRun({ pid: id, runId: serverRunId });
           }
+          // 精灵接管（2026-08-14 首条消息真空修）：真的 run.start 多半已丢 ——
+          // 新项目首条消息时 WS 还挂在 sid=null 上，服务端把 session-scoped
+          // 事件全滤掉了，等 POST 返回带新 sid 重连，run.start 早发完了；断线
+          // 重连同理。聊天靠 live_turn 快照补课，在场表没有快照 —— server 报
+          // activeRunId 就是"在跑"的权威话，合成一枚 run.start 让主 agent 立即
+          // 上场（reducer 对已在场的 run.start 幂等，网络抖动多来几次无害）。
+          stageRef.current?.onEvent?.({ type: 'run.start', synthetic: true, runId: serverRunId });
         } else if (localRunId) {
           setIsStreaming(false);
           currentRunIdRef.current = null;
           setCurrentRunId(null);
           setActiveRun(null);
           setMessages(prev => clearThinkingStreaming(prev));
+          // 对称收场：断线期间 run 已结束（run.done 错过且 buffer 挤掉了）——
+          // 不扫的话精灵冻在"正在干活"里转圈，同六批换会话那枚合成事件。
+          stageRef.current?.onEvent?.({ type: 'run.cancelled', synthetic: true });
         }
         break;
       }
