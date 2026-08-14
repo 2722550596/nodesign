@@ -1,7 +1,7 @@
 ---
 name: site-craft
-version: 0.2.0
-description: NoDesign 站点设计方法论 —— 静态站点（手写起步，CDN 库与构建按需），先跟用户对齐一页的气质再铺开全站。含骨架推导、排版与色彩系统、图像手法（抠图叠层）、中文排版基线、反默认清单。当用户要做网站 / 官网 / 个人站 / 落地页 / 作品集 / 博客 / landing page / 多页站点，或要"能发出去的一个地址"时使用。不要用于 deck / 幻灯片 / PPT（那是 deskskill-engine-mini）。
+version: 0.3.0
+description: NoDesign 站点设计方法论 —— 静态站点（手写起步，CDN 库与构建按需），先跟用户对齐一页的气质再铺开全站。含骨架推导、排版与色彩系统、图像手法（抠图叠层）、中文排版基线、反默认清单、构建道配方（React / vite / Tailwind / 组件库站点）。当用户要做网站 / 官网 / 个人站 / 落地页 / 作品集 / 博客 / landing page / 多页站点，或要"能发出去的一个地址"时使用。不要用于 deck / 幻灯片 / PPT（那是 deskskill-engine-mini）。
 ---
 
 # 核心守则：先定气质，再铺页
@@ -105,12 +105,15 @@ CDN 库随便拉（gsap / lenis / three / alpine / htmx），但动效是调味�
 
 **站点住自己的文件夹**（按站名起，别把 index.html 直接放工作区根 ——
 根是整个项目的桌面）。夹里一份 `index.html` + 一份 `style.css` 起步，
-多页同目录加 `.html`。简单站点这样就够，别为它们引工程。真需要构建（几十篇 md 的博客、组件复用的多页站）就上：
-Astro / 11ty / 自写脚本都行，装包跑得通，产物落 `dist/`（系统按约定自动认）。
-唯一硬约束：**产物必须是纯静态文件**，SSR / 常驻进程不行。
+多页同目录加 `.html`。简单站点这样就够，别为它们引工程。构建道（React /
+打包器 / 生成脚本）什么时候值得上、怎么配才不跟平台打架（`base: './'`、
+页=html 入口、build 节奏），配方在 `patterns/build-lane.md` —— **动手搭
+package.json 之前先 Read 它**。硬约束不变：**产物必须是纯静态文件**
+（落 `dist/`，系统自动认），SSR / 常驻进程不行。
 
 样式建议集中在一份 CSS 里 —— 用户自己才改得动；utility class（Tailwind 等）
-散在几百个标签上，改行高要改一百处。用户点名要就用。
+散在几百个标签上，改行高要改一百处。用户点名要就用。（构建道上这笔账不一样，
+立场见 `patterns/build-lane.md`。）
 
 ## 反默认清单
 
@@ -152,3 +155,4 @@ Astro / 11ty / 自写脚本都行，装包跑得通，产物落 `dist/`（系统
 > 起手模板：Read `site.template.html` 和 `style.template.css`（已拷进 cwd）。
 > 目录约定、产物根、`_drafts/`、导出交付在站点技术参考（首次写站点 html 时注入）。
 > 抠图叠层配方按需 Read 本 skill 目录下的 `patterns/cutout-collage.md`。
+> 构建道（React / vite / Tailwind / 组件库）配方 Read `patterns/build-lane.md`。

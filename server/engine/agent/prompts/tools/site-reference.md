@@ -65,6 +65,10 @@ cp style.template.css 观察日志/style.css`，然后改（文件夹名换成�
 - CDN 随便用（跟 deck 同生态）：`<script>` 标签或 importmap 拉 gsap / lenis /
   three / alpine / htmx / echarts / katex（esm.sh / unpkg / jsdelivr）
 - npm install 跑得通，但依赖不进导出包 —— 只有构建型站点才值得装
+- **打包器一律配相对 base**（vite: `base: './'`）—— 预览挂在 artifact-file
+  深前缀下，根路径产物全部 404。这条加上"页=html 入口、别上 SPA router"，
+  踩了才发现就是返工整站；上构建道前先 Read site-craft skill 的
+  `patterns/build-lane.md`
 - 硬约束：**产物必须是纯静态文件**。SSR / 需要常驻 Node 进程的方案不行
 - CDN 依赖意味着导出的 zip 离线打开时缺那些库（联网打开正常，发布后正常）
 
