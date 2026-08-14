@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { PAPER } from '../../lib/paper.js';
 import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
 import { isImeEnter } from '../../lib/helpers.js';
@@ -28,45 +28,85 @@ const KEYFRAMES = `
   @keyframes ndSketchDraw { to { stroke-dashoffset: 0; } }
   @keyframes ndSketchFill { to { opacity: 0.94; } }
   @keyframes ndInkIn      { to { opacity: 1; } }
-  @keyframes ndSpRot {
-    8.3% { transform: rotate(30deg); } 16.6% { transform: rotate(60deg); }
-    25% { transform: rotate(90deg); } 33.3% { transform: rotate(120deg); }
-    41.6% { transform: rotate(150deg); } 50% { transform: rotate(180deg); }
-    58.3% { transform: rotate(210deg); } 66.6% { transform: rotate(240deg); }
-    75% { transform: rotate(270deg); } 83.3% { transform: rotate(300deg); }
-    91.6% { transform: rotate(330deg); } 100% { transform: rotate(360deg); }
+  @keyframes ndRayPulse {
+    0% { transform: scale(1); }
+    8% { transform: scale(0.7); }
+    16% { transform: scale(0.84); }
+    24% { transform: scale(1); }
+    100% { transform: scale(1); }
   }
 `;
 
 /** 描线用时（手写文字的起笔时刻拿它当 delay，字总在图标成形后才落） */
 const MARK_DRAW_MS = 760;
 
-/** 放射条的阶梯透明度（尾迹朝逆时针淡出 → 视觉上顺时针追） */
-const SPIN_BARS = [
-  [0, 0.14], [30, 0.29], [60, 0.43], [90, 0.57], [120, 0.71], [150, 0.86], [180, 1],
+/**
+ * 官方星芒的 12 个触点各占一个楔形扇区（scratchpad/claude-rays.mjs 从
+ * CLAUDE_PATH 逐点量出来的：半径极大=触点尖、相邻尖的中分线=扇区界）。
+ * 每条是"圆心 → 两条界在半径 40 处"的三角 clipPath —— 裁的都是同一份
+ * 官方 path，所以触点形状一个字没改。顺时针序，表盘 12 点起。
+ * ⚠️ 触点间隔天生不均（14°/42°/57°…）—— 那是官方图的手绘感，别"整理"成
+ * 等分（等分正是当初手搓 11 根射线被判丑的原因）。
+ */
+const RAY_WEDGES = [
+  'M12 12 L6.50 -27.62 L29.16 -24.13 Z',
+  'M12 12 L29.16 -24.13 L47.04 -7.29 Z',
+  'M12 12 L47.04 -7.29 L51.96 13.81 Z',
+  'M12 12 L51.96 13.81 L47.34 30.73 Z',
+  'M12 12 L47.34 30.73 L37.93 42.46 Z',
+  'M12 12 L37.93 42.46 L22.33 50.64 Z',
+  'M12 12 L22.33 50.64 L-0.72 49.92 Z',
+  'M12 12 L-0.72 49.92 L-16.47 40.10 Z',
+  'M12 12 L-16.47 40.10 L-26.41 23.15 Z',
+  'M12 12 L-26.41 23.15 L-26.17 0.05 Z',
+  'M12 12 L-26.17 0.05 L-14.23 -18.20 Z',
+  'M12 12 L-14.23 -18.20 L6.50 -27.62 Z',
 ];
 
+/** 每个触点相对前一个的起拍间隔；一整圈 = 12 × 130ms ≈ 1.6s */
+const RAY_STEP_MS = 130;
+
 /**
- * 活跃态转轮：svg-spinners 的 bars-rotate-fade（MIT © Utkarsh Verma，
- * github.com/n3r4zzurr0/svg-spinners）—— 放射条带渐隐尾迹、30° 步进顺时针，
- * `step-end` 一格一格转正好是定格动画的手感（一版手搓的 11 根射线被用户
- * 判丑，2026-08-14 换现成资源）。中心嵌官方星芒 —— 转的是光条，Claude 不转。
+ * 活跃态：**星芒自己的触点**顺时针逐个收缩回弹（用户点名要的就是矢量图
+ * 本身在动 —— 先后两版都跑偏：手搓射线丢了官方形状、外挂转轮又没动到
+ * 图标本身）。做法是把官方 path 按触点裁成 12 片，每片绕图心 scale 收放，
+ * 起拍按顺时针错开成一圈行波；`step-end` 三帧定格（1 → 0.7 → 0.84 → 1），
+ * 保住铅笔定格的手感。纯色填充下扇区叠缝不可见；圆心垫一小片静态星芒，
+ * 兜住各片缩放时谷底可能开出的细缝。
  */
 function SpinnerMark({ size }) {
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const period = RAY_WEDGES.length * RAY_STEP_MS;
   return (
+    // ⚠️ 透明度只能放在 svg 根上：楔形之间、楔形与圆心垫片是同色叠画，
+    // per-path 0.95 会在重叠处叠出一圈更深的色斑（截图实锤过），根上的
+    // opacity 是"孩子们先合成、整体再透明"，重叠不可见。
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"
-      style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}>
-      <g fill={CLAUDE_BRAND} style={{ transformOrigin: 'center', animation: 'ndSpRot .9s step-end infinite' }}>
-        {SPIN_BARS.map(([deg, op]) => (
-          <rect
-            key={deg} x="11" y="0.5" width="2" height="4.6" rx="1" opacity={op}
-            transform={deg ? `rotate(${deg} 12 12)` : undefined}
-          />
+      style={{ display: 'block', flexShrink: 0, overflow: 'visible', opacity: 0.95 }}>
+      <defs>
+        {RAY_WEDGES.map((d, i) => (
+          <clipPath key={i} id={`ndray${uid}${i}`}><path d={d} /></clipPath>
         ))}
+        {/* 垫片 6.8：星芒中央那坨的谷底最深到 ~7，5.2 时收缩会在圆心咬出缺口 */}
+        <clipPath id={`ndraycore${uid}`}><circle cx="12" cy="12" r="6.8" /></clipPath>
+      </defs>
+      <g clipPath={`url(#ndraycore${uid})`}>
+        <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} />
       </g>
-      <g transform="translate(6.24 6.24) scale(0.48)">
-        <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} opacity="0.95" />
-      </g>
+      {RAY_WEDGES.map((d, i) => (
+        <g
+          key={i} clipPath={`url(#ndray${uid}${i})`}
+          style={{
+            // transform-box: view-box —— 不写的话 SVG 里 scale 不绕图心
+            // （三件套那批踩过）；负 delay = 一上场行波就已经在半路，没有起手僵直
+            transformOrigin: '12px 12px', transformBox: 'view-box',
+            animation: `ndRayPulse ${period}ms step-end infinite`,
+            animationDelay: `${i * RAY_STEP_MS - period}ms`,
+          }}
+        >
+          <path d={CLAUDE_PATH} fill={CLAUDE_BRAND} />
+        </g>
+      ))}
     </svg>
   );
 }
