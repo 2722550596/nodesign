@@ -1,8 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import { Plus, ExternalLink, X, BookOpen, LogOut, PencilLine, ChevronsUpDown, Focus, Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid } from 'lucide-react';
-import { Assets, Memory, Canvas } from '../../lib/api.js';
+import { Plus, LogOut, ChevronsUpDown, Focus, Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid } from 'lucide-react';
+import { Assets, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
 import { orderWithGroups } from '../../lib/relation-order.js';
 import { computeDesktopSeating } from '../../lib/board-seating.js';
@@ -13,7 +12,7 @@ import {
   EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, primaryOf, readerOf, isFileBacked,
+  SIZES, sizeOf, actionsOf, primaryOf, isFileBacked,
   chromeOf, cardOf, labelOf,
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
@@ -42,10 +41,9 @@ import FolderWindow, { parentDir } from './FolderWindow.jsx';
 import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 import { useBoardData } from './useBoardData.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import MemoryCard from '../project/MemoryCard.jsx';
-import InstructionsCard from '../project/InstructionsCard.jsx';
-import BrandCard from '../project/BrandCard.jsx';
-import FilesCard from '../project/FilesCard.jsx';
+import {
+  makeBoardReaders, ProjectPanelOverlay, MarkdownViewerOverlay, ImageDetailOverlay,
+} from './BoardOverlays.jsx';
 
 /**
  * BoardCanvas —— 工作台空间画布（2026-07-27 分区版）
@@ -247,7 +245,7 @@ export default function BoardCanvas({
   const [addedPaths, setAddedPaths] = useState(() => new Set());
   const [detail, setDetail] = useState(null);       // 图片详情
   const [viewer, setViewer] = useState(null);       // { title, content, note? } markdown 阅读；note = 可编辑的任务便利贴
-  const [viewerEdit, setViewerEdit] = useState(null); // null = 阅读态；string = 编辑中的草稿
+  // （编辑草稿态住 MarkdownViewerOverlay 本地 —— 浮层关闭即弃稿，B5 抽出时下沉）
   const [projectPanel, setProjectPanel] = useState(null);   // 'memory'|'guide'|'brand'|'files'
   // 拖拽实时落点提示：{ kind:'zone'|'folder', id, ghost?:{x,y,w,h} }（ghost=吸附预览格）
   const [dropHint, setDropHint] = useState(null);
@@ -1311,48 +1309,8 @@ export default function BoardCanvas({
     setAddedPaths(prev => new Set(prev).add(o.id));
   };
 
-  /**
-   * 进阅读器。走哪条路由由形态表的 `reader` 决定（board-kinds.js），
-   * 这里只实现三种阅读器本身。
-   */
-  const READERS = {
-    // 记忆 / 品牌 / 指引三张卡的画布分身：正文在服务端，不在磁盘产物里
-    async memory(o) {
-      const r = await Memory.read(projectId, o.readKey).catch(() => null);
-      setViewer({ title: o.title, content: r?.content || o.preview || '(空)' });
-    },
-
-    // 普通 .md 产物（世界.md / 正文章节 / agent 写的任何 markdown）。
-    // 2026-08-03 之前这类文件只有「打开」= window.open 原始 URL，浏览器给一坨
-    // 纯文本 —— 41KB 的正文点开满屏 `**` 和 `##`。阅读器本来就是现成的，
-    // 缺的只是这条路由。frontmatter 不剥：便签的 `---` 头是会话元数据该藏，
-    // 普通 md 的 frontmatter 是内容的一部分，替用户删掉是自作主张。
-    async file(o) {
-      const title = o.name || o.title || 'markdown';
-      try {
-        const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
-        setViewer({ title, content: await res.text() });
-      } catch {
-        setViewer({ title, content: o.preview || '(读不出来)' });
-      }
-    },
-
-    async note(o) {
-      const title = o.noteTask ? o.name.replace(/\.md$/i, '') : '便签';
-      try {
-        const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
-        const raw = await res.text();
-        // 任务便利贴带 note 引用 → 浮层出"编辑"按钮（共享头脑风暴：用户改完
-        // agent 下轮从注入清单看到文件、自己 Read 到新内容）
-        setViewer({ title, content: raw.replace(/^---\n[\s\S]{0,500}?\n---\n?/, ''), note: o.noteTask ? o : null });
-      } catch { setViewer({ title, content: o.text || '', note: o.noteTask ? o : null }); }
-    },
-  };
-
-  const openViewer = async (o) => {
-    const reader = readerOf(o);
-    if (reader) await READERS[reader](o);
-  };
+  // 进阅读器：路由与三种阅读器本体在 BoardOverlays.jsx（B5 抽出）
+  const openViewer = makeBoardReaders({ projectId, setViewer });
 
   const openFile = (o) => {
     window.open(Assets.artifactFileUrl(projectId, o.path), '_blank', 'noopener');
@@ -2705,125 +2663,28 @@ export default function BoardCanvas({
         />
       )}
 
-      {/* 项目区浮层：直接用原 Hub 的四张卡（编辑 / 上传 / 删除全套照旧）*/}
+      {/* 项目区 / 阅读 / 图片详情三张浮层：本体在 BoardOverlays.jsx（B5 抽出）*/}
       {projectPanel && (
-        <Overlay onClose={() => setProjectPanel(null)}>
-          <div style={{
-            width: 'min(560px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'auto',
-            background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
-          }}>
-            {projectPanel === 'memory' && <MemoryCard projectId={projectId} />}
-            {projectPanel === 'guide' && <InstructionsCard projectId={projectId} />}
-            {projectPanel === 'brand' && <BrandCard projectId={projectId} />}
-            {projectPanel === 'files' && <FilesCard projectId={projectId} />}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: GAP.md }}>
-              <button onClick={() => { setProjectPanel(null); reload(); }} style={toolBtn}>关闭</button>
-            </div>
-          </div>
-        </Overlay>
+        <ProjectPanelOverlay
+          projectId={projectId} panel={projectPanel}
+          onClose={() => setProjectPanel(null)} reload={reload}
+        />
       )}
 
-      {/* markdown 阅读浮层（便签全文 / 记忆 / 品牌）；任务便利贴可直接编辑（共享头脑风暴）*/}
       {viewer && (
-        <Overlay onClose={() => { setViewer(null); setViewerEdit(null); }}>
-          <div style={{
-            background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
-            width: 'min(720px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'auto',
-            display: 'flex', flexDirection: 'column',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', marginBottom: GAP.sm, flexShrink: 0 }}>
-              <BookOpen size={14} color={COLOR.sub} />
-              <span style={{ marginLeft: GAP.sm, fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.md, color: COLOR.text }}>{viewer.title}</span>
-              {viewer.note && viewerEdit === null && (
-                <button title="编辑" onClick={() => setViewerEdit(viewer.content)} style={{ ...toolBtn, marginLeft: 'auto' }}>
-                  <PencilLine size={12} />
-                </button>
-              )}
-              {viewer.note && viewerEdit !== null && (
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: GAP.xs }}>
-                  <button onClick={async () => {
-                    const o = viewer.note;
-                    try {
-                      // ⚠️ api.js 的 putTaskNote 07-30 就改成 (pid, filename, text)
-                      // 三参了，这里一直还是四参老签名 —— noteTask 当 filename、
-                      // 文件名当正文。恰好 noteTask 同期恒 null 让编辑按钮根本不
-                      // 出现，两个 bug 互相掩护（2026-08-14 一起修）。
-                      await Assets.putTaskNote(projectId, o.name, viewerEdit);
-                      setViewer(v => ({ ...v, content: viewerEdit }));
-                      setViewerEdit(null);
-                      reload();
-                    } catch (err) { console.warn('[board] save note failed:', err.message); }
-                  }} style={toolBtn}>保存</button>
-                  <button onClick={() => setViewerEdit(null)} style={toolBtn}>取消</button>
-                </div>
-              )}
-              <button onClick={() => { setViewer(null); setViewerEdit(null); }}
-                style={{ ...toolBtn, ...(viewer.note ? { marginLeft: GAP.xs } : { marginLeft: 'auto' }) }}><X size={12} /></button>
-            </div>
-            {viewerEdit === null ? (
-              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7 }}>
-                <ReactMarkdown>{viewer.content}</ReactMarkdown>
-              </div>
-            ) : (
-              <textarea
-                value={viewerEdit}
-                onChange={(e) => setViewerEdit(e.target.value)}
-                autoFocus
-                style={{
-                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7,
-                  minHeight: 320, resize: 'vertical', width: '100%', boxSizing: 'border-box',
-                  border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.lg, padding: GAP.md,
-                  background: CANVAS.note, outline: 'none',
-                }}
-              />
-            )}
-          </div>
-        </Overlay>
+        <MarkdownViewerOverlay
+          projectId={projectId} viewer={viewer}
+          onClose={() => setViewer(null)}
+          onSaved={(content) => { setViewer(v => ({ ...v, content })); reload(); }}
+        />
       )}
 
-      {/* 图片详情浮层 */}
       {detail && (
-        <Overlay onClose={() => setDetail(null)}>
-          <div style={{
-            background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
-            maxWidth: 'min(920px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'hidden',
-            display: 'flex', flexDirection: 'column', gap: GAP.md,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm }}>
-              <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, color: COLOR.text }}>{detail.name}</span>
-              <button onClick={() => setDetail(null)} style={{ ...toolBtn, marginLeft: 'auto' }}><X size={12} /></button>
-            </div>
-            {/* 图占中间的伸缩位：文件名和底部动作条永远留在画面里，图自己缩着看 */}
-            <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <img
-                src={Assets.artifactFileUrl(projectId, detail.path)} alt={detail.name}
-                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: RADIUS.lg, border: `1px solid ${COLOR.borderLt}` }}
-              />
-            </div>
-            {detail.meta?.prompt && (
-              <div style={{
-                padding: GAP.md, borderRadius: RADIUS.lg, background: COLOR.bgCard, border: `1px solid ${COLOR.borderLt}`,
-                fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.6, whiteSpace: 'pre-wrap',
-                flexShrink: 0, maxHeight: 150, overflow: 'auto',
-              }}>
-                <div style={{ letterSpacing: '0.06em', marginBottom: GAP.xs, color: COLOR.text }}>PROMPT</div>
-                {detail.meta.prompt}
-                <div style={{ marginTop: GAP.xs }}>
-                  {detail.meta.aspectRatio} · {detail.meta.model || detail.meta.provider}
-                  {detail.meta.referenceImageCount > 0 && ` · ${detail.meta.referenceImageCount} 张参考图`}
-                </div>
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: GAP.sm, justifyContent: 'flex-end' }}>
-              <a href={Assets.artifactFileUrl(projectId, detail.path)} target="_blank" rel="noreferrer" style={{ ...toolBtn, textDecoration: 'none' }}>
-                <ExternalLink size={12} /> 原图
-              </a>
-              <button onClick={() => { handleAdd(detail); setDetail(null); }} style={{ ...toolBtn, background: COLOR.text, color: COLOR.bg }}>
-                <Plus size={12} /> 加入上下文
-              </button>
-            </div>
-          </div>
-        </Overlay>
+        <ImageDetailOverlay
+          projectId={projectId} detail={detail}
+          onClose={() => setDetail(null)}
+          onAdd={() => { handleAdd(detail); setDetail(null); }}
+        />
       )}
     </div>
   );
@@ -2887,54 +2748,5 @@ function TextDraft({ screen, onCommit, onCancel, placeholder = '写点什么…�
 }
 
 
-/**
- * 画布内浮层（2026-07-28：层级归位）
- *
- * 原来是 position:fixed 铺满整个视口 —— 看图 / 读便签会把左栏对话和顶栏一起
- * 压暗，跟"编辑窗只在画布内最大化"（DeckWindow）的桌面语义打架。改成 absolute
- * 贴在 BoardCanvas 根上：只压暗桌面这一格，zIndex 压在 DeckWindow(120) 之下。
- */
-function Overlay({ children, onClose }) {
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'absolute', inset: 0, zIndex: 110, background: 'rgba(0,0,0,0.42)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: GAP.page,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        /* 高度给定值（不是 max-）：里层卡片的 maxHeight:100% 才有参照，能真被压缩 */
-        style={{
-          animation: POP_IN, height: '100%', width: '100%', minHeight: 0,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        }}
-      >{children}</div>
-    </div>
-  );
-}
-
-
-const toolBtn = {
-  display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
-  border: `1px solid ${COLOR.borderLt}`, borderRadius: RADIUS.md,
-  background: COLOR.bgCard, color: COLOR.text, cursor: 'pointer',
-  padding: `${GAP.xs}px ${GAP.sm + 2}px`,
-  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-};
-
-
-function formatTime(iso) {
-  if (!iso) return '';
-  try {
-    const d = new Date(iso);
-    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-  } catch { return ''; }
-}
-
-function formatSize(bytes) {
-  if (!Number.isFinite(bytes)) return '';
-  if (bytes > 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-  return `${Math.round(bytes / 1024)}KB`;
-}
+// Overlay / toolBtn 随浮层族住 BoardOverlays.jsx（B5）。formatTime / formatSize
+// 两个孤儿 helper 同批删除 —— 全文件零调用（BoardObject.jsx 有自己的一对）。
