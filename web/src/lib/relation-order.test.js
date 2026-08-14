@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { orderByRelations, orderWithGroups } from './relation-order.js';
-import { packRow, COL_W } from './board-geometry.js';
+import { packRow, COL_W, ROW_GAP, BLOCK_GAP } from './board-geometry.js';
 
 const b = (type, from, to) => ({ type, from, to, by: 'user' });
 
@@ -77,7 +77,8 @@ describe('orderWithGroups / packRow 块边界', () => {
     const m = (id, brk) => ({ id, w: COL_W, h: 100, breakBefore: !!brk });
     const { slots } = packRow([m('a'), m('b', true), m('c')], { width: COL_W * 4, xMin: 0, yTop: 0 });
     const y = Object.fromEntries(slots.map(s2 => [s2.id, s2.y]));
-    expect(y.b).toBeGreaterThan(y.a);          // b 前强制换行
+    expect(y.b).toBe(y.a + 100 + BLOCK_GAP);   // b 前强制换行，且用组间大间距
+    expect(BLOCK_GAP).toBeGreaterThan(ROW_GAP);
     expect(y.c).toBe(y.b);                     // c 跟 b 同行
     const first = packRow([m('a', true), m('x')], { width: COL_W * 4, xMin: 0, yTop: 0 });
     expect(first.slots[0].y).toBe(0);          // 行首 breakBefore 不空转

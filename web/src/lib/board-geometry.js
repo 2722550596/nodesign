@@ -91,6 +91,9 @@ export const GROUP_LABEL_H = 26;
 export const COL_W = 240;
 export const COL_GAP = 16;
 export const ROW_GAP = 16;
+/** 块边界（关系组）的行距：affinity「摆近点」的反面是组间要呼吸 —— 组内
+ *  行距 ROW_GAP、组间 BLOCK_GAP，留白差就是版面的分段语言（北极星路线2） */
+export const BLOCK_GAP = 40;
 
 /**
  * 把一组成员按顺序排进一个宽度里（纯函数）。
@@ -111,9 +114,9 @@ export function packRow(members, { width, xMin, yTop }) {
   for (const m of members) {
     const span = Math.min(cols, Math.max(1, Math.ceil((m.w + COL_GAP) / (COL_W + COL_GAP))));
     // 块边界（北极星二程）：关系组独占成行 —— 组头/组后强制换行，
-    // 版面读出「组内紧凑、组间呼吸」。行首的 breakBefore 是 noop。
+    // 且换行用 BLOCK_GAP（组间呼吸 > 组内行距）。行首的 breakBefore 是 noop。
     if (m.breakBefore && col > 0) {
-      rowY += rowH + ROW_GAP;
+      rowY += rowH + BLOCK_GAP;
       col = 0; rowH = 0;
     }
     if (col > 0 && col + span > cols) {   // 这一行放不下了，换行
