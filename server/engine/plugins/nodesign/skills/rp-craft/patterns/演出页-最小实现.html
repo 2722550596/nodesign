@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>演出</title>
+<style>
+/* ═══ 皮肤区 —— 按题材随便改，这套只是能用的素底 ═══ */
+:root {
+  --纸: #f4f1ea; --墨: #2b2723; --淡墨: #6b6357;
+  --我方: #e7e0d2; --对方: #fbf9f4; --线: #d8d1c2; --强调: #8a4b2d;
+}
+* { box-sizing: border-box; margin: 0; }
+body {
+  background: var(--纸); color: var(--墨);
+  font: 16px/1.9 'Kaiti SC', 'STKaiti', KaiTi, serif;
+  height: 100dvh; display: flex; flex-direction: column;
+}
+#台 { flex: 1; overflow-y: auto; padding: 24px 16px 12px; }
+#台 > * { max-width: 640px; margin: 0 auto 14px; }
+.回合 { padding: 10px 16px; border-radius: 4px; white-space: pre-wrap; }
+.用户 { background: var(--我方); margin-left: 48px !important; }
+.演出 { background: var(--对方); border: 1px solid var(--线); margin-right: 48px !important; }
+.提示 { color: var(--淡墨); font-size: 13px; text-align: center; }
+.出错 { color: var(--强调); font-size: 14px; text-align: center; }
+#输入区 { border-top: 1px solid var(--线); padding: 12px 16px; }
+#输入排 { max-width: 640px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end; }
+#输入 {
+  flex: 1; resize: none; border: 1px solid var(--线); border-radius: 4px;
+  background: var(--对方); color: var(--墨); font: inherit; padding: 8px 12px;
+  max-height: 40dvh; outline: none;
+}
+#发送 {
+  border: none; border-radius: 4px; background: var(--墨); color: var(--纸);
+  font: inherit; padding: 8px 20px; cursor: pointer;
+}
+#发送:disabled { opacity: .4; cursor: default; }
+</style>
+</head>
+<body>
+<div id="台"></div>
+<div id="输入区"><div id="输入排">
+  <textarea id="输入" rows="2" placeholder="……"></textarea>
+  <button id="发送">说</button>
+</div></div>
+
+<script>
+/* ═══ 管线区 —— 协议不是设计，整段照抄，别现写 ═══ */
+
+// 1) 从自己的 URL 推 pid 和演出文件夹（页面被伺服在
+//    /api/projects/<pid>/artifact-file/<文件夹>/index.html，挪走照活，不许硬编码）
+const m = location.pathname.match(/^\/api\/projects\/([^/]+)\/artifact-file\/(.+)$/);
+const PID = m[1];
+const DIR = m[2].split('/').slice(0, -1).map(decodeURIComponent).join('/');
+const API = (p) => `/api/projects/${PID}/chatai/${p}`;
+
+const 台 = document.getElementById('台');
+const 输入 = document.getElementById('输入');
+const 发送钮 = document.getElementById('发送');
+
+function 贴(cls, text) {
+  const el = document.createElement('div');
+  el.className = cls; el.textContent = text;
+  台.appendChild(el); 台.scrollTop = 台.scrollHeight;
+  return el;
+}
+
+// 2) 开场 hydrate：把已有对话铺出来（cookie 同源自动带，不用任何凭证代码）
+async function 铺场() {
+  const r = await fetch(`${API('log')}?dir=${encodeURIComponent(DIR)}`);
+  if (!r.ok) { 贴('出错', (await r.json().catch(() => ({}))).error || `读取失败 ${r.status}`); return; }
+  const d = await r.json();
+  for (const rec of d.records) 贴(rec.role === 'user' ? '回合 用户' : '回合 演出', rec.text);
+  if (!d.records.length) 贴('提示', '（帷幕未启）');
+}
+
+// 3) 发一轮：SSE 流式。失败时输入原样留着，能直接重发
+let 跑着 = false;
+async function 发送() {
+  const text = 输入.value.trim();
+  if (!text || 跑着) return;
+  跑着 = true; 发送钮.disabled = true;
+  贴('回合 用户', text);
+  const 气泡 = 贴('回合 演出', '…');
+  let res;
+  try {
+    res = await fetch(API('turn'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dir: DIR, input: text }),
+    });
+  } catch { 气泡.remove(); 贴('出错', '网络断了，稍后重发'); 跑着 = false; 发送钮.disabled = false; return; }
+  if (!res.ok) {  // 429 限频/额度、409 上一轮没回完、403 未开通——照实说
+    const err = (await res.json().catch(() => ({}))).error || `失败 ${res.status}`;
+    气泡.remove(); 贴('出错', err); 跑着 = false; 发送钮.disabled = false; return;
+  }
+  输入.value = '';   // 真发出去了才清
+  // SSE 解析：按空行分事件，data: 后是 JSON（{delta} | {done,…} | {error}）
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', body = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const events = buf.split('\n\n'); buf = events.pop();
+    for (const ev of events) {
+      const line = ev.split('\n').find(l => l.startsWith('data:'));
+      if (!line) continue;
+      let j; try { j = JSON.parse(line.slice(5)); } catch { continue; }
+      if (j.delta) { body += j.delta; 气泡.textContent = body; 台.scrollTop = 台.scrollHeight; }
+      if (j.error) { 气泡.remove(); 贴('出错', j.error); 输入.value = text; }
+      if (j.done && !body) 气泡.textContent = j.text;   // 流没吐字的兜底
+    }
+  }
+  跑着 = false; 发送钮.disabled = false; 输入.focus();
+}
+
+// 4) 回车发送。⚠ isComposing 判定必须有：中文输入法选字的回车不是提交
+输入.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); 发送(); }
+});
+发送钮.addEventListener('click', 发送);
+铺场();
+</script>
+</body>
+</html>

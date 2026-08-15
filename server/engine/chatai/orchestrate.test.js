@@ -157,6 +157,15 @@ describe('编译：历史、预算、摘要', () => {
     expect(c.meta.历史.摘要已折叠).toBe(true);
   });
 
+  it('开场白：assistant 打头的记录保留（角色先开口）', async () => {
+    await scaffold(MIN);
+    await fs.writeFile(path.join(dir, '对话.jsonl'),
+      JSON.stringify({ seq: 1, role: 'assistant', text: '雾夜的摊子亮着灯。', at: 't' }) + '\n');
+    const c = await compileContext({ dir, userInput: '走近' });
+    expect(c.messages[0]).toEqual({ role: 'assistant', content: '雾夜的摊子亮着灯。' });
+    expect(c.messages).toHaveLength(2);
+  });
+
   it('历史被全部折叠时，前情提要进当轮输入', async () => {
     await scaffold(MIN);
     await seedTurns(3);

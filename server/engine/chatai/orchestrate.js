@@ -186,8 +186,9 @@ export async function compileContext({ dir, userInput, config = null }) {
   const all = await readLog(dir, cfg);
   const summary = await readSummary(dir);
   const boundary = summary?.至 ?? 0;
-  let live = all.filter(r => r.seq > boundary);
-  while (live.length && live[0].role !== 'user') live.shift();   // 摘要折叠后开头必须是 user
+  // 开头允许是 assistant —— RP 惯例是角色先开口，agent 建场时往记录里种一条
+  // 开场白（assistant, seq 1）。它不算轮（轮按 user 记录数），够老了会随摘要折叠。
+  const live = all.filter(r => r.seq > boundary);
 
   // ── 尾部触发扫描：最近 8 条记录 + 当轮输入 ──
   const scanText = live.slice(-TRIGGER_SCAN_RECORDS).map(r => r.text).concat(input).join('\n');
@@ -228,12 +229,13 @@ export async function compileContext({ dir, userInput, config = null }) {
     预算丢弃轮数: dropped,
   };
 
-  // ── 拼消息 ──
-  if (summaryBlock && hist.length) {
-    hist[0] = { ...hist[0], content: `${summaryBlock}\n\n${hist[0].content}` };
+  // ── 拼消息 ──（前情提要注进第一条 user 消息；没有就落到当轮输入）
+  const firstUser = hist.findIndex(m => m.role === 'user');
+  if (summaryBlock && firstUser >= 0) {
+    hist[firstUser] = { ...hist[firstUser], content: `${summaryBlock}\n\n${hist[firstUser].content}` };
   }
   const currentParts = [];
-  if (summaryBlock && !hist.length) currentParts.push(summaryBlock);
+  if (summaryBlock && firstUser < 0) currentParts.push(summaryBlock);
   currentParts.push(...tailBlocks, input);
   const messages = [...hist, { role: 'user', content: currentParts.join('\n\n') }];
 
