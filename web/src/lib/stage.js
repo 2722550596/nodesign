@@ -58,7 +58,13 @@ export function stageKindOf(toolName) {
  */
 export function resolveObjectId(filePath, artifactRoots) {
   if (!filePath || typeof filePath !== 'string') return null;
-  const p = filePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
+  const norm = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  // 绝对路径直接拒（2026-08-15 home 幽灵案）：前端没有工作区根可对，剥掉开头
+  // 斜杠等于把 /home/wangang-dev/... 认成 home/... 的相对路径 —— ensureZoneForTarget
+  // 会孵出一块名叫「home」的影子文件夹，光圈/精灵全锚过去，拖一下就消失但锚定
+  // 残留。服务端漏 toWorkspaceRel 的 emit 修一个少一个，这道闸管的是"下一个"。
+  if (norm.startsWith('/')) return null;
+  const p = norm.replace(/\/+$/g, '');
   if (!p) return null;
   if (p.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
   if (p.endsWith('agent-memory/memory.md')) return 'doc:_root';

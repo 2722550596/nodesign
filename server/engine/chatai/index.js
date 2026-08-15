@@ -57,6 +57,31 @@ export function chataiConfig() {
 }
 
 /**
+ * 标准模型名 → 中转站实名（2026-08-15 时停之城 503 案）。
+ *
+ * 中转站的 100 个模型**没有一个裸标准名**，全是「反重力-流式抗截断/xxx」这类
+ * 前缀变体。而 编排.yaml / 设置页 / skill 教的都是标准名（用户不该学中转站的
+ * 命名黑话，换渠道也不用改配置）。这层在发请求前换成实名；表里没有的原样放行
+ * （直接写实名也合法）。env `CHATAI_MODEL_ALIASES`（JSON）可覆盖/增补——
+ * 中转站哪天改名，改 env 不用动代码。
+ */
+const MODEL_ALIASES = Object.freeze({
+  'gemini-3.7-flash': '反重力-流式抗截断/gemini-3.7-flash-low',
+  'gemini-3.6-flash': '反重力-流式抗截断/gemini-3.7-flash-low',
+  'gemini-3-flash': '反重力-流式抗截断/gemini-3-flash',
+  'claude-sonnet-4-6': '反重力-流式抗截断/claude-sonnet-4-6',
+  'claude-sonnet': '反重力-流式抗截断/claude-sonnet-4-6',
+  'claude-opus-4-6': '反重力-claude-opus-4-6',
+});
+
+export function resolveModelAlias(model) {
+  if (!model) return model;
+  let extra = {};
+  try { extra = JSON.parse(process.env.CHATAI_MODEL_ALIASES || '{}'); } catch { /* 坏 JSON 当没配 */ }
+  return extra[model] || MODEL_ALIASES[model] || model;
+}
+
+/**
  * 跑一次 chatai。
  * @param {object} opts  system / messages / model / maxTokens / signal / onDelta
  */
@@ -70,7 +95,7 @@ export async function runChatai({
       { code: 'CHATAI_UNCONFIGURED' },
     );
   }
-  const useModel = model || cfg.model;
+  const useModel = resolveModelAlias(model || cfg.model);
   const out = await callOpenAICompat({
     base: cfg.base, key: cfg.key, model: useModel,
     system, messages, maxTokens, signal, onDelta,

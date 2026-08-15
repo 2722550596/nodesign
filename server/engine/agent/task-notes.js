@@ -70,8 +70,9 @@ export async function noteTaskStarted(ctx, msg) {
     const next = prev.trim() ? `${prev.replace(/\s+$/, '')}\n\n---\n\n${face}\n` : `${face}\n`;
     await fs.writeFile(noteFile, next, 'utf8');
   });
-  // MCP/系统消息写盘不走 PostToolUse file_changed 直发，自己补一发刷新画布
-  ctx.emit?.(Events.fileChanged(noteFile, 'change'));
+  // MCP/系统消息写盘不走 PostToolUse file_changed 直发，自己补一发刷新画布。
+  // ⚠️ 发工作区相对路径不发 noteFile（绝对）——绝对路径会在前端孵出 home 影子文件夹
+  ctx.emit?.(Events.fileChanged(path.posix.join('notes', NOTE_FILE), 'change'));
 }
 
 /**
@@ -105,5 +106,5 @@ export async function noteTaskFinished(ctx, msg) {
     await fs.writeFile(noteFile, faces.join('\n---\n'), 'utf8');
     changed = true;
   });
-  if (changed) ctx.emit?.(Events.fileChanged(noteFile, 'change'));
+  if (changed) ctx.emit?.(Events.fileChanged(path.posix.join('notes', NOTE_FILE), 'change'));   // 同上：相对路径
 }

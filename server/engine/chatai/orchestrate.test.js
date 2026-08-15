@@ -262,3 +262,16 @@ describe('token 估算', () => {
     expect(estTokens('')).toBe(0);
   });
 });
+
+describe('模型别名（中转站没有裸标准名）', () => {
+  it('标准名换实名、实名与未知名放行、env 可覆盖', async () => {
+    const { resolveModelAlias } = await import('./index.js');
+    expect(resolveModelAlias('gemini-3.7-flash')).toBe('反重力-流式抗截断/gemini-3.7-flash-low');
+    expect(resolveModelAlias('claude-sonnet-4-6')).toBe('反重力-流式抗截断/claude-sonnet-4-6');
+    expect(resolveModelAlias('反重力-流式抗截断/gemini-3-flash')).toBe('反重力-流式抗截断/gemini-3-flash');
+    expect(resolveModelAlias('随便什么')).toBe('随便什么');
+    process.env.CHATAI_MODEL_ALIASES = '{"gemini-3.7-flash":"改了"}';
+    expect(resolveModelAlias('gemini-3.7-flash')).toBe('改了');
+    delete process.env.CHATAI_MODEL_ALIASES;
+  });
+});

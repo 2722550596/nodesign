@@ -30,6 +30,11 @@ const ROOTS = [
 ];
 
 describe('resolveObjectId — 文件落到哪张卡', () => {
+  it('绝对路径一律拒收（home 幽灵案：剥斜杠会把 /home/... 认成 home/... 相对路径）', () => {
+    expect(resolveObjectId('/home/u/data/proj/shared/assets/generated/a.png', [])).toBeNull();
+    expect(resolveObjectId('/tmp/x.md', [])).toBeNull();
+  });
+
   it('记忆 / 品牌两份文档有固定 id，不按路径派生', () => {
     expect(resolveObjectId('.claude/agent-memory/memory.md', ROOTS)).toBe('doc:_root');
     expect(resolveObjectId('.claude/agent-memory/brand/memory.md', ROOTS)).toBe('doc:brand');

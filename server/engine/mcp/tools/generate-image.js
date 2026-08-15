@@ -758,9 +758,9 @@ become part of the spec.json design history.`,
       // 匹配不到 mcp__nodesign__* 工具名），所以生成的图在这一发之前对前端是不存在的：
       // 产物墙只在 listVersion / boardVersion 变化时才重拉 /artifacts，而这两个都要等
       // run.done 的兜底刷新。结果就是"图生完了，要等这一轮跑完才出现在任务文件夹里"。
-      // record-decision.js 早就补过同样的一发，这里漏了。
+      // record-decision.js 早补过同样一发。⚠️发相对路径不发 absOut：绝对路径会在前端孵出「home」影子文件夹（stage.js 拒收注释详述）
       try {
-        ctx?.emit?.(Events.fileChanged(absOut, 'add'));
+        ctx?.emit?.(Events.fileChanged(agentRelPath, 'add'));
       } catch { /* fail-safe */ }
 
       // 7b. emit run.image_generated（前端可显 thumbnail / 加 timeline 节点）
