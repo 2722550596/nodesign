@@ -64,10 +64,7 @@ import {
   makePreToolUseBashStarterFilesFallback,
 } from './hooks/pre-starter-files.js';
 import { makePreToolUseBoardNeighborhoodInjector } from './hooks/pre-board-neighborhood.js';
-import {
-  makePreToolUsePerformanceLogGuard,
-  makePreToolUseBashPerformanceGuard,
-} from './hooks/pre-performance-log-guard.js';
+import { makePreToolUsePerformanceLogGuard } from './hooks/pre-performance-log-guard.js';
 import { makeUserPromptSubmitHandler } from './hooks/user-prompt-submit.js';
 import {
   makeFileChangedHandler,
@@ -124,10 +121,13 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // （sdk.mjs 的 i6 表 Task→Agent，binary 侧 matcher 也吃这个别名 —— 2026-08-03
     // 双 matcher 探针实测两个都命中）。两个都写，换 SDK 版本时不会静默失配。
     PreToolUse: [{
-      // 演出记录隐私闸（RP 台词只走 chatai 通路不进设计会话）：Read 点到记录 →
-      // deny + 教义。写不拦——建场要种开场白。Grep 那一路在下面的 Grep 条目里
-      // 改输入（排除 glob），Bash 那一路在再下面单独一条。
-      matcher: 'Read',
+      // 演出记录隐私闸：Read/Grep 直接点到演出文件夹的对话记录 → deny + 教义
+      //（RP 台词只走 chatai 通路不进设计会话；写不拦——建场要种开场白）。
+      // ⚠️ 边界写清楚：**只拦点名那一种读法**。`Grep path=<目录>` 和 Bash `cat`
+      // 都过得去 —— 08-15 补过那两条（Grep 注排除 glob + Bash 命令闸），因为
+      // 连带面太宽被用户撤回：固定记录名靠项目 .gitignore 兜（ripgrep 默认跳过
+      // 被 gitignore 的文件），剩下的靠 rp-craft 的隐私纪律。
+      matcher: 'Read|Grep',
       hooks: [makePreToolUsePerformanceLogGuard({ workspaceRoot })],
     }, {
       matcher: 'Task|Agent',
@@ -137,24 +137,18 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
         makePreToolUseTaskVisionCheckerDispatchInjector(),
       ],
     }, {
-      // ⚠️ Grep 的输入改写只许有这一个 handler（output_mode 默认值 + 演出记录
-      // 排除都在它里面）——两个 handler 各返回 updatedInput 会互相抹掉
+      // ⚠️ Grep 的输入改写只许有这一个 handler——两个各返回 updatedInput 会互相抹掉
       matcher: 'Grep',
-      hooks: [makePreToolUseGrepContentDefaultHandler({ workspaceRoot })],
+      hooks: [makePreToolUseGrepContentDefaultHandler()],
     }, {
       // Skill 加载 deskskill 时才拷起手文件（canvas.template.html 等）——
       // 2026-07-27 起从 session-loop init 挪到这里：session ≠ 默认 deck 任务
       matcher: 'Skill',
       hooks: [makePreToolUseSkillStarterFilesCopier({ workspaceRoot })],
     }, {
-      // 兜底：agent 没走 Skill 直接 cp canvas.template.html → 现场补拷；
-      // 同条上挂演出记录隐私闸的 Bash 那一路（命令点到记录名 → deny，
-      // 但记录还空着就放行——那是建场在种开场白）
+      // 兜底：agent 没走 Skill 直接 cp canvas.template.html → 现场补拷
       matcher: 'Bash',
-      hooks: [
-        makePreToolUseBashStarterFilesFallback({ workspaceRoot }),
-        makePreToolUseBashPerformanceGuard({ workspaceRoot }),
-      ],
+      hooks: [makePreToolUseBashStarterFilesFallback({ workspaceRoot })],
     }, {
       // get_pending_changes 首次调用时注入 DirectEdit 逐 kind 处理协议全文
       // （prelude 只留流程骨架，~90 行细则挪到 prompts/tools/direct-edit-protocol.md）
