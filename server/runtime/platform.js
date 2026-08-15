@@ -201,29 +201,42 @@ function protectedPathRules({ dataRoot } = {}) {
   // 仓库自身只读：agent 的活全在工作区里，没理由改服务端源码（改得动就等于
   // 能改自己的 prelude / hook / 闸门 —— 隔离的地板就没了）。
   // ⚠️ 生产的数据根是仓库里的 `server/projects-data` —— 一刀切 deny 整个 repoRoot
-  // 会把 agent 自己的工作区一起封死。所以按顶层目录逐个发规则，跳过通往数据根
-  // 的那一支。exp 的数据根在仓库外，走不到这个分支。
+  // 会把 agent 自己的工作区一起封死。所以沿通往数据根的那条路**逐层下探**，
+  // 每层封兄弟、只放行那一支（只封顶层不够：那样整个 server/ 都得放行 =
+  // 平台源码对 agent 可写）。exp 的数据根在仓库外，直接封整个仓库。
   for (const child of repoChildrenOutside(dataRoot)) {
     rules.push(`Write(/${child}/**)`, `Edit(/${child}/**)`);
   }
   return rules;
 }
 
-/** repoRoot 下与数据根无关的顶层条目（数据根落在仓库内时用来避让） */
+/**
+ * repoRoot 下与数据根无关的条目（数据根落在仓库内时用来避让）
+ *
+ * 数据根在仓库外（exp）→ 直接返回 repoRoot，整个仓库禁写。
+ * 数据根在仓库内（生产是 `server/projects-data`）→ **沿着通往数据根的那条路
+ * 逐层下探**，每层把兄弟条目都封掉，只放行通往数据根的那一支。
+ * ⚠️ 只封顶层是不够的：那样整个 `server/` 都得放行，等于平台源码对 agent 可写
+ * （2026-08-15 拿生产真实布局算了一遍才看见）。
+ */
 function repoChildrenOutside(dataRoot) {
   const resolvedData = dataRoot ? path.resolve(dataRoot) : null;
   const dataInsideRepo = resolvedData
     && (resolvedData === repoRoot || resolvedData.startsWith(`${repoRoot}${path.sep}`));
   if (!dataInsideRepo) return [repoRoot];
-  // 数据根在仓库内 → 只封跟它不同支的顶层目录
-  const keepOut = resolvedData.slice(repoRoot.length + 1).split(path.sep)[0];
-  try {
-    return fs.readdirSync(repoRoot)
-      .filter(name => name !== keepOut && name !== '.git')
-      .map(name => path.join(repoRoot, name));
-  } catch {
-    return [];
+  const segments = resolvedData.slice(repoRoot.length + 1).split(path.sep).filter(Boolean);
+  const out = [];
+  let level = repoRoot;
+  for (const keepOut of segments) {
+    let names = [];
+    try { names = fs.readdirSync(level); } catch { break; }
+    for (const name of names) {
+      if (name === keepOut || name === '.git') continue;
+      out.push(path.join(level, name));
+    }
+    level = path.join(level, keepOut);
   }
+  return out;
 }
 
 /**

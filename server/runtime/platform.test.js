@@ -77,4 +77,13 @@ describe('结构化工具 deny 规则', () => {
     // 别的顶层目录照封
     expect(rules).toContain(`Write(/${path.join(repoRoot, 'web')}/**)`);
   });
+
+  it('⭐ 逐层下探：只放行通往数据根的那一支，`server/` 里的源码照样禁写', () => {
+    const rules = platform.protectedPathRules({ dataRoot: path.join(repoRoot, 'server', 'projects-data') });
+    // server/ 整个不能放行 —— 那等于平台源码对 agent 可写
+    expect(rules).toContain(`Write(/${path.join(repoRoot, 'server', 'engine')}/**)`);
+    expect(rules).toContain(`Write(/${path.join(repoRoot, 'server', 'runtime')}/**)`);
+    // 通往数据根那一支不能被封
+    expect(rules).not.toContain(`Write(/${path.join(repoRoot, 'server', 'projects-data')}/**)`);
+  });
 });
