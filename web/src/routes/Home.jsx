@@ -395,7 +395,7 @@ function QuickEntry({ prefill }) {
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp,.md,.txt"
+            accept=".pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp,.md,.txt,.json"
             onChange={(e) => {
               Array.from(e.target.files || []).forEach(handlePickFile);
               e.target.value = '';

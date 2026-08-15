@@ -228,7 +228,7 @@ export default function ChatComposer({
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.docx,.xlsx,.pptx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp"
+            accept=".pdf,.docx,.xlsx,.pptx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp,.json"
             onChange={(e) => {
               const files = Array.from(e.target.files || []);
               files.forEach(f => onPickFile?.(f));

@@ -99,7 +99,7 @@ export default function InputsTab({ inputs = [], onAdd, onRemove }) {
           ref={fileRef}
           type="file"
           multiple
-          accept=".pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp"
+          accept=".pdf,.pptx,.docx,.html,.htm,.png,.jpg,.jpeg,.svg,.webp,.json"
           onChange={e => handleFile(e.target.files)}
           style={{ display: 'none' }}
         />
