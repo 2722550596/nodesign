@@ -3,6 +3,8 @@
  * （2026-08-14 可维护性行动：从 hooks.js 原样迁出，语义零改动）
  */
 
+import { guardGrepInput } from './pre-performance-log-guard.js';
+
 /**
  * PreToolUse(Agent) 强制前台 —— 透明改 input，不 hard deny。
  *
@@ -53,30 +55,48 @@ export function makePreToolUseAgentForceForegroundHandler() {
 }
 
 /**
- * PreToolUse(Grep) handler：把缺省 output_mode 改成 'content'。
+ * PreToolUse(Grep) handler：改 Grep 的入参。**Grep 的输入改写只许有这一个
+ * handler** —— 两个 handler 各自返回 updatedInput，后跑的那个是拿原始
+ * tool_input 拼的，会把前一个的改动抹掉。所以下面两件事合在一处做。
  *
- * SDK Grep 工具默认 output_mode='files_with_matches' —— 只返回匹配到的文件名
- * 列表，不返回行内容。Agent 拿到文件名后还得再 Read 一遍，多一个 turn，浪费
- * tokens 和时延。NoDesign 设计场景下 agent grep 几乎都是想看实际文本（CSS
- * 类名定义在哪、某个 token 怎么用），'content' 是更合理的默认。
+ * ① 缺省 output_mode 改成 'content'。
+ *    SDK 默认 'files_with_matches' 只返回文件名，agent 还得再 Read 一遍，多一个
+ *    turn。设计场景下 grep 几乎都是想看实际文本，'content' 是更合理的默认。
+ *    显式传了 'files_with_matches' / 'count' 就不动（agent 知道自己在干嘛）。
  *
- * 拦截规则：
- *   - 没传 output_mode 或传了空字符串 → updatedInput 改成 'content'
- *   - 显式传 'files_with_matches' / 'count' → 不动（agent 知道自己在做什么）
+ * ② 演出记录排除（2026-08-15）：工作区里有演出文件夹时，没指定 glob 的 Grep
+ *    自动带上 `!{对话.jsonl,…}`。搜索照跑，只是搜不到台词 —— 拒工具会打断正经
+ *    搜索，改输入不会。agent 自己的 glob 会命中记录才拒。详见
+ *    hooks/pre-performance-log-guard.js。
  *
- * 不发 additionalContext —— agent 不需要知道这个变换，行为对它透明，结果
- * 直接更有用。
+ * 不发 additionalContext —— ① 对 agent 透明；② 只在真拒的时候才需要解释。
  */
-export function makePreToolUseGrepContentDefaultHandler() {
+export function makePreToolUseGrepContentDefaultHandler({ workspaceRoot } = {}) {
   return async (input) => {
     const t = input?.tool_input;
     if (!t || typeof t !== 'object') return {};
-    if (t.output_mode && t.output_mode !== '') return {};
+    let 隐私 = {};
+    try { 隐私 = await guardGrepInput(t, workspaceRoot); } catch { 隐私 = {}; }
+    if (隐私.deny) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: 隐私.deny,
+        },
+      };
+    }
+    const 补默认 = !t.output_mode || t.output_mode === '';
+    if (!隐私.glob && !补默认) return {};
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
-        updatedInput: { ...t, output_mode: 'content' },
+        updatedInput: {
+          ...t,
+          ...(补默认 ? { output_mode: 'content' } : {}),
+          ...(隐私.glob ? { glob: 隐私.glob } : {}),
+        },
       },
     };
   };

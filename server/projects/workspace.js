@@ -92,42 +92,9 @@ export function validateSessionId(sid) {
   }
 }
 
-const DEFAULT_GITIGNORE = `node_modules/
-.DS_Store
-*.log
-.tmp/
-# SDK 转录：一个会话一个 jsonl，一轮几百 KB，不进项目历史
-.claude/projects/
-# 会话私档（压缩摘要 / plan 弧）——属于对话不属于产物
-.nd/
-# generate_image 产物 — 通常很大且能从 spec.json 的 prompt 重生
-assets/generated/
-# 画布布局 —— 属于"你怎么摆的"，不属于"你做出了什么"。
-# 进历史的坏处是具体的：每拖一次卡就弄脏工作区，而且 revertWorkspace
-# 会连着把画布布局一起回退（卡片弹回旧位置、清掉的死 id 复活）。
-board.json
-`;
-
-const DEFAULT_SPEC_JSON = JSON.stringify(
-  { version: '0.1', meta: {}, designTokens: {}, outline: [] },
-  null, 2,
-) + '\n';
-
-const DEFAULT_CLAUDE_MD = `# Project Instructions
-
-This file is read by the AI agent at the start of every session as part of its
-system prompt. Write project-specific guidance here — design intent,
-constraints, vocabulary, must-do / must-not-do.
-
-The agent will see this verbatim. Keep it concise and actionable.
-
-## Examples
-- Design tone: minimal, editorial, generous whitespace
-- Hard constraints: never use red as a primary color
-- Vocabulary: refer to the user as "the team"
-
-(Edit this file from the NoDesign UI — the agent picks up changes on next session.)
-`;
+import {
+  DEFAULT_GITIGNORE, DEFAULT_SPEC_JSON, DEFAULT_CLAUDE_MD,
+} from './workspace-templates.js';
 
 /**
  * NoDesign 全局默认 settings.json — 代码是 source of truth。
