@@ -34,9 +34,13 @@ import fs from 'node:fs/promises';
 // 留在这里是为了它万一还在也不会作为一张文件夹卡出现在桌面上。
 export const RESERVED_DIRS = new Set(['assets', 'exports', 'notes', 'node_modules', 'agent-memory']);
 
-/** 不当产物看的文件：起手模板（写出来是给 agent 改的，不是成品） */
+/**
+ * 不当产物看的文件：起手模板（拷进来是给 agent 抄/改的，不是成品）。
+ * 2026-08-15 加 js/mjs —— RP 的管线模块 `演出.template.js` 走同一条起手文件路，
+ * 规则只认 html/css 的话它会当成一张产物卡上墙。
+ */
 export function isReservedFile(name) {
-  return /\.template\.(html?|css)$/i.test(name) || RESERVED_FILES.has(name);
+  return /\.template\.(html?|css|jsx?|mjs)$/i.test(name) || RESERVED_FILES.has(name);
 }
 
 /**

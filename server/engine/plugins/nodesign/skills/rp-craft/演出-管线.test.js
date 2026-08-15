@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 /**
- * 演出.js 的回归网（2026-08-15）。这份管线被抄进每一个演出文件夹，改坏了是
+ * 演出.template.js 的回归网（2026-08-15）。
+ *
+ * ⚠️ 文件名**不许带 `.template.`** —— 起手文件是按名字里有没有 `.template.` 挑的，
+ * 叫 `演出.template.test.js` 会连测试一起拷进每个用户的工作区（08-15 真跑抓到）。
+ *这份管线被抄进每一个演出文件夹，改坏了是
  * **所有演出一起坏**，所以把踩过的坑逐条钉住：
  *   - pathname 是编码过的，二次编码 → 404（写这份模块当天就中了一次）
  *   - SSE 事件跨 chunk 到，逐 chunk 解析会丢字
@@ -13,7 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const 源 = fs.readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), '演出.js'), 'utf8',
+  path.join(path.dirname(fileURLToPath(import.meta.url)), '演出.template.js'), 'utf8',
 );
 
 /** 把模块跑进当前 happy-dom 环境（它是 classic script，直接 eval 就行） */
