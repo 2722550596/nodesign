@@ -1,0 +1,233 @@
+/**
+ * server/api/chatai.js —— 演出端点：页面 → 服务端 → 中转站。
+ *
+ * agent 写的演出前端（iframe 里的站点页）打这两条路由；chatai 的 key 在服务端
+ * env，页面永远拿不到。页面靠同源 cookie 认证，不发任何新凭证。
+ *
+ * ⭐ 演出路**不过内容审查**（2026-08-15 拍板）：chatai 无工具、无会话、改不了
+ * 任何文件，出格也只是文本；审查只存在于 agent 侧。但不过审 ≠ 不设闸，四道闸
+ * 全钉在这一个口上：
+ *
+ *   1. 通路批准制 —— admin / allowLocalGen 获批账号（同 roll_film 那套）。
+ *      中转站计量单位不明，问清之前不对全量内测用户开。
+ *   2. 金额闸门 —— checkQuota 同一个 USD 池：每轮花费按我们的单价表记进
+ *      runs + run_model_usage（skill_id='chatai'），跟 agent 会话共享日限/终身额度。
+ *   3. 频率闸门 —— 滑动窗口每用户每分钟 N 轮（env NODESIGN_CHATAI_TURNS_PER_MIN，
+ *      默认 10）。金额日限拦不住单日尖峰，这道闸才是 setInterval 烧钱机的对手。
+ *   4. 单演出串行 —— 同一文件夹同时只跑一轮（保护 对话.jsonl 成对追加与摘要
+ *      折叠），撞上返 409 而不是排队。
+ *
+ * 流式默认 SSE（data: {delta} … data: {done, usage, costUsd, 摘要}）；
+ * body.stream=false 走整段 JSON。中转站分片本来就粗，别指望逐字。
+ */
+
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import express from 'express';
+import { guardProject } from './_guard.js';
+import { getWorkspaceRoot } from '../projects/workspace.js';
+import { performTurn } from '../engine/chatai/perform.js';
+import { loadOrchestration } from '../engine/chatai/orchestrate.js';
+import { readLog, readSummary } from '../engine/chatai/chat-log.js';
+import { checkQuota, fmtUsd } from '../lib/quota.js';
+import { makeRateWindow } from '../lib/rate-window.js';
+import {
+  createRun, markRunStarted, markRunSucceeded, markRunFailed,
+  setRunMetrics, setRunModelUsage,
+} from '../engine/runs/store.js';
+
+const router = express.Router();
+export default router;
+
+const MAX_INPUT_CHARS = 8000;
+
+const rate = makeRateWindow({
+  limit: Number(process.env.NODESIGN_CHATAI_TURNS_PER_MIN) || 10,
+  windowMs: 60_000,
+});
+
+/** 正在演出的文件夹（abs path → true）。串行是保护 jsonl，不是并发额度。 */
+const playing = new Set();
+
+function gateApproved(req, res) {
+  const u = req.user;
+  if (u?.role === 'admin' || u?.allowLocalGen) return true;
+  res.status(403).json({ error: '演出通路还没对这个账号开放，找管理员开通' });
+  return false;
+}
+
+/** 解析演出文件夹：相对工作区根，防逃逸，必须真是目录。失败时已发响应。 */
+async function resolvePerformanceDir(req, res) {
+  const root = path.resolve(getWorkspaceRoot(req.params.pid));
+  const rel = String(req.method === 'GET' ? req.query.dir ?? '' : req.body?.dir ?? '');
+  const abs = path.resolve(root, rel);
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    res.status(400).json({ error: 'dir 跑出了项目工作区' });
+    return null;
+  }
+  try {
+    if (!(await fs.stat(abs)).isDirectory()) throw new Error();
+  } catch {
+    res.status(404).json({ error: '演出文件夹不存在' });
+    return null;
+  }
+  return { abs, rel };
+}
+
+function statusOfOrchError(err) {
+  if (err?.code === 'ORCH_NO_CONFIG') return 404;
+  if (err?.code === 'ORCH_INVALID') return 422;
+  if (err?.code === 'CHATAI_UNCONFIGURED') return 503;
+  if (err?.code === 'CHATAI_UPSTREAM') return 502;
+  return 500;
+}
+
+/** 把一轮（正文 + 可能的摘要调用）的用量并成 run_model_usage 行 */
+function usageRows(out) {
+  const rows = new Map();
+  const add = (model, usage, costUsd) => {
+    if (!usage) return;
+    const key = model || 'unknown';
+    const acc = rows.get(key) || {
+      inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 0,
+    };
+    // 列口径对齐 agent 行：input 不含缓存读（openai 格式的 prompt_tokens 含，要拆）；
+    // 思考 token 按输出计（Gemini 口径，costOf 同款）
+    acc.inputTokens += Math.max(0, (usage.inputTokens || 0) - (usage.cacheReadTokens || 0));
+    acc.outputTokens += (usage.outputTokens || 0) + (usage.reasoningTokens || 0);
+    acc.cacheReadTokens += usage.cacheReadTokens || 0;
+    acc.costUsd += costUsd || 0;
+    rows.set(key, acc);
+  };
+  add(out.model, out.usage, out.costUsd);
+  if (out.摘要?.用量) add(out.摘要.模型, out.摘要.用量, out.摘要.花费);
+  return rows;
+}
+
+function meterRun(runId, out) {
+  const rows = usageRows(out);
+  setRunModelUsage(runId, Object.fromEntries(rows));
+  const total = [...rows.values()].reduce((a, r) => ({
+    inputTokens: a.inputTokens + r.inputTokens,
+    outputTokens: a.outputTokens + r.outputTokens,
+    cacheReadTokens: a.cacheReadTokens + r.cacheReadTokens,
+    totalCostUsd: a.totalCostUsd + r.costUsd,
+  }), { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, totalCostUsd: 0 });
+  setRunMetrics(runId, total);
+  return total.totalCostUsd;
+}
+
+/**
+ * GET /:pid/chatai/log?dir=…  —— 页面打开时渲染既有对话。
+ * 读不花钱不限频；只要项目归属过关就给。
+ */
+router.get('/:pid/chatai/log', async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    const dir = await resolvePerformanceDir(req, res);
+    if (!dir) return;
+    let config;
+    try {
+      config = await loadOrchestration(dir.abs);
+    } catch (err) {
+      return res.status(statusOfOrchError(err)).json({ error: err.message });
+    }
+    const [records, summary] = await Promise.all([
+      readLog(dir.abs, config), readSummary(dir.abs),
+    ]);
+    res.json({
+      records,
+      摘要: summary ? { 至: summary.至, 内容: summary.内容 } : null,
+      配置: { 模型: config.模型, 最大输出: config.最大输出, 上下文预算: config.上下文预算 },
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /:pid/chatai/turn  body { dir, input, stream? }
+ */
+router.post('/:pid/chatai/turn', async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    if (!gateApproved(req, res)) return;
+
+    const input = String(req.body?.input ?? '').trim();
+    if (!input) return res.status(422).json({ error: 'input 是空的' });
+    if (input.length > MAX_INPUT_CHARS) {
+      return res.status(422).json({ error: `input 超长（上限 ${MAX_INPUT_CHARS} 字符）` });
+    }
+
+    const quota = checkQuota(req.user);
+    if (!quota.ok) {
+      const word = quota.kind === 'lifetime' ? '试用额度' : '今日额度';
+      return res.status(429).json({ error: `${word}用完了（${fmtUsd(quota.used)} / ${fmtUsd(quota.limit)}）` });
+    }
+    const r = rate.take(req.user?.id ?? 'anon');
+    if (!r.ok) {
+      res.setHeader('Retry-After', Math.ceil(r.retryAfterMs / 1000));
+      return res.status(429).json({ error: '太快了，歇几秒再发' });
+    }
+
+    const dir = await resolvePerformanceDir(req, res);
+    if (!dir) return;
+    if (playing.has(dir.abs)) {
+      return res.status(409).json({ error: '这场演出正有一轮在跑，等它回完' });
+    }
+
+    const stream = req.body?.stream !== false;
+    const run = createRun({
+      skillId: 'chatai',
+      brief: input.slice(0, 120),
+      projectId: req.params.pid,
+      userId: req.user?.id ?? null,
+      metadata: { dir: dir.rel, kind: 'chatai-turn' },
+    });
+    markRunStarted(run.id);
+
+    // 客户端断开就掐上游：落盘在调用成功之后，掐掉的轮子不留半条记录
+    const ctrl = new AbortController();
+    req.on('close', () => { if (!res.writableEnded) ctrl.abort(new Error('客户端断开')); });
+
+    playing.add(dir.abs);
+    try {
+      if (stream) {
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders?.();
+        const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+        try {
+          const out = await performTurn({
+            dir: dir.abs, userInput: input, signal: ctrl.signal,
+            onDelta: (piece) => send({ delta: piece }),
+          });
+          const costUsd = meterRun(run.id, out);
+          markRunSucceeded(run.id);
+          send({
+            done: true, text: out.text, usage: out.usage, costUsd,
+            摘要: out.摘要 ? { 折叠: !out.摘要.失败, ...(out.摘要.失败 ? { 失败: out.摘要.失败 } : {}) } : null,
+          });
+        } catch (err) {
+          markRunFailed(run.id, err.message);
+          send({ error: err.message, code: err.code || null });
+        }
+        res.end();
+      } else {
+        try {
+          const out = await performTurn({ dir: dir.abs, userInput: input, signal: ctrl.signal });
+          const costUsd = meterRun(run.id, out);
+          markRunSucceeded(run.id);
+          res.json({
+            text: out.text, usage: out.usage, costUsd, meta: out.meta,
+            摘要: out.摘要 ? { 折叠: !out.摘要.失败, ...(out.摘要.失败 ? { 失败: out.摘要.失败 } : {}) } : null,
+          });
+        } catch (err) {
+          markRunFailed(run.id, err.message);
+          res.status(statusOfOrchError(err)).json({ error: err.message, code: err.code || null });
+        }
+      }
+    } finally {
+      playing.delete(dir.abs);
+    }
+  } catch (err) { next(err); }
+});

@@ -31,6 +31,7 @@ import memoryRouter from './api/memory.js';
 import boardRouter from './api/board.js';
 import pendingChangesRouter from './api/pending-changes.js';
 import publishRouter from './api/publish.js';
+import chataiRouter from './api/chatai.js';
 import recentRouter from './api/recent.js';
 import { userPluginsRouter, projectPluginsRouter } from './api/plugins.js';
 import { authRouter, authGuard } from './auth/middleware.js';
@@ -95,6 +96,7 @@ app.use('/api/projects', memoryRouter);
 app.use('/api/projects', boardRouter);
 app.use('/api/projects', pendingChangesRouter);  // C4: 用户直接编辑 + 评论 buffer
 app.use('/api/projects', publishRouter);         // 站点一键上线 Cloudflare Pages
+app.use('/api/projects', chataiRouter);          // 演出端点：页面 → chatai 通路（编排/闸门见 api/chatai.js）
 app.use('/api/projects', projectPluginsRouter);  // 2026-05-18: project 级 plugin 上传/卸载/列表
 // 跨项目聚合：/api/sessions/recent
 app.use('/api', recentRouter);
