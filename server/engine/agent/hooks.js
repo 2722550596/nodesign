@@ -65,6 +65,8 @@ import {
 } from './hooks/pre-starter-files.js';
 import { makePreToolUseBoardNeighborhoodInjector } from './hooks/pre-board-neighborhood.js';
 import { makePreToolUsePerformanceLogGuard } from './hooks/pre-performance-log-guard.js';
+import { makePreToolUseWorkspaceScopeGuard } from './hooks/pre-workspace-scope-guard.js';
+import { PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { makeUserPromptSubmitHandler } from './hooks/user-prompt-submit.js';
 import {
   makeFileChangedHandler,
@@ -129,6 +131,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // 被 gitignore 的文件），剩下的靠 rp-craft 的隐私纪律。
       matcher: 'Read|Grep',
       hooks: [makePreToolUsePerformanceLogGuard({ workspaceRoot })],
+    }, {
+      // 项目边界闸：结构化工具不进 bwrap，沙盒管不着它们跨项目读写 ——
+      // 数据根里、又不在本工作区里的路径一律拒。见 pre-workspace-scope-guard.js
+      matcher: 'Read|Grep|Glob|Write|Edit|NotebookEdit',
+      hooks: [makePreToolUseWorkspaceScopeGuard({ workspaceRoot, dataRoot: PROJECTS_DATA_ROOT })],
     }, {
       matcher: 'Task|Agent',
       hooks: [

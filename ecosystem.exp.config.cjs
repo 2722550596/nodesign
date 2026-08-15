@@ -32,6 +32,16 @@ module.exports = {
         NODE_ENV: 'production',
         HOME: '/home/wangang-dev',
         CLAUDE_CONFIG_DIR: '/home/wangang-dev/.claude',
+        // 进程级沙盒（2026-08-15 在 exp 先开）：Bash 进 bwrap，写只落工作区、
+        // 凭据读不到、env 里的 key 被抹掉。生产还没开，观察 exp 一段再说。
+        // 结构化工具（Read/Grep/Write）不归它管，那半边在 runtime/platform.js。
+        NODESIGN_SANDBOX: 'on',
+        // 两个实例同机同用户：不拦的话 exp 的会话读得到生产的用户数据和库。
+        // （.env 那类凭据由 platform.js 的兄弟仓扫描自动盖住，这里只补数据。）
+        NODESIGN_DENY_READ_EXTRA: [
+          '/home/wangang-dev/projects/Nodesign/server/projects-data',
+          '/home/wangang-dev/projects/Nodesign/server/db',
+        ].join(':'),
       },
       error_file: 'logs/nodesign-exp-error.log',
       out_file: 'logs/nodesign-exp-out.log',

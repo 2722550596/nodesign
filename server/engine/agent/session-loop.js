@@ -51,6 +51,7 @@ import {
 // session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
+import { buildIsolationOptions } from './isolation.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -74,7 +75,7 @@ import { autoNameProjectFromSession } from '../../projects/auto-name.js';
 // 合流并集（2026-08-13）：commitWorkspace/taskManifest 是扁平化这边的，
 // getUserById/levelFor 是 main 的每用户内容尺度旋钮（78ceaac）；
 // main 的 listTasks 已随任务层退役，不再引入
-import { commitTaskWorkspace, commitWorkspace } from '../../projects/workspace.js';
+import { commitTaskWorkspace, commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { taskManifest } from '../../lib/artifact-target.js';
 import { getUserById } from '../../auth/users-store.js';
 import { levelFor } from '../../lib/moderation.js';
@@ -405,6 +406,35 @@ export async function runSession({
   // 工具名（server.toolNames，见 mcp/index.js）——不另立第二份清单。
   const nodesignServer = createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx });
 
+  // npm 缓存：沙盒里 HOME 不可写，默认的 ~/.npm 会让 `npm i` EROFS 直接失败。
+  // 放数据根下共用一份（内容寻址 + 完整性校验，跨会话共用不构成投毒面）。
+  // 目录必须先存在 —— bwrap 绑一个不存在的路径会起不来。
+  const npmCacheDir = path.join(PROJECTS_DATA_ROOT, '.npm-cache');
+  try { await fs.mkdir(npmCacheDir, { recursive: true }); } catch { /* 起不来也不该拦会话 */ }
+
+  const sdkEnv = {
+    ...process.env,
+    ANTHROPIC_BASE_URL: baseUrlForBinary,
+    // 订阅模式（gateway URL 未设）下不能注入 NODESIGN_GATEWAY_KEY —— binary 见到
+    // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth。此时 GATEWAY_KEY 仅供
+    // generate_image 等业务工具直读。
+    ANTHROPIC_API_KEY: realGatewayUrl
+      ? (process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY)
+      : process.env.ANTHROPIC_API_KEY,
+    CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
+    CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
+    // auto-memory 强制开启分支（binary gate：DISABLE 置 falsy 值 = force on，
+    // 绕过 CLAUDE_CODE_SIMPLE 等后置门；前置门 U$/zl 若拦住则此招无效 → 走自建 B 计划）
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+    // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
+    // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
+    ENABLE_TOOL_SEARCH: 'true',
+    npm_config_cache: npmCacheDir,
+    // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
+    // 用于 SDK 内部 helper（如 task title 总结、auto-compaction 等小调）。
+    ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
+  };
+
   const sdkOptions = {
     cwd: cwdRoot,
     abortController: sessionAbortController,
@@ -422,27 +452,7 @@ export async function runSession({
       ...installed.plugins.map(p => p.path),
     ],
 
-    env: {
-      ...process.env,
-      ANTHROPIC_BASE_URL: baseUrlForBinary,
-      // 订阅模式（gateway URL 未设）下不能注入 NODESIGN_GATEWAY_KEY —— binary 见到
-      // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth。此时 GATEWAY_KEY 仅供
-      // generate_image 等业务工具直读。
-      ANTHROPIC_API_KEY: realGatewayUrl
-        ? (process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY)
-        : process.env.ANTHROPIC_API_KEY,
-      CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
-      CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
-      // auto-memory 强制开启分支（binary gate：DISABLE 置 falsy 值 = force on，
-      // 绕过 CLAUDE_CODE_SIMPLE 等后置门；前置门 U$/zl 若拦住则此招无效 → 走自建 B 计划）
-      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-      // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
-      // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
-      ENABLE_TOOL_SEARCH: 'true',
-      // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
-      // 用于 SDK 内部 helper（如 task title 总结、auto-compaction 等小调）。
-      ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
-    },
+    env: sdkEnv,
 
     // sdkModel = appModel spoofing alias（kimi-k2.6 → claude-opus-4-7[1m]）。
     // 让 SDK 内部 rawMaxTokens=1M，autoCompactWindow=230400 不再被卡 200k；
@@ -688,28 +698,9 @@ export async function runSession({
       return Number.isFinite(v) && v > 0 ? { maxBudgetUsd: v } : {};
     })(),
 
-    // Sandbox 开/关来自 runtime/platform.js（NODESIGN_SANDBOX=on 显式打开）
-    // 现状：默认关 —— bwrap 不解析 session root 的 symlink。详见 platform.js
-    sandbox: {
-      enabled: platform.sandboxEnabled,
-      failIfUnavailable: false,
-      network: {
-        allowLocalBinding: false,
-        // MVP 全域允许；生产可改具体白名单（unsplash / google-fonts / jsdelivr 等）
-        allowedDomains: ['*'],
-      },
-      filesystem: {
-        allowWrite: [
-          cwdRoot,
-          ...(sharedRoot ? [
-            path.join(sharedRoot, '.claude', 'agent-memory'),
-            path.join(sharedRoot, 'assets'),
-          ] : []),
-        ],
-        denyWrite: ['/etc', '/usr', '/bin', '/sbin', '/private/etc'],
-        denyRead: platform.credentialBlacklist(),
-      },
-    },
+    // 隔离两道闸（sandbox 管 Bash，permissions.deny 管 Read/Write 这类进程内工具）
+    // 全在 agent/isolation.js 里，改之前读那份文件头上的四条实测教训。
+    ...buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv }),
 
     toolConfig: {
       askUserQuestion: { previewFormat: 'html' },

@@ -23,7 +23,7 @@ const GRANDFATHERED = {
   'web/src/routes/ProjectWorkspace.jsx': 2427,
   // server/engine/agent/hooks.js 2026-08-14 拆完出表（1975 → 组装层 ~330，走 600 通用上限）
   'web/src/components/chat/Message.jsx': 1871,   // 正文渲染迁去 MarkdownText.jsx 后
-  'server/engine/agent/session-loop.js': 1192,
+  'server/engine/agent/session-loop.js': 1145,   // 08-15 隔离配置搬去 agent/isolation.js
   'server/projects/workspace.js': 1089,          // 起手模板迁去 workspace-templates.js 后
   'server/api/turn.js': 1075,
   'server/api/assets.js': 1017,

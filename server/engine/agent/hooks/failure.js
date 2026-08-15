@@ -52,6 +52,15 @@ export function makePostToolUseFailureHandler({ ctx, projectId, sessionId }) {
         + '  1. canvas.html 还没创建 → 先 Write 创建首版\n'
         + '  2. playwright spawn 慢 / 失败 → 换 Read canvas.html 让用户看代码\n'
         + '  3. fullPage 截图太大 → 换 fullPage:false 截视口';
+    } else if (tool === 'Bash' && /apply-seccomp|unshare\(CLONE_NEWUSER\)/.test(error)) {
+      // 沙盒启动自身的偶发（2026-08-15 实测约 1-2/14）：seccomp 那步的 unshare
+      // 跟运行时起线程抢跑，EINVAL。跟命令本身、跟权限都没关系 —— **原样重跑
+      // 一次就过**。必须点破：08-15 真会话里 agent 把它误判成"隔离闸拦住了"，
+      // 拿一个假结论去回答用户。
+      advice =
+        '这不是你的命令有问题，也不是权限拦截 —— 是沙盒启动时的已知偶发'
+        + '（apply-seccomp / unshare EINVAL，约十几分之一的概率）。\n'
+        + '**把刚才那条命令原样再跑一次就行**，别改写命令，也别据此推断"某个东西被拦了"。';
     } else if (tool === 'Bash') {
       advice =
         'Bash 命令失败。常见：\n'
