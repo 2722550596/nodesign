@@ -16,7 +16,7 @@
  * 下次打开任意便签会直接跳进带陈稿的编辑态（潜伏边，抽出时一并收掉）。
  */
 import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import MarkdownMath from '../ui/MarkdownMath.jsx';
 import { Plus, ExternalLink, X, BookOpen, PencilLine } from 'lucide-react';
 import { Assets, Memory } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS } from '../../lib/theme.js';
@@ -132,7 +132,7 @@ export function MarkdownViewerOverlay({ projectId, viewer, onClose, onSaved }) {
         </div>
         {draft === null ? (
           <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7 }}>
-            <ReactMarkdown>{viewer.content}</ReactMarkdown>
+            <MarkdownMath>{viewer.content}</MarkdownMath>
           </div>
         ) : (
           <textarea

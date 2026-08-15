@@ -1,17 +1,17 @@
 // @vitest-environment happy-dom
-// 聊天正文的公式渲染（2026-08-15）：模型写的 LaTeX 要出来，价钱不许被当公式吃掉
+// 全站 markdown 的公式支持（2026-08-15）：模型写的 LaTeX 要出来，价钱不许被当公式吃掉
 import { describe, it, expect } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { act } from 'react';
-import MarkdownText, { normalizeMath } from './MarkdownText.jsx';
+import MarkdownMath from '../components/ui/MarkdownMath.jsx';
+import { normalizeMath } from './markdown-math.js';
 
 function render(md) {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  act(() => { root.render(<MarkdownText>{md}</MarkdownText>); });
-  // 只看正文那块：组件自带的 <style> 里就有 katex 选择器，连样式一起断言等于白断言
-  const html = host.querySelector('.md-content').innerHTML;
+  act(() => { root.render(<MarkdownMath>{md}</MarkdownMath>); });
+  const html = host.innerHTML;
   act(() => { root.unmount(); });
   host.remove();
   return html;

@@ -17,7 +17,7 @@
  *   - 不能 dismiss（必须三选一），ESC 也不行—— SDK 在 plan mode 下卡着等
  */
 import { useState, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
+import MarkdownMath from '../ui/MarkdownMath.jsx';
 import { Check, Edit3, X, Send } from 'lucide-react';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Plan } from '../../lib/api.js';
@@ -200,7 +200,7 @@ export default function PlanReviewCard() {
               color: COLOR.text2,
               lineHeight: 1.6,
             }}>
-              <ReactMarkdown>{planText || ''}</ReactMarkdown>
+              <MarkdownMath>{planText || ''}</MarkdownMath>
               <style>{`
                 .plan-md h1 { font-size: 22px; font-weight: 600; margin: 0 0 12px 0; }
                 .plan-md h2 { font-size: 16px; font-weight: 600; margin: 16px 0 8px 0; color: ${COLOR.text}; }

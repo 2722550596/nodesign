@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
+import MarkdownMath from '../ui/MarkdownMath.jsx';
 import { PencilLine, Terminal, X, Bot } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SANS, FONT_SIZE, TERM, CANVAS, alpha } from '../../lib/theme.js';
 import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
@@ -642,7 +642,7 @@ function SubagentStickyCard({ card, onDismiss, scale = 1 }) {
           </span>
         ) : card.result ? (
           <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: '#4a3f2c', lineHeight: 1.65 }}>
-            <ReactMarkdown>{card.result}</ReactMarkdown>
+            <MarkdownMath>{card.result}</MarkdownMath>
           </div>
         ) : (
           <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: '#6d5c3d' }}>

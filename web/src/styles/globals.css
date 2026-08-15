@@ -97,3 +97,9 @@ iframe { border: 0; }
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* 公式（katex，2026-08-15）：排版归 katex 自带的样式，这里只管它在我们这些
+   窄容器里的行为 —— 长公式自己横向滚动，别把聊天栏/舞台卡撑破；块级公式上下
+   留一口气；写坏的公式红一行就算了（throwOnError:false 出的就是这个类）。 */
+.katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.katex-error { color: #b0554f; font-family: 'SF Mono', 'Cascadia Code', Menlo, monospace; font-size: 11px; }
