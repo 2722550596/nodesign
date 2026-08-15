@@ -57,6 +57,9 @@ export function makePostToolUseFailureHandler({ ctx, projectId, sessionId }) {
       // 跟运行时起线程抢跑，EINVAL。跟命令本身、跟权限都没关系 —— **原样重跑
       // 一次就过**。必须点破：08-15 真会话里 agent 把它误判成"隔离闸拦住了"，
       // 拿一个假结论去回答用户。
+      // 上游 issue：https://github.com/anthropics/claude-code/issues/86928
+      // 现在 ops/sandbox-shim/bwrap 那个垫片已经把它治住了，这条留着兜底：
+      // 垫片靠识别 SDK 内部命令前缀工作，SDK 升级后失配就会静默退回偶发。
       advice =
         '这不是你的命令有问题，也不是权限拦截 —— 是沙盒启动时的已知偶发'
         + '（apply-seccomp / unshare EINVAL，约十几分之一的概率）。\n'

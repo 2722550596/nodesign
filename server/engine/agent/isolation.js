@@ -29,7 +29,14 @@ import { autoModeSettings } from './auto-mode-rules.js';
  *
  * 治的是 `apply-seccomp: unshare(CLONE_NEWUSER): Invalid argument` 这个偶发
  * —— 内核级竞态，机器越闲越容易撞，实测每十几次 Bash 调用炸一次，而且会把
- * agent 带进错误推断。原理与安全不变量写在 server/ops/sandbox-shim/bwrap 里。
+ * agent 带进错误推断（有一次它干脆自己拿 `dangerouslyDisableSandbox` 绕过去）。
+ * 原理与安全不变量写在 server/ops/sandbox-shim/bwrap 里。
+ *
+ * 📮 上游 issue：https://github.com/anthropics/claude-code/issues/86928
+ * ⏳ **临时设施**：垫片认的是 SDK 内部的命令前缀，**SDK 一升级前缀变了就静默
+ *    失效**（原样透传 = 悄悄退回那个偶发，不报错）。升级后查
+ *    `<数据根>/.sandbox-shim.log` 里 `rewrote=1` 的计数还在不在涨；
+ *    上游修好之后连这个函数带 ops/sandbox-shim/ 一起删掉。
  * 关掉：`NODESIGN_SANDBOX_SHIM=off`。
  */
 export function sandboxShimEnv({ baseEnv = process.env, dataRoot } = {}) {

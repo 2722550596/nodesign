@@ -1,6 +1,11 @@
 #!/bin/bash
 # bwrap 垫片 —— 绕开 apply-seccomp 的 unshare 竞态（2026-08-15）
 #
+# 📮 上游 issue：https://github.com/anthropics/claude-code/issues/86928
+#    （含 strace 时序、内核源码引用、49 行 C 最小复现、三条修法建议）
+#    ⏳ **这是临时设施**：上游修掉之后把整个目录连同 isolation.js 里的
+#    sandboxShimEnv() 一起摘掉，别让它变成永久的一层。
+#
 # 病：SDK 沙盒每条命令都以 `ARGV0=apply-seccomp /proc/self/fd/3 <命令>` 起手 ——
 # 那是那个 306MB bun 二进制**自我重执行**成 seccomp helper。bun 启动时 mimalloc
 # 会先起一根 `mi-scavenger` 线程，helper 随即把它关掉并 join；但内核在
@@ -27,7 +32,9 @@
 # 现状的偶发，不会退成"没有沙盒"）。升 SDK 之后查 $NODESIGN_SHIM_LOG 里
 # rewrote=1 的计数还在不在涨。
 #
-# 上游修法（已记在 memory，值得提 issue）：helper 对 EINVAL 做有界重试即可。
+# 上游修法（issue 里提的三条）：对 EINVAL 做有界重试 + sched_yield（最简单，
+# 实测 50µs 退避就闭合窗口）／改成轮询 /proc/self/status 的 Threads: 到 1
+# 再 unshare／让 helper 在运行时起线程之前就把 namespace 建好。
 
 PAT='ARGV0=apply-seccomp /proc/self/fd/3 '
 REP='/usr/bin/unshare -U --map-current-user --keep-caps /usr/bin/env ARGV0=apply-seccomp /proc/self/fd/3 '
