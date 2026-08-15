@@ -53,6 +53,7 @@ import { makeArrangeOnBoardTool } from './tools/arrange-on-board.js';
 import { makeCreateOnBoardTool } from './tools/create-on-board.js';
 import { makeOrganizeBoardTool } from './tools/organize-board.js';
 import { makeReadDocumentTool } from './tools/read-document.js';
+import { makeReadTavernJsonTool } from './tools/read-tavern-json.js';
 import { makeDeliverFilesTool } from './tools/deliver-files.js';
 import { makeCrystallizeSkillTool } from './tools/crystallize-skill.js';
 import { makePublishSiteTool } from './tools/publish-site.js';
@@ -105,6 +106,9 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 普通 Read 读这三种只会拿到二进制乱码**而且不报错**，agent 会拿着空气
       // 往下干。PDF 不在此列：Read 原生支持，真跑验过。
       makeReadDocumentTool({ workspaceRoot, sharedRoot }),
+
+      // 酒馆 JSON 读取口：预设/角色卡/世界书先摘要再取正文（Read 会被 460KB 预设撑爆）
+      makeReadTavernJsonTool({ workspaceRoot, sharedRoot }),
 
       // C10 export_handoff — 复用 exports.js 的 buildHandoffZip，写到 workspace/exports/
       makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
