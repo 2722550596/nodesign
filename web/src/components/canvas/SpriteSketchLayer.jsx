@@ -291,6 +291,12 @@ const SPRITE_W = 400;
 const SPRITE_H = 100;
 
 /**
+ * 贴着工作目标时，精灵下沿离目标上边线留多少（世界单位，2026-08-15 用户报
+ * "贴太紧、摘要压产物"后加）。跟纸上题字一样：字要在画的上方留一条呼吸缝。
+ */
+const WORK_GAP = 26;
+
+/**
  * 备选槽（视口比例坐标）。第一个就是用户点名的落点：视口中点到顶边这条线
  * 的中点。其余从它往两侧、再往下半屏退让。
  */
@@ -424,17 +430,24 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
   // 卸载兜底：不走上面的显式清理路径时别让计时器对着空组件开枪
   useEffect(() => () => clearTimeout(offTimer.current), []);
 
-  const at = workAnchor
-    ? { x: Math.round(workAnchor.x - 14), y: Math.round(workAnchor.y - 56) }
+  // 贴目标时：以**精灵的下沿**吊在目标上边线之上（transform: translateY(-100%)），
+  // 而不是把它的上沿钉在目标上方固定 56px —— 手写行是一到三行不等的，按上沿钉
+  // 就等于"句子越长压产物越多"（2026-08-15 用户报：摘要经常和产物重叠）。
+  // 下沿吊法与句长无关，留白恒定。
+  const anchored = !!workAnchor;
+  const at = anchored
+    ? { x: Math.round(workAnchor.x - 14), y: Math.round(workAnchor.y - WORK_GAP) }
     : slot;
+  // 输出框和输入行要的是精灵**外接框的左上角**：吊着的时候它在 at 之上一个身位
+  const box = at && anchored ? { x: at.x, y: at.y - SPRITE_H } : at;
 
   // 输出框落位：精灵在哪它就绕着哪找位。obstacles 变一次（产物增删/拖动落盘）
   // 才重算 —— 流式打字每拍都重排的话框会来回蹦。
   const hasFrames = frameCards.length > 0 && typeof renderFrameCard === 'function';
   const frameSpot = useMemo(
-    () => (hasFrames ? findFrameSpot(at, obstacles) : null),
+    () => (hasFrames ? findFrameSpot(box, obstacles) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hasFrames, at?.x, at?.y, obstacles],
+    [hasFrames, box?.x, box?.y, obstacles],
   );
 
   if (!at || !text) return null;
@@ -442,6 +455,8 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
     <>
       <div style={{
         position: 'absolute', left: at.x, top: at.y, zIndex: 305, pointerEvents: 'none',
+        // 贴目标时整块往上吊一个自身高度：留白就跟手写行有几行无关了
+        transform: anchored ? 'translateY(-100%)' : undefined,
         // 目标间移动是"走过去"；槽位重落走 drawKey 重画（定格换场），过渡不碍事
         transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
       }}>
@@ -449,7 +464,7 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
           drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
           // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
           // 从**当前落点**算 —— recap 长文遮挡输入行的病由 quiet 让位治）
-          onMarkClick={onAsk ? () => onAsk({ x: at.x + 54, y: at.y + 50 }) : undefined}
+          onMarkClick={onAsk ? () => onAsk({ x: box.x + 54, y: box.y + 50 }) : undefined}
         />
       </div>
       {/* 输出框（代码直播/终端）：跟着精灵走，绕它找不压产物的方位

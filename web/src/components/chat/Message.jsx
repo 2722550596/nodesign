@@ -12,7 +12,7 @@ import {
   MousePointerClick, BookOpen, ClipboardCheck, Camera,
 } from 'lucide-react';
 import { diffLines } from 'diff';
-import ReactMarkdown from 'react-markdown';
+import MarkdownText from './MarkdownText.jsx';
 import { Undo2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -105,23 +105,8 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
     return <SystemMessage variant={message.variant} content={content} pending={!!message.pending} />;
   }
 
-  // assistant
-  const mdContent = (
-    <>
-      <div className="md-content">
-        <ReactMarkdown>{content || ''}</ReactMarkdown>
-      </div>
-      <style>{`
-        .md-content p { margin: 0 0 ${GAP.md}px 0; }
-        .md-content p:last-child { margin-bottom: 0; }
-        .md-content code { background: rgba(43,33,23,0.06); padding: 1px 5px; border-radius: ${RADIUS.xs}px; font-family: ${FONT_MONO}; font-size: ${FONT_SIZE.md}px; }
-        .md-content pre { background: ${COLOR.bgCard}; padding: ${GAP.lg}px; border-radius: ${RADIUS.lg}px; overflow-x: auto; font-size: ${FONT_SIZE.md}px; }
-        .md-content ul, .md-content ol { margin: 0 0 ${GAP.md}px 0; padding-left: ${GAP.xxl}px; }
-        .md-content li { margin: ${GAP.xxs}px 0; }
-        .md-content a { color: ${COLOR.btn}; text-decoration: underline; }
-      `}</style>
-    </>
-  );
+  // assistant（正文渲染连同 LaTeX 都在 MarkdownText.jsx，2026-08-15 拆出）
+  const mdContent = <MarkdownText>{content || ''}</MarkdownText>;
 
   // V7：bare 渲染（无 icon、无 TimelineNode）。在 group 内左 padding 加大让正文
   // 跟其他 timeline 节点的 children 对齐（PAD_LEFT + NODE_AREA + CONTENT_GAP =

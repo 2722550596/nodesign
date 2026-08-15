@@ -14,6 +14,7 @@
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "diff": "^9.0.0",
+    "katex": "^0.16.47",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -22,6 +23,8 @@
     "react-router-dom": "^7.1.0",
     "react-virtuoso": "^4.18.6",
     "recharts": "^2.15.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

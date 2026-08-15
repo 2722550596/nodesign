@@ -143,20 +143,41 @@ export function sanitizeLine(s, max = 48) {
  * 首句兜底（不花钱那条腿）：haiku 到货前先把回复的第一小句写上去 ——
  * 铅笔先起个底稿，显影稿到了再换。中文回复的第一小句通常本来就像一句
  * 旁白（"好的，我来把配色调暖一点"）。
+ *
+ * 开头的应答词单独剥掉（"好的，"/"明白，"/"没问题，"）：那半句是说给用户听的
+ * 客套，占着 26 字的额度还不带信息，剥了剩下的正好是"我在干什么"。
  */
+const OPENER_RE = /^(好的?|行|明白了?|收到|没问题|你说得对|说得对|确实|是的|对|OK|ok|Sure|当然)[，,。！!、～~ ]+/;
+
 export function clampFirstClause(text, max = 26) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return '';
-  const cut = t.split(/(?<=[。！？!?；;\n])/)[0] || t;
-  return sanitizeLine(cut, max);
+  const parts = t.split(/(?<=[。！？!?；;\n])/).filter(s => s.trim());
+  // 整句都是应答词（"没问题！"）就往后挪一句 —— 底稿要的是"在干什么"那句
+  const hit = parts.find(s => s.replace(OPENER_RE, '').replace(/[。！？!?；;，,、～~ ]/g, ''));
+  const cut = hit || parts[0] || t;
+  return sanitizeLine(cut.replace(OPENER_RE, '').trim() || cut, max);
 }
 
-/** 回合内回复 → 画布短句（第一人称进行时，像旁白） */
+/**
+ * 回合内回复 → 画布短句。
+ *
+ * ⭐ 视角是**第一人称**：这句话写在精灵旁边，说话的就是干活的那位自己
+ * （"正在把海报配色调暖"），不是解说员在旁边报"它/你在干嘛"。2026-08-15
+ * 用户报"看起来是第二人称"——病根是原提示只说了"第一人称"没堵住"你/为你/
+ * 帮你"这类**对着用户说话**的写法，而被摘的原文本来就是说给用户听的，
+ * 模型顺手就把人称抄过来了。所以现在既给正例也给反例。
+ */
 export function summarizeReply(text) {
   const body = String(text || '').slice(0, 2400);
   if (body.replace(/\s+/g, '').length < 40) return Promise.resolve(sanitizeLine(body, 26) || null);
   return quickModelLine(
-    '把用户给的这段 AI 助手回复压成一行不超过 16 字的中文短句，第一人称进行时的旁白口吻（例：正在把海报配色调暖）。只输出短句本身，不要引号不要句号。',
+    '把用户给的这段 AI 助手回复摘成一行不超过 16 字的中文短句，放在画布上当旁白。'
+    + '视角是助手自己的第一人称（主语「我」省略不写）：说我这会儿在做/刚做完的**那一件具体的事**，'
+    + '准确、不夸张、不评价。'
+    + '不许出现「你」「为你」「帮你」「已为您」这类对着用户说话的写法，也不要「助手」「它」这类第三人称。'
+    + '例：正在把海报配色调暖 / 三张封面已导出 / 在查登录失败的原因。'
+    + '只输出短句本身，不要引号不要句号。',
     body,
   );
 }
@@ -169,7 +190,9 @@ export function summarizeRecap({ finalText, toolCount = 0, durationMs = 0 }) {
   const body = String(finalText || '').slice(0, 3000);
   if (!body.trim()) return Promise.resolve(null);
   return quickModelLine(
-    '用不超过 40 字的中文总结这一轮 AI 助手做了什么、有没有留下待办。有待办就点出来，没有就说都做完了。只输出总结本身，一行。',
+    '用不超过 40 字的中文写一句「我刚才做了什么」：第一人称（主语「我」省略不写），'
+    + '说清这一轮实际做完的事，有没留下待办；有待办就点出来，没有就说都做完了。'
+    + '不许出现「你」「为你」「帮你」，也不要「助手」「它」这类第三人称。只输出这一句，一行。',
     `（本轮约 ${mins} 分钟，动了 ${toolCount} 次工具）\n${body}`,
   );
 }

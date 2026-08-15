@@ -22,13 +22,13 @@ const GRANDFATHERED = {
   'web/src/components/canvas/BoardCanvas.jsx': 2752,   // B1 入座 → B2 搬家 → B3 菜单表 → B5 浮层族迁出后
   'web/src/routes/ProjectWorkspace.jsx': 2427,
   // server/engine/agent/hooks.js 2026-08-14 拆完出表（1975 → 组装层 ~330，走 600 通用上限）
-  'web/src/components/chat/Message.jsx': 1886,
+  'web/src/components/chat/Message.jsx': 1871,   // 正文渲染迁去 MarkdownText.jsx 后
   'server/engine/agent/session-loop.js': 1192,
   'server/projects/workspace.js': 1124,
   'server/api/turn.js': 1075,
   'server/api/assets.js': 1017,
   'server/api/exports/build-standalone.js': 980,
-  'web/src/routes/Home.jsx': 931,
+  'web/src/routes/Home.jsx': 710,               // 样式表迁去 home-styles.js 后
   'web/src/components/canvas/DragOverlay.jsx': 927,
   'server/api/exports.js': 926,
   'server/engine/runs/active-runs.js': 912,
