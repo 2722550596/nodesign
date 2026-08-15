@@ -51,7 +51,7 @@ import {
 // session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
-import { buildIsolationOptions } from './isolation.js';
+import { buildIsolationOptions, sandboxShimEnv } from './isolation.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -430,6 +430,11 @@ export async function runSession({
     // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
     ENABLE_TOOL_SEARCH: 'true',
     npm_config_cache: npmCacheDir,
+    // auto 模式分类器用哪个模型。判"这个动作越不越界"是需要判断力的活，
+    // 默认 opus —— 这一步省钱等于把闸门交给一个更笨的看门人。
+    ...(platform.autoModeEnabled ? { CLAUDE_CODE_AUTO_MODE_MODEL: platform.autoModeModel } : {}),
+    // bwrap 垫片：绕开 apply-seccomp 的 unshare 竞态（见 isolation.js / ops/sandbox-shim）
+    ...sandboxShimEnv({ dataRoot: PROJECTS_DATA_ROOT }),
     // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
     // 用于 SDK 内部 helper（如 task title 总结、auto-compaction 等小调）。
     ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
@@ -502,9 +507,11 @@ export async function runSession({
     // 这个错没有 runId 会被前端 stale guard 吞掉 → 用户看到"完全没反应"。
     // 修：resume 不传 permissionMode 让 SDK 用 JSONL 保存的；运行时切 mode 通过
     // query.setPermissionMode + turn.js POST /turn 入口的 mode 校正路径完成。
+    // 非 plan 的默认模式来自 platform（exp 是 'auto' = 模型分类器判每次调用，
+    // 生产仍是 'bypassPermissions'）。plan 照旧优先。
     ...(isResume
       ? {}
-      : { permissionMode: initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions' }),
+      : { permissionMode: initialPermissionMode === 'plan' ? 'plan' : platform.permissionModeDefault }),
     // 永远 true：与 permissionMode 正交——只是"允许运行时切 bypassPermissions"的安全
     // 开关，启动当下的 mode 由 permissionMode 字段定。plan-mode 启动也必须带，否则用户
     // 批准 plan 后 host 调 query.setPermissionMode('bypassPermissions') 会被 SDK 拒：
@@ -593,6 +600,27 @@ export async function runSession({
           return { behavior: 'deny', message: '用户希望重新对齐，请基于反馈重新组织 plan', interrupt: true };
         } catch (err) {
           return { behavior: 'deny', message: err.message, interrupt: true };
+        }
+      }
+
+      // auto 模式的升级口：分类器自己拿不准的调用会落到这里（它自己判定要拦的
+      // 不会来，直接就拒了）。第一版**只记账不拦**——先看真实用量里都有谁会
+      // 升上来，再决定拦不拦；这期间分类器的硬拒照样生效。
+      // NODESIGN_AUTO_MODE_ESCALATION=deny 改成拦。
+      if (platform.autoModeEnabled && currentMode === 'auto' && toolName !== 'ExitPlanMode') {
+        const 因 = options?.decisionReason || options?.title || '(没给原因)';
+        console.log(
+          `[auto-mode] 升级 sid=${sessionId.slice(0, 8)} tool=${toolName} `
+          + `理由=${String(因).replace(/\s+/g, ' ').slice(0, 200)}`,
+        );
+        if (platform.autoModeEscalation === 'deny' && toolName !== 'AskUserQuestion') {
+          return {
+            behavior: 'deny',
+            message:
+              `这个动作没通过平台的自动审批：${String(因).slice(0, 300)}\n`
+              + '换个不需要越界的做法；确实必须这么做的话，先跟用户说清楚你要做什么、为什么，让他决定。',
+            interrupt: false,
+          };
         }
       }
 
@@ -905,10 +933,22 @@ export async function runSession({
     if (missing.length) {
       problems.push(`nodesign 工具缺 ${missing.length}/${expected.length}：${missing.join(', ')}`);
     }
+    // 权限模式对账（2026-08-15）：**要的和拿到的可能不一样，而且是静默的**。
+    // 实测：会话模型是 haiku 时 `permissionMode:'auto'` 会被无声降级成 'default'，
+    // init 里照报 default，没有任何报错 —— 分类器一次都不跑，我们却以为它在把关。
+    // 只警告不杀：降级后的会话还能干活，杀掉代价大于收益；但必须在日志里喊出来。
+    const wantMode = isResume ? null : (initialPermissionMode === 'plan' ? 'plan' : platform.permissionModeDefault);
+    if (wantMode && init.permissionMode && init.permissionMode !== wantMode) {
+      console.warn(
+        `[session-loop] ⚠️ sid=${sessionId.slice(0, 8)} 权限模式被降级：要 ${wantMode}，`
+        + `实际 ${init.permissionMode}（模型 ${sdkModel} 可能不支持该模式）`,
+      );
+    }
     if (!problems.length) {
       console.info(
         `[session-loop] sid=${sessionId.slice(0, 8)} init 契约自检 ✓ `
-        + `(nodesign connected, ${expected.length}/${expected.length} tools)`,
+        + `(nodesign connected, ${expected.length}/${expected.length} tools, `
+        + `mode=${init.permissionMode ?? '未报'})`,
       );
       return;
     }

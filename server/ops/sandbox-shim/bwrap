@@ -1,0 +1,50 @@
+#!/bin/bash
+# bwrap 垫片 —— 绕开 apply-seccomp 的 unshare 竞态（2026-08-15）
+#
+# 病：SDK 沙盒每条命令都以 `ARGV0=apply-seccomp /proc/self/fd/3 <命令>` 起手 ——
+# 那是那个 306MB bun 二进制**自我重执行**成 seccomp helper。bun 启动时 mimalloc
+# 会先起一根 `mi-scavenger` 线程，helper 随即把它关掉并 join；但内核在
+# `mm_release()` 里唤醒 joiner 的时机**早于** `release_task` 把死线程从
+# thread group 摘除，于是紧接着那句 `unshare(CLONE_NEWUSER)` 撞上
+# `!thread_group_empty` → EINVAL。（kernel/fork.c：CLONE_NEWUSER 会被隐式加上
+# CLONE_THREAD，而 check_unshare_flags 对 CLONE_THREAD 要求 thread group 为空。）
+#
+# 所以它是**内核级竞态**，不是配置问题：40 行 C 能脱离 claude 复现，1 vCPU 空载
+# 200/200 必炸，join 后加 50µs 睡眠就 0/200。机器越闲越容易炸（joiner 抢占了
+# 垂死线程），多核几乎见不到 —— 这是这台单核机特有的。
+#
+# 治：把那句 racy 的 syscall 从执行路径上拿掉。`unshare -U --map-current-user
+# --keep-caps` 由 util-linux **单线程**先把 user namespace 建好并把能力放进
+# ambient set，helper 进去后第一步 `unshare(NEWNS|NEWPID)` 直接成功，**根本不会
+# 走到那句 CLONE_NEWUSER**。helper 在 exec 载荷之前自带 PR_CAP_AMBIENT_CLEAR_ALL，
+# 能力不外泄。
+#
+# 安全不变量（每条都在真会话里验过，改这个文件前重验）：
+#   Seccomp: 2（filter 仍在）· AF_UNIX socket() 仍被拒（pm2 rpc.sock 逃逸路照旧关着）
+#   · uid 仍是 1000 · userns 嵌套层数不变 · ambient caps 在载荷 exec 前清空
+#
+# ⚠️ 这是垫在 SDK 内部实现上的补丁，**pattern 变了就自动失效**（原样透传 = 退回
+# 现状的偶发，不会退成"没有沙盒"）。升 SDK 之后查 $NODESIGN_SHIM_LOG 里
+# rewrote=1 的计数还在不在涨。
+#
+# 上游修法（已记在 memory，值得提 issue）：helper 对 EINVAL 做有界重试即可。
+
+PAT='ARGV0=apply-seccomp /proc/self/fd/3 '
+REP='/usr/bin/unshare -U --map-current-user --keep-caps /usr/bin/env ARGV0=apply-seccomp /proc/self/fd/3 '
+REAL=${NODESIGN_REAL_BWRAP:-/usr/bin/bwrap}
+
+# 兜底：unshare 不在（非 util-linux 系统）→ 原样透传，退回现状
+[ -x /usr/bin/unshare ] || exec "$REAL" "$@"
+
+args=()
+hit=0
+for a in "$@"; do
+  case "$a" in
+    *"$PAT"*) hit=1; a=${a//"$PAT"/"$REP"} ;;
+  esac
+  args+=("$a")
+done
+
+[ -n "$NODESIGN_SHIM_LOG" ] && printf '%s rewrote=%d nargs=%d\n' "$(date +%s)" "$hit" "$#" >>"$NODESIGN_SHIM_LOG" 2>/dev/null
+
+exec "$REAL" "${args[@]}"

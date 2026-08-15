@@ -36,6 +36,16 @@ module.exports = {
         // 凭据读不到、env 里的 key 被抹掉。生产还没开，观察 exp 一段再说。
         // 结构化工具（Read/Grep/Write）不归它管，那半边在 runtime/platform.js。
         NODESIGN_SANDBOX: 'on',
+        // 权限模式：auto = 每次要审批的工具调用交给一个**模型分类器**判，
+        // 规则从 agent/auto-mode-rules.js 注进它的系统提示。
+        // ⚠️ 会话模型是 haiku 时 SDK 会把 auto 静默降级成 default（实测），
+        // 分类器一次都不跑 —— session-loop 的 init 自检会在日志里喊。
+        NODESIGN_PERMISSION_MODE: 'auto',
+        // 判"越不越界"是需要判断力的活，用 opus，别在这儿省。
+        NODESIGN_AUTO_MODE_MODEL: 'opus',
+        // 分类器判不了、升级到我们这儿的：先只记账放行（allow），
+        // 看清真实用量里都有谁会升上来再决定拦不拦（deny）。
+        NODESIGN_AUTO_MODE_ESCALATION: 'allow',
         // 两个实例同机同用户：不拦的话 exp 的会话读得到生产的用户数据和库。
         // （.env 那类凭据由 platform.js 的兄弟仓扫描自动盖住，这里只补数据。）
         NODESIGN_DENY_READ_EXTRA: [

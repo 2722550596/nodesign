@@ -22,6 +22,26 @@
 
 import path from 'node:path';
 import { platform } from '../../runtime/platform.js';
+import { autoModeSettings } from './auto-mode-rules.js';
+
+/**
+ * bwrap 垫片的 env（PATH 前插一个目录，里面的 `bwrap` 是我们的包装脚本）
+ *
+ * 治的是 `apply-seccomp: unshare(CLONE_NEWUSER): Invalid argument` 这个偶发
+ * —— 内核级竞态，机器越闲越容易撞，实测每十几次 Bash 调用炸一次，而且会把
+ * agent 带进错误推断。原理与安全不变量写在 server/ops/sandbox-shim/bwrap 里。
+ * 关掉：`NODESIGN_SANDBOX_SHIM=off`。
+ */
+export function sandboxShimEnv({ baseEnv = process.env, dataRoot } = {}) {
+  if (!platform.sandboxEnabled) return {};
+  if (process.env.NODESIGN_SANDBOX_SHIM === 'off') return {};
+  const dir = path.join(platform.repoRoot, 'server', 'ops', 'sandbox-shim');
+  return {
+    PATH: `${dir}${path.delimiter}${baseEnv.PATH || ''}`,
+    // 改写次数记一笔：SDK 升级后 pattern 变了会静默退回现状，靠这个计数发现
+    ...(dataRoot ? { NODESIGN_SHIM_LOG: path.join(dataRoot, '.sandbox-shim.log') } : {}),
+  };
+}
 
 /**
  * @param {object} o
@@ -72,6 +92,10 @@ export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRo
     },
     settings: {
       permissions: { deny: platform.protectedPathRules({ dataRoot }) },
+      // auto 模式的分类器规则（只在开了 auto 时注入，省得白占 settings）。
+      // ⚠️ 按节替换不是追加 —— 为什么只覆盖 environment / hard_deny 两节，
+      // 见 auto-mode-rules.js 文件头。
+      ...(platform.autoModeEnabled ? { autoMode: autoModeSettings() } : {}),
     },
   };
 }

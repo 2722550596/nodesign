@@ -62,6 +62,27 @@ const claudeConfigDir = process.env.NODESIGN_CONFIG_DIR
 const sandboxEnabled = process.env.NODESIGN_SANDBOX === 'on';
 
 /**
+ * 权限模式 & auto 模式分类器
+ *
+ * 历史上一直是 `bypassPermissions`（没有人能回答权限弹窗，只能全放）。
+ * SDK 还有个 `auto`：**用一个模型分类器**判每次工具调用该放行还是该拦，
+ * 规则从 settings 的 `autoMode` 段注入它的系统提示（见 agent/auto-mode-rules.js）。
+ *
+ * 分类器用哪个模型由 `CLAUDE_CODE_AUTO_MODE_MODEL` 定 —— 判"这个动作越不越界"
+ * 是个需要判断力的活，用强模型，别在这儿省。
+ *
+ * 开关：`NODESIGN_PERMISSION_MODE=auto`（exp 已开，生产仍是 bypass）。
+ * 分类器判不了、升级到 host 的那些调用走 canUseTool，处理策略见
+ * `NODESIGN_AUTO_MODE_ESCALATION`（allow=记账放行/deny=拦）。
+ */
+const permissionModeDefault =
+  process.env.NODESIGN_PERMISSION_MODE === 'auto' ? 'auto' : 'bypassPermissions';
+const autoModeEnabled = permissionModeDefault === 'auto';
+const autoModeModel = process.env.NODESIGN_AUTO_MODE_MODEL || 'opus';
+const autoModeEscalation =
+  process.env.NODESIGN_AUTO_MODE_ESCALATION === 'deny' ? 'deny' : 'allow';
+
+/**
  * WebFetch preflight 是否跳过
  *
  * SDK binary 内置 `nV7()` preflight：调 Anthropic 服务器侧域名分类 API（需 OAuth
@@ -223,6 +244,8 @@ function dump() {
     // 沙盒真开没开一眼看到，另外报一下两道闸各盖了多少条 —— 归零就是配错了
     protectedPaths: credentialBlacklist().length,
     scrubbedEnvVars: secretEnvVarNames().length,
+    permissionMode: permissionModeDefault,
+    ...(autoModeEnabled ? { autoModeModel, autoModeEscalation } : {}),
   };
   console.log('[platform]', JSON.stringify(info, null, 2));
   return info;
@@ -235,6 +258,10 @@ export const platform = {
   repoRoot,
   claudeConfigDir,
   sandboxEnabled,
+  permissionModeDefault,
+  autoModeEnabled,
+  autoModeModel,
+  autoModeEscalation,
   skipWebFetchPreflight,
   credentialBlacklist,
   secretEnvVarNames,

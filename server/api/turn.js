@@ -58,6 +58,7 @@ import { Events } from '../engine/agent/events.js';
 import { readPendingSummary } from './pending-changes.js';
 import { isExtractable } from '../lib/doc-extract.js';
 import { pendingRewinds } from './sessions.js';
+import { platform } from '../runtime/platform.js';
 
 /** 直接 image input 阈值：> 1MB 走 path 让 agent Read，< 1MB inline base64 */
 const IMAGE_INLINE_MAX_BYTES = 1 * 1024 * 1024;
@@ -171,7 +172,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     // Phase 3.2：前端 plan-mode toggle 传 permissionMode='plan' 启用 SDK 原生 plan mode；
     // 其他值（含不传）显式走 bypassPermissions（自动化 design agent 默认 — 见 SDK
     // PermissionMode 定义；不要传 null，行为未定义）。
-    const initialPermissionMode = permissionMode === 'plan' ? 'plan' : 'bypassPermissions';
+    const initialPermissionMode = permissionMode === 'plan' ? 'plan' : platform.permissionModeDefault;
 
     const finalSkillId = (typeof skillId === 'string' && skillId) || project.skillId;
 
@@ -988,15 +989,16 @@ router.post('/:pid/runs/:runId/plan-approve', async (req, res, next) => {
     // 反过来 resolve 先发生 → canUseTool return → ExitPlanMode tool 执行 → agent
     // next turn 看到的可能仍是 plan-mode reminder（race condition）。
     //
-    // 切 'bypassPermissions' 而非 'default'（用户报告"ExitPlanMode 后 Edit 还是被
-    // 拦"的根因）—— session 起初就是 'bypassPermissions'（session-loop.js:232），
-    // plan 退出回到同一 mode 才一致。'default' 让 SDK 走 per-tool 询问流程，多数
-    // 写工具默认 deny。
-    await query.setPermissionMode('bypassPermissions');
+    // 回到**会话起初那个 mode**（platform.permissionModeDefault：生产是
+    // 'bypassPermissions'，exp 是 'auto'）。别写死 —— 写死会让 plan 批准之后
+    // 整条会话退回没有分类器的状态。也别用 'default'：那会走 per-tool 询问流程，
+    // 多数写工具默认 deny（"ExitPlanMode 后 Edit 还是被拦"就是这么来的）。
+    const backToMode = platform.permissionModeDefault;
+    await query.setPermissionMode(backToMode);
     const sid = getSessionIdByRunId(req.params.runId);
     if (sid) {
-      setSessionPermissionMode(sid, 'bypassPermissions');
-      emitPermissionModeChanged(project.id, sid, 'bypassPermissions');
+      setSessionPermissionMode(sid, backToMode);
+      emitPermissionModeChanged(project.id, sid, backToMode);
     }
     if (sid && toolUseId) {
       // resolve canUseTool 里 await 的 pending plan approval Promise，agent 阻塞解开
