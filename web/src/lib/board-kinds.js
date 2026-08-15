@@ -73,6 +73,11 @@ export function isMarkdown(o) {
   return /\.(md|markdown)$/i.test(o?.ext || o?.name || o?.path || '');
 }
 
+/** 演出的编排配置（`编排.yaml`）——双击进图形设置页，跟 .md 进阅读器同路数。 */
+export function isOrchestration(o) {
+  return /(^|\/)编排\.yaml$/.test(o?.path || o?.name || '');
+}
+
 /**
  * 形态注册表。
  *
@@ -225,9 +230,12 @@ export const KINDS = {
     // `.md` 也是 file，但它能进阅读器：「阅读」是渲染过的（双击默认走这条），
     // 「打开」仍留着给原始文件。frontmatter 不剥 —— 便签的 `---` 头是会话
     // 元数据该藏，普通 md 的 frontmatter 是内容的一部分。
-    variant: (o) => (isMarkdown(o)
-      ? { reader: 'file', primary: 'read', actions: ['add', 'read', 'open'] }
-      : null),
+    variant: (o) => {
+      if (isMarkdown(o)) return { reader: 'file', primary: 'read', actions: ['add', 'read', 'open'] };
+      // 编排.yaml：双击/「编排」按钮进图形设置页；「打开」留给原始文件
+      if (isOrchestration(o)) return { label: '编排', primary: 'orchestrate', actions: ['orchestrate', 'open'] };
+      return null;
+    },
   },
 };
 

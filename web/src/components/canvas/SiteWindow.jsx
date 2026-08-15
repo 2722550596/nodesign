@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move, SquareDashedMousePointer } from 'lucide-react';
+import { Monitor, Tablet, Smartphone, RotateCw, ExternalLink, FileCode, Eye, ArrowLeft, Pencil, Move, SquareDashedMousePointer, SlidersHorizontal } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { SITE_VIEWPORTS } from '../../lib/board-geometry.js';
-import ArtifactWindow, { WindowBanner, exportToolGroup } from './ArtifactWindow.jsx';
+import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
+import { SiteModeBanner } from './site-window-banner.jsx';
 import RegionSelect from './RegionSelect.jsx';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
 import { serializeForAI } from '../../lib/element-semantics.js';
@@ -21,6 +22,7 @@ import GrabHandle from './GrabHandle.jsx';
 import PostDragNotePanel from './PostDragNotePanel.jsx';
 import CodeCanvas from './CodeCanvas.jsx';
 import SitePublishControl from './SitePublishControl.jsx';
+import { useOrchestrateEntry } from './orchestrate-entry.jsx';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
@@ -558,6 +560,9 @@ export default function SiteWindow({
 
   const switchTab = (id) => { setSelected(null); setNotePanelOpen(false); setTab(id); };
 
+  // 演出入口（编排.yaml 存在才亮）：探测与设置页都在 orchestrate-entry.jsx
+  const orch = useOrchestrateEntry(projectId, base);
+
   const groups = useMemo(() => [
     {
       id: 'mode',
@@ -604,6 +609,7 @@ export default function SiteWindow({
     {
       id: 'actions',
       items: [
+        orch.item,
         history.length > 0 && { id: 'back', icon: ArrowLeft, title: '站内后退', onClick: goBack },
         { id: 'reload', icon: RotateCw, title: '刷新', onClick: () => { commitAllPending(); setReloadKey(k => k + 1); } },
         {
@@ -616,7 +622,7 @@ export default function SiteWindow({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [tab, editable, draggable, isStreaming, pageList, current, viewport, history.length,
     goBack, navigateTo, commitAllPending, projectId, relPath, onRegionComment, task,
-    artifactExports, onExport]);
+    artifactExports, onExport, orch.item]);
 
   // overlay 全家共用的 iframe 引用。
   //
@@ -637,29 +643,10 @@ export default function SiteWindow({
       escToClose={false}
       groups={groups}
       onToolbarGroups={onToolbarGroups}
-      banner={(tab === 'edit' || tab === 'drag') ? (
-        <WindowBanner>
-          {tab === 'edit' ? (
-            <span>双击文字直接改（Enter 保存 / Esc 还原），单击元素弹评论卡 —— 改动和评论都会带给 agent</span>
-          ) : (
-            <span>
-              拖动元素调整布局，摆好后<b>点「保存」写进文件</b>（保存前可撤销）· 按 P 切自由摆放 · Alt 拖 = 复制 · 自由模式方向键微调
-              {collageWarn && (
-                <span style={{ color: '#a4600f' }}>
-                  {' '}· 这页是拼贴式版面（大量绝对定位）：绝对定位碎片拖动自动改坐标；其余元素拖动改的是结构，画面可能不变 —— 精修位置更推荐直接吩咐 agent 改 CSS
-                </span>
-              )}
-            </span>
-          )}
-          {built && (
-            <span style={{ color: '#a4600f' }}>
-              · 构建型站点：这里改的是构建产物，agent 会把改动同步回源再重新构建
-            </span>
-          )}
-        </WindowBanner>
-      ) : null}
+      banner={<SiteModeBanner tab={tab} collageWarn={collageWarn} built={built} />}
     >
-      <div data-site-window={task} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div data-site-window={task} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {orch.overlay}
       {/* 内容区 */}
       {tab !== 'code' ? (
         <div ref={wrapRef} style={{

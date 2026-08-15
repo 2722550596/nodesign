@@ -549,6 +549,14 @@ export const Plugins = {
     jsonRequest('DELETE', `/api/projects/${pid}/plugins/${encodeURIComponent(name)}`),
 };
 
+// ── Chatai（演出）：编排设置页的读写。演出页本身自带 fetch，不走这里 ──
+export const Chatai = {
+  config: (pid, dir) =>
+    jsonRequest('GET', `/api/projects/${pid}/chatai/config?dir=${encodeURIComponent(dir)}`),
+  saveConfig: (pid, dir, 配置, 文件) =>
+    jsonRequest('PUT', `/api/projects/${pid}/chatai/config`, { dir, 配置, 文件 }),
+};
+
 // ── Health ──
 export const Health = {
   check: () => jsonRequest('GET', '/api/health'),

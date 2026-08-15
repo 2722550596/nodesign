@@ -44,6 +44,7 @@ import { useGlobalStore } from '../../stores/globalStore.js';
 import {
   makeBoardReaders, ProjectPanelOverlay, MarkdownViewerOverlay, ImageDetailOverlay,
 } from './BoardOverlays.jsx';
+import OrchestrateSettings from './OrchestrateSettings.jsx';
 
 /**
  * BoardCanvas —— 工作台空间画布（2026-07-27 分区版）
@@ -245,6 +246,7 @@ export default function BoardCanvas({
   const [addedPaths, setAddedPaths] = useState(() => new Set());
   const [detail, setDetail] = useState(null);       // 图片详情
   const [viewer, setViewer] = useState(null);       // { title, content, note? } markdown 阅读；note = 可编辑的任务便利贴
+  const [orchestrate, setOrchestrate] = useState(null); // { dir } 演出编排设置页（编排.yaml 双击进）
   // （编辑草稿态住 MarkdownViewerOverlay 本地 —— 浮层关闭即弃稿，B5 抽出时下沉）
   const [projectPanel, setProjectPanel] = useState(null);   // 'memory'|'guide'|'brand'|'files'
   // 拖拽实时落点提示：{ kind:'zone'|'folder', id, ghost?:{x,y,w,h} }（ghost=吸附预览格）
@@ -1300,6 +1302,12 @@ export default function BoardCanvas({
     window.open(Assets.artifactFileUrl(projectId, o.path), '_blank', 'noopener');
   };
 
+  // 编排.yaml → 图形设置页。dir = 配置所在文件夹（演出文件夹）
+  const openOrchestrate = (o) => {
+    const p = String(o.path || '');
+    setOrchestrate({ dir: p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '' });
+  };
+
   const handleDeleteNote = async (o) => {
     // 画布原生物件（涂鸦/文字）：board.json 就是本体，删掉那一条就是删掉它。
     // 走下面文件那条路会静默失败 —— native 物件没有 `name`，垃圾桶和右键
@@ -1359,6 +1367,8 @@ export default function BoardCanvas({
     open: focusDeck,
     // 手写文字：双击改内容（原来是 null —— 写下的字永远改不了）
     editText: openTextEditor,
+    // 编排.yaml：图形设置页
+    orchestrate: openOrchestrate,
   };
 
   const primaryOpen = (o) => PRIMARY[primaryOf(o)]?.(o);
@@ -1371,8 +1381,8 @@ export default function BoardCanvas({
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       // 先关浮层（项目区面板 / 阅读 / 图片详情），都没开着才退回项目区全景
-      if (projectPanel || viewer || detail) {
-        setProjectPanel(null); setViewer(null); setDetail(null);
+      if (projectPanel || viewer || detail || orchestrate) {
+        setProjectPanel(null); setViewer(null); setDetail(null); setOrchestrate(null);
         return;
       }
       // 有选中先取消选中（比"关窗"近一级的撤销）
@@ -1382,7 +1392,7 @@ export default function BoardCanvas({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [deckOpen, projectPanel, viewer, detail]);
+  }, [deckOpen, projectPanel, viewer, detail, orchestrate]);
 
   /**
    * 换工具的单键快捷键。
@@ -2202,6 +2212,7 @@ export default function BoardCanvas({
         onAdd={() => handleAdd(obj)}
         onOpenViewer={() => openViewer(obj)}
         onOpenFile={() => openFile(obj)}
+        onOrchestrate={() => openOrchestrate(obj)}
         onDetail={() => setDetail(obj)}
         onDeleteNote={() => handleDeleteNote(obj)}
         onFocus={() => focusDeck(obj)}
@@ -2660,6 +2671,13 @@ export default function BoardCanvas({
           projectId={projectId} detail={detail}
           onClose={() => setDetail(null)}
           onAdd={() => { handleAdd(detail); setDetail(null); }}
+        />
+      )}
+
+      {orchestrate && (
+        <OrchestrateSettings
+          projectId={projectId} dir={orchestrate.dir}
+          onClose={() => setOrchestrate(null)}
         />
       )}
     </div>

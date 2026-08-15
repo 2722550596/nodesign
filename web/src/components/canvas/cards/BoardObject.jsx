@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink, BookOpen, Trash2, Film,
-  MessageSquarePlus,
+  MessageSquarePlus, SlidersHorizontal,
 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../../lib/theme.js';
 import { PAPER, PAPER_SHADOW } from '../../../lib/paper.js';
@@ -38,7 +38,7 @@ function BoardObject({
   vanishing = false,
   groupTarget = false, selected = false, noteCount = 0,
   renaming = false, onRenameCommit, onRenameCancel,
-  onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus,
+  onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus, onOrchestrate,
   onAnnotate,
   scale = 1,
   /** 谱系收叠（北极星路线3）：身后叠着几张旧版 + 当前展开态 */
@@ -134,6 +134,8 @@ function BoardObject({
     detail: { icon: ExternalLink, title: '详情', fn: onDetail },
     // .md 两条路都给：「阅读」是渲染过的（双击也走这条），「打开」是原始文件
     open: { icon: ExternalLink, title: '打开', fn: onOpenFile },
+    // 编排.yaml：图形设置页（双击也走这条），「打开」仍留给原始文件
+    orchestrate: { icon: SlidersHorizontal, title: '编排设置', fn: onOrchestrate },
     delete: { icon: Trash2, title: '删除', fn: onDeleteNote },
   };
   /**

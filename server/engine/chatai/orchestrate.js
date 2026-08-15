@@ -52,7 +52,7 @@ export function estTokens(text) {
 }
 
 /** 文件引用只许指向文件夹内部（配置是用户/agent 写的，但端点跑在服务端） */
-function resolveInside(dir, rel, ctx) {
+export function resolveInside(dir, rel, ctx) {
   const abs = path.resolve(dir, String(rel));
   if (abs !== path.resolve(dir) && !abs.startsWith(path.resolve(dir) + path.sep)) {
     fail(`${ctx}：文件引用「${rel}」跑出了演出文件夹`);
@@ -110,6 +110,14 @@ export async function loadOrchestration(dir) {
   try { doc = YAML.parse(raw); } catch (e) {
     fail(`${CONFIG_FILE} 不是合法 YAML：${e.message}`);
   }
+  return normalizeOrchestration(doc);
+}
+
+/**
+ * 校验并归一一份编排配置（对象形态）。设置页 PUT 落盘前也走这一份——
+ * 校验只有一个实现，读路径和写路径不许各自为政。
+ */
+export function normalizeOrchestration(doc) {
   if (!doc || typeof doc !== 'object') fail(`${CONFIG_FILE} 顶层要是对象`);
 
   const 系统层 = (doc.系统层 ?? []).map((e, i) => normalizeEntry(e, '系统层', i));
@@ -137,6 +145,37 @@ export async function loadOrchestration(dir) {
     上下文预算: intField(doc.上下文预算, DEFAULTS.上下文预算, '上下文预算'),
     系统层, 历史, 尾部, 摘要,
   };
+}
+
+/**
+ * 归一后的配置 → YAML 文本（设置页保存路径）。
+ * 只写非默认/非空的东西，条目字段按 名字/文件|内容/触发/停用 的稳定顺序。
+ * 注释保不住（结构化编辑后重生成）——所以 skill 教"说明写进名字字段"。
+ */
+export function serializeOrchestration(cfg) {
+  const entry = (e) => ({
+    名字: e.名字,
+    ...(e.文件 != null ? { 文件: e.文件 } : { 内容: e.内容 ?? '' }),
+    ...(e.触发 ? { 触发: e.触发 } : {}),
+    ...(e.停用 ? { 停用: true } : {}),
+  });
+  const doc = {
+    ...(cfg.模型 ? { 模型: cfg.模型 } : {}),
+    最大输出: cfg.最大输出,
+    上下文预算: cfg.上下文预算,
+    系统层: cfg.系统层.map(entry),
+    历史: { 文件: cfg.历史.文件, 保留轮数: cfg.历史.保留轮数 },
+    摘要: {
+      启用: cfg.摘要.启用,
+      ...(cfg.摘要.模型 ? { 模型: cfg.摘要.模型 } : {}),
+      触发轮数: cfg.摘要.触发轮数,
+      保留轮数: cfg.摘要.保留轮数,
+      长度: cfg.摘要.长度,
+      ...(cfg.摘要.提示 ? { 提示: cfg.摘要.提示 } : {}),
+    },
+    尾部: cfg.尾部.map(entry),
+  };
+  return `# ${CONFIG_FILE} —— 此文件的顺序 = 进模型的顺序\n` + YAML.stringify(doc, { lineWidth: 0 });
 }
 
 async function resolveEntryText(dir, entry, zone) {

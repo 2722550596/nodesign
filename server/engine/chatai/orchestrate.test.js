@@ -3,7 +3,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { loadOrchestration, compileContext, estTokens, CONFIG_FILE } from './orchestrate.js';
+import {
+  loadOrchestration, compileContext, estTokens, CONFIG_FILE,
+  normalizeOrchestration, serializeOrchestration,
+} from './orchestrate.js';
 import { readLog, appendTurn, writeSummary, readSummary } from './chat-log.js';
 import { needsSummary } from './summarize.js';
 
@@ -228,6 +231,27 @@ describe('摘要触发判定（纯函数）', () => {
     const need = needsSummary(mk(6), { 至: 4, 内容: 'x' }, cfg);          // 活 4 轮 → 折
     expect(need.至).toBe(8);
     expect(need.fold.map(r => r.seq)).toEqual([5, 6, 7, 8]);
+  });
+});
+
+describe('序列化 round-trip（设置页保存路径）', () => {
+  it('serialize → parse → normalize 与原配置一致，含多行内容与触发', async () => {
+    await scaffold(
+      `模型: claude-sonnet-4-6\n最大输出: 400\n系统层:\n  - 名字: 文风\n    内容: |\n      第一行\n      第二行\n尾部:\n  - 名字: 纸条\n    内容: 短句。\n    触发: [拔剑, 交手]\n  - 名字: 停着\n    文件: 设定/x.md\n    停用: true\n`,
+      { '设定/x.md': 'x' },
+    );
+    const cfg = await loadOrchestration(dir);
+    const text = serializeOrchestration(cfg);
+    const YAML = (await import('yaml')).default;
+    expect(normalizeOrchestration(YAML.parse(text))).toEqual(cfg);
+    expect(text).toContain('触发');
+    expect(text).toContain('第二行');
+  });
+
+  it('normalizeOrchestration 拒无效对象（跟读路径同一份校验）', () => {
+    expect(() => normalizeOrchestration({ 系统层: [{ 名字: '违规', 内容: 'x', 触发: ['a'] }] }))
+      .toThrow('只能住尾部');
+    expect(() => normalizeOrchestration(null)).toThrow('顶层');
   });
 });
 

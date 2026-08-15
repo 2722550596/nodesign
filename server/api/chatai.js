@@ -27,8 +27,11 @@ import express from 'express';
 import { guardProject } from './_guard.js';
 import { getWorkspaceRoot } from '../projects/workspace.js';
 import { performTurn } from '../engine/chatai/perform.js';
-import { loadOrchestration } from '../engine/chatai/orchestrate.js';
-import { readLog, readSummary } from '../engine/chatai/chat-log.js';
+import {
+  loadOrchestration, normalizeOrchestration, serializeOrchestration,
+  resolveInside, estTokens, CONFIG_FILE,
+} from '../engine/chatai/orchestrate.js';
+import { readLog, readSummary, SUMMARY_FILE } from '../engine/chatai/chat-log.js';
 import { checkQuota, fmtUsd } from '../lib/quota.js';
 import { makeRateWindow } from '../lib/rate-window.js';
 import {
@@ -140,6 +143,83 @@ router.get('/:pid/chatai/log', async (req, res, next) => {
       摘要: summary ? { 至: summary.至, 内容: summary.内容 } : null,
       配置: { 模型: config.模型, 最大输出: config.最大输出, 上下文预算: config.上下文预算 },
     });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /:pid/chatai/config?dir=…  —— 设置页的一次取齐：归一后的配置 +
+ * 条目引用的文件内容 + 历史/摘要状况。token 估算前端自己算（同款下限口径）。
+ */
+router.get('/:pid/chatai/config', async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    const dir = await resolvePerformanceDir(req, res);
+    if (!dir) return;
+    let config;
+    try {
+      config = await loadOrchestration(dir.abs);
+    } catch (err) {
+      return res.status(statusOfOrchError(err)).json({ error: err.message, code: err.code || null });
+    }
+    const 文件 = {};
+    for (const e of [...config.系统层, ...config.尾部]) {
+      if (e.文件 == null || e.文件 in 文件) continue;
+      try {
+        文件[e.文件] = await fs.readFile(resolveInside(dir.abs, e.文件, `条目「${e.名字}」`), 'utf8');
+      } catch { 文件[e.文件] = null; }   // 引用悬空：设置页要红给用户看，不是 500
+    }
+    const [records, summary] = await Promise.all([readLog(dir.abs, config), readSummary(dir.abs)]);
+    const boundary = summary?.至 ?? 0;
+    res.json({
+      配置: config,
+      文件,
+      状况: {
+        记录条数: records.length,
+        轮数: records.filter(r => r.role === 'user').length,
+        活历史tok: records.filter(r => r.seq > boundary).reduce((n, r) => n + estTokens(r.text), 0),
+        摘要: summary ? { 至: summary.至, 内容: summary.内容 } : null,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /:pid/chatai/config  body { dir, 配置, 文件? }
+ *
+ * 校验（normalizeOrchestration，跟演出路同一份）→ 先写引用文件、再原子写
+ * 编排.yaml。改动下一轮生效——正在跑的那轮已经编译完了，不追。
+ * 文件表只许写文件夹内部，且不许碰 编排.yaml / 摘要.json / 对话记录本体。
+ */
+router.put('/:pid/chatai/config', async (req, res, next) => {
+  try {
+    if (!guardProject(req, res)) return;
+    const dir = await resolvePerformanceDir(req, res);
+    if (!dir) return;
+    let config;
+    try {
+      config = normalizeOrchestration(req.body?.配置);
+    } catch (err) {
+      return res.status(422).json({ error: err.message });
+    }
+    const files = req.body?.文件 && typeof req.body.文件 === 'object' ? req.body.文件 : {};
+    const forbidden = new Set([CONFIG_FILE, SUMMARY_FILE, config.历史.文件]);
+    for (const [rel, text] of Object.entries(files)) {
+      if (forbidden.has(rel)) {
+        return res.status(422).json({ error: `「${rel}」不归设置页写（配置/摘要/对话记录各有各的落盘路）` });
+      }
+      if (typeof text !== 'string') return res.status(422).json({ error: `文件「${rel}」的内容要是字符串` });
+      let abs;
+      try { abs = resolveInside(dir.abs, rel, '文件表'); } catch (err) {
+        return res.status(422).json({ error: err.message });
+      }
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, text, 'utf8');
+    }
+    const target = path.join(dir.abs, CONFIG_FILE);
+    const tmp = `${target}.tmp`;
+    await fs.writeFile(tmp, serializeOrchestration(config), 'utf8');
+    await fs.rename(tmp, target);
+    res.json({ ok: true, 配置: config });
   } catch (err) { next(err); }
 });
 
