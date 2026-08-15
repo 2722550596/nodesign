@@ -45,8 +45,9 @@ see the render, this one is for **the user**.`,
     async ({ path: rawPath }) => {
       try {
         const p = typeof rawPath === 'string' ? rawPath.trim().replace(/^\.\//, '') : '';
-        if (p.includes('..')) {
-          return { content: [{ type: 'text', text: 'Invalid path.' }], isError: true };
+        // 绝对路径同拒：这个 path 直发前端当寻址依据（home 幽灵族的家规）
+        if (p.includes('..') || p.startsWith('/')) {
+          return { content: [{ type: 'text', text: 'Invalid path (workspace-relative only).' }], isError: true };
         }
         if (p) setActiveDeck(sessionId, p);   // 摊给用户看的那份就是"当前 deck"
         ctx?.emit?.(Events.deckPreview(p));

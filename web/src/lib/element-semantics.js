@@ -203,12 +203,47 @@ export function describeAdjustables(el) {
 // ─── AI 上下文视图（给 LLM 工具调用的 input）──────────────
 
 /**
- * 序列化元素给 AI：完整 path / computed / outerHTML / siblings
- * 这是不做翻译的"机器视图"
+ * 隐私页判定：页面自声明 `<meta name="nd-privacy">`（演出页管线自带这枚标）。
+ * 演出记录（RP 台词）只走 chatai 通路，不进设计会话 —— 隐私页上的序列化
+ * 一律剥文本、留结构。
  */
-export function serializeForAI(el) {
+export function isPrivacyDoc(doc) {
+  try { return !!doc?.querySelector?.('meta[name="nd-privacy"]'); } catch { return false; }
+}
+
+/** 文本剥离的 outerHTML：结构骨架照留，每个非空文本节点换成〔文N字〕。 */
+function redactedOuterHtml(el) {
+  try {
+    const clone = el.cloneNode(true);
+    const walker = el.ownerDocument.createTreeWalker(clone, 4 /* SHOW_TEXT */);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) {
+      const len = (n.textContent || '').trim().length;
+      if (len) n.textContent = `〔文${len}字〕`;
+    }
+    return clone.outerHTML || '';
+  } catch { return '〔已略〕'; }
+}
+
+/** 锚点隐私化：textHint 是内容原文，隐私页上不出门（dataId/path/bbox 够找回来） */
+export function redactAnchor(anchor) {
+  if (!anchor) return anchor;
+  return { ...anchor, textHint: anchor.textHint ? `〔文${anchor.textHint.length}字〕` : '' };
+}
+
+/**
+ * 序列化元素给 AI：完整 path / computed / outerHTML / siblings
+ * 这是不做翻译的"机器视图"。
+ *
+ * opts.redactText：true=剥文本（演出页标注管线传）；不传则看页面自己的
+ * nd-privacy 标。agent 修版式要的是锚点和结构，从来不需要台词。
+ */
+export function serializeForAI(el, { redactText } = {}) {
   if (!el || el.nodeType !== 1) return null;
-  const anchor = serializeAnchor(el);
+  const privacy = redactText ?? isPrivacyDoc(el.ownerDocument);
+  const anchor0 = serializeAnchor(el);
+  const anchor = privacy ? redactAnchor(anchor0) : anchor0;
   const view = el.ownerDocument?.defaultView;
   const cs = view ? view.getComputedStyle(el) : null;
   const computed = cs ? Object.fromEntries(
@@ -217,20 +252,24 @@ export function serializeForAI(el) {
       .map(k => [k, cs[k]])
   ) : null;
   const siblings = el.parentElement
-    ? Array.from(el.parentElement.children).map((c, i) => ({
-        index: i,
-        tag: c.tagName.toLowerCase(),
-        isSelf: c === el,
-        textBrief: (c.textContent || '').trim().slice(0, 40),
-      }))
+    ? Array.from(el.parentElement.children).map((c, i) => {
+        const t = (c.textContent || '').trim();
+        return {
+          index: i,
+          tag: c.tagName.toLowerCase(),
+          isSelf: c === el,
+          textBrief: privacy ? (t ? `〔文${t.length}字〕` : '') : t.slice(0, 40),
+        };
+      })
     : [];
   return {
     tag: el.tagName.toLowerCase(),
     anchor,
     pageInfo: describePage(el),
-    outerHtml: (el.outerHTML || '').slice(0, 2000),
+    outerHtml: (privacy ? redactedOuterHtml(el) : (el.outerHTML || '')).slice(0, 2000),
     computed,
     siblings,
+    ...(privacy ? { 隐私: '文本已剥离（演出页），只留结构' } : {}),
   };
 }
 

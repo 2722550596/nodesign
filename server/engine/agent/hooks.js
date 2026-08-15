@@ -64,6 +64,7 @@ import {
   makePreToolUseBashStarterFilesFallback,
 } from './hooks/pre-starter-files.js';
 import { makePreToolUseBoardNeighborhoodInjector } from './hooks/pre-board-neighborhood.js';
+import { makePreToolUsePerformanceLogGuard } from './hooks/pre-performance-log-guard.js';
 import { makeUserPromptSubmitHandler } from './hooks/user-prompt-submit.js';
 import {
   makeFileChangedHandler,
@@ -120,6 +121,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // （sdk.mjs 的 i6 表 Task→Agent，binary 侧 matcher 也吃这个别名 —— 2026-08-03
     // 双 matcher 探针实测两个都命中）。两个都写，换 SDK 版本时不会静默失配。
     PreToolUse: [{
+      // 演出记录隐私闸：Read/Grep 演出文件夹的对话记录 → deny + 教义
+      //（RP 台词只走 chatai 通路不进设计会话；写不拦——建场要种开场白）
+      matcher: 'Read|Grep',
+      hooks: [makePreToolUsePerformanceLogGuard({ workspaceRoot })],
+    }, {
       matcher: 'Task|Agent',
       hooks: [
         makePreToolUseAgentForceForegroundHandler(),

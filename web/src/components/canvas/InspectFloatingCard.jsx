@@ -3,7 +3,7 @@ import { X, MapPin, MessageCircle, Trash2, Check } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { isImeEnter } from '../../lib/helpers.js';
-import { getElementRole, describePage, serializeForAI } from '../../lib/element-semantics.js';
+import { getElementRole, describePage, serializeForAI, redactAnchor } from '../../lib/element-semantics.js';
 import { overlayBase, placeFloatingCard } from '../../lib/overlay-rect.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -28,6 +28,7 @@ const CARD_MAX_HEIGHT = 520;
 
 export default function InspectFloatingCard({
   selectedAnchor,
+  redactText = undefined,   // 演出页隐私：true=评论序列化剥文本（SiteWindow 按 hasOrch 传）
   iframeDoc,
   iframeRef,
   iframeRect,
@@ -100,15 +101,15 @@ export default function InspectFloatingCard({
   const handleSubmit = useCallback(() => {
     const text = draft.trim();
     if (!text || !el) return;
-    const aiContext = serializeForAI(el);
+    const aiContext = serializeForAI(el, { redactText });
     onAddComment?.({
-      anchor: selectedAnchor,
+      anchor: redactText ? redactAnchor(selectedAnchor) : selectedAnchor,
       scope: 'this',
       aiContext,
       text,
     });
     setDraft('');
-  }, [draft, el, selectedAnchor, onAddComment]);
+  }, [draft, el, selectedAnchor, onAddComment, redactText]);
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

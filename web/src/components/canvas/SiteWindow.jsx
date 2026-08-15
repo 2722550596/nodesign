@@ -8,7 +8,7 @@ import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
 import { SiteModeBanner } from './site-window-banner.jsx';
 import RegionSelect from './RegionSelect.jsx';
 import { attachEditMode, detachAll } from './DirectEditBridge.js';
-import { serializeForAI } from '../../lib/element-semantics.js';
+import { serializeForAI, redactAnchor } from '../../lib/element-semantics.js';
 import { findElementByAnchor } from '../../lib/html-utils.js';
 import { applyMoveToRuntime, applyStyleToRuntime } from '../../lib/pending-edit-apply.js';
 import { applyOpsToSource } from '../../lib/site-source-patch.js';
@@ -358,19 +358,31 @@ export default function SiteWindow({
     }
   }, [stageOp, pushReactPending]);
 
+  // 演出入口（编排.yaml 存在才亮）：探测与设置页都在 orchestrate-entry.jsx。
+  // ⚠️ 必须声明在下面几个 useCallback 之前 —— 它们的依赖里有 orch.hasOrch，
+  // 声明晚了就是渲染期 TDZ（Cannot access before initialization，整窗白屏）。
+  const orch = useOrchestrateEntry(projectId, base);
+
   // ── 双击改字：跟拖拽走同一条落盘队列（干净源码重放，不再整页序列化）──
+  // 演出页（orch.hasOrch）隐私纪律：发给 agent 的记录一律剥文本留结构——
+  // 台词只走 chatai 通路。运行时 op 里的 anchor 保持原样（客户端应用编辑要用）。
   const handleTextEditLocal = useCallback((info) => {
     if (!info || typeof info.newText !== 'string') return;
     let doc; try { doc = iframeRef.current?.contentDocument; } catch { doc = null; }
     const el = doc?.body ? findElementByAnchor(info.anchor, doc.body) : null;
+    const 隐私 = orch.hasOrch;
     queueOp(`改字「${info.newText.trim().slice(0, 12)}」`,
       { type: 'text', anchor: info.anchor, newText: info.newText },
       {
-        kind: 'edit', anchor: info.anchor,
-        diff: { oldText: info.oldText, newText: info.newText },
-        aiContext: el ? serializeForAI(el) : null,
+        kind: 'edit', anchor: 隐私 ? redactAnchor(info.anchor) : info.anchor,
+        // 新文是用户亲手写的改动意图，照发；旧文可能是台词，隐私页剥掉
+        diff: {
+          oldText: 隐私 ? `〔文${(info.oldText || '').length}字〕` : info.oldText,
+          newText: info.newText,
+        },
+        aiContext: el ? serializeForAI(el, { redactText: 隐私 }) : null,
       });
-  }, [queueOp]);
+  }, [queueOp, orch.hasOrch]);
 
   // 拖完的补充说明 → 元素评论（带 path 进 buffer，agent 连着 applied-* 记录一起看）
   const handleDragNote = useCallback(async (anchor, text) => {
@@ -378,12 +390,12 @@ export default function SiteWindow({
     if (!t) return;
     const el = draggedSource;
     await onAddComment?.({
-      anchor,
-      aiContext: el && el.isConnected ? serializeForAI(el) : null,
+      anchor: orch.hasOrch ? redactAnchor(anchor) : anchor,
+      aiContext: el && el.isConnected ? serializeForAI(el, { redactText: orch.hasOrch }) : null,
       path: relPathRef.current,
       text: t,
     });
-  }, [draggedSource, onAddComment]);
+  }, [draggedSource, onAddComment, orch.hasOrch]);
 
   // 协作 lock（deck 同款）：agent run 期间强制退出 drag，避免双方并行改同一份文件
   useEffect(() => {
@@ -560,9 +572,6 @@ export default function SiteWindow({
 
   const switchTab = (id) => { setSelected(null); setNotePanelOpen(false); setTab(id); };
 
-  // 演出入口（编排.yaml 存在才亮）：探测与设置页都在 orchestrate-entry.jsx
-  const orch = useOrchestrateEntry(projectId, base);
-
   const groups = useMemo(() => [
     {
       id: 'mode',
@@ -711,6 +720,7 @@ export default function SiteWindow({
           {tab === 'edit' && selected && iframeDoc && (
             <InspectFloatingCard
               selectedAnchor={selected.anchor}
+              redactText={orch.hasOrch}
               iframeDoc={iframeDoc}
               iframeRef={overlayIframeRef}
               iframeRect={wrapSize}

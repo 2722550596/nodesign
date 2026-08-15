@@ -31,6 +31,7 @@ export function useOrchestrateEntry(projectId, base) {
   }, [projectId, base]);
 
   return {
+    hasOrch,   // 演出页判定给隐私管线复用（标注序列化剥文本）
     item: hasOrch && {
       id: 'orchestrate', icon: SlidersHorizontal,
       title: '编排设置 —— 这场演出的上下文怎么拼',
