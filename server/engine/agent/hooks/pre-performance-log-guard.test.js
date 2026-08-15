@@ -125,6 +125,24 @@ describe('Bash 那一路', () => {
   });
 });
 
+describe('⚠️ 系统层条目的 文件: 不是记录名（08-15 在真配置上量出来的连带问题）', () => {
+  it('只认 历史.文件，系统层的设定文件照样能读能搜', async () => {
+    const 真 = await fs.mkdtemp(path.join(os.tmpdir(), 'real-'));
+    await fs.mkdir(path.join(真, '城/设定'), { recursive: true });
+    await fs.writeFile(path.join(真, '城/编排.yaml'),
+      '系统层:\n  - 名字: 身份\n    文件: 设定/叙述者.md\n历史:\n  文件: 对话.jsonl\n');
+    await fs.writeFile(path.join(真, '城/设定/叙述者.md'), '# 叙述者\n');
+    await fs.writeFile(path.join(真, '城/对话.jsonl'), '{"text":"台词"}\n');
+    resetPerformanceScanCache();
+    const { names } = await scanPerformances(真);
+    expect([...names].sort()).toEqual(['对话.jsonl', '摘要.json']);   // 叙述者.md 不在里面
+    expect(await checkPerformanceLogRead({ file_path: '城/设定/叙述者.md' }, 真)).toBeNull();
+    expect(await checkBashPerformanceRead('cat 城/设定/叙述者.md', 真)).toBeNull();
+    expect((await guardGrepInput({ path: '.' }, 真)).glob).not.toContain('叙述者');
+    await fs.rm(真, { recursive: true, force: true });
+  });
+});
+
 describe('扫描', () => {
   it('认出演出文件夹和它的记录名，深目录不漏', async () => {
     await fs.mkdir(path.join(root, 'a/b/戏二'), { recursive: true });
