@@ -23,6 +23,7 @@ export async function performTurn({ dir, userInput, signal, onDelta }) {
     system: compiled.system,
     messages: compiled.messages,
     model: compiled.model || undefined,
+    思考: compiled.思考,
     maxTokens: compiled.maxTokens,
     signal, onDelta,
   });

@@ -32,6 +32,7 @@ import {
   resolveInside, estTokens, CONFIG_FILE,
 } from '../engine/chatai/orchestrate.js';
 import { readLog, readSummary, SUMMARY_FILE } from '../engine/chatai/chat-log.js';
+import { modelCatalog } from '../engine/chatai/index.js';
 import { checkQuota, fmtUsd } from '../lib/quota.js';
 import { makeRateWindow } from '../lib/rate-window.js';
 import {
@@ -173,6 +174,9 @@ router.get('/:pid/chatai/config', async (req, res, next) => {
     res.json({
       配置: config,
       文件,
+      // 模型/单价/思考档由服务端一张表说了算（MODEL_SPECS），前端只负责画——
+      // 中转站改名或换档位时不用两头改（单一真相源）。
+      模型表: modelCatalog(),
       状况: {
         记录条数: records.length,
         轮数: records.filter(r => r.role === 'user').length,
@@ -285,6 +289,7 @@ router.post('/:pid/chatai/turn', async (req, res, next) => {
           markRunSucceeded(run.id);
           send({
             done: true, text: out.text, usage: out.usage, costUsd,
+            模型: out.model, 档: out.档 ?? null, ...(out.降级 ? { 降级: out.降级 } : {}),
             摘要: out.摘要 ? { 折叠: !out.摘要.失败, ...(out.摘要.失败 ? { 失败: out.摘要.失败 } : {}) } : null,
           });
         } catch (err) {
@@ -299,6 +304,7 @@ router.post('/:pid/chatai/turn', async (req, res, next) => {
           markRunSucceeded(run.id);
           res.json({
             text: out.text, usage: out.usage, costUsd, meta: out.meta,
+            模型: out.model, 档: out.档 ?? null, ...(out.降级 ? { 降级: out.降级 } : {}),
             摘要: out.摘要 ? { 折叠: !out.摘要.失败, ...(out.摘要.失败 ? { 失败: out.摘要.失败 } : {}) } : null,
           });
         } catch (err) {

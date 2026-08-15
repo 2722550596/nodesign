@@ -24,6 +24,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import YAML from 'yaml';
 import { readLog, readSummary } from './chat-log.js';
+import { LEVELS } from './index.js';
 
 export const CONFIG_FILE = '编排.yaml';
 
@@ -85,6 +86,18 @@ function normalizeEntry(raw, zone, i) {
   };
 }
 
+/**
+ * 思考档：只认词表里的四个词，空=按模型默认档（每个模型的默认档都是最省的那档）。
+ * 「这个模型有没有这一档」不在这儿判——那是通路层的事（resolveModelVariant 会
+ * 降级并报出来），配置层拦词不拦搭配，免得换渠道时老配置全被拒开。
+ */
+function levelField(v, name) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  if (!LEVELS.includes(s)) fail(`${name} 只能是 ${LEVELS.join(' / ')} 之一，拿到的是 ${JSON.stringify(v)}`);
+  return s;
+}
+
 function intField(v, def, name, { min = 1 } = {}) {
   if (v == null) return def;
   const n = Number(v);
@@ -130,6 +143,9 @@ export function normalizeOrchestration(doc) {
   const 摘要 = {
     启用: doc.摘要?.启用 !== false,
     模型: doc.摘要?.模型 ? String(doc.摘要.模型) : null,
+    // 摘要不跟着主模型的思考档走：不写就按默认档（最省那档）。折叠一次要吃十几轮
+    // 对话，跟着主档开高思考是纯烧钱，而摘要的活是压缩不是创作。
+    思考: levelField(doc.摘要?.思考, '摘要.思考'),
     提示: doc.摘要?.提示 ? String(doc.摘要.提示) : null,
     保留轮数: intField(doc.摘要?.保留轮数, DEFAULTS.摘要.保留轮数, '摘要.保留轮数'),
     触发轮数: intField(doc.摘要?.触发轮数, DEFAULTS.摘要.触发轮数, '摘要.触发轮数'),
@@ -141,6 +157,7 @@ export function normalizeOrchestration(doc) {
 
   return {
     模型: doc.模型 ? String(doc.模型) : null,
+    思考: levelField(doc.思考, '思考'),
     最大输出: intField(doc.最大输出, DEFAULTS.最大输出, '最大输出'),
     上下文预算: intField(doc.上下文预算, DEFAULTS.上下文预算, '上下文预算'),
     系统层, 历史, 尾部, 摘要,
@@ -161,6 +178,7 @@ export function serializeOrchestration(cfg) {
   });
   const doc = {
     ...(cfg.模型 ? { 模型: cfg.模型 } : {}),
+    ...(cfg.思考 ? { 思考: cfg.思考 } : {}),
     最大输出: cfg.最大输出,
     上下文预算: cfg.上下文预算,
     系统层: cfg.系统层.map(entry),
@@ -168,6 +186,7 @@ export function serializeOrchestration(cfg) {
     摘要: {
       启用: cfg.摘要.启用,
       ...(cfg.摘要.模型 ? { 模型: cfg.摘要.模型 } : {}),
+      ...(cfg.摘要.思考 ? { 思考: cfg.摘要.思考 } : {}),
       触发轮数: cfg.摘要.触发轮数,
       保留轮数: cfg.摘要.保留轮数,
       长度: cfg.摘要.长度,
@@ -286,5 +305,5 @@ export async function compileContext({ dir, userInput, config = null }) {
   };
   meta.估算.合计 = meta.估算.系统层 + meta.估算.历史 + meta.估算.当轮;
 
-  return { model: cfg.模型, maxTokens: cfg.最大输出, system, messages, meta };
+  return { model: cfg.模型, 思考: cfg.思考, maxTokens: cfg.最大输出, system, messages, meta };
 }

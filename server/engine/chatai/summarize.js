@@ -58,6 +58,8 @@ export async function maybeSummarize({ dir, config, signal }) {
     system: config.摘要.提示 || DEFAULT_PROMPT(config.摘要.长度),
     messages: [{ role: 'user', content: parts.join('\n\n') }],
     model: config.摘要.模型 || config.模型 || undefined,
+    // 思考档不继承主配置：没专门给摘要设档就走默认档（最省的那档）。压缩不是创作。
+    思考: config.摘要.思考,
     maxTokens: Math.max(500, config.摘要.长度 * 2),
     signal,
   });

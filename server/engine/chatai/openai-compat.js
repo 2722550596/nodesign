@@ -15,6 +15,39 @@
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
+/**
+ * 「[done]」收尾标记（2026-08-15 实测）：中转站「流式抗截断」系列在**流式**下会
+ * 往正文末尾追加 `\n\n[done]` —— claude 那几个变体每次都带，gemini 不带，非流式
+ * 不带。那是抗截断协议的收尾信号，中转站自己没摘。不管它就会当台词演给用户看、
+ * 还写进 对话.jsonl。而且它是**跨分片来的**（实测尾三片 `"。\n\n["` + `"done]"`），
+ * 逐片过滤拦不住，只能压着尾巴发。
+ */
+const SENTINEL_RE = /\s*\[done\]\s*$/;
+const HOLD = 12;   // 压住末尾这么多字符不发；中转站分片本来就粗（一句话四片），看不出延迟
+
+export function stripSentinel(text) {
+  return String(text ?? '').replace(SENTINEL_RE, '');
+}
+
+/** 流式尾巴过滤：压住末尾不发，收尾时剥掉标记再把剩下的补出去 */
+export function makeTailFilter(onDelta) {
+  let text = '';
+  let emitted = 0;
+  return {
+    push(piece) {
+      text += piece;
+      const upTo = Math.max(emitted, text.length - HOLD);
+      if (upTo > emitted) { onDelta(text.slice(emitted, upTo)); emitted = upTo; }
+    },
+    /** @returns {string} 剥干净的全文 */
+    end() {
+      const clean = stripSentinel(text);
+      if (clean.length > emitted) onDelta(clean.slice(emitted));
+      return clean;
+    },
+  };
+}
+
 function normalizeUsage(u = {}) {
   const details = u.completion_tokens_details || {};
   return {
@@ -80,12 +113,13 @@ export async function callOpenAICompat({
     clearTimeout(timer);
     const j = await res.json();
     return {
-      text: j.choices?.[0]?.message?.content ?? '',
+      text: stripSentinel(j.choices?.[0]?.message?.content ?? ''),
       usage: normalizeUsage(j.usage),
       finish: j.choices?.[0]?.finish_reason ?? null,
     };
   }
 
+  const tail = makeTailFilter(onDelta);
   let text = '';
   let usage = {};
   let finish = null;
@@ -104,13 +138,14 @@ export async function callOpenAICompat({
         try { j = JSON.parse(payload); } catch { continue; }
         const d = j.choices?.[0];
         const piece = d?.delta?.content;
-        if (piece) { text += piece; onDelta(piece); }
+        if (piece) tail.push(piece);       // 思考走 delta.reasoning_content，本来就不进正文
         if (d?.finish_reason) finish = d.finish_reason;
         if (j.usage) usage = j.usage;      // 中转站每片都带 usage，最后一片为准
       }
     }
   } finally {
     clearTimeout(timer);
+    text = tail.end();
   }
 
   return { text, usage: normalizeUsage(usage), finish };

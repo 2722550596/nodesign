@@ -263,6 +263,54 @@ describe('token 估算', () => {
   });
 });
 
+describe('思考档', () => {
+  it('词表外的值拒收；空值 = 按模型默认档', () => {
+    expect(() => normalizeOrchestration({ 思考: '中' }).思考).not.toThrow();
+    expect(normalizeOrchestration({ 思考: '中' }).思考).toBe('中');
+    expect(normalizeOrchestration({}).思考).toBeNull();
+    expect(normalizeOrchestration({ 思考: '' }).思考).toBeNull();
+    expect(() => normalizeOrchestration({ 思考: 'high' })).toThrow(/只能是/);
+    expect(() => normalizeOrchestration({ 摘要: { 思考: '超高' } })).toThrow(/摘要.思考/);
+  });
+
+  it('落盘再读回来还是那一档；没设就不写进 YAML', async () => {
+    const YAML = (await import('yaml')).default;
+    const cfg = normalizeOrchestration({ 模型: 'claude-sonnet-4-6', 思考: '高', 摘要: { 思考: '关' } });
+    const back = normalizeOrchestration(YAML.parse(serializeOrchestration(cfg)));
+    expect(back.思考).toBe('高');
+    expect(back.摘要.思考).toBe('关');
+    expect(serializeOrchestration(normalizeOrchestration({}))).not.toContain('思考');
+  });
+
+  it('编译结果把档带给通路层', async () => {
+    await scaffold('模型: gemini-3.7-flash\n思考: 高\n系统层: []\n');
+    const out = await compileContext({ dir, userInput: '开演' });
+    expect(out.思考).toBe('高');
+  });
+
+  it('档 → 中转站实名：认得的换名、不认的降级并说明', async () => {
+    const { resolveModelVariant } = await import('./index.js');
+    expect(resolveModelVariant('gemini-3.7-flash', '高').名).toBe('反重力-流式抗截断/gemini-3.7-flash-high');
+    expect(resolveModelVariant('claude-sonnet-4-6', '高').名).toBe('反重力-流式抗截断/claude-sonnet-4-6-thinking');
+    const 低 = resolveModelVariant('claude-sonnet-4-6', '低');       // claude 没有低档
+    expect(低.名).toBe('反重力-流式抗截断/claude-sonnet-4-6');
+    expect(低.档).toBe('关');
+    expect(低.降级).toMatch(/没有「低」档/);
+    const 固定 = resolveModelVariant('gemini-3-flash', '高');        // 这个模型不可调
+    expect(固定.名).toBe('反重力-流式抗截断/gemini-3-flash');
+    expect(固定.降级).toMatch(/不可调/);
+    expect(resolveModelVariant('gemini-3.7-flash').档).toBe('低');    // 不给档 = 默认档
+  });
+
+  it('设置页目录跟单价表同源', async () => {
+    const { modelCatalog, PRICES } = await import('./index.js');
+    const cat = modelCatalog();
+    expect(cat.find(m => m.id === 'gemini-3.7-flash').档.map(d => d.名)).toEqual(['低', '中', '高']);
+    expect(cat.find(m => m.id === 'gemini-3-flash').档).toEqual([]);
+    for (const m of cat) expect(PRICES[m.id]).toEqual({ in: m.入, out: m.出 });
+  });
+});
+
 describe('模型别名（中转站没有裸标准名）', () => {
   it('标准名换实名、实名与未知名放行、env 可覆盖', async () => {
     const { resolveModelAlias } = await import('./index.js');

@@ -27,13 +27,8 @@ function est(text) {
   return cjk + Math.ceil((s.length - cjk) / 4);
 }
 
-const 模型表 = [
-  { id: '', 注: '平台默认（当前 gemini-3.7-flash）', 入: 0.75, 出: 3.75, 思: 2.5 },
-  { id: 'gemini-3.7-flash', 注: '$0.75 / $3.75 每百万 · 促销价，思考计入输出', 入: 0.75, 出: 3.75, 思: 2.5 },
-  { id: 'gemini-3-flash', 注: '$0.50 / $2.50 每百万 · 上一代，更便宜', 入: 0.5, 出: 2.5, 思: 2.5 },
-  { id: 'claude-sonnet-4-6', 注: '$3 / $15 每百万 · 文笔更稳，一轮贵一个量级', 入: 3, 出: 15, 思: 1 },
-  { id: 'claude-opus-4-6', 注: '$15 / $75 每百万 · 只在真的在乎的场合', 入: 15, 出: 75, 思: 1 },
-];
+/** 平台默认那一行（选空模型时用）；其余各行由服务端 模型表 给，前端不再存单价 */
+const 默认行 = { id: '', 注: '平台默认（服务端 env 定的那个）', 入: 0.75, 出: 3.75, 思耗: 3.4, 档: [], 默认档: null };
 
 const 段色 = { 系: '#3F4D46', 史: '#7A6C58', 尾: PAPER.red };
 
@@ -56,12 +51,22 @@ export default function OrchestrateSettings({ projectId, dir, onClose }) {
   useEffect(() => {
     let live = true;
     Chatai.config(projectId, dir)
-      .then((d) => { if (live) setState({ cfg: structuredClone(d.配置), files: d.文件, 状况: d.状况 }); })
+      .then((d) => {
+        if (live) setState({ cfg: structuredClone(d.配置), files: d.文件, 状况: d.状况, 模型表: [默认行, ...(d.模型表 || [])] });
+      })
       .catch((e) => { if (live) setState({ error: e.message }); });
     return () => { live = false; clearTimeout(toastTimer.current); };
   }, [projectId, dir]);
 
-  const { cfg, files, 状况 } = state;
+  const { cfg, files, 状况, 模型表: 服务端表 = [默认行] } = state;
+
+  // 配置里写的模型不在平台表里（手写实名、或者服务端还没重启到新版）也要能显示：
+  // 下拉里少一行会让 select 掉回第一项，页面就在**替用户改配置**。宁可多一行说明。
+  const 模型表 = useMemo(() => {
+    const id = cfg?.模型 || '';
+    if (!id || 服务端表.some((m) => m.id === id)) return 服务端表;
+    return [...服务端表, { id, 入: 1, 出: 5, 注: '不在平台模型表里（手写的实名？单价按兜底价估）', 思耗: 1, 档: [], 默认档: null }];
+  }, [服务端表, cfg?.模型]);
   const 文本of = useCallback((e) => (e?.内容 != null ? e.内容 : (files?.[e?.文件] ?? '')), [files]);
 
   /** 所有改动走这一个口：标脏 + 触发重渲染 */
@@ -101,6 +106,10 @@ export default function OrchestrateSettings({ projectId, dir, onClose }) {
   const 帐 = useMemo(() => {
     if (!cfg) return null;
     const m = 模型表.find((x) => x.id === (cfg.模型 || '')) || 模型表[0];
+    // 生效档：选了就用选的，没选（或这个模型没这档）就落默认档 —— 跟服务端
+    // resolveModelVariant 同一条降级规矩，帐目才不会跟真跑的那轮对不上。
+    const 档 = m.档?.find((d) => d.名 === cfg.思考) || m.档?.find((d) => d.名 === m.默认档) || null;
+    const 思耗 = 档?.思耗 ?? m.思耗 ?? 1;
     const 系 = cfg.系统层.filter((e) => !e.停用).reduce((n, e) => n + est(文本of(e)), 0);
     const 尾常 = cfg.尾部.filter((e) => !e.停用 && !e.触发).reduce((n, e) => n + est(文本of(e)), 0);
     const 尾触 = cfg.尾部.filter((e) => !e.停用 && e.触发).reduce((n, e) => n + est(文本of(e)), 0);
@@ -108,9 +117,9 @@ export default function OrchestrateSettings({ projectId, dir, onClose }) {
     const 摘 = 状况?.摘要 ? est(状况.摘要.内容) : 0;
     const 输入 = 60;
     const 总 = 系 + 史 + 摘 + 尾常 + 输入;
-    const 钱 = (总 * m.入 + cfg.最大输出 * m.思 * m.出) / 1e6;
-    return { m, 系, 史: 史 + 摘, 尾: 尾常 + 输入, 尾触, 总, 钱 };
-  }, [cfg, 状况, 文本of]);
+    const 钱 = (总 * m.入 + cfg.最大输出 * 思耗 * m.出) / 1e6;
+    return { m, 档, 系, 史: 史 + 摘, 尾: 尾常 + 输入, 尾触, 总, 钱 };
+  }, [cfg, 状况, 文本of, 模型表]);
 
   /* ── 样式 ── */
   const S = useMemo(() => ({
@@ -288,10 +297,28 @@ export default function OrchestrateSettings({ projectId, dir, onClose }) {
                   <div style={{ flex: '1 1 200px' }}>
                     <label style={{ display: 'block', fontSize: FONT_SIZE.xs, color: PAPER.ink2 }}>模型</label>
                     <select value={cfg.模型 || ''} style={{ width: '100%', ...S.输入框 }}
-                      onChange={(ev) => 改((c) => { c.模型 = ev.target.value || null; })}>
+                      onChange={(ev) => {
+                        const id = ev.target.value || null;
+                        const 新 = 模型表.find((x) => x.id === (id || ''));
+                        // 换模型时清掉它不支持的档：各家档位词表不一样（gemini 低/中/高、
+                        // claude 关/高），留着旧词会在服务端被降级，不如当场归默认。
+                        const 保留 = 新?.档?.some((d) => d.名 === cfg.思考);
+                        改((c) => { c.模型 = id; if (!保留) c.思考 = null; });
+                      }}>
                       {模型表.map((m) => <option key={m.id} value={m.id}>{m.id || '（平台默认）'}</option>)}
                     </select>
                     <div style={{ fontSize: 11, color: PAPER.ink2, marginTop: 2 }}>{帐?.m.注}</div>
+                  </div>
+                  <div style={{ flex: '0 1 150px' }}>
+                    <label style={{ display: 'block', fontSize: FONT_SIZE.xs, color: PAPER.ink2 }}>思考</label>
+                    <select value={cfg.思考 || ''} disabled={!帐?.m.档?.length} style={{ width: '100%', ...S.输入框 }}
+                      onChange={(ev) => 改((c) => { c.思考 = ev.target.value || null; })}>
+                      <option value="">{帐?.m.档?.length ? `默认（${帐.m.默认档}）` : '不可调'}</option>
+                      {(帐?.m.档 || []).map((d) => <option key={d.名} value={d.名}>{d.名}</option>)}
+                    </select>
+                    <div style={{ fontSize: 11, color: PAPER.ink2, marginTop: 2 }}>
+                      {帐?.档?.注 || '这个模型的思考档由中转站定死，调不了'}
+                    </div>
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: FONT_SIZE.xs, color: PAPER.ink2 }}>最大输出</label>
@@ -349,7 +376,8 @@ export default function OrchestrateSettings({ projectId, dir, onClose }) {
               <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: GAP.xs, fontSize: FONT_SIZE.xs, color: PAPER.ink2 }}>
                 <span>下一轮预演：<b style={{ fontWeight: 'normal', color: PAPER.ink }}>
                   {帐.总.toLocaleString()} tok</b>（系统层 {帐.系} · 历史 {帐.史} · 尾部 {帐.尾}{帐.尾触 ? ` · 触发时再 +${帐.尾触}` : ''}）/ 预算 {Math.round(cfg.上下文预算 / 1000)}k</span>
-                <span>一轮约 ${帐.钱.toFixed(4)}（未计缓存折扣）</span>
+                <span>一轮约 ${帐.钱.toFixed(4)}
+                  （{帐.档 ? `思考${帐.档.名}档粗估` : '含思考粗估'} · 未计缓存折扣）</span>
               </div>
               <div style={{ display: 'flex', height: 9, marginTop: 5, background: '#E2DAC6',
                 outline: 帐.总 > cfg.上下文预算 ? `2px solid ${PAPER.red}` : 'none' }}>
