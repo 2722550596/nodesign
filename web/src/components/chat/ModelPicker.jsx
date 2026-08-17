@@ -3,6 +3,7 @@ import { Check, Loader2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions } from '../../lib/api.js';
+import { FALLBACK_MODELS } from '../../lib/models.js';
 import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
 
 /**
@@ -33,12 +34,6 @@ import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
  * 这不是损失（想要哪个直接点哪个），但**如果以后清单变长、或者 NODESIGN_MODEL
  * 要当成一个能被跟随的档位**，这一档得连同它的语义一起加回来，别只加个按钮。
  */
-
-/** 服务端拿不到时的兜底清单（离线 / 接口挂了也别让按钮变成死的） */
-const FALLBACK_OPTIONS = [
-  { id: 'claude-sonnet-5[1m]', label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用' },
-  { id: 'claude-opus-5[1m]', label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开' },
-];
 
 /** 重档模型（按钮画成实心的那一档）—— 判 id 不判位置，清单换序不会跟着错 */
 const isHeavy = (id) => /opus/i.test(String(id || ''));
@@ -103,15 +98,15 @@ export default function ModelPicker({
     return () => { alive = false; };
   }, [hasSession, projectId, sessionId]);
 
-  const options = remote?.options?.length ? remote.options : FALLBACK_OPTIONS;
+  const options = remote?.options?.length ? remote.options : FALLBACK_MODELS;
   /**
-   * 现在跑的是哪个。有会话看服务端（`remote.model` 已经把覆盖和全局默认算完，
-   * 永远是个具体模型）；没会话看本地偏好。
+   * 现在跑的是哪个。两条路都保证是个具体模型：有会话看服务端（`remote.model`
+   * 已经把覆盖和全局默认算完），没会话看本地偏好（store 里没选过就是
+   * `DEFAULT_MODEL_ID`，不再是 null）。
    *
-   * ⚠️ 没会话又没选过时回落到清单第一项 —— 之所以诚实，是因为服务端的
-   * `NODESIGN_MODEL` 就是 Sonnet 5，跟第一项同一个。**哪天全局默认挪出清单头部，
-   * 这里就会写着 Sonnet 却跑着别的**（这个文件顶上那段说的正是这类病）。真要挪，
-   * 得给"没有会话"的处境开一条能问到全局默认的路，别在这儿猜。
+   * 所以按钮上写的就是这条消息真会用的那个 —— 没会话时前端把它明写进
+   * `body.model`，不靠服务端的 `NODESIGN_MODEL` 兜。后面那个 `||` 只是安全网
+   * （remote 回了个空 model 之类），不是设计里的一条路。
    */
   const effective = (hasSession ? remote?.model : modelPref) || options[0]?.id || null;
 

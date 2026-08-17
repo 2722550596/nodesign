@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEFAULT_MODEL_ID } from '../lib/models.js';
 
 /**
  * 全局轻量状态（toast / modal / 跨组件共享的 UI 状态）
@@ -134,18 +135,23 @@ export const useGlobalStore = create((set) => ({
   // 留着状态但没有 UI 关它，等于给开过的人留一个永久开启的 plan mode。
 
   // ── 模型选择（2026-07-29）──
-  // Composer 里的 picker。选择随每条消息的 body.model 下发，服务端写进
-  // session-config.json（模型的唯一真相源）并在会话空闲时重启 query 以生效。
-  // null = 跟随服务端默认（NODESIGN_MODEL）。localStorage 持久化，跨会话沿用。
+  // Composer 里的 picker。选择随**新建会话**那条消息的 body.model 下发，服务端
+  // 写进 session-config.json（模型的唯一真相源）；会话建起来之后改模型走
+  // PUT /sessions/:sid/model。localStorage 持久化，跨会话沿用。
+  //
+  // ⚠️ **永远是个具体模型，不会是 null**（2026-08-17）。以前 null 表示"不带
+  // model 字段、跟随 NODESIGN_MODEL"，于是 picker 上显示的和实际跑的是两条独立
+  // 的链，环境变量一改按钮就开始说谎。现在没选过就是 DEFAULT_MODEL_ID，
+  // 显示什么就发什么。清空偏好（传 null）= 回到那个常量，不是回到"不指定"。
   modelPref: (() => {
-    try { return localStorage.getItem('nodesign:modelPref') || null; } catch { return null; }
+    try { return localStorage.getItem('nodesign:modelPref') || DEFAULT_MODEL_ID; } catch { return DEFAULT_MODEL_ID; }
   })(),
   setModelPref: (model) => {
     try {
       if (model) localStorage.setItem('nodesign:modelPref', model);
       else localStorage.removeItem('nodesign:modelPref');
     } catch { /* ignore */ }
-    set({ modelPref: model || null });
+    set({ modelPref: model || DEFAULT_MODEL_ID });
   },
 
   // ── Phase B 批次 3：用户主动 recall project memory 到下一轮 chat ──
