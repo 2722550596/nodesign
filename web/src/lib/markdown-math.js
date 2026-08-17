@@ -14,6 +14,7 @@
  *     和"用户写 $$"两条路都通，而单美元照旧是钱。
  *   - 换写法只在**代码之外**做：围栏代码块和行内 code 里的 `\(` 是代码不是公式。
  */
+import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
@@ -38,8 +39,19 @@ export function normalizeMath(text) {
 /**
  * 直接摊给 ReactMarkdown 的插件对。
  * throwOnError:false —— 模型写错的公式显示成红字就够了，不该炸掉整条消息/整张卡。
+ *
+ * ## remark-gfm（2026-08-17 补）
+ *
+ * react-markdown 默认只认 **CommonMark**，而 CommonMark 里没有表格。用户报的
+ * 「AI 侧边栏 markdown 显示不全，表格渲染不出来」就是这个 —— 表格源码原样躺在
+ * 那儿。同一批缺的还有：删除线 `~~x~~`、任务列表 `- [ ]`、裸链接自动成链、
+ * 脚注。模型写这几样是家常便饭，缺一样就是"它答对了但我看不懂"。
+ *
+ * ⚠️ **gfm 要排在 math 前面**。两个插件都要动 `~` 和 `$` 附近的文本：gfm 先把
+ * 表格和删除线切成节点，math 再在剩下的文本里找公式；反过来的话表格分隔行里的
+ * 内容有机会先被别的规则吃掉。顺序在这种插件链里是语义不是风格。
  */
 export const MATH_PLUGINS = Object.freeze({
-  remarkPlugins: [[remarkMath, { singleDollarTextMath: false }]],
+  remarkPlugins: [remarkGfm, [remarkMath, { singleDollarTextMath: false }]],
   rehypePlugins: [[rehypeKatex, { throwOnError: false, strict: 'ignore' }]],
 });
