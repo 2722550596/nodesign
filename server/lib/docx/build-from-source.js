@@ -36,12 +36,32 @@ export class DocxSourceError extends Error {
 }
 
 /**
+ * 递归剥掉 `_` 开头的键 —— 源文件里的行内注释约定。
+ *
+ * 为什么要有：JSON 没有注释语法，而 token 表最需要注释的地方恰恰是**字段旁边**
+ * （`firstLineChars: 200` 边上写一句「= 两字符，随字号缩放」比写在文档里管用
+ * 得多）。闭合 schema 会把这些键当"未登记字段"拒掉，所以在校验前剥干净。
+ *
+ * 顺带：agent 自己写源文件时也能用这个约定给自己留话，下次回来还看得懂。
+ */
+function stripNotes(v) {
+  if (Array.isArray(v)) return v.map(stripNotes);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(
+      Object.entries(v).filter(([k]) => !k.startsWith('_')).map(([k, x]) => [k, stripNotes(x)]),
+    );
+  }
+  return v;
+}
+
+/**
  * 解析源对象 → { tokens, content, opts }。不碰文件系统，方便单测。
  */
-export function resolveSource(src) {
-  if (!src || typeof src !== 'object') {
+export function resolveSource(rawSrc) {
+  if (!rawSrc || typeof rawSrc !== 'object') {
     throw new DocxSourceError('源文件不是一个 JSON 对象');
   }
+  const src = stripNotes(rawSrc);
   let tokens;
   if (src.preset) {
     const make = PRESETS[src.preset];

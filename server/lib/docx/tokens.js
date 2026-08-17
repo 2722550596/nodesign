@@ -254,9 +254,35 @@ const RUN_KEYS = new Set(['font', 'sizePt', 'bold', 'italic', 'color', 'underlin
 const PARA_KEYS = new Set(['align', 'outlineLevel', 'indent', 'spacing', 'keepNext', 'keepLines',
   'pageBreakBefore', 'widowControl', 'contextualSpacing', 'borders', 'shading', 'tabs', 'cjk']);
 
+/**
+ * 行距规则的合法值。
+ *
+ * ⚠️ 单独校验它是因为**写错这个字段不会静默失效，会静默生效成荒谬值**：
+ * `lineRule` 只有 'multiple' 时 `line` 才是倍数，其余按磅算。写 `'auto'`
+ * （CSS/OOXML 里都存在这个词，很容易顺手打出来）会落进磅值分支，
+ * `line: 360` 本意「1.5 倍」就变成每行 360 磅 = 5 英寸，正文整个被挤出页面。
+ * 只查键名的闭合 schema 挡不住这种，得查值。
+ */
+const LINE_RULES = new Set(['multiple', 'exact', 'atLeast']);
+
+/** 字号：数字直接用，字符串必须是字号名 */
+function badSize(v) {
+  return typeof v === 'string' && !(v in ZIHAO);
+}
+
 export function validateTokens(tok) {
   const errs = [];
   if (tok.v !== 1) errs.push('v must be 1');
+  const checkSpacing = (where, sp) => {
+    if (!sp) return;
+    if (sp.lineRule != null && !LINE_RULES.has(sp.lineRule)) {
+      errs.push(`${where}.spacing.lineRule: '${sp.lineRule}' 不是合法值，只有 ${[...LINE_RULES].join(' / ')}`
+        + "（multiple 时 line 是倍数如 1.5；exact/atLeast 时 line 是磅）");
+    }
+    if (sp.line != null && sp.lineRule === 'multiple' && sp.line > 10) {
+      errs.push(`${where}.spacing: lineRule=multiple 时 line 是**倍数**，${sp.line} 倍行距几乎肯定是把磅值写这儿了`);
+    }
+  };
   for (const [id, st] of Object.entries(tok.styles ?? {})) {
     for (const k of Object.keys(st)) if (!STYLE_KEYS.has(k)) errs.push(`styles.${id}: unknown key ${k}`);
     for (const k of Object.keys(st.run ?? {})) if (!RUN_KEYS.has(k)) errs.push(`styles.${id}.run: unknown key ${k}`);
@@ -264,10 +290,11 @@ export function validateTokens(tok) {
     if (st.run?.font && typeof st.run.font === 'string' && !tok.fonts?.[st.run.font]) {
       errs.push(`styles.${id}.run.font: no such font slot '${st.run.font}'`);
     }
+    if (badSize(st.run?.sizePt)) errs.push(`styles.${id}.run.sizePt: unknown 字号 ${st.run.sizePt}`);
     if (st.basedOn && !tok.styles[st.basedOn]) errs.push(`styles.${id}.basedOn: no such style '${st.basedOn}'`);
+    checkSpacing(`styles.${id}.para`, st.para?.spacing);
   }
-  if (tok.base?.sizePt != null && typeof tok.base.sizePt === 'string' && !(tok.base.sizePt in ZIHAO)) {
-    errs.push(`base.sizePt: unknown 字号 ${tok.base.sizePt}`);
-  }
+  if (badSize(tok.base?.sizePt)) errs.push(`base.sizePt: unknown 字号 ${tok.base.sizePt}`);
+  checkSpacing('base', tok.base?.spacing);
   return errs;
 }

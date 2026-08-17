@@ -42,6 +42,57 @@ describe('resolveSource —— 词典条目当起点', () => {
   });
 });
 
+describe('resolveSource —— `_` 注释键', () => {
+  it('下划线开头的键被剥掉，不会被闭合 schema 当成未登记字段拒掉', () => {
+    const { tokens, content } = resolveSource({
+      _说明: 'JSON 没有注释语法，用 _ 前缀当约定',
+      preset: '办公标准',
+      tokens: { styles: { Normal: { _为什么: '解释这条样式', para: { _注: '两字符', indent: { firstLineChars: 200 } } } } },
+      content: [{ t: 'p', _注: '开场白', text: 'x' }],
+    });
+    expect(tokens.styles.Normal.para.indent.firstLineChars).toBe(200);
+    expect(tokens.styles.Normal._为什么).toBeUndefined();
+    expect(content[0]._注).toBeUndefined();
+  });
+});
+
+describe('resolveSource —— 值域校验（不只是键名）', () => {
+  it("⭐lineRule 写成 'auto' 必须报错 —— 它不会静默失效，会静默生效成每行五英寸", () => {
+    try {
+      resolveSource({
+        preset: '办公标准',
+        tokens: { styles: { Normal: { para: { spacing: { line: 360, lineRule: 'auto' } } } } },
+        content: [{ t: 'p', text: 'x' }],
+      });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.detail).toContain('lineRule');
+      expect(e.detail).toContain('multiple');
+    }
+  });
+
+  it('lineRule=multiple 时给了磅值量级的 line，也要拦', () => {
+    expect(() => resolveSource({
+      preset: '办公标准',
+      tokens: { styles: { Normal: { para: { spacing: { line: 28, lineRule: 'multiple' } } } } },
+      content: [{ t: 'p', text: 'x' }],
+    })).toThrow(/token 没过校验/);
+  });
+
+  it('样式里的字号名写错要报错（原来只校验 base 那一处）', () => {
+    try {
+      resolveSource({
+        preset: '办公标准',
+        tokens: { styles: { Normal: { run: { sizePt: '中四' } } } },
+        content: [{ t: 'p', text: 'x' }],
+      });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.detail).toMatch(/unknown 字号/);
+    }
+  });
+});
+
 describe('resolveSource —— schema 闭合', () => {
   it('⭐没登记过的 token 键必须报错，不能静默吞掉', () => {
     expect(() => resolveSource({
@@ -114,7 +165,8 @@ describe('buildFromSource —— 落盘', () => {
     expect(a.opts.footer).toEqual([{ t: 'p', style: 'Normal', text: '第一页' }]);
     const blocks = [{ t: 'p', style: 'Footer', runs: [{ text: '— ' }, { fld: 'PAGE' }, { text: ' —' }] }];
     const b = resolveSource({ preset: '公文', content: [{ t: 'p', text: 'x' }], footer: blocks });
-    expect(b.opts.footer).toBe(blocks);
+    // 内容相等而非同一对象：stripNotes（剥 `_` 注释键）会深拷贝整份源
+    expect(b.opts.footer).toEqual(blocks);
     expect(resolveSource({ preset: '公文', content: [{ t: 'p', text: 'x' }] }).opts.header).toBeUndefined();
   });
 
