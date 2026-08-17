@@ -47,7 +47,8 @@ const GRANDFATHERED = {
   'web/src/lib/drag-intent.js': 819,
   'web/src/components/canvas/StageLayer.jsx': 726,
   'server/lib/plugin-validator.js': 721,
-  'web/src/components/AuthGate.jsx': 684,
+  // web/src/components/AuthGate.jsx 08-17 拆完出表（684 → 210）：材质词汇迁去
+  // login-wall/wall-css.js，一套构图一个文件迁去 login-wall/scenes/ —— 走 600 通用上限
   'server/lib/binary-fixup-proxy.js': 651,
   'server/engine/agent/agent-shared.js': 650,
   'server/projects/board-store.js': 640,

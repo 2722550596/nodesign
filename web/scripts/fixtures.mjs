@@ -182,7 +182,19 @@ export function resolve(pathname, method, body) {
 
   if (p === '/me/usage') return { json: { usedToday: 0.12, limit: 50, username: 'demo', role: 'user' } };
   if (p === '/me/showcase') return { json: { items: [] } };
-  if (p === '/auth/status') return { json: { authed: true, user: { username: 'demo', role: 'user' } } };
+  /**
+   * 默认已登录 —— 检查通道十有八九是来看工作台的，别每次先撞一次登录墙。
+   *
+   * `ND_INSPECT_AUTH=off` 反过来：回未登录，于是渲染的是**登录墙本身**。
+   * 加这个开关是因为登录墙在这条通道里以前根本照不到（它是唯一一个"接口说
+   * 没登录才出现"的页面），而它恰恰是最需要逐像素守门的那一页 —— 改版时的
+   * 判据就是"拿登录页跟基线 diff 要求 0"。
+   */
+  if (p === '/auth/status') {
+    return process.env.ND_INSPECT_AUTH === 'off'
+      ? { json: { required: true, authed: false } }
+      : { json: { authed: true, user: { username: 'demo', role: 'user' } } };
+  }
   if (p === '/notices') return { json: { notices: [] } };
   if (p === '/plugins') return { json: { plugins: [] } };
 
