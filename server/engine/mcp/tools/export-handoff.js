@@ -32,22 +32,25 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC } from '../../../lib/artifact-tar
 export function makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }) {
   return tool(
     'export_handoff',
-    `Build a handoff zip package containing the current design, spec, assets,
-chat history, and a README. Use this when you decide the design is ready to
-deliver to the user (or the user explicitly says "give it to me" / "export").
+    `Build a handoff zip: the artifact's source, the assets it actually
+references, and a README that says what it is, how to run it, and — for a
+mock-data app — which backend endpoints the recipient needs to implement.
 
-The zip is written to workspace/exports/handoff-<timestamp>.zip. After
-building, tell the user the path so they can download it via the UI.
+Use this when the work is done and the user wants to take it away. The point of
+this package is that **someone else can pick the project up and keep building**;
+it is not the "give me a pretty file to look at" path (that's the export menu's
+PDF / single-page HTML).
 
-Returns: text describing the path + size.
+The zip is written to workspace/exports/handoff-<timestamp>.zip. After building,
+tell the user the path so they can download it via the UI.
 
 Use this tool when:
-- The design meets the user's brief and you've verified it (e.g., via screenshot_canvas)
-- The user says "I want this delivered" / "package it up" / "give me the files"
+- The artifact meets the brief and you've verified it (e.g., via screenshot_canvas)
+- The user says "give me the files" / "package it up" / "I want to host this myself"
 
 Do NOT use this tool when:
-- The design is still in iteration
-- canvas.html doesn't exist yet`,
+- The work is still in iteration
+- The artifact doesn't exist yet (nothing has been written)`,
     {
       notes: z
         .string()

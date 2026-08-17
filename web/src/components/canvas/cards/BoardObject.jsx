@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Image as ImageIcon, FileText, Plus, ExternalLink, BookOpen, Trash2, Film,
-  MessageSquarePlus, SlidersHorizontal,
+  MessageSquarePlus, Download, SlidersHorizontal,
 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../../lib/theme.js';
 import { PAPER, PAPER_SHADOW } from '../../../lib/paper.js';
@@ -40,6 +40,7 @@ function BoardObject({
   renaming = false, onRenameCommit, onRenameCancel,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus, onOrchestrate,
   onAnnotate,
+  onExport,
   scale = 1,
   /** 谱系收叠（北极星路线3）：身后叠着几张旧版 + 当前展开态 */
   stackCount = 0, stackOpen = false, onToggleStack = null,
@@ -150,6 +151,9 @@ function BoardObject({
    */
   const actions = [
     ...actionsOf(o).map(id => ACTION_DEFS[id]).filter(Boolean),
+    // 导出跟标注同理：**每一种产物卡都能导出**，所以不进形态表。抄进十条形态
+    // 就是把同一句话说十遍，加第十一种形态还得记着补一遍。
+    ...(onExport ? [{ icon: Download, title: '导出这张卡', fn: onExport }] : []),
     { icon: MessageSquarePlus, title: '标注（发给 agent / 留在画布）', fn: onAnnotate, anchored: true },
   ];
 

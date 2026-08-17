@@ -30,6 +30,7 @@ import {
 } from '../lib/image-variant.js';
 import { injectSrcset } from '../lib/html-srcset.js';
 import { sendVideo, isVideo } from '../lib/video-variant.js';
+import { IMAGE_EXTS, VIDEO_EXTS, decorateCardKind } from '../lib/kinds/file-kinds.js';
 
 const router = express.Router();
 
@@ -194,10 +195,8 @@ const ARTIFACT_MIME = {
   '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
   '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
 };
-const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
-// 视频上墙（2026-08-08 roll_film）：isVideo 让前端渲成带播放器的视频卡而不是
-// 通用文件卡。播放走既有 Range+派生档管线（video-variant.js），这里只标记。
-const VIDEO_EXTS = new Set(['.mp4', '.webm']);
+// 「什么算图片 / 视频」的真相源在 lib/kinds/file-kinds.js（2026-08-17 从这里挪过去）——
+// 导出按卡类型收产物时也要问同一个问题，抄两份会分叉成「画布认、导出不认」。
 
 /**
  * 文件夹递归深度上限。
@@ -326,6 +325,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
           // 让产物墙退回去加载 3MB 原图 —— 正好是这轮要消灭的东西。
           hasThumb: kind === 'generated' && IMAGE_EXTS.has(ext),
         };
+        decorateCardKind(item);
         // 语义元数据（generate-image.js 落 .meta/<base>.json sidecar：prompt /
         // assetRole / provider / aspectRatio / sessionId / runId）—— 物件不只是
         // 文件，带着它的来历上墙

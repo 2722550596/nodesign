@@ -25,8 +25,11 @@ const GRANDFATHERED = {
   // useZoneGestures。剩下三块**刻意没拆**：右键菜单组装（引用几乎所有动作和索引表，
   // 抽出去等于把整个组件当参数传）、renderObjectCard/FolderCard 与浮层族 JSX
   // （都是大参数包，拆了更难读）。再往下要先想清楚"状态该由谁持有"，不是搬代码能解决的。
-  'web/src/components/canvas/BoardCanvas.jsx': 2266,
-  'web/src/routes/ProjectWorkspace.jsx': 2427,
+  // 08-17 导出重做：exportCard handler 迁去 canvas/card-export.js，
+  // annotTargetOf 收进 board-kinds.js（它的形状要跟右键菜单一字不差，抄两份会分叉）
+  'web/src/components/canvas/BoardCanvas.jsx': 2261,
+  // 08-17 导出重做：顶栏导出动作迁去 canvas/card-export.js 的 exportFromMenu
+  'web/src/routes/ProjectWorkspace.jsx': 2408,
   // server/engine/agent/hooks.js 2026-08-14 拆完出表（1975 → 组装层 ~330，走 600 通用上限）
   'web/src/components/chat/Message.jsx': 1871,   // 正文渲染迁去 MarkdownText.jsx 后
   // 08-15 隔离配置搬去 agent/isolation.js → 08-17 plan mode 工具闸搬去
@@ -39,7 +42,9 @@ const GRANDFATHERED = {
   // web/src/routes/Home.jsx 08-17 拆完出表（710 → 497，QuickEntry 迁去
   // home-quick-entry.jsx；样式表 08-15 已迁去 home-styles.js）—— 走 600 通用上限
   'web/src/components/canvas/DragOverlay.jsx': 927,
-  'server/api/exports.js': 926,
+  // 08-17 导出重做：按卡导出迁去 exports/cards.js，旧交付包打包逻辑（待退役）
+  // 整块迁去 exports/handoff.js —— 圈起来是为了退役时整份删，不用在大文件里挑
+  'server/api/exports.js': 812,
   'server/engine/runs/active-runs.js': 912,
   'server/engine/mcp/tools/generate-image.js': 843,
   'web/src/components/canvas/SiteWindow.jsx': 841,

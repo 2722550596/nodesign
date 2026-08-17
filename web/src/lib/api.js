@@ -330,6 +330,35 @@ export const Exports = {
     return { blob, filename };
   },
 
+  /**
+   * 按**产物卡**导出（2026-08-17 重做）。cardIds 就是画布上的卡 id。
+   * 一张卡也走这条，「导出全部图片」就是多传几个 id。
+   * 收不到的卡不拖累整批 —— 从 X-Export-Skipped 头里取回来，调用方要提示出去，
+   * 静默少东西是导出最贵的失败方式。
+   */
+  cards: async (pid, cardIds, format) => {
+    const res = await fetch(`/api/projects/${pid}/exports/cards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cardIds, format }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      // 全军覆没时具体原因在 body 的 skipped 里，只报 error 的话用户只看到
+      // 「一张都没收到」，不知道是哪张、为什么
+      const detail = data.skipped?.[0]?.reason;
+      throw Object.assign(new Error(detail || data.error || res.statusText), { status: res.status });
+    }
+    let skipped = { total: 0, items: [] };
+    const raw = res.headers.get('x-export-skipped');
+    if (raw) { try { skipped = JSON.parse(decodeURIComponent(raw)); } catch { /* 头坏了不该拖垮下载 */ } }
+    return {
+      blob: await res.blob(),
+      filename: parseFilenameFromDisposition(res.headers.get('content-disposition')),
+      skipped,
+    };
+  },
+
   list: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports`),
 
   downloadFile: async (pid, filename) => {

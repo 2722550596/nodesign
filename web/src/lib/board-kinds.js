@@ -337,3 +337,36 @@ export function legacyBucketOf(o) {
 export const SIZES = Object.fromEntries(
   Object.entries(KINDS).map(([k, v]) => [k, v.size]),
 );
+
+/**
+ * 物件 → 标注浮层的 target 描述（2026-08-17 从 BoardCanvas 收进来）。
+ *
+ * 收在这儿的理由：这个形状在画布上有两处要一字不差 —— hover 工具条那颗标注
+ * 按钮和右键菜单那条（BoardObject 的注释里明写着"逐字一致"）。抄两份的东西
+ * 迟早分叉，而分叉的症状是"从右键标注和从按钮标注，agent 收到的对象不一样"，
+ * 没人查得出来。
+ *
+ * `path` 那行的意思：卡 id 可能带形态前缀（`site:` / `deck:`），标注要的是真路径。
+ */
+export function annotTargetOf(o) {
+  return {
+    kind: 'object',
+    id: o.id,
+    path: o.path || (typeof o.id === 'string' && /^[a-z]+:/.test(o.id) ? o.id.slice(o.id.indexOf(':') + 1) : o.id),
+    title: o.title || o.name || o.id,
+    typeLabel: labelOf(o),
+  };
+}
+
+/**
+ * 任务里的一份产物 → 画布上那张卡的 id（2026-08-17 从 BoardCanvas 收进来）。
+ *
+ * 这个规则**是导出的寻址地址**：服务端 `export-collect.parseCardId` 按同一套前缀
+ * 判据反解它。原来它是 BoardCanvas 里两处内联字符串，导出菜单要用第三处 ——
+ * 抄第三遍之前先收成一份。
+ */
+export function cardIdOf(taskId, a) {
+  if (a.kind === 'site') return `site:${a.single ? a.entryRel : (a.root || taskId)}`;
+  return `deck:${a.file}`;
+}
+

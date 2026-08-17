@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, ChevronsUpDown, Focus } from 'lucide-react';
 import { Assets, Canvas } from '../../lib/api.js';
+import { exportCard } from './card-export.js';
 import { joinRel } from '../../lib/paths.js';
 import { orderWithGroups } from '../../lib/relation-order.js';
 import { computeDesktopSeating } from '../../lib/board-seating.js';
@@ -12,8 +13,7 @@ import {
   EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, primaryOf, isFileBacked,
-  chromeOf, cardOf, labelOf,
+  SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf,
 } from '../../lib/board-kinds.js';
 import BoardObject from './cards/BoardObject.jsx';
 import FolderCard from './cards/FolderCard.jsx';
@@ -304,7 +304,7 @@ export default function BoardCanvas({
       for (const a of (t.artifacts || [])) {
         if (a.kind === 'site') {
           out.push({
-            id: `site:${a.single ? a.entryRel : (a.root || t.id)}`,
+            id: cardIdOf(t.id, a),
             type: 'site',
             single: !!a.single,
             task: t.id,
@@ -319,7 +319,7 @@ export default function BoardCanvas({
           });
         } else {
           out.push({
-            id: `deck:${a.file}`,
+            id: cardIdOf(t.id, a),
             type: 'deck',
             task: t.id,
             deckFile: a.file,
@@ -1372,14 +1372,6 @@ export default function BoardCanvas({
    * 而 id 不是（`deck:主稿.html` 这种带形态前缀的读不出来）。剥前缀的规矩跟
    * moveEntry 一致 —— id 就是路径，冒号前那截是形态名。
    */
-  const annotTargetOf = useCallback((o) => ({
-    kind: 'object',
-    id: o.id,
-    path: o.path || (typeof o.id === 'string' && /^[a-z]+:/.test(o.id) ? o.id.slice(o.id.indexOf(':') + 1) : o.id),
-    title: o.title || o.name || o.id,
-    typeLabel: labelOf(o),
-  }), []);
-
   const openContextMenu = useCallback((e) => {
     const mx = e.clientX; const my = e.clientY;
     const at = camApiRef.current?.toWorld(e.clientX, e.clientY) || { x: 0, y: 0 };
@@ -1673,6 +1665,7 @@ export default function BoardCanvas({
       crumbs,
       artifactKind: focusTaskObj?.kind || null,
       artifactExports: focusTaskObj?.exports || null,
+      artifactCardId: focusTaskObj?.artifacts?.[0] ? cardIdOf(focusTaskObj.id, focusTaskObj.artifacts[0]) : null,
       // 项目级四件套的一行摘要 —— 卡片撤出画布后，这几句话跟着入口一起
       // 搬进顶栏的「⋯」，不能因为换了个地方就把"里面有没有东西"弄丢
       projectBand: bandSummaries,
@@ -1761,6 +1754,7 @@ export default function BoardCanvas({
         // 标注：浮层从按钮底下长出来（at 是按钮的屏幕坐标），
         // target 的形状跟右键菜单那条**逐字一致** —— 同一张浮层
         onAnnotate={(at) => setAnnotate({ x: at.x, y: at.y, target: annotTargetOf(obj) })}
+        onExport={isFileBacked(obj) ? () => !wasDrag() && exportCard(projectId, obj) : undefined}
         noteCount={noteCounts[obj.id] || 0}
         // 缩略图的第二道限流：镜头拉太远就不挂 iframe（看不清，纯浪费）
         scale={win ? 1 : scale}

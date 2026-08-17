@@ -36,6 +36,7 @@ import { newId } from '../lib/helpers.js';
 import { findElementByAnchor } from '../lib/html-utils.js';
 import { serializeForAI } from '../lib/element-semantics.js';
 import { Canvas, Turn, Assets, Exports, Sessions, PendingChanges } from '../lib/api.js';
+import { exportFromMenu } from '../components/canvas/card-export.js';
 import { openProjectWS } from '../lib/ws-client.js';
 import { sessionMessagesToDisplay } from '../lib/session-to-messages.js';
 import { reduceChatEvent, clearThinkingStreaming, mergeLiveTurnSnapshot, mergeHydrated } from '../lib/chat-stream.js';
@@ -1957,29 +1958,9 @@ export default function ProjectWorkspace() {
   const handleRenameCandidate = () => {};
   const handleSelectCandidate = () => setSelectedAnchor(null);
 
-  /**
-   * 流 I 导出（用户主动按钮）：调 GET /api/projects/:pid/exports/:format
-   * → blob → a.click() 触发浏览器下载
-   * filename 从 content-disposition 解析；解析失败退化为 <project-name>.<ext>
-   */
-  const handleExport = async (format) => {
-    try {
-      // （无会话闸门 2026-08-13 撤除 —— 导出的是项目的产物，路由已项目级）
-      const { blob, filename } = await Exports.download(id, format);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename
-        || `${project.name || 'design'}.${format === 'handoff' ? 'zip' : format}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-      showToast(`已下载：${a.download}`, 'success');
-    } catch (err) {
-      showToast(`导出失败：${err.message}`, 'error');
-    }
-  };
+  /** 顶栏导出：工程包走按卡导出的新路，其余格式仍走烘焙老路由（实现见 card-export.js） */
+  const handleExport = (format) =>
+    exportFromMenu(id, format, format === 'handoff' ? boardUi?.artifactCardId : null, project.name);
 
   return (
     <PanelManagerProvider projectId={id} defaultPanels={defaultPanels} panelMeta={panelMeta}>

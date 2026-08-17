@@ -10,7 +10,8 @@
  *   GET  /api/projects/:pid/exports/pdf            playwright print → PDF
  *   GET  /api/projects/:pid/exports/pptx           截图 → pptxgenjs
  *   GET  /api/projects/:pid/exports/site           整站打包
- *   GET  /api/projects/:pid/exports/handoff        JSZip 工程交付包
+ *   GET  /api/projects/:pid/exports/handoff        JSZip 工程交付包（旧口径，待退役）
+ *   POST /api/projects/:pid/exports/cards          按产物卡导出（→ exports/cards.js）
  *   （/:pid/sessions/:sid/exports/... 同 handler 双挂载。老 sid 路由**永远保留**：
  *     jsonl 历史里持久化了绝对 URL —— export-handoff.js:104 拼出来发给用户的
  *     下载链接就是这个形状，砍掉 alias 等于让所有历史消息里的链接变 404。）
@@ -38,6 +39,11 @@ import { buildStandaloneHtml, isHybridHtml, inlineLocalImages } from './exports/
 import {
   resolveCanvasTarget, KIND_SITE, ENTRY_FILE, formatAllowed,
 } from '../lib/artifact-target.js';
+import { makeCardsExportHandler } from './exports/cards.js';
+// 旧交付包打包逻辑已拆到 ./exports/handoff.js（待退役）。这里 re-export 是因为
+// MCP 工具 export_handoff 从本文件 import 它 —— 换那条路由时一起收拾。
+export { buildHandoffZip } from './exports/handoff.js';
+import { buildHandoffZip } from './exports/handoff.js';
 import { walkTaskFiles, loadIgnore } from '../lib/task-scan.js';
 
 const router = express.Router();
@@ -67,6 +73,11 @@ function rootOf(req) {
     ? getSessionWorkspace(req.params.pid, req.params.sid)
     : getWorkspaceRoot(req.params.pid);
 }
+
+// 按产物卡导出（2026-08-17 重做）实现在 ./exports/cards.js：跟这里的烘焙路由
+// 不是一档东西（原样打包 vs 跑 playwright/esbuild）
+router.post(['/:pid/exports/cards', '/:pid/sessions/:sid/exports/cards'],
+  makeCardsExportHandler({ guard, rootOf }));
 
 function safeFilename(name) {
   return (name || 'design').replace(/[^A-Za-z0-9._一-龥-]/g, '_').slice(0, 60);
@@ -671,132 +682,8 @@ router.get(['/:pid/exports/handoff', '/:pid/sessions/:sid/exports/handoff'], asy
   } catch (err) { next(err); }
 });
 
-/**
- * 共享 handoff 打包逻辑 —— HTTP 路由 + MCP tool（export_handoff）共用。
- *
- * @param {string} sessionRoot  sessions/<sid>/ 绝对路径（canvas/spec 在这）
- * @param {string} sharedRoot   shared/ 绝对路径（assets 在这）
- */
-export async function buildHandoffZip(sessionRoot, sharedRoot, { projectId, projectName, skillId, sessionId, runs = [], deckPath = 'canvas.html', kind = null } = {}) {
-  const zip = new JSZip();
-  const isSite = kind === KIND_SITE;
 
-  if (isSite) {
-    // 站点：产物根整个进 design/，保留文件名与子目录 —— 只留入口页并改名叫
-    // canvas.html 的话，子页和 style.css 全丢，页间相对链接必然断。
-    // dirname(入口) 就是产物根（手写 = 任务根，构建型 = dist/）；忽略规则
-    // 从任务根读（.ndignore 住那），试作 `_drafts/` 不进交付包。
-    const artifactDirAbs = path.dirname(path.resolve(sessionRoot, deckPath));
-    // 忽略规则（.ndignore）住工作区根；构建型站点的产物根是 dist/，
-    // 规则却写在源那边，所以这两个目录必须分开取
-    const taskRootAbs = path.resolve(sessionRoot);
-    const siteFiles = await walkTaskFiles(artifactDirAbs, {
-      maxDepth: 6,
-      ignore: await loadIgnore(taskRootAbs),
-      ignoreBase: taskRootAbs,
-    });
-    for (const f of siteFiles) {
-      try { zip.file(`design/${f.rel}`, await fs.readFile(f.abs)); } catch { /* 中途被删就跳过 */ }
-    }
-    // 站内 html/css 的 `../../assets/` 归一（zip 布局是 design/<页面> + design/assets/）
-    for (const rel of Object.keys(zip.files)) {
-      if (zip.files[rel].dir || !/\.(html?|css)$/i.test(rel)) continue;
-      const depth = rel.split('/').length - 2;             // design/ 之下还有几层
-      const up = '../'.repeat(Math.max(0, depth));
-      const text = await zip.files[rel].async('string');
-      zip.file(rel, text.replace(/(["'(])(?:\.\.\/)+assets\//g, `$1${up}assets/`));
-    }
-  } else {
-    try {
-      // deckPath 相对 sessionRoot（任务模型下是 tasks/<任务>/canvas.html）
-      const raw = await fs.readFile(path.resolve(sessionRoot, deckPath), 'utf8');
-      // zip 里的布局是 design/canvas.html + design/assets/…，而任务 deck 写的是
-      // `../../assets/generated/x.png`（相对它在 workspace 里的位置）—— 不改写的话
-      // 解压出来图全裂。统一压成 `assets/…`。
-      const html = raw.replace(/(["'(])(?:\.\.\/)+assets\//g, '$1assets/');
-      zip.file('design/canvas.html', html);
-    } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
-      zip.file('design/canvas.html', '<!-- canvas.html not yet generated -->');
-    }
-  }
-
-  try {
-    const spec = await fs.readFile(path.join(sessionRoot, 'spec.json'), 'utf8');
-    zip.file('design/spec.json', spec);
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-  }
-
-  // assets 来自 shared/（跨 session 共享）—— 递归走子目录，
-  // 主要是 assets/generated/（generate_image MCP 落档处）必须进 zip，
-  // 否则 canvas.html 里的 <img src="assets/generated/..."> 在打开导出时全 404。
-  const assetsDir = path.join(sharedRoot, 'assets');
-  await zipDirRecursive(zip, assetsDir, 'design/assets');
-
-  const chatHistory = (runs || []).map((row) => ({ runId: row.id }));
-  zip.file('chat-history.json', JSON.stringify({ projectId, sessionId, runs: chatHistory }, null, 2));
-
-  zip.file('prompt.txt', '');
-  zip.file('README.md', renderReadme({ id: projectId, name: projectName, skillId, sessionId, kind }));
-
-  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-}
-
-/**
- * 递归把 srcDir 下所有文件加进 zip（保留相对路径），dst 是 zip 内根前缀。
- * srcDir 不存在时静默 noop（fail-soft）。子目录中的 dotfile / 软链按需可扩展。
- */
-async function zipDirRecursive(zip, srcDir, dstPrefix, { skipDotfiles = false } = {}) {
-  let entries;
-  try {
-    entries = await fs.readdir(srcDir, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === 'ENOENT') return;
-    throw err;
-  }
-  for (const e of entries) {
-    if (skipDotfiles && e.name.startsWith('.')) continue;
-    const srcAbs = path.join(srcDir, e.name);
-    const dstRel = `${dstPrefix}/${e.name}`;
-    if (e.isDirectory()) {
-      await zipDirRecursive(zip, srcAbs, dstRel, { skipDotfiles });
-      continue;
-    }
-    if (!e.isFile()) continue;  // 跳软链 / fifo 等
-    const buf = await fs.readFile(srcAbs);
-    zip.file(dstRel, buf);
-  }
-}
-
-function renderReadme(project) {
-  return `# ${project.name}
-
-NoDesign 工程交付包。
-
-## 文件结构
-
-${project.kind === 'site' ? `- \`design/\` — 站点全部文件（保留原目录结构与文件名）
-- \`design/${'index.html'}\` — 入口页
-- \`design/assets/\` — 站点引用到的项目素材` : `- \`design/canvas.html\` — 单文件 self-contained HTML，主产物
-- \`design/assets/\` — 项目共享素材`}
-- \`design/spec.json\` — 设计意图档案（agent 私域记忆）
-- \`chat-history.json\` — runs 摘要
-- \`prompt.txt\` — 占位
-
-## 怎么用
-
-${project.kind === 'site' ? `把 \`design/\` 整个目录当站点根目录发布（任何静态托管都行），或者直接双击
-\`design/index.html\` 在本地浏览 —— 页面之间是相对链接，不依赖服务器。` : `直接在浏览器打开 \`design/canvas.html\` 看 deck。
-导出 PDF：用浏览器打印（${'${DECK.width}'}×${'${DECK.height}'} 视口最佳）。`}
-
----
-导出时间：${new Date().toISOString()}
-项目 ID：${project.id}
-Session ID：${project.sessionId}
-Skill：${project.skillId}
-`;
-}
+export default router;
 
 /**
  * 共用导出准备：启 Playwright page、等字体/图片就绪、注入基线 reset、探测实际 section 尺寸。
@@ -922,5 +809,3 @@ function injectViewportFit(html) {
   }
   return html + block;
 }
-
-export default router;

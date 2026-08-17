@@ -1,4 +1,4 @@
-import { FileCode, FileText, Presentation, Globe, Hammer } from 'lucide-react';
+import { FileCode, FileText, Presentation, Globe, Hammer, FileDown, Package } from 'lucide-react';
 
 /**
  * 导出格式的词汇表 —— **一份**，给两个消费者用：
@@ -14,14 +14,28 @@ const FORMAT_META = {
   pdf:     { icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）' },
   pptx:    { icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
   site:    { icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 图，解压双击就能看' },
-  handoff: { icon: Hammer,       label: '源码包',               desc: 'ZIP: HTML + spec + assets + README',
-             siteDesc: 'ZIP: 整站 + spec + assets + README' },
+  handoff: { icon: Hammer,       label: '工程包',               desc: 'ZIP: 源码 + 用到的素材 + README（含后端接口清单）',
+             siteDesc: 'ZIP: 整站源码 + 用到的素材 + README（含后端接口清单）' },
+  // 按产物卡导出的三种（2026-08-17 重做）。跟上面那几种的区别：上面是「烘焙」
+  // （PDF / PPTX / 单页 HTML 要跑 playwright / esbuild），下面是「原样打包」。
+  raw:     { icon: FileDown,      label: '原件',                 desc: '就下这一个文件，不打包' },
+  zip:     { icon: Package,       label: '打包 (.zip)',          desc: '产物 + 它真正引用到的素材，目录结构原样保留' },
+  md:      { icon: FileText,      label: '合并成一份 .md',        desc: '多张便签接成一篇，带来源标注' },
 };
+
+/** 一张卡默认导出成什么：文件类给原件，目录/页面类给打包 */
+export function defaultFormatFor(cardKind) {
+  return ['image', 'video', 'note', 'file'].includes(cardKind) ? 'raw' : 'zip';
+}
 
 // 服务端没给格式表时的兜底（旧数据 / 聚焦的不是任务）
 const FALLBACK_FORMATS = {
   deck: ['html', 'pdf', 'pptx', 'handoff'],
   site: ['site', 'html', 'handoff'],
+  image: ['raw', 'zip'],
+  video: ['raw', 'zip'],
+  note: ['raw', 'zip', 'md'],
+  file: ['raw', 'zip'],
 };
 
 function itemsFor(artifactKind, artifactExports) {
