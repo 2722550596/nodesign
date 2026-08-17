@@ -27,5 +27,17 @@ export const BOARD_KEYFRAMES = [
   // 这儿干活"。两层叠着：底下一圈稳的实边（认得出是哪一个），上面
   // 一段亮弧沿着边转（看得出在动）。
   '@keyframes ndAgentRing{0%,100%{box-shadow:0 0 0 2px rgba(176,140,79,0.85),0 0 0 7px rgba(176,140,79,0.16),0 6px 20px rgba(40,32,16,0.12)}50%{box-shadow:0 0 0 2px rgba(176,140,79,0.95),0 0 0 13px rgba(176,140,79,0.05),0 6px 20px rgba(40,32,16,0.12)}}',
-  '@keyframes ndAgentSweep{to{transform:rotate(1turn)}}',
+  // 亮弧沿边跑：转的是**渐变的起始角**，不是那个矩形。
+  //
+  // ⚠️ 原来写的是 `transform:rotate(1turn)` —— 那转的是整个遮罩矩形。只有正方
+  // 卡在 90° 整数倍上才转回自己，真实产物卡（240×200、文字卡窄高）转到 45° 时
+  // 那道光整个飞到卡外面，看着就是一道断掉的折线浮在卡上方。用户报的
+  // 「流光破损」就是这个（2026-08-17 复现：把 CSS 原样搬进空白页逐相位截图）。
+  //
+  // 改法：注册成 <angle> 类型的自定义属性才能被插值（不注册的自定义属性只做
+  // 离散动画，会在 50% 处直接跳一下）。BoardObject 那边写
+  // `from var(--ndSweep, 0deg)` —— 万一浏览器不认 @property，回落成一段不动的
+  // 静态弧，而不是整条 background 声明作废（那会让光圈整个消失）。
+  '@property --ndSweep{syntax:"<angle>";inherits:false;initial-value:0deg}',
+  '@keyframes ndAgentSweep{to{--ndSweep:360deg}}',
 ].join('');

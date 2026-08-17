@@ -261,13 +261,23 @@ function BoardObject({
       )}
 
       {/* 运动环绕光圈（2026-08-08）：一段亮弧沿着卡的外沿转。
-          conic-gradient 转一圈 + mask 只留边框那一环 —— 比逐帧画 SVG 便宜，
-          而且跟着卡片圆角走。pointerEvents:none，不吃任何手势。 */}
+          conic-gradient 的**起始角**转一圈 + mask 只留边框那一环 —— 比逐帧画
+          SVG 便宜，而且跟着卡片圆角走。pointerEvents:none，不吃任何手势。
+
+          ⚠️ 转角度不转元素（2026-08-17 修）：动画写在 `--ndSweep` 上，别改回
+          `transform: rotate` —— 那转的是这个矩形本身，非正方的卡一转光就飞出
+          卡外，理由与复现见 board-keyframes.js。
+
+          环放在卡边**外侧**（inset -4 / padding 3）而不是压着边框：卡自己在
+          agentActive 时已经是一圈黄铜实边，同色 2px 弧叠上去几乎看不见（改对
+          转法之后才暴露出来）。弧心提亮到暖白 = "一点光扫过黄铜"，运动感靠
+          明度差读出来，不靠位移。 */}
       {agentActive && (
         <div aria-hidden style={{
-          position: 'absolute', inset: -2, borderRadius: 'inherit',
-          padding: 2, pointerEvents: 'none', zIndex: 3,
-          background: `conic-gradient(from 0deg, transparent 0deg, transparent 250deg, ${alpha(CANVAS.brass, 0.95)} 320deg, transparent 360deg)`,
+          position: 'absolute', inset: -4, borderRadius: 'inherit',
+          padding: 3, pointerEvents: 'none', zIndex: 3,
+          background: 'conic-gradient(from var(--ndSweep, 0deg), transparent 0deg, transparent 244deg, '
+            + `${alpha(CANVAS.brass, 0.9)} 300deg, rgba(255,247,225,1) 328deg, ${alpha(CANVAS.brass, 0.6)} 346deg, transparent 358deg)`,
           WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
           WebkitMaskComposite: 'xor', maskComposite: 'exclude',
           animation: 'ndAgentSweep 1400ms linear infinite',
