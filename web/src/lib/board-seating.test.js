@@ -49,6 +49,23 @@ describe('computeDesktopSeating', () => {
     expect(r.positioned[0].pos.y).toBeGreaterThan(300 + 240 - 1);
   });
 
+  it('生图幻影占的地方算已有内容：新卡排到它底下，不叠在一起', () => {
+    // issue #1 第 9 条：幻影出生时躲开了所有真卡，可没人躲它，而两边的起排线
+    // 是同一条 —— 不把它算进去，等图期间落的新卡必然压在加载动画上。
+    const phantom = { x: 40, y: 600, w: 244, h: 210 };
+    const r = seat({
+      dirIndex: dirIndexOf([{ id: 'new.png', type: 'image' }]),
+      occupied: [phantom],
+    });
+    expect(r.positioned[0].pos.y).toBeGreaterThan(phantom.y + phantom.h - 1);
+  });
+
+  it('没有幻影时起排线不受影响（occupied 缺省不改行为）', () => {
+    const withNone = seat({ dirIndex: dirIndexOf([{ id: 'n.png', type: 'image' }]) });
+    const withEmpty = seat({ dirIndex: dirIndexOf([{ id: 'n.png', type: 'image' }]), occupied: [] });
+    expect(withEmpty.positioned[0].pos).toEqual(withNone.positioned[0].pos);
+  });
+
   it('显式主角（board.hero）压过推断并标 tier', () => {
     const r = seat({
       dirIndex: dirIndexOf([

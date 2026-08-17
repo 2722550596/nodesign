@@ -17,13 +17,13 @@ import { onBlankCanvas, onChrome } from '../../lib/board-hit.js';
  * - Ctrl / Cmd + 滚轮     → 在光标处缩放
  * - 拖空白背景            → 平移
  * - 中键拖                → 平移（任何位置，包括压在卡片上）
- * - 按住空格拖            → 平移
- * - 抓手工具（H）         → 平移（任何位置；空格的常驻版）
+ * - 按住空格拖            → 平移（任何位置；"画面塞满找不到空地"时用这条）
  *
- * 抓手是 2026-08-08 补的。在那之前「平移」只有空白背景这一个常驻入口，而画布
- * 越满空白越少 —— 想把镜头挪一点，先得找一块没被卡片盖住的地方按下去。空格
- * 抓手能解决，但那是**按住**的临时态，挪一段远路要一直按着。工具化之后
- * 「我现在是在挪镜头还是在挪东西」变成一个显式的、看得见的状态。
+ * **抓手工具 2026-08-17 退役**（2026-08-08 加的）。当初加它是因为「平移」只有
+ * 空白背景这一个常驻入口，画布越满空白越少；工具化还能把"我在挪镜头还是挪
+ * 东西"变成一个看得见的状态。撤它的理由是账算下来它是第五条平移路（前四条
+ * 见上），唯一独有的只是"不用按住任何键"，而代价是模式工具的通病 —— 选了
+ * 忘了切回来，画布就变得什么都点不动。空格态留着，它才是那个场景的正解。
  *
  * 2026-07-27 那版曾定「滚轮=缩放、平移只靠拖背景」。**这次不沿用**：那时候
  * 画布只占右半屏、内容一屏多点，滚轮缩放尚可；现在画布全屏、内容纵向长得多，
@@ -46,7 +46,7 @@ const ZOOM_SPEED = 0.0022;
 
 const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
-export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool = false }) {
+export function useBoardCamera({ paneRef, contentBox, enabled = true }) {
   const [cam, setCam] = useState(IDENTITY_CAMERA);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [panning, setPanning] = useState(false);
@@ -58,10 +58,13 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
   const panRef = useRef(null);
   const flyRef = useRef(null);
   const holdUntilRef = useRef(0);
+  /**
+   * 按住空格 = 临时抓手。**这是"画面塞满、找不到空地下手"时的正解** ——
+   * 2026-08-17 抓手工具退役后它就是唯一的那条路了（另外还有滚轮/触控板两指、
+   * 中键拖，以及指针拖空地）。
+   * ref 而不是 state：shouldPan 要在 pointerdown 那一刻读最新值，不进依赖数组。
+   */
   const spaceRef = useRef(false);
-  // shouldPan 不进依赖数组（它要在 pointerdown 那一刻读最新值），所以走 ref
-  const handToolRef = useRef(handTool);
-  handToolRef.current = handTool;
   // 键盘 effect 挂在最上面、动作定义在下面，用 ref 转一手：
   // 直接依赖那几个 useCallback 会让监听每次重挂，按键在重挂的缝里会丢。
   const zoomToFitRef = useRef(null);
@@ -199,10 +202,9 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
     if (!enabled) return false;
     if (e.button === 1) return true;                    // 中键：任何位置
     if (e.button !== 0) return false;
-    // 抓手（工具或空格）：任何位置都平移，**但仍要躲开界面控件** ——
-    // 拿着抓手点工具栏想换回指针，结果按钮被当成画布抢走了指针捕获，
-    // 那就再也换不回来了（board-hit.js 顶上记的第 1 个坑）。
-    if (spaceRef.current || handToolRef.current) return !onChrome(e);
+    // 空格抓手：任何位置都平移，**但仍要躲开界面控件** —— 按着空格点工具栏，
+    // 按钮会被当成画布抢走指针捕获（board-hit.js 顶上记的第 1 个坑）。
+    if (spaceRef.current) return !onChrome(e);
     return onBlankCanvas(e);
   }, [enabled]);
 
@@ -316,6 +318,22 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
     apply(zoomAtScreenPoint(camRef.current, { x: vp.w / 2, y: vp.h / 2 }, z));
   }, [apply, noteTakeover]);
 
+  /**
+   * 按**屏幕像素**推一下相机（拖物件到视口边缘时的自动跟随，2026-08-17 issue #1 第 6 条）。
+   *
+   * 正数 = 视口往右／往下走（内容相对往左／往上跑），跟 onPointerMove 那条
+   * 手动平移的符号相反 —— 那边是"抓着内容拖"，这边是"把镜头推过去"。
+   *
+   * 走 apply 所以照样吃 constrain（不会推出漫游边界）；noteTakeover 让自动
+   * 取景在这段时间里别抢镜。
+   */
+  const panByScreen = useCallback((dxPx, dyPx) => {
+    if (!dxPx && !dyPx) return;
+    noteTakeover();
+    const c = camRef.current;
+    apply({ z: c.z, x: c.x - dxPx / c.z, y: c.y - dyPx / c.z });
+  }, [apply, noteTakeover]);
+
   /** 屏幕坐标 → 世界坐标（放置新物件、命中测试都要） */
   const toWorld = useCallback((clientX, clientY) => {
     const el = paneRef.current;
@@ -330,9 +348,10 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true, handTool =
 
   return {
     cam, camRef, viewport, panning, bounds,
-    isHandMode: () => spaceRef.current || handToolRef.current,
+    isHandMode: () => spaceRef.current,   // 按住空格中（抓手工具 08-17 已退役）
     noteTakeover,
     onPointerDown, onPointerMove, onPointerUp,
     flyTo, flyToBox, flyToPoint, jumpToPoint, zoomToFit, zoomBy, zoomTo, toWorld,
+    panByScreen,
   };
 }

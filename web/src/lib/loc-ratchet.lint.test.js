@@ -19,16 +19,25 @@ const LIMIT = 600;
 
 /** 老户冻结上限（= 2026-08-14 现状）。只许调低。 */
 const GRANDFATHERED = {
-  'web/src/components/canvas/BoardCanvas.jsx': 2752,   // B1 入座 → B2 搬家 → B3 菜单表 → B5 浮层族迁出后
+  // B1 入座 → B2 搬家 → B3 菜单表 → B5 浮层族 → 08-17 一轮搬走八块（2752 → 2266）：
+  // useDragEdgePan / board-keyframes / useBoardAuthoring / useBoardOpen /
+  // useSpriteAmbient（并进 SpriteSketchLayer）/ board-tool-groups / useMarquee /
+  // useZoneGestures。剩下三块**刻意没拆**：右键菜单组装（引用几乎所有动作和索引表，
+  // 抽出去等于把整个组件当参数传）、renderObjectCard/FolderCard 与浮层族 JSX
+  // （都是大参数包，拆了更难读）。再往下要先想清楚"状态该由谁持有"，不是搬代码能解决的。
+  'web/src/components/canvas/BoardCanvas.jsx': 2266,
   'web/src/routes/ProjectWorkspace.jsx': 2427,
   // server/engine/agent/hooks.js 2026-08-14 拆完出表（1975 → 组装层 ~330，走 600 通用上限）
   'web/src/components/chat/Message.jsx': 1871,   // 正文渲染迁去 MarkdownText.jsx 后
-  'server/engine/agent/session-loop.js': 1145,   // 08-15 隔离配置搬去 agent/isolation.js
+  // 08-15 隔离配置搬去 agent/isolation.js → 08-17 plan mode 工具闸搬去
+  // agent/plan-mode-gate.js（纯策略，跟会话循环零耦合）：1184 → 1058
+  'server/engine/agent/session-loop.js': 1058,
   'server/projects/workspace.js': 1089,          // 起手模板迁去 workspace-templates.js 后
-  'server/api/turn.js': 1075,
+  'server/api/turn.js': 902,                     // 08-17 组装 user message 迁去 turn-compose.js 后
   'server/api/assets.js': 1017,
   'server/api/exports/build-standalone.js': 980,
-  'web/src/routes/Home.jsx': 710,               // 样式表迁去 home-styles.js 后
+  // web/src/routes/Home.jsx 08-17 拆完出表（710 → 497，QuickEntry 迁去
+  // home-quick-entry.jsx；样式表 08-15 已迁去 home-styles.js）—— 走 600 通用上限
   'web/src/components/canvas/DragOverlay.jsx': 927,
   'server/api/exports.js': 926,
   'server/engine/runs/active-runs.js': 912,

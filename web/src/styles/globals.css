@@ -103,3 +103,26 @@ iframe { border: 0; }
    留一口气；写坏的公式红一行就算了（throwOnError:false 出的就是这个类）。 */
 .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 .katex-error { color: #b0554f; font-family: 'SF Mono', 'Cascadia Code', Menlo, monospace; font-size: 11px; }
+
+/* 画布上的字一律不可选（2026-08-17，issue #1 第 5 条）。
+
+   精灵那行手写字、卡片上的产物名，只要浏览器认为它们是可选文本，在上面按下去
+   拖一下就变成**拉选区**而不是平移画布；选区一旦成立，后面的手势都在跟一个
+   不存在的"文档视图"较劲，表现就是"停在那块东西上，画布推不动"。
+   画布是**图形**表面，不是文档。
+
+   写在这儿而不是 BoardCanvas 的内联样式里：它跟下面那条"打字的地方开回来"
+   是一对，规则和它的例外分居两处必然有一天只改一边。产物窗 / 文件夹窗是这个
+   pane 的兄弟节点，不在选择器范围内，不受影响。 */
+[data-board-pane] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* 例外：真正用来打字的地方要把选中还回来 —— 不还的话就地改名的框里连双击
+   选词、拖选一段重写都做不到，而那正是"改名"最常用的两个动作。 */
+[data-board-pane] input,
+[data-board-pane] textarea,
+[data-board-pane] [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}

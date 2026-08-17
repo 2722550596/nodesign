@@ -118,6 +118,12 @@ export const CSS = `
   transition: border-color 0.15s, color 0.15s; }
 .ndd-pad .att:hover { border-color: var(--ink); color: var(--ink); }
 .ndd-pad .att:disabled { opacity: 0.45; cursor: default; }
+/* 模型选择：ModelPicker 自带的是全站 chrome 那套皮（无衬线 + 圆角），落在纸上
+   像一颗从别处剪来的按钮。只改字与形，**颜色一律不碰** —— 它的底色本来就在
+   传达"你选过没有"（选过是实心墨块，跟隔壁开工钮同一支墨），改了就把信号抹平。
+   要 !important 是因为组件写的是内联样式。 */
+.ndd-pad .model > button { font: 12.5px var(--kai) !important; letter-spacing: 0.04em;
+  padding: 4px 9px !important; border-radius: 2px !important; }
 /* 没写字的时候是个空框，写了字才变成实心墨块 —— 淡一档的实心块看着像坏了 */
 .ndd-pad .go { padding: 8px 22px; font: 700 14px var(--kai);
   letter-spacing: 0.3em; text-indent: 0.3em;

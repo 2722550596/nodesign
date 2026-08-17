@@ -50,18 +50,43 @@ const HIDE_MS = 300;
  *  pointerenter 立刻接管，自动收的兜底计时器基本用不上。 */
 const EDGE_GAP = 8;
 
+/**
+ * 配置版本（2026-08-17）。
+ *
+ * 出厂默认从「固定展开」翻成「不固定」—— 因为顶栏改成了「卡显示时不浮现」
+ * （issue #1 第 1、4 条），两层界面轮流占屏。默认要是还固定着，顶栏就等于
+ * 永远唤不出来，面包屑 / 导出 / 登出全都够不着。
+ *
+ * **必须带版本号**：这份配置是**挂载即落盘**的（下面那条 effect），所以每个
+ * 来过的人本地都写着 `pinned:true` —— 那不是他们选的，是上一版默认的残影。
+ * 只改默认值对他们零效果，正好落进"卡开着 + 顶栏不出来"那个最坏组合。
+ * 没有 v 的旧配置一律按新默认重置这一项（side / width 是真选择，留着）。
+ * 代价：真的手动钉过的人会被解一次钉，钉回去就记住了。
+ */
+const CFG_V = 2;
+
 function loadCfg() {
   try {
     const c = JSON.parse(localStorage.getItem(KEY)) || {};
     return {
-      pinned: c.pinned !== false,     // 默认固定：新用户第一眼要看得见对话在哪
+      v: CFG_V,
+      // 默认不固定：贴右缘唤出，鼠标离开自动收，屏幕交回画布和顶栏
+      pinned: c.v === CFG_V ? c.pinned === true : false,
       side: c.side === 'left' ? 'left' : 'right',
       width: Number.isFinite(c.width) ? Math.min(MAX_W, Math.max(MIN_W, c.width)) : DEFAULT_W,
     };
-  } catch { return { pinned: true, side: 'right', width: DEFAULT_W }; }
+  } catch { return { v: CFG_V, pinned: false, side: 'right', width: DEFAULT_W }; }
 }
 
-export default function ChatDock({ title, children }) {
+export default function ChatDock({
+  title, children,
+  /**
+   * 卡的开合上报给外层（2026-08-17）。顶栏据此**不浮现** —— 卡贴着右缘从
+   * 屏顶铺到屏底，顶栏一浮出来就压住它顶沿那排按钮（折叠 / 图钉）。
+   * 跟产物窗那条 `topSuppressed` 同一个道理：那一层不是当前上下文。
+   */
+  onOpenChange,
+}) {
   void title; // 标题在 ChatPanel 的 header 里，这层不再画（保留 prop 兼容调用方）
   const [cfg, setCfg] = useState(loadCfg);
   const [open, setOpen] = useState(() => loadCfg().pinned);
@@ -78,6 +103,8 @@ export default function ChatDock({ title, children }) {
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch { /* 隐私模式 */ }
   }, [cfg]);
+
+  useEffect(() => { onOpenChange?.(open); }, [open, onOpenChange]);
 
   // ── 程序化唤出：就地标注/圈选发送（openChatDock）、要把光标放进输入框
   //   （focusComposer —— 对着收起的卡聚焦是空操作，所以它隐含"先出来"）。

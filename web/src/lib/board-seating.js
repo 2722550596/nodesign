@@ -34,10 +34,12 @@ import { orderWithGroups } from './relation-order.js';
  * @param {(id: string, pos: {x:number,y:number}) => object} deps.folderCardOf
  * @param {Set}    deps.movingIds       正在搬家的 id（不落盘）
  * @param {(id: string) => {x:number,y:number}|null} deps.claimSeat 幻影座位过户
+ * @param {Array<{x,y,w,h}>} [deps.occupied] 占着地方但不在 layout 里的东西
+ *        （生图幻影）—— 它们不落盘也不可拖，只能让排座这边躲开
  */
 export function computeDesktopSeating({
   dirIndex, zonesEff, layout, bindings, lineageOpen, boardHero,
-  folderCardOf, movingIds, claimSeat,
+  folderCardOf, movingIds, claimSeat, occupied = [],
 }) {
   // ── 桌面这一层（根目录）有哪些文件夹 ──
   // 桌面**永远是根**（2026-08-13）：双击文件夹开窗，桌面不动。
@@ -100,6 +102,10 @@ export function computeDesktopSeating({
       if (visFresh.includes(it)) continue;
       seatedBottom = Math.max(seatedBottom, it.pos.y + sizeOf(it).h);
     }
+    // 生图幻影也算"已有内容"（2026-08-17，issue #1 第 9 条）。它跟新卡的起排线
+    // 本来是同一条 —— 幻影出生时躲开了所有真卡，可没人躲它，于是"等图的时候
+    // 又落了一件东西"必然叠在一起。它不落盘不可拖，让不开，只能这边躲。
+    for (const r of occupied) seatedBottom = Math.max(seatedBottom, r.y + r.h);
     // 关系边决定先后（对照/关联凑相邻、接着正向、改自旧→新），字典序兜底；
     // 多成员关系组独占成行（breakBefore），组内紧凑、组间呼吸。
     const byId = new Map(visFresh.map(it => [String(it.id), it]));

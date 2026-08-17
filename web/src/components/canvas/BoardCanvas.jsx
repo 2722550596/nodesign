@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, LogOut, ChevronsUpDown, Focus, Maximize2, Minus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid } from 'lucide-react';
+import { LogOut, ChevronsUpDown, Focus } from 'lucide-react';
 import { Assets, Canvas } from '../../lib/api.js';
 import { joinRel } from '../../lib/paths.js';
 import { orderWithGroups } from '../../lib/relation-order.js';
@@ -23,8 +23,8 @@ import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, resolvePending, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
-import { AmbientSpriteLayer, SpriteAskInput, TOOL_PHRASES, THINK_PHRASES, pickGreeting } from './SpriteSketchLayer.jsx';
-import { usePhantoms, claimPhantomSeat, PhantomImageCard } from './PhantomLayer.jsx';
+import { AmbientSpriteLayer, SpriteAskInput, useSpriteAmbient } from './SpriteSketchLayer.jsx';
+import { usePhantoms, claimPhantomSeat, phantomRects, PhantomCards } from './PhantomLayer.jsx';
 import { useBoardMoves } from './useBoardMoves.js';
 import { buildBoardMenu } from './canvas-menus.js';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
@@ -38,11 +38,18 @@ import LinkPopover from './LinkPopover.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
 import MoveToPopover from './MoveToPopover.jsx';
 import FolderWindow, { parentDir } from './FolderWindow.jsx';
+import { useDragEdgePan } from './useDragEdgePan.js';
+import { BOARD_KEYFRAMES } from './board-keyframes.js';
+import { useBoardAuthoring } from './useBoardAuthoring.js';
+import { useBoardOpen } from './useBoardOpen.js';
+import { buildBoardToolGroups } from './board-tool-groups.js';
+import { useMarquee } from './useMarquee.js';
+import { useZoneGestures } from './useZoneGestures.js';
 import { useCanvasTools, pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 import { useBoardData } from './useBoardData.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import {
-  makeBoardReaders, ProjectPanelOverlay, MarkdownViewerOverlay, ImageDetailOverlay,
+  ProjectPanelOverlay, MarkdownViewerOverlay, ImageDetailOverlay,
 } from './BoardOverlays.jsx';
 import OrchestrateSettings from './OrchestrateSettings.jsx';
 
@@ -83,13 +90,6 @@ const FOLDER_LABEL = {
 
 // SCRIBBLE_INK 随卡体搬去 cards/BoardObject.jsx（只有那边用；
 // 它跟服务端 sanitizeCanvasData 的白名单是一对，断言在 board-kinds.test.js）
-
-const EXT_MIME = {
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp', '.gif': 'image/gif', '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf', '.md': 'text/markdown',
-  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.zip': 'application/zip',
-};
 
 export default function BoardCanvas({
   projectId, currentSessionId, listVersion, fileVersions, boardVersion, onAddToContext, onFocusDeck,
@@ -187,10 +187,9 @@ export default function BoardCanvas({
    * 工具是**画布级**的一个模式，不是某个物件的属性 —— 所以它住在这里，
    * 由浮动工具栏的模式组切换（FloatingToolbar 的 type:'mode'）。
    *
-   * `select` 和 `hand` 是一对（2026-08-08 拆开）：**指针管东西，抓手管镜头**。
-   * 在这之前只有 select 一个，平移靠"拖到空白处"—— 画布一满就没有空白可拖，
-   * 于是挪镜头这件最频繁的事反而最难做。现在两件事各有各的工具，手上拿的是
-   * 哪个一眼看得见（光标也跟着变）。空格临时抓手照旧，它是 hand 的按住版。
+   * `hand`（抓手）2026-08-08 从 select 拆出来、2026-08-17 又并回去 —— 它是第五
+   * 条平移路，唯一独有的只是"不用按住任何键"，换来的却是模式工具的通病：选了
+   * 忘了切回来，画布就什么都点不动。完整的账在 useBoardCamera.js 头上。
    */
   const [tool, setTool] = useState('select');
   /**
@@ -209,7 +208,6 @@ export default function BoardCanvas({
   /** 镜头跟不跟 agent 跑（设置里的开关，默认开） */
   const followAgent = useGlobalStore(st => st.followAgent);
   /** 正在改内容的手写文字：{ id, at:{x,y}, initial }（复用 TextDraft） */
-  const [editingText, setEditingText] = useState(null);
   /**
    * 选中的东西（物件 id / 文件夹 id 混装）。
    *
@@ -226,9 +224,6 @@ export default function BoardCanvas({
   selectedIdRef.current = selectedId;
   const setSelectedId = useCallback((id) => setSelectedIds(id ? [id] : []), []);
   /** 框选：{ a:{sx,sy,wx,wy}, b:{…} }（sx/sy 是画布视口内像素，wx/wy 是世界坐标）*/
-  const [marquee, setMarquee] = useState(null);
-  const marqueeRef = useRef(null);
-  const pressRef = useRef(null);   // 长按候选：{ timer, startX, startY, pointerId }
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [hoveredBinding, setHoveredBinding] = useState(null);
   // 在场表。（08-14 上午曾在这儿做过"主精灵 localStorage 常驻"，当天下午
@@ -629,6 +624,7 @@ export default function BoardCanvas({
       dirIndex, zonesEff, layout, bindings, lineageOpen, boardHero, folderCardOf,
       movingIds: movingRef.current,
       claimSeat: (id) => claimPhantomSeat(phantomsRef, id),
+      occupied: phantomRects(phantomsRef),   // 生图幻影占的地方：它让不开，只能排座这边躲它
     })
   ), [dirIndex, folderCardOf, layout, zonesEff, bindings, lineageOpen, boardHero]);
   positionedRef.current = positioned;
@@ -741,7 +737,7 @@ export default function BoardCanvas({
     return boxUnion(boxes) || { x: 0, y: 0, w: DESKTOP_W, h: 600 };
   }, [visibleZones, visibleObjects]);
 
-  const camera = useBoardCamera({ paneRef: scrollRef, contentBox, handTool: tool === 'hand' });
+  const camera = useBoardCamera({ paneRef: scrollRef, contentBox });
   const { cam } = camera;
   const scale = cam.z;
   scaleRef.current = scale;
@@ -758,143 +754,18 @@ export default function BoardCanvas({
   }, []);
 
   /** 写一段字 → 落成 .md（走便签那条路，agent 读得到） */
-  /**
-   * 写一段字 → **画布原生文字**（2026-08-08 改）。
-   *
-   * 以前它一律落成 `.md` 便签，理由是"canvas-native 的东西 agent 读不到，
-   * 而用户写字十有八九是想说给 agent 听"。那个判断被推翻了：用户要的是
-   * **白板** —— 在工程文件旁边随手写一句、画一笔，跟涂鸦是同一件事。
-   * 想说给 agent 听的走右键「新建便利贴」，那条路原样还在。
-   *
-   * 字体走设置里选的默认值（fontPref），跟涂鸦一样只活在 board.json。
-   */
-  const handleCreateText = useCallback((text, at) => {
-    const t = String(text || '').trim();
-    if (!t) return null;
-    const id = `text:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
-    // 尺寸按字数估：一行约 26 个全角字符，行高 1.6。估不准也没关系 ——
-    // 卡体是 height:auto，这个值只用来定命中区和避让矩形（同涂鸦那条教训）。
-    const cols = Math.min(26, Math.max(6, t.length));
-    const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
-    const px = { sm: 13, md: 16, lg: 22, xl: 30 }[canvasFont.size] || 16;
-    // 归属跟涂鸦同一条规则：落点被谁的文件夹卡框住就归谁。原来这里漏写 zone，
-    // 在文件夹层里写的字会静默归到根上（2026-08-13 查实补齐）
-    const zid = zoneAtPoint({ x: at.x, y: at.y });
-    patchLayout(id, {
-      x: Math.round(at.x), y: Math.round(at.y), z: ++zMaxRef.current,
-      w: Math.round(cols * px * 1.05) + 12,
-      h: Math.round(lines * px * 1.6) + 10,
-      kind: 'text',
-      data: { t, font: canvasFont.font, size: canvasFont.size, color: 'ink' },
-      ...(zid ? { zone: zid } : {}),
-    });
-    return id;
-  }, [patchLayout, canvasFont, zoneAtPoint]);
-
-  /** 打开某段字的内容编辑（双击 / 文字工具点在字上，两个入口共用） */
-  const openTextEditor = useCallback((o) => {
-    setEditingText({ id: o.id, at: { x: o.pos.x, y: o.pos.y }, initial: o.data?.t || '' });
-  }, []);
-
-  const commitTextEdit = useCallback((text) => {
-    const ed = editingText;
-    setEditingText(null);
-    if (!ed) return;
-    const t = String(text || '').trim();
-    const old = layoutRef.current[ed.id];
-    if (!old) return;
-    if (!t) {
-      // 清空 = 删掉这段字（服务端对空文本也是整条丢弃，两边同一个语义）
-      setLayout(prev => { const next = { ...prev }; delete next[ed.id]; return next; });
-      dirtyRef.current.objects.add(ed.id);
-      scheduleSave();
-      return;
-    }
-    // 尺寸按新内容重估（跟创建同一套公式 —— 它只定命中区和避让矩形）
-    const cols = Math.min(26, Math.max(6, t.length));
-    const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
-    const px = { sm: 13, md: 16, lg: 22, xl: 30 }[old.data?.size] || 16;
-    patchLayout(ed.id, {
-      w: Math.round(cols * px * 1.05) + 12,
-      h: Math.round(lines * px * 1.6) + 10,
-      data: { ...old.data, t },
-    });
-  }, [editingText, patchLayout, scheduleSave]);
-
-  /** 写一张便利贴 → `notes/*.md`（**这条是给 agent 看的**，走右键菜单） */
-  const createNoteAt = useCallback(async (at) => {
-    const text = window.prompt('便利贴写点什么？（agent 下一轮就能看到）');
-    if (!text?.trim()) return;
-    try {
-      const name = `${Date.now().toString(36)}.md`;
-      await Assets.putTaskNote(projectId, name, text.trim());
-      const file = `notes/${name}`;
-      // 落在右键处（而不是让它自动入座）—— 用户是**指着地方**写的
-      patchLayout(file, { x: Math.round(at?.x ?? 0), y: Math.round(at?.y ?? 0), z: ++zMaxRef.current });
-      reload();
-    } catch (err) {
-      useGlobalStore.getState().showToast(`便利贴写不进去：${err.message}`, 'error');
-    }
-  }, [projectId, patchLayout, reload]);
-
-  /** 新笔画跟旧墨迹"有结合点"的判距（世界像素）：笔尖挨着就算一伙 */
-  const MERGE_DIST = 24;
-
-  /** 画一笔 → 画布原生物件（只活在 board.json）；挨着旧墨迹就并进去成一组 */
-  const handleCreateScribble = useCallback((points) => {
-    const box = pointsBounds(points, 8);
-    const d = pointsToPath(points, box.x, box.y);
-    if (!d) return;
-
-    /**
-     * 归组（2026-08-13 用户定）：判据是**点到点的最小距离**，不是包围盒相交 ——
-     * 一条长对角线的 bbox 大得离谱，按 bbox 合并会把半屏的墨迹吸成一坨。
-     * bbox 只做快筛。已被旋转/缩放过的组不并（合并数学在变换下不成立，
-     * 且用户既然特意摆过它，新笔画多半不是它的一部分）。
-     */
-    const host = (() => {
-      for (const o of positionedRef.current) {
-        if (o.type !== 'scribble' || !o.native) continue;
-        if (o.data?.rotation || (o.data?.scale && o.data.scale !== 1)) continue;
-        const sz = sizeOf(o);
-        if (box.x > o.pos.x + sz.w + MERGE_DIST || box.x + box.w < o.pos.x - MERGE_DIST
-          || box.y > o.pos.y + sz.h + MERGE_DIST || box.y + box.h < o.pos.y - MERGE_DIST) continue;
-        const oldPts = pathPoints(o.data?.d).map(p => ({ x: p.x + o.pos.x, y: p.y + o.pos.y }));
-        for (const q of points) {
-          for (const p of oldPts) {
-            if (Math.hypot(p.x - q.x, p.y - q.y) <= MERGE_DIST) return o;
-          }
-        }
-      }
-      return null;
-    })();
-
-    if (host) {
-      const sz = sizeOf(host);
-      const nx = Math.min(host.pos.x, box.x);
-      const ny = Math.min(host.pos.y, box.y);
-      const nw = Math.max(host.pos.x + sz.w, box.x + box.w) - nx;
-      const nh = Math.max(host.pos.y + sz.h, box.y + box.h) - ny;
-      const merged = `${translatePath(host.data.d, host.pos.x - nx, host.pos.y - ny)} ${pointsToPath(points, nx, ny)}`;
-      // 服务端 8000 字符闸门：并不进去就各过各的（丢笔画是最差的结果）
-      if (merged.length < 7900) {
-        patchLayout(host.id, {
-          x: Math.round(nx), y: Math.round(ny), w: Math.round(nw), h: Math.round(nh),
-          data: { ...host.data, d: merged },
-        });
-        return;
-      }
-    }
-
-    const id = `scribble:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
-    const zid = zoneAtPoint({ x: box.x + box.w / 2, y: box.y + box.h / 2 });
-    patchLayout(id, {
-      x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.w), h: Math.round(box.h),
-      z: ++zMaxRef.current,
-      kind: 'scribble', data: { d, color: 'ink', width: 2 },
-      ...(zid ? { zone: zid } : {}),
-    });
-  }, [zoneAtPoint, patchLayout]);
+  // 造东西（写字 / 便利贴 / 画一笔）→ useBoardAuthoring.js。
+  // editingText 跟着搬过去了：它是 commitTextEdit 的另一半。
+  const {
+    editingText, setEditingText,
+    handleCreateText, openTextEditor, commitTextEdit,
+    createNoteAt, handleCreateScribble,
+  } = useBoardAuthoring({
+    projectId, canvasFont,
+    patchLayout, setLayout, reload, scheduleSave,
+    layoutRef, dirtyRef, zMaxRef,
+    positionedRef, zoneAtPoint,
+  });
 
   const canvasTools = useCanvasTools({
     // 摆放模式下笔不落墨：喂给工具层一个它不认识的名字，所有分支自然闭合，
@@ -1020,7 +891,7 @@ export default function BoardCanvas({
   const onObjectPointerDown = (e, o) => {
     if (e.button !== 0) return;
     if (e.target.closest('[data-board-action]')) return;   // 按钮不触发拖拽
-    // 抓手态（工具或空格）：这一下归镜头。卡片的 handler 挂在卡片上、画布的
+    // 按着空格 = 挪镜头：这一下归相机。卡片的 handler 挂在卡片上、画布的
     // 挂在外层，事件是**先卡片后画布**冒泡上去的 —— 卡片不主动让路的话，
     // 按在卡片上会同时起一个物件拖拽和一次平移，两边各拽各的。
     if (camApiRef.current?.isHandMode?.()) return;
@@ -1123,6 +994,9 @@ export default function BoardCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cam]);
 
+  // 拖到视口边缘 → 画布自动跟着走。只推相机，卡由上面那条 [cam] effect 补帧（道理在 useDragEdgePan.js）
+  useDragEdgePan({ active: dragActive, dragRef, paneRef: scrollRef, camApiRef });
+
   /**
    * ⚠️ 这里曾有「拖到空白处 = 搬出当前文件夹」（DRAG_OUT_DETACHES / DETACH_MARGIN）。
    * **2026-08-13 删掉，因为它在当前目录模型下必然误触** —— 用户报「我总是拖一下
@@ -1185,85 +1059,14 @@ export default function BoardCanvas({
     }
   };
 
-  // ── 框选（长按起手）────────────────────────────────────────────────
-  //
-  // 「选中指针控件的时候能够长按拖动以大范围框选」（用户 2026-08-13）。
-  //
-  // **长按**而不是直接拖：空白处拖拽这个手势已经归相机平移了，那是画布上用得
-  // 最多的动作，不能抢。所以按住不动 LONG_PRESS_MS 才转框选 —— 这期间手一动
-  // （>4px）就当平移，定时器作废。
-  //
-  // 转框选的那一下必须**把已经武装的相机平移撤掉**，不然一次手势同时拉框和推
-  // 镜头：框的起点钉在世界坐标上，镜头一跑，框看着就往反方向歪。
-  const LONG_PRESS_MS = 220;
-  /** 比这更小的框算"点了一下空地"（清空选中），不算框选 */
-  const MARQUEE_MIN = 6;
-
-  const armMarquee = (e) => {
-    if (toolRef.current !== 'select' || e.button !== 0) return;
-    if (onChrome(e)) return;
-    if (e.target.closest?.('[data-board-object],[data-board-zone],[data-transform-handle]')) return;
-    clearTimeout(pressRef.current?.timer);
-    const sx = e.clientX; const sy = e.clientY;
-    const { pointerId } = e;
-    pressRef.current = {
-      startX: sx, startY: sy, pointerId,
-      timer: setTimeout(() => {
-        camera.onPointerUp({ pointerId });         // 撤掉这一下已武装的平移
-        const r = scrollRef.current?.getBoundingClientRect();
-        const w = camera.toWorld(sx, sy);
-        const a = { sx: sx - (r?.left || 0), sy: sy - (r?.top || 0), wx: w.x, wy: w.y };
-        marqueeRef.current = { a, b: a };
-        setMarquee({ a, b: a });
-      }, LONG_PRESS_MS),
-    };
-  };
-
-  const moveMarquee = (e) => {
-    const p = pressRef.current;
-    if (p && !marqueeRef.current) {
-      if (Math.abs(e.clientX - p.startX) + Math.abs(e.clientY - p.startY) > 4) {
-        clearTimeout(p.timer); pressRef.current = null;    // 手动了 = 这是平移
-      }
-      return false;
-    }
-    const m = marqueeRef.current;
-    if (!m) return false;
-    const r = scrollRef.current?.getBoundingClientRect();
-    const w = camera.toWorld(e.clientX, e.clientY);
-    const b = { sx: e.clientX - (r?.left || 0), sy: e.clientY - (r?.top || 0), wx: w.x, wy: w.y };
-    marqueeRef.current = { ...m, b };
-    setMarquee({ ...m, b });
-    return true;
-  };
-
-  /** @returns 这次抬手是不是被框选吃掉了（吃掉了相机和物件都别再收尾） */
-  const endMarquee = () => {
-    clearTimeout(pressRef.current?.timer);
-    pressRef.current = null;
-    const m = marqueeRef.current;
-    marqueeRef.current = null;
-    if (!m) return false;
-    setMarquee(null);
-    if (Math.abs(m.b.sx - m.a.sx) < MARQUEE_MIN && Math.abs(m.b.sy - m.a.sy) < MARQUEE_MIN) {
-      setSelectedIds([]);           // 长按了但没拉开 = 点了一下空地
-      return true;
-    }
-    const x0 = Math.min(m.a.wx, m.b.wx); const x1 = Math.max(m.a.wx, m.b.wx);
-    const y0 = Math.min(m.a.wy, m.b.wy); const y1 = Math.max(m.a.wy, m.b.wy);
-    // 判据是**相交**不是包含：拉框的人不会去精确包住每一件，框到一半就算
-    // （访达、Figma 都是相交）
-    const hit = (x, y, w, h) => x < x1 && x + w > x0 && y < y1 && y + h > y0;
-    const ids = [];
-    for (const o of positionedRef.current) {
-      const sz = sizeOf(o);
-      if (hit(o.pos.x, o.pos.y, sz.w, sz.h)) ids.push(o.id);
-    }
-    for (const z of folderViewRef.current) if (hit(z.x, z.y, z.w, z.h)) ids.push(z.id);
-    setSelectedIds(ids);
-    recentDragMovedRef.current = true;   // 这一下不是点击，别让它把选中清掉
-    return true;
-  };
+  // 「刚拖完」的余韵，点击类 handler 靠它区分"拖完松手"和"真点击"。
+  // 必须声明在 useMarquee 之前 —— 那个 hook 在 render 期就把它读走了。
+  const recentDragMovedRef = useRef(false);
+  // 长按框选 → useMarquee.js（框的状态和三个手势口都在那儿）
+  const { marquee, armMarquee, moveMarquee, endMarquee } = useMarquee({
+    camera, paneRef: scrollRef, toolRef, positionedRef, folderViewRef, setSelectedIds,
+    recentDragMovedRef,
+  });
 
   // 搬家家族（moveEntry/moveZone/moveManyTo/groupInto + 飞入动画）2026-08-14
   // 抽进 useBoardMoves.js —— 语义与注释原样搬走，改搬家行为去那看。
@@ -1274,105 +1077,22 @@ export default function BoardCanvas({
     positionedRef, objectsRef, zonesEffRef, folderViewRef,
   });
 
-  const recentDragMovedRef = useRef(false);
   const wasDrag = () => !!(dragRef.current?.moved || recentDragMovedRef.current);
 
-  // ── 动作 ──
-  const handleAdd = (o) => {
-    if (!onAddToContext) return;
-    const path = o.ctxPath || o.path;
-    onAddToContext({
-      // 托盘条目的契约是**必有 id**：ComposerTray 拿它当 key，移除按
-      // `it.id !== id` 过滤。这里以前不带 —— 两个画布条目撞 undefined key，
-      // 点任何一个的 × 会把画布来的条目一次删光。path 唯一且稳定，直接当 id
-      //（上传那路的 id 是 newId('asset')，不会撞）。
-      id: path,
-      type: 'asset', path,
-      name: o.name || o.title,
-      size: o.size || 0,
-      mime: EXT_MIME[o.ext] || 'text/markdown',
-    });
-    setAddedPaths(prev => new Set(prev).add(o.id));
-  };
-
-  // 进阅读器：路由与三种阅读器本体在 BoardOverlays.jsx（B5 抽出）
-  const openViewer = makeBoardReaders({ projectId, setViewer });
-
-  const openFile = (o) => {
-    window.open(Assets.artifactFileUrl(projectId, o.path), '_blank', 'noopener');
-  };
-
-  // 编排.yaml → 图形设置页。dir = 配置所在文件夹（演出文件夹）
-  const openOrchestrate = (o) => {
-    const p = String(o.path || '');
-    setOrchestrate({ dir: p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '' });
-  };
-
-  const handleDeleteNote = async (o) => {
-    // 画布原生物件（涂鸦/文字）：board.json 就是本体，删掉那一条就是删掉它。
-    // 走下面文件那条路会静默失败 —— native 物件没有 `name`，垃圾桶和右键
-    // 删除对它们从来没生效过（2026-08-13 查实）。
-    if (o.native) {
-      setLayout(prev => { const next = { ...prev }; delete next[o.id]; return next; });
-      dirtyRef.current.objects.add(o.id);   // scheduleSave 对缺席的 id 发 null = 服务端删除
-      scheduleSave();
-      return;
-    }
-    try {
-      // 便利贴落点从 `tasks/<任务>/notes/` 收敛成工作区的 `notes/` 之后，
-      // 删除只认文件名（不再需要先知道它属于哪个任务）
-      if (o.noteTask) await Assets.removeTaskNote(projectId, o.name);
-      else await Assets.removeNote(projectId, o.name);
-      reload();
-    } catch (err) { console.warn('[board] delete note failed:', err.message); }
-  };
+  // 打开语义（双击 / 加进上下文 / 删便签）→ useBoardOpen.js
+  const {
+    handleAdd, openViewer, openFile, openOrchestrate,
+    handleDeleteNote, focusDeck, primaryOpen,
+  } = useBoardOpen({
+    projectId, onAddToContext, onFocusDeck,
+    setLayout, dirtyRef, scheduleSave, reload,
+    setAddedPaths, setViewer, setOrchestrate, setDetail,
+    openTextEditor,
+  });
+  // 两个 ref 留在这儿赋值：挂得更早的 effect（Delete 键、preview_deck 工具）
+  // 靠它们够到下面才定义的函数
   handleDeleteNoteRef.current = handleDeleteNote;
-
-  const focusDeck = (o) => {
-    if (o.type === 'site') {
-      // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
-      // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
-      onFocusDeck?.({
-        kind: 'site', task: o.task, base: o.base || o.task,
-        entry: o.entry || 'index.html', title: o.title, pages: o.pages, exports: o.exports,
-        // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
-        built: !!(o.root && o.root !== o.srcRoot),
-      });
-    } else {
-      // deck：与会话解绑，原地开最大化编辑窗。
-      //
-      // ⚠️ 判据从 `o.task` 改成走 else（2026-08-13）。`task` 是**文件夹路径**，
-      // 而住在工作区根上的 deck 路径是空串 —— 空串 falsy，于是根上的每一份
-      // deck 都掉进下面那条"旧式会话 deck"分支，`navigate` 到
-      // `/sessions/undefined`。今天双击先走展开态所以少有人踩，但产物本来就
-      // 默认摊在根上，展开态一取消这条就是每次必中。
-      //
-      // 顺带删掉的两条分支（会话 deck / 跨会话切换）是**死代码**：deck 物件
-      // 只有一处构造（本文件 `id: deck:${a.file}`），那里一律带 `task: t.id`，
-      // 所以"没有 task 的 deck"从 08-08 起就不存在了。
-      onFocusDeck?.({ kind: 'task', task: o.task, file: o.deckFile || 'canvas.html', title: o.title, exports: o.exports });
-    }
-  };
-
-  // 双击打开（统一挂在卡片根节点：pointer capture 会把 click/dblclick 重定向到
-  // 捕获元素本身，挂内层 div 事件根本到不了 —— 2026-07-27 双击失灵的根因）
-  const PRIMARY = {
-    read: openViewer,
-    detail: (o) => setDetail(o),
-    openFile,
-    // 产物：双击直接开那扇窗。
-    // ⚠️ 这里曾经是两段式（先展开成画布上的内嵌渲染，再双击一次才开窗）。
-    // 展开态 2026-08-13 退役 —— "在画布上并排看两份 deck"这件事本来就该由窗
-    // 来做，而一个会自己变大两倍半的卡片是所有落点逻辑的噪声源。
-    open: focusDeck,
-    // 手写文字：双击改内容（原来是 null —— 写下的字永远改不了）
-    editText: openTextEditor,
-    // 编排.yaml：图形设置页
-    orchestrate: openOrchestrate,
-  };
-
-  const primaryOpen = (o) => PRIMARY[primaryOf(o)]?.(o);
-  primaryOpenRef.current = primaryOpen;   // preview_deck 走同一条"双击"路径
+  primaryOpenRef.current = primaryOpen;
 
   // ESC = 退回项目区全景（编辑窗开着时归窗口自己处理，别抢）
   useEffect(() => {
@@ -1399,13 +1119,13 @@ export default function BoardCanvas({
    *
    * 工具栏的 title 里从一开始就写着「（V）（T）（P）（C）」，但**全仓没有一处
    * 监听过这些键** —— 提示写了一个不存在的功能，比不写更坏。2026-08-08 补上，
-   * 顺带给抓手一个 H（跟 Figma / Miro 同键位，用户不用学）。
+   * 抓手的 H 2026-08-17 随抓手一起退役（理由见 board-tool-groups.js）。
    *
    * 带修饰键的一律放行：Ctrl+V 是粘贴，不是换工具。
    */
   useEffect(() => {
     // c（标注）2026-08-13 退役：标注不再是一种"拿在手里的工具"，见 AnnotatePopover
-    const KEYS = { v: 'select', h: 'hand', t: 'text', p: 'draw' };
+    const KEYS = { v: 'select', t: 'text', p: 'draw' };
     const onKey = (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = e.target;
@@ -1536,128 +1256,13 @@ export default function BoardCanvas({
   // （前三次：绑定表 memo、splitStageCards、handlePresenceEvent）。
   // 症状一律是整页白屏 + "Cannot access 'X' before initialization"，
   // 而且 build 和单测都照过不误，只有真跑才看得见。
-  /**
-   * 文件夹卡的手势 —— 2026-08-13 重做：
-   *
-   *   拖动（>4px）   直接搬走，跟产物卡同一手感
-   *   单击           无语义
-   *   双击           进这个文件夹
-   *
-   * 280ms 长按门撤了。它当年防的是"最大命中面积被随手误拖"，但门本身零反馈：
-   * 按下就拖的前 280ms 所有位移被吞、光标还是 pointer，松手又因为 moved 被
-   * 判"什么都不做" —— 体感就是这卡**既拖不动也点不开**（用户报）。误触之忧
-   * 由 4px 阈值 + 单击无副作用兜底，跟产物卡同一套判据。
-   *
-   * ⚠️ 双击**不能用 `onDoubleClick`**：这里在 pointerdown 时 setPointerCapture
-   * （拖拽需要），而捕获会让浏览器不再派发 click / dblclick —— 这个文件
-   * 2026-07-27 就栽过同一个坑（当时是卡片双击失灵）。所以双击是自己数的：
-   * 第二下 pointerup 时上一次的单击定时器还在，就判定为双击。
-   */
-  const ZONE_DBLCLICK_MS = 260;
-  const zoneDragRef = useRef(null);
-  const zoneClickTimer = useRef(null);
-  const [draggingZone, setDraggingZone] = useState(null);
-
-  /**
-   * @param z 区
-   * @param opts.onTap  单击做什么（默认无事）
-   * @param opts.onOpen 双击做什么（默认进这个文件夹；传 null 表示没有双击语义）
-   */
-  const zoneGestureProps = useCallback((z, opts = {}) => ({
-    onPointerDown: (e) => {
-      if (e.button !== 0 || e.target.closest?.('[data-zone-action]')) return;
-      if (camApiRef.current?.isHandMode?.()) return;   // 抓手态归镜头（同 onObjectPointerDown）
-      if (toolRef.current !== 'select') return;        // 工具在手归工具（可以在文件夹卡上画/写）
-      e.stopPropagation();
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-      noteUserTakeover();   // 拖动期间 agent 跟随别抢镜头（产物卡同款，原来漏了）
-      zoneDragRef.current = {
-        id: z.id, startX: e.clientX, startY: e.clientY,
-        // 抓点世界坐标 —— 跟物件拖拽同一套换算，相机中途动了也跟手
-        grabWorld: camApiRef.current.toWorld(e.clientX, e.clientY),
-        origX: z.x, origY: z.y, moved: false,
-      };
-    },
-    onPointerMove: (e) => {
-      const d = zoneDragRef.current;
-      if (!d) return;
-      if (!d.moved && Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) <= 4) return;
-      if (!d.moved) { d.moved = true; setDraggingZone(d.id); }
-      e.stopPropagation();
-      const w = camApiRef.current.toWorld(e.clientX, e.clientY);
-      const nx = d.origX + (w.x - d.grabWorld.x);
-      const ny = d.origY + (w.y - d.grabWorld.y);
-      // upsert 而不是"有才改"：agent 刚 mkdir 出来的影子文件夹（ghostZones）
-      // 还没进 zones，旧写法 `prev[d.id] ? ... : prev` 对它是静默 no-op ——
-      // 卡画得出来但怎么拖都纹丝不动（2026-08-13 查实）。第一次拖动就落户。
-      setZones(prev => ({
-        ...prev,
-        [d.id]: { w: FOLDER_CARD.w, h: FOLDER_CARD.h, ...prev[d.id], x: nx, y: ny },
-      }));
-    },
-    onPointerUp: () => {
-      const d = zoneDragRef.current;
-      zoneDragRef.current = null;
-      if (!d) return;
-      if (d.moved) {
-        setDraggingZone(null);
-        recentDragMovedRef.current = true;      // 别让这一下被当成点击
-        dirtyRef.current.zones.add(d.id);
-        scheduleSave();
-        return;
-      }
-      const tap = opts.onTap || (() => {});
-      // 没有双击语义的时候不用等 —— 那 260ms 是为了给双击让路，白等就是钝
-      if (opts.onOpen === null) { clearTimeout(zoneClickTimer.current); tap(); return; }
-      // 第二下来了 = 双击
-      if (zoneClickTimer.current) {
-        clearTimeout(zoneClickTimer.current);
-        zoneClickTimer.current = null;
-        (opts.onOpen || (() => openFolderRef.current?.(d.id)))();
-        return;
-      }
-      zoneClickTimer.current = setTimeout(() => { zoneClickTimer.current = null; tap(); }, ZONE_DBLCLICK_MS);
-    },
-    onPointerCancel: () => {
-      zoneDragRef.current = null;
-      setDraggingZone(null);
-    },
-  }), [scheduleSave, noteUserTakeover]);
-
-
-  /**
-   * 删文件夹（2026-08-08）。
-   *
-   * 以前这里是「删任务」，连带把绑定的那次对话一起删 —— 那条绑定随「任务=会话」
-   * 一起废了，所以现在只删目录和它在画布上的那些卡，**对话一个字不动**。
-   * zid 就是文件夹的工作区相对路径（可以是嵌套的 `稿件/初稿`）。
-   */
-  const handleDeleteFolder = useCallback(async (zid, title) => {
-    const ok = await useGlobalStore.getState().confirm({
-      title: '删除文件夹',
-      message: `删除「${title || zid}」？文件夹里的全部内容会一起删掉，此操作不可撤销。对话记录不受影响。`,
-      confirmLabel: '删除',
-      danger: true,
-    });
-    if (!ok) return;
-    try {
-      await Assets.removeFolder(projectId, zid);
-      // 服务端已把 board.json 里的行清掉，本地 state 也要同步剪，
-      // 否则要刷新页面僵尸文件夹才消失（2026-07-30「删不了」修复的一半）
-      removedZonesRef.current.add(zid);
-      setZones(prev => {
-        const next = { ...prev };
-        delete next[zid];
-        return next;
-      });
-      // 正开着这个文件夹（或它的子层）的窗 → 关掉，别留一扇指向已删目录的窗
-      if (winDirRef.current === zid || winDirRef.current?.startsWith(`${zid}/`)) setWinDir(null);
-      reload();
-      useGlobalStore.getState().showToast('文件夹已删除', 'info');
-    } catch (err) {
-      useGlobalStore.getState().showToast(`删除失败：${err.message}`, 'error');
-    }
-  }, [projectId, reload]);
+  // 文件夹卡的拖 / 单击 / 双击 + 删文件夹 → useZoneGestures.js
+  const { draggingZone, zoneGestureProps, handleDeleteFolder } = useZoneGestures({
+    projectId,
+    camApiRef, toolRef, openFolderRef, winDirRef,
+    removedZonesRef, recentDragMovedRef, dirtyRef,
+    setZones, setWinDir, scheduleSave, reload, noteUserTakeover,
+  });
 
   // ⚠️ 这里曾经有 handleRemoveLegacyZone（把"旧式会话分区"从桌面拿掉，只清
   // board.json 不动对话）。会话不再产生分区之后，画布上每个框背后都有一个真实
@@ -1957,42 +1562,17 @@ export default function BoardCanvas({
   });
 
   // 幻影表：出生（stageCards 出 image 条目）→ 找座 → 等过户 / 蒸发
-  const phantoms = usePhantoms({
+  const { phantoms, moveSeat: movePhantomSeat } = usePhantoms({
     stageCards, phantomsRef,
     obstaclesRef: phantomObstaclesRef, contentBottomRef: phantomBottomRef,
   });
 
   // ── 铅笔精灵的台词与出场（2026-08-14 日记本批；五批收敛成单精灵层）──
   //
-  // 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端
-  // haiku 压的）→ 写它；都没有 = 在想 → 思考旁白轮播。轮播节拍 4.2s —— 每换
-  // 一句就是一次重写动画，太快会像抽搐。
-  // ⚠️ 轮播计时挂在**活跃**上不是"工具在跑"上：纯思考阶段也要有话说 ——
-  // 只挂 toolsBusy 的话 thinking 台词永远停在第一句（用户报的活跃真空之一）。
-  const mainActive = !!presence[MAIN_AGENT_ID]?.active;
-  const toolsBusy = useMemo(() => Object.values(stageCards).some(c =>
-    c.status === 'running' && c.kind !== 'subagent' && c.kind !== 'question'), [stageCards]);
-  const [phraseTick, setPhraseTick] = useState(0);
-  useEffect(() => {
-    if (!mainActive) return undefined;
-    const t = setInterval(() => setPhraseTick(k => k + 1), 4200);
-    return () => clearInterval(t);
-  }, [mainActive]);
-  const workText = toolsBusy
-    ? TOOL_PHRASES[phraseTick % TOOL_PHRASES.length]
-    : (spriteLine?.text || THINK_PHRASES[phraseTick % THINK_PHRASES.length]);
-  // recap 持久：闲时精灵写"刚才干了什么"，刷新页面也还记得（localStorage per-project）
-  const [storedRecap, setStoredRecap] = useState(() => {
-    try { return localStorage.getItem(`nd:recap:${projectId}`) || ''; } catch { return ''; }
+  // 精灵此刻说什么（台词池与挑法都在 SpriteSketchLayer.jsx）
+  const { mainActive, workText, ambientText } = useSpriteAmbient({
+    projectId, presence, stageCards, spriteLine, recap,
   });
-  useEffect(() => {
-    if (!recap?.text) return;
-    setStoredRecap(recap.text);
-    try { localStorage.setItem(`nd:recap:${projectId}`, recap.text); } catch { /* 记不住就算了 */ }
-  }, [recap, projectId]);
-  // 问候语进场定一句，不轮换 —— 闲时的字是"留在纸上的"，不是跑马灯
-  const greeting = useMemo(() => pickGreeting(), []);
-  const ambientText = storedRecap ? `※ ${storedRecap}` : greeting;
 
   // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock。
   // （image 卡 2026-08-14 迁出 —— 幻影入座见 PhantomLayer.jsx，occupancy 参数
@@ -2128,48 +1708,10 @@ export default function BoardCanvas({
   const zoomByStable = useCallback((d) => cameraRef.current.zoomBy(d), []);
   const zoomToStable = useCallback((z) => cameraRef.current.zoomTo(z), []);
 
-  const boardToolGroups = useMemo(() => ([
-            {
-              id: 'view',
-              items: [
-                {
-                  id: 'tidy', icon: LayoutGrid, label: '整理',
-                  title: '重排这块画布上的产物（自动排版只在新产物到货时跑一次，别的时候不动你摆的位置）',
-                  onClick: tidyBoard,
-                },
-                { id: 'fit', icon: Maximize2, label: '全部', title: '全部内容入镜（Shift+1）', onClick: zoomFitStable },
-                { id: 'zoomOut', icon: Minus, title: '缩小（Ctrl -）', onClick: () => zoomByStable(-1) },
-                { id: 'zoomLevel', icon: null, label: `${Math.round(scale * 100)}%`, title: '回到 100%（Ctrl 0）', onClick: () => zoomToStable(1) },
-                { id: 'zoomIn', icon: Plus, title: '放大（Ctrl +）', onClick: () => zoomByStable(1) },
-              ],
-            },
-            {
-              id: 'tools',
-              type: 'mode',
-              value: tool,
-              onChange: setTool,
-              items: [
-                { id: 'select', icon: MousePointer2, title: '指针：选中和挪动东西（V）' },
-                { id: 'hand', icon: Hand, title: '抓手：拖任何地方都是挪镜头（H，或按住空格）' },
-                { id: 'text', icon: Type, title: '写一段字（T）：双击空地落输入框，单击照常选中/拖动' },
-                { id: 'draw', icon: PenLine, title: '涂鸦（P）' },
-                // 标注 2026-08-13 从这儿撤了：它的对象永远是一个具体物件，
-                // 所以入口在物件自己身上（右键菜单 / 卡片右上角的标注按钮），
-                // 工具栏只留"要在空地上起手势"的那几种。
-              ],
-            },
-            // 拿着笔时多出的子模式组：落笔 / 摆放（见 drawMode 的说明）
-            ...(tool === 'draw' ? [{
-              id: 'drawMode',
-              type: 'mode',
-              value: drawMode,
-              onChange: setDrawMode,
-              items: [
-                { id: 'ink', icon: PenLine, label: '落笔', title: '只管画 —— 不会碰到已有的墨迹' },
-                { id: 'arrange', icon: Move, label: '摆放', title: '挪动/缩放已有墨迹 —— 不会落笔' },
-              ],
-            }] : []),
-          ]), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
+  const boardToolGroups = useMemo(() => buildBoardToolGroups({
+    tool, setTool, drawMode, setDrawMode, scale,
+    tidyBoard, zoomFit: zoomFitStable, zoomBy: zoomByStable, zoomTo: zoomToStable,
+  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
 
   useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
 
@@ -2267,28 +1809,7 @@ export default function BoardCanvas({
   // ── 渲染 ──
   return (
     <div style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden', background: CANVAS.paper }}>
-      <style>{[
-        '@keyframes ndPopIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}',
-        '@keyframes ndStageOut{to{opacity:0;transform:scale(.97)}}',
-        // 流光：一个动画周期必须**正好走完一个图案周期**，否则每次 loop 重启时
-        // 花纹相位对不上，看着就是"扫到一半跳一下"。
-        // background-size:200% 时 offset(p) = (W - 2W)·p = -W·p，
-        // 100% → -100% 的位移正好是 2W = 一个图案宽。
-        // （原来是 size 240% + 200%→-60%：位移 3.64W / 周期 2.4W = 1.517 个周期，
-        //   每 1.5s 跳一次。）
-        '@keyframes ndShimmer{from{background-position:100% 0}to{background-position:-100% 0}}',
-        '@keyframes ndCaret{0%,100%{opacity:1}50%{opacity:0}}',
-        '@keyframes ndSpin{to{transform:rotate(360deg)}}',
-        '@keyframes ndPresencePulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.75}}',
-        '@keyframes ndPulse{from{box-shadow:0 0 0 0 rgba(79,143,91,0.4)}to{box-shadow:0 0 0 12px rgba(79,143,91,0)}}',
-        // agent 正在动的目标：外圈橙色呼吸光圈
-        // agent 正在动这个东西：**一圈跑动的光**，不只是边框在呼吸。
-        // 用户要的是"运动环绕光圈"—— 呼吸是"这里有点什么"，跑动才是"有人正在
-        // 这儿干活"。两层叠着：底下一圈稳的实边（认得出是哪一个），上面
-        // 一段亮弧沿着边转（看得出在动）。
-        '@keyframes ndAgentRing{0%,100%{box-shadow:0 0 0 2px rgba(176,140,79,0.85),0 0 0 7px rgba(176,140,79,0.16),0 6px 20px rgba(40,32,16,0.12)}50%{box-shadow:0 0 0 2px rgba(176,140,79,0.95),0 0 0 13px rgba(176,140,79,0.05),0 6px 20px rgba(40,32,16,0.12)}}',
-        '@keyframes ndAgentSweep{to{transform:rotate(1turn)}}',
-      ].join('')}</style>
+      <style>{BOARD_KEYFRAMES}</style>
       {/* 视口：不滚动，镜头就是相机（2026-08-07 无限画布）
        *
        * 点阵台面画在**视口**上不画在世界层上：世界是无限的，给不出一个"多大"
@@ -2353,9 +1874,9 @@ export default function BoardCanvas({
         style={{
           position: 'absolute', inset: 0, overflow: 'hidden',
           touchAction: 'none',
+          // 画布上的字不可选：规则连同理由整条住在 globals.css 的 [data-board-pane]
           cursor: linkFrom ? 'crosshair'
             : camera.panning ? 'grabbing'
-            : tool === 'hand' ? 'grab'
             : tool === 'draw' ? (drawMode === 'arrange' ? 'default' : 'crosshair')
             : tool === 'text' ? 'text'
             : 'default',
@@ -2385,10 +1906,9 @@ export default function BoardCanvas({
           {/* 吸附预览：松手后物件将落到的格位（虚线 ghost）*/}
           {visibleObjects.map((o) => renderObjectCard(o))}
 
-          {/* 生图幻影（PhantomLayer.jsx）：占位卡在纸面层等图，真图落地座位
-              过户。consumedBy 是认领时在 memo 里就地标的 —— 渲染当帧过滤，
-              不等状态清扫，过户瞬间幻影即隐 */}
-          {phantoms.filter(p => !p.consumedBy).map(p => <PhantomImageCard key={p.blockId} p={p} />)}
+          {/* 生图幻影：占位卡在纸面层等图，真图落地座位过户；拖它 = 指定这张图落在哪 */}
+          <PhantomCards phantoms={phantoms} draggable={tool === 'select'}
+            toWorld={camera.toWorld} onSeatChange={movePhantomSeat} />
 
 
           {/* 关系线（世界坐标，铺在物件之下）*/}

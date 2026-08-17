@@ -4,6 +4,7 @@ import { STAGE_CARD_W } from '../../lib/board-geometry.js';
 import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
 import { isImeEnter } from '../../lib/helpers.js';
 import { CLAUDE_BRAND, CLAUDE_PATH } from '../ui/ClaudeMark.jsx';
+import { MAIN_AGENT_ID } from '../../lib/board-presence.js';
 
 /**
  * SpriteSketchLayer —— 铅笔定格精灵（2026-08-14，日记本批）
@@ -502,4 +503,51 @@ export function pickGreeting(now = new Date()) {
       : h < 18 ? ["it's coffee and claude time", '纸摊好了，随时开工']
         : ['晚上好，灵感夜班', 'good evening — night owl mode'];
   return pool[(now.getDate() + h) % pool.length];
+}
+
+/**
+ * 精灵此刻该说什么（2026-08-17 从 BoardCanvas 搬来 —— 行数棘轮；而且台词的
+ * 挑选逻辑本来就该跟上面那三个文案池住在一起，分居两个文件必然只改一边）。
+ *
+ * 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端 haiku
+ * 压的）→ 写它；都没有 = 在想 → 思考旁白轮播。轮播节拍 4.2s —— 每换一句就是
+ * 一次重写动画，太快会像抽搐。
+ *
+ * ⚠️ 轮播计时挂在**活跃**上不是"工具在跑"上：纯思考阶段也要有话说 —— 只挂
+ * toolsBusy 的话 thinking 台词永远停在第一句（用户报的活跃真空之一）。
+ *
+ * 闲时写 recap（"刚才干了什么"），刷新也还记得（localStorage per-project）；
+ * 没有 recap 就写问候语，进场定一句不轮换 —— 闲时的字是"留在纸上的"，
+ * 不是跑马灯。
+ *
+ * @returns {{ mainActive: boolean, workText: string, ambientText: string }}
+ */
+export function useSpriteAmbient({ projectId, presence, stageCards, spriteLine, recap }) {
+  const mainActive = !!presence[MAIN_AGENT_ID]?.active;
+  const toolsBusy = useMemo(() => Object.values(stageCards).some(c =>
+    c.status === 'running' && c.kind !== 'subagent' && c.kind !== 'question'), [stageCards]);
+
+  const [phraseTick, setPhraseTick] = useState(0);
+  useEffect(() => {
+    if (!mainActive) return undefined;
+    const t = setInterval(() => setPhraseTick(k => k + 1), 4200);
+    return () => clearInterval(t);
+  }, [mainActive]);
+
+  const workText = toolsBusy
+    ? TOOL_PHRASES[phraseTick % TOOL_PHRASES.length]
+    : (spriteLine?.text || THINK_PHRASES[phraseTick % THINK_PHRASES.length]);
+
+  const [storedRecap, setStoredRecap] = useState(() => {
+    try { return localStorage.getItem(`nd:recap:${projectId}`) || ''; } catch { return ''; }
+  });
+  useEffect(() => {
+    if (!recap?.text) return;
+    setStoredRecap(recap.text);
+    try { localStorage.setItem(`nd:recap:${projectId}`, recap.text); } catch { /* 记不住就算了 */ }
+  }, [recap, projectId]);
+
+  const greeting = useMemo(() => pickGreeting(), []);
+
+  return { mainActive, workText, ambientText: storedRecap ? `※ ${storedRecap}` : greeting };
 }

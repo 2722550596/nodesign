@@ -52,7 +52,13 @@ const COLD_START_USD_PER_TOKEN = 9 / 1_000_000;
 /** 低于这个上下文就不提醒：新会话切模型几乎免费，弹窗只会变成噪音 */
 const WARN_FROM_TOKENS = 30_000;
 
-export default function ModelPicker({ disabled = false, projectId = null, sessionId = null, contextTokens = 0 }) {
+export default function ModelPicker({
+  disabled = false, projectId = null, sessionId = null, contextTokens = 0,
+  /** 换皮用：首页那张纸上的这颗按钮要跟着纸走（见 home-styles.js 的 .model） */
+  className,
+  /** 下拉往上开还是往下开。首页的纸底下没地方，仍旧往上开 */
+  menuPlacement = 'up',
+}) {
   const modelPref = useGlobalStore(s => s.modelPref);
   const setModelPref = useGlobalStore(s => s.setModelPref);
   const showToast = useGlobalStore(s => s.showToast);
@@ -127,7 +133,7 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
   const busy = disabled || saving;
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} className={className} style={{ position: 'relative' }}>
       <style>{'@keyframes nd-model-spin { to { transform: rotate(360deg); } }'}</style>
       <button
         onClick={() => !busy && setOpen(v => !v)}
@@ -159,7 +165,10 @@ export default function ModelPicker({ disabled = false, projectId = null, sessio
 
       {open && (
         <div style={{
-          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0,
+          position: 'absolute', left: 0,
+          ...(menuPlacement === 'down'
+            ? { top: 'calc(100% + 6px)' }
+            : { bottom: 'calc(100% + 6px)' }),
           minWidth: 240,
           background: COLOR.bgWhite,
           borderRadius: 2,

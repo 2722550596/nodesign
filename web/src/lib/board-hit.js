@@ -31,8 +31,14 @@ export const CHROME_SELECTOR = [
   '[data-no-pan]',           // 通用逃生舱
 ].join(',');
 
-/** 画布物件：相机要躲开，工具不用 */
-export const OBJECT_SELECTOR = '[data-board-object],[data-board-zone]';
+/**
+ * 画布物件：相机要躲开，工具不用。
+ *
+ * `[data-phantom]` 是生图占位卡（2026-08-17 起可拖 —— 拖它就是指定这张图
+ * 待会儿落在哪）。它不在 board.json 里，但对着这三方它就是一个画布物件：
+ * 按在它身上是要挪它，不是要拖画布。
+ */
+export const OBJECT_SELECTOR = '[data-board-object],[data-board-zone],[data-phantom]';
 
 /** 落在界面控件上（工具栏、按钮…）。**三方都该先问这一句**。 */
 export function onChrome(e) {

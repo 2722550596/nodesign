@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SIZE, CANVAS, alpha } from '../../lib/theme.js';
 import { sizeOf } from '../../lib/board-kinds.js';
@@ -69,6 +69,15 @@ export function findPhantomSeat(obstacles, contentBottom) {
  */
 export function usePhantoms({ stageCards, phantomsRef, obstaclesRef, contentBottomRef }) {
   const [phantoms, setPhantoms] = useState([]);
+  /**
+   * 拖动幻影用的重渲染扳机。
+   *
+   * **不能改成"造个新对象塞进 state"**：`phantoms` 里装的必须是**表里那一个**
+   * 对象 —— 认领是在入座 memo 里就地把 `consumedBy` 标在表对象上的，渲染那行
+   * 靠同一个引用当帧过滤掉它（不等状态清扫，所以过户瞬间幻影即隐）。
+   * 复制一份就等于把这条断了。所以座位改在表上、渲染靠这个计数器推一下。
+   */
+  const [, bumpSeat] = useReducer(n => n + 1, 0);
 
   useEffect(() => {
     const table = phantomsRef.current;
@@ -124,7 +133,41 @@ export function usePhantoms({ stageCards, phantomsRef, obstaclesRef, contentBott
     return () => clearTimeout(t);
   }, [stageCards, phantomsRef, obstaclesRef, contentBottomRef]);
 
-  return phantoms;
+  /**
+   * 挪座（2026-08-17）：**拖幻影 = 指定这张图待会儿落在哪**。
+   *
+   * 不需要新的持久化 —— 座位本来就是这张图落点的唯一真相，过户时原样交给
+   * 真图、由 seatFixes 照常落盘。在这之前只有算法能写它，用户不能，于是
+   * 占位卡摆得不合适也只能干看着（用户 2026-08-17 的原话是"我觉得可以给一个
+   * layout，或者说这才是我想要的"）。
+   *
+   * 写在表上，不进 state：理由见上面那个计数器。
+   */
+  const moveSeat = useCallback((blockId, seat) => {
+    const p = phantomsRef.current.get(blockId);
+    if (!p || p.consumedBy) return;
+    p.seat = { x: Math.round(seat.x), y: Math.round(seat.y) };
+    bumpSeat();
+  }, [phantomsRef]);
+
+  return { phantoms, moveSeat };
+}
+
+/**
+ * 还没过户的幻影占的地方（2026-08-17，issue #1 第 9 条）。
+ *
+ * 幻影原来对入座算法**完全不可见**：它自己找座时躲开所有真卡（出生那一下），
+ * 可反过来没人躲它 —— 而两边的起排线是同一条（都从"已有内容的最低边"往下
+ * 排一行），于是"生图等着的时候又落了一件新东西"必然把新卡排在幻影身上。
+ * 用户报的「加载动画和已经渲染出来的图叠在一起」就是这么来的。
+ *
+ * 幻影不落盘、不可拖，所以它没法自己让开 —— 只能让排座的那边知道它在。
+ * 在 memo 里现算（跟 movingRef 同一种 ref 用法），拿到的是那一趟的现实。
+ */
+export function phantomRects(phantomsRef) {
+  return [...phantomsRef.current.values()]
+    .filter(p => !p.consumedBy)
+    .map(p => ({ x: p.seat.x, y: p.seat.y, w: IMG_SIZE.w, h: IMG_SIZE.h }));
 }
 
 /**
@@ -140,19 +183,81 @@ export function claimPhantomSeat(phantomsRef, newImageId) {
   return { ...free[0].seat };
 }
 
-/** 幻影卡本体：纸面层的 shimmer（视觉从舞台版搬家，身位换成真图卡口径） */
-export function PhantomImageCard({ p }) {
+/**
+ * 纸面层上的整排幻影。
+ *
+ * `consumedBy` 是入座 memo 认领时**就地标在表对象上**的，而这一层是
+ * BoardCanvas 的子组件、渲染发生在它 render 之后 —— 所以这里过滤到的
+ * 永远是那一趟的最新结果，过户瞬间幻影即隐，不用等状态清扫。
+ */
+export function PhantomCards({ phantoms, draggable, toWorld, onSeatChange }) {
+  return phantoms.filter(p => !p.consumedBy).map(p => (
+    <PhantomImageCard
+      key={p.blockId} p={p}
+      draggable={draggable} toWorld={toWorld} onSeatChange={onSeatChange}
+    />
+  ));
+}
+
+/**
+ * 幻影卡本体：纸面层的 shimmer（视觉从舞台版搬家，身位换成真图卡口径）。
+ *
+ * **可拖**（2026-08-17）：拖它就是指定这张图落在哪。位移在世界坐标里算
+ * （当前相机下光标处的世界点 − 按下时的抓点），跟真卡那条路同一个算法 ——
+ * 原因也一样：公式里没有相机项的话，拖着卡滚一格滚轮目标就丢了（08-13 事故）。
+ *
+ * @param {boolean}  draggable  只在指针工具在手时可拖（跟真卡同一条规矩：
+ *                              手里拿着画笔按在卡上是要在卡上画，不是要挪它）
+ * @param {Function} toWorld    camera.toWorld
+ * @param {Function} onSeatChange (blockId, seat) => void
+ */
+export function PhantomImageCard({ p, draggable = false, toWorld, onSeatChange }) {
   const running = p.status === 'running';
+  const dragRef = useRef(null);
+
+  const onPointerDown = (e) => {
+    if (!draggable || e.button !== 0 || !toWorld) return;
+    // 不让画布把这一下当平移/框选。board-hit 的 OBJECT_SELECTOR 里也加了
+    // [data-phantom]（相机的判据是共享的那一份），这里是第二道。
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragRef.current = {
+      id: e.pointerId,
+      grab: toWorld(e.clientX, e.clientY),
+      orig: { ...p.seat },
+    };
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    const w = toWorld(e.clientX, e.clientY);
+    onSeatChange?.(p.blockId, {
+      x: d.orig.x + (w.x - d.grab.x),
+      y: d.orig.y + (w.y - d.grab.y),
+    });
+  };
+  const endDrag = (e) => {
+    if (dragRef.current?.id === e.pointerId) dragRef.current = null;
+  };
+
   return (
     <div
       data-phantom="image"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      title={draggable ? '拖动它 = 指定这张图落在哪' : undefined}
       style={{
         position: 'absolute', left: p.seat.x, top: p.seat.y,
         width: IMG_SIZE.w, height: IMG_SIZE.h,
         borderRadius: RADIUS.xl, overflow: 'hidden',
         border: `1px solid ${p.status === 'fail' ? '#b0554f' : alpha(CANVAS.brass, 0.5)}`,
         background: COLOR.bgCard, boxShadow: '0 6px 18px rgba(60,48,20,0.14)',
-        pointerEvents: 'none',
+        pointerEvents: draggable ? 'auto' : 'none',
+        cursor: draggable ? 'grab' : 'default',
+        touchAction: 'none',
+        userSelect: 'none',
       }}
     >
       <div style={{

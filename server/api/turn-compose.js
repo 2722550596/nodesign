@@ -1,0 +1,202 @@
+/**
+ * 一条 user message 的组装（2026-08-17 从 turn.js 拆出 —— 行数棘轮，
+ * turn.js 是路由层，"chat + 附件怎么变成 SDK content blocks"是独立的一件事，
+ * 拆之前它占了那个文件的六分之一）。
+ *
+ * 对外只有 composeUserMessage 一个出口；inline 图那段是它的私事。
+ */
+import { promises as fs } from 'fs';
+import path from 'path';
+import { isExtractable } from '../lib/doc-extract.js';
+
+/** 直接 image input 阈值：> 1MB 走 path 让 agent Read，< 1MB inline base64 */
+const IMAGE_INLINE_MAX_BYTES = 1 * 1024 * 1024;
+/** Anthropic API 支持的 image media types（sdk-tools.d.ts:150 + API doc） */
+const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/**
+ * 把 chat 文本 + attachments 拼成 SDK content blocks 数组。
+ *
+ * 返回：
+ *   - displayText: 用于 createRun 审计 + run.error 时前端显示 fallback
+ *   - blocks: BetaContentBlockParam[]（喂 SDK 的 user message content）
+ *
+ * 策略：
+ *   - **小图（< 1MB） inline base64** → user message 顶层 image content block，
+ *     agent 一上来就能 vision 看见参考图，不用先 Read。Kimi vision 通过
+ *     binary-fixup-proxy 已验证（lift transform 仅处理 tool_result 嵌套；
+ *     user message 顶层 image 直接走标准路径，无需 lift）。
+ *   - **大图（>= 1MB）/ 非 image / 文档** → 文本路径让 agent Read（避免大文件
+ *     爆 user message token，配合 prelude 的"开工前必看 ./assets/"硬规则）
+ *   - **anchor / comment 类型** → 文本描述
+ *
+ * Anthropic image content block 仅支持 jpeg/png/gif/webp，不支持 svg/heic 等。
+ * 不在白名单的 image mime → 按文本路径降级。
+ */
+export async function composeUserMessage(chat, attachments, pendingSummary, assetsSummary, sessionRoot) {
+  const blocks = [];
+
+  // C4：用户在过去时段做的 direct edit + comment → prepend system 提示
+  // 不灌详情（让 agent 主动调 mcp__nodesign__get_pending_changes 拉），省 token
+  if (pendingSummary && pendingSummary.count > 0) {
+    blocks.push({
+      type: 'text',
+      text: `<system>${pendingSummary.summary}。可调 mcp__nodesign__get_pending_changes 查看详情；处理完调 mcp__nodesign__clear_pending_changes 清 buffer。</system>`,
+    });
+  }
+
+  // C8：assets/ 主动提醒（替代 prelude 硬规则"必先 Glob assets"）—— workspace
+  // 检测到有素材时温和提示 agent，没素材就不注入，agent 不必每个 turn 硬查
+  if (assetsSummary && assetsSummary.count > 0) {
+    // assets/ 是 symlink → shared/assets/，SDK Glob/Grep 走 ripgrep 默认不跟
+    // symlink，所以 `Glob("assets/*")` 会拿 "No files found"。把完整路径列出来
+    // 让 agent 跳过 Glob 直接 Read（plan mode Bash 被 deny 没有 ls 兜底，更需要这条）。
+    const fileList = Array.isArray(assetsSummary.paths) && assetsSummary.paths.length > 0
+      ? `\n完整路径（直接 Read，**别用 Glob/Grep——assets/ 是 symlink，SDK 默认不跟会返回空**）：\n${assetsSummary.paths.map((p) => `- ${p}`).join('\n')}`
+      : '';
+    let hint = '建议挑 1 张关键图 Read 看一眼（你能直接 vision 看到颜色/质感/排版），再决定动手。如果跟用户的 brief 不相关可以先不看。';
+    if (assetsSummary.hasBinaryDocs) {
+      hint += ' PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包），用 Bash 跑 python3 解：pdf 用 pdfplumber 或 PyPDF2、ppt 用 python-pptx、docx 用 python-docx、xlsx 用 openpyxl。**python 提取出来的不只是文本，通常还包含嵌入图片**（导出到临时目录如 `/tmp/extracted/` 或 `./assets/extracted/`）—— 提取完一定 Read 看图片（vision 自动渲染），别只看 stdout 文本就以为信息齐了。文档里的图常含关键 brand 元素 / 数据图表 / 案例视觉，跳过看图等于丢了一半内容。';
+    }
+    blocks.push({
+      type: 'text',
+      text: `<system>${assetsSummary.summary}。${hint}${fileList}</system>`,
+    });
+  }
+
+  // 空文字块会被 API 直接判 400（text content block 不许为空），所以只发附件的
+  // 那条消息这里不能盲推。改成一句交代处境的话 —— agent 得知道"用户没说话"是
+  // 事实本身，而不是以为上下文丢了。
+  if (chat && chat.trim()) {
+    blocks.push({ type: 'text', text: chat });
+  } else {
+    blocks.push({ type: 'text', text: '[用户只发了附件，没有附带文字。先看附件再问他想拿它做什么]' });
+  }
+
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    // 先尝试给 image attachment inline base64；inline 失败的当 path 走文本路径
+    const inlineImageNames = [];
+    const fallbackLines = [];
+    // Office 三件套单独一队：**普通 Read 读它们只会拿到二进制乱码而且不报错**，
+    // 底下那句"用 Read 读取"对这几种是错的指路，agent 会拿着空气往下干
+    const docLines = [];
+
+    for (const a of attachments) {
+      if (!a || typeof a !== 'object') continue;
+      if (a.type === 'anchor') {
+        fallbackLines.push(`- 选中元素: page=${a.pageIndex} ${a.tag || 'element'} ${a.text ? `"${a.text}"` : ''}`);
+        continue;
+      }
+      if (a.type === 'comment') {
+        fallbackLines.push(`- 评论: ${a.text} (anchor: ${JSON.stringify(a.anchor || {})})`);
+        continue;
+      }
+      // asset 路径分支（assets API 返回 path 形如 '../../shared/assets/<name>'）
+      if (!a.path) continue;
+      const inline = await tryInlineImageAttachment(a, sessionRoot);
+      if (inline) {
+        blocks.push(inline);
+        inlineImageNames.push(a.name || path.basename(a.path));
+      } else if (isExtractable(a.path)) {
+        docLines.push(`- ${a.path}${a.name ? `（${a.name}）` : ''}`);
+      } else {
+        fallbackLines.push(`- ${a.path}${a.name ? `（${a.name}）` : ''}`);
+      }
+    }
+
+    if (inlineImageNames.length > 0) {
+      blocks.push({
+        type: 'text',
+        text: `[已直接附上 ${inlineImageNames.length} 张参考图：${inlineImageNames.join('、')} —— 你可以直接 vision 看，不需要再 Read]`,
+      });
+    }
+    if (fallbackLines.length > 0) {
+      blocks.push({
+        type: 'text',
+        text: `可用素材（用 Read 工具读取，路径相对 workspace）：\n${fallbackLines.join('\n')}`,
+      });
+    }
+    if (docLines.length > 0) {
+      blocks.push({
+        type: 'text',
+        text: `Office 文档（**用 mcp__nodesign__read_document 读，不要用 Read** ——`
+          + ` 这几种是 zip 包，Read 会返回二进制且不报错）：\n${docLines.join('\n')}`,
+      });
+    }
+  }
+
+  // 故事忠于：comment 类型的 attachment 触发"改前回故事"提醒
+  // 设计原则 metadata-not-content：只提醒 agent 去 Read，不注入 plan/decisions 内容
+  const hasComment = Array.isArray(attachments) && attachments.some((a) => a && a.type === 'comment');
+  if (hasComment) {
+    let hasDesignPlan = false;
+    try {
+      await fs.access(path.join(sessionRoot, 'design-plan.md'));
+      hasDesignPlan = true;
+    } catch { /* design-plan.md 不存在，用退化文案 */ }
+
+    blocks.push({
+      type: 'text',
+      text: hasDesignPlan
+        ? '[评论提示 — 改前可以 Read design-plan.md 对照该页 c_decisions（reference / opposition / constraint / motion）；如果改动跟主线方向不一致，在 chat 里跟用户点一下再动手]'
+        : '[评论提示 — 改前可以回看最近 decisions（hook 已注入摘要 / 细节去 Read spec.json）；如果改动方向不确定，跟用户点一下]',
+    });
+  }
+
+  // displayText：合并 blocks 用 \n\n，给 DB 审计 / fallback 显示用
+  // image block 用占位文本而非 base64（base64 进 DB / 前端 fallback 都没意义）
+  const displayText = blocks.map((b) => {
+    if (b.type === 'image') return '[image]';
+    return b.text || `[${b.type}]`;
+  }).join('\n\n');
+
+  return { displayText, blocks };
+}
+
+/**
+ * 尝试把 attachment 直接读成 image content block。
+ * 失败（不是 image / 太大 / 读取失败 / mime 不在白名单）返 null，让调用方
+ * 走 path 字符串 fallback。
+ *
+ * @param {object} attachment - { path, name?, mime?, size? }
+ * @param {string} sessionRoot - 绝对路径，sessions/<sid>/
+ * @returns {Promise<null | { type: 'image', source: { type: 'base64', media_type, data } }>}
+ */
+async function tryInlineImageAttachment(attachment, sessionRoot) {
+  const mime = attachment.mime;
+  if (!mime || !IMAGE_MEDIA_TYPES.has(mime)) return null;
+
+  // attachment.path 是相对 sessionRoot 的（assets API 返 '../../shared/assets/...'）
+  // 解析成绝对路径，并校验解析后仍在 project workspace 内（防 path traversal）
+  let absPath;
+  try {
+    absPath = path.resolve(sessionRoot, attachment.path);
+  } catch {
+    return null;
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(absPath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile()) return null;
+  if (stat.size > IMAGE_INLINE_MAX_BYTES) return null;
+
+  let buf;
+  try {
+    buf = await fs.readFile(absPath);
+  } catch {
+    return null;
+  }
+
+  return {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: mime,
+      data: buf.toString('base64'),
+    },
+  };
+}

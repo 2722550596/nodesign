@@ -29,6 +29,16 @@ import TopBar from './TopBar.jsx';
 const REVEAL_ZONE = 10;
 /** 移开之后再等这么久才淡出（免得贴着边界抖动） */
 const HIDE_DELAY = 600;
+/**
+ * 右上角让路的宽度。文件夹窗的关闭叉钉在那儿（窗 inset 8/10 + 30px 顶栏，
+ * 叉子落在 y 8~38），鼠标去够它的路上会扫过顶部那条感应带，顶栏浮出来正好
+ * 盖住它 —— 2026-08-17 试用反馈 issue #1 第 4 条。
+ *
+ * 产物窗走的是 `topSuppressed`（整条不浮现），文件夹窗不能那么办：顶栏上的
+ * 面包屑**只在文件夹窗开着时才有内容**，收掉顶栏等于把换层的那个入口一起删了。
+ * 所以这里只让开右边这一段。
+ */
+const CORNER_SAFE_W = 160;
 
 export default function AppShell({
   breadcrumb, actions, children, overlayTop = false,
@@ -40,49 +50,57 @@ export default function AppShell({
    * 顶栏管的是"这个项目"，窗开着的时候那一层根本不是当前上下文。
    */
   topSuppressed = false,
+  /** 右上角有别人的关闭钮：感应带在那一段让路（顶栏本身照旧可用） */
+  topRightSafe = false,
 }) {
   const [revealed, setRevealed] = useState(true);
   const hostRef = useRef(null);
   const timerRef = useRef(null);
-  // 顶栏里开着菜单（导出 / ⋯ / 头像）时不许收 —— 收了菜单就悬在半空
-  const holdRef = useRef(false);
 
   useEffect(() => {
     if (!overlayTop) return undefined;
     if (topSuppressed) { clearTimeout(timerRef.current); setRevealed(false); return undefined; }
     const schedule = () => {
       clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        if (!holdRef.current) setRevealed(false);
-      }, HIDE_DELAY);
+      timerRef.current = setTimeout(() => setRevealed(false), HIDE_DELAY);
     };
+    /**
+     * 指针是不是落在顶栏自己（或它撑开的菜单）身上。菜单都是顶栏的后代，
+     * 所以这一条同时管住了"菜单开着别把顶栏收走"。
+     */
+    const overTopBar = (t) => !!t?.closest?.('[data-top-bar]');
+    const inSafeCorner = (e) => topRightSafe && e.clientX >= window.innerWidth - CORNER_SAFE_W;
     const onMove = (e) => {
-      if (e.clientY <= REVEAL_ZONE) {
+      // 手就在顶栏上：清掉计时器。少这一条的话，鼠标停在顶栏上不动满 600ms，
+      // 它会被计时器从手底下收走 —— 原来那版的判据只有 clientY<=10，
+      // 于是"指针在顶栏上"和"该收起来了"是同一个分支。
+      if (overTopBar(e.target)) {
+        clearTimeout(timerRef.current);
+        setRevealed(true);
+        return;
+      }
+      if (e.clientY <= REVEAL_ZONE && !inSafeCorner(e)) {
         clearTimeout(timerRef.current);
         setRevealed(true);
       } else {
         schedule();
       }
     };
-    // 顶栏内部随便点了什么（打开菜单）都算"手还在上面"
+    // 键盘 tab 进顶栏也得看得见（收起态只是透明，里面的元素仍然可聚焦）
     const onFocusIn = (e) => {
-      holdRef.current = !!e.target?.closest?.('[data-top-bar]');
-      if (holdRef.current) setRevealed(true);
-    };
-    const onDown = (e) => {
-      holdRef.current = !!e.target?.closest?.('[data-top-bar]');
+      if (!overTopBar(e.target)) return;
+      clearTimeout(timerRef.current);
+      setRevealed(true);
     };
     window.addEventListener('pointermove', onMove, { passive: true });
-    window.addEventListener('pointerdown', onDown, true);
     window.addEventListener('focusin', onFocusIn);
     schedule();
     return () => {
       clearTimeout(timerRef.current);
       window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerdown', onDown, true);
       window.removeEventListener('focusin', onFocusIn);
     };
-  }, [overlayTop, topSuppressed]);
+  }, [overlayTop, topSuppressed, topRightSafe]);
 
   if (!overlayTop) {
     return (
@@ -117,11 +135,16 @@ export default function AppShell({
       </div>
 
       {/* 收起时贴顶的一条感应带：鼠标扫到就唤出（pointermove 已经能唤，
-          这层是给"从窗口外面直接滑进来"那种不产生 move 事件的情况兜底） */}
+          这层是给"从窗口外面直接滑进来"那种不产生 move 事件的情况兜底）。
+          右端跟 onMove 一样让开关闭钮那一段，否则这层会把让路绕过去。 */}
       {!revealed && !topSuppressed && (
         <div
           onPointerEnter={() => setRevealed(true)}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: REVEAL_ZONE, zIndex: 899 }}
+          style={{
+            position: 'absolute', top: 0, left: 0,
+            right: topRightSafe ? CORNER_SAFE_W : 0,
+            height: REVEAL_ZONE, zIndex: 899,
+          }}
         />
       )}
     </div>

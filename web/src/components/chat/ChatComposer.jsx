@@ -86,11 +86,23 @@ export default function ChatComposer({
     }
   }, [chatDraft, setChatDraft]);
 
+  /**
+   * 传了附件就算有内容（2026-08-17，issue #1 第 8 条）——「拖张参考图进来 +
+   * 直接发」是完整的一句话，逼用户再补一句"看看这个"是白要的动作。
+   *
+   * 只认**传完的**那些：还在上传的没有 path，这时候发出去服务端拿到的是空消息。
+   * （`_file` 是首页那条路的暂存待发，submit 时才统一上传，按已就绪算。）
+   */
+  const readyAttachments = (trayItems || []).filter(
+    it => it && it.type === 'asset' && !it.error && (it.path || it._file),
+  );
+  const hasAttachment = readyAttachments.length > 0;
+
   const submit = () => {
     const trimmed = text.trim();
     // streamInput 重构：isRunning 时仍允许发 —— message 排队，agent 跑完当前 turn
     // 后自然吃下一条。disabled / 空输入 仍阻止
-    if (!trimmed || disabled) return;
+    if ((!trimmed && !hasAttachment) || disabled) return;
     onSend?.(trimmed);
     setText('');
   };
@@ -104,7 +116,7 @@ export default function ChatComposer({
     }
   };
 
-  const empty = !text.trim();
+  const empty = !text.trim() && !hasAttachment;
 
   // V3：拖文件入复合器 → 走和 Paperclip 同条路（onPickFile）。
   // isRunning 不拦：streamInput 模式下附件在 POST /turn 时就拼进 blocks 随消息
@@ -276,7 +288,7 @@ export default function ChatComposer({
             <button
               onClick={submit}
               disabled={disabled || empty}
-              title={empty ? '输入内容后发送' : '发送（Enter）'}
+              title={empty ? '写点什么或传个附件再发' : '发送（Enter）'}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: GAP.xs + 1,
                 padding: `${GAP.xs + 1}px ${GAP.md + 2}px`,

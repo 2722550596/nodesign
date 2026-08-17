@@ -228,6 +228,8 @@ export default function ProjectWorkspace() {
   // 有产物窗铺满屏幕时收掉顶栏的浮现（它的关闭钮在右上角，鼠标够它的路上
   // 必然扫过顶部感应带）
   const [artifactWindowOpen, setArtifactWindowOpen] = useState(false);
+  // 聊天卡开着 = 右缘那一整条被它占着，顶栏不浮现（issue #1 第 1、4 条）
+  const [chatDockOpen, setChatDockOpen] = useState(false);
   const [exportsListOpen, setExportsListOpen] = useState(false);
   const [pickExportOpen, setPickExportOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
@@ -558,8 +560,6 @@ export default function ProjectWorkspace() {
   useEffect(() => {
     if (!hydrated || hydrateError || !project) return;
     if (initialMessageSentRef.current) return;
-    const initial = location.state?.initialMessage;
-    if (typeof initial !== 'string' || !initial.trim()) return;
     // QuickEntry / HubInput 入口在 navigate state 里捎带 attachments（已上传到
     // shared/assets/，格式 [{ type:'asset', path, name, size, mime }]）—— 首条 turn
     // 一起喂给 agent，turn.js composeUserMessage 会自动加"已附上 N 张参考图 / 可用素材路径"
@@ -567,12 +567,18 @@ export default function ProjectWorkspace() {
     const stateAttachments = Array.isArray(location.state?.attachments)
       ? location.state.attachments
       : [];
+    const initial = typeof location.state?.initialMessage === 'string'
+      ? location.state.initialMessage.trim() : '';
+    // 首页那条路同样允许「只传附件就开工」（issue #1 第 8 条），所以判空要连
+    // 附件一起判：两样都没有才是真的没东西可发。
+    if (!initial && stateAttachments.length === 0) return;
     initialMessageSentRef.current = true;
 
-    const text = initial.trim();
+    const text = initial;
     // 等 WS 连上一两个 tick 再发，确保 run.start 等事件能收到
     const t = setTimeout(async () => {
-      setMessages((ms) => [...ms, { id: newId('msg'), role: 'user', content: text }]);
+      const bubble = text || `（附件：${stateAttachments.map(a => a.name || a.path).join('、')}）`;
+      setMessages((ms) => [...ms, { id: newId('msg'), role: 'user', content: bubble }]);
       // 跟 handleSend 同步：sidForRequest 优先用 ref（避 React 闭包陈旧）
       const sidForRequest = sessionIdRef.current ?? currentSessionId;
       try {
@@ -1379,31 +1385,36 @@ export default function ProjectWorkspace() {
    * send 成功后清空托盘。
    */
   const handleSend = async (text) => {
-    if (!text || !text.trim()) return;
+    // mime 字段必传：Phase 1.4 后端 image inline 检测用 mime 判断是不是图
+    const attachments = inputs
+      .filter(it => it.type === 'asset' && it.path)
+      .map(it => ({ type: 'asset', path: it.path, name: it.name, size: it.size, mime: it.mime }));
+    // 光有附件也算一条消息（2026-08-17，issue #1 第 8 条）。空文字 + 空托盘才是空消息。
+    const body = (text || '').trim();
+    if (!body && attachments.length === 0) return;
     // 任何一条消息发出去，攒着的元素评论就随行了（agent 每轮都拉 pending
     // changes）—— 标 sentAt 只为让「发给 agent（N 条标注）」那颗浮钮的计数
     // 归零，不影响橙色框（那个跟 status 走，agent clear 时才消）。
     setComments(arr => arr.some(c => !c.sentAt)
       ? arr.map(c => (c.sentAt ? c : { ...c, sentAt: Date.now() }))
       : arr);
-    // mime 字段必传：Phase 1.4 后端 image inline 检测用 mime 判断是不是图
-    const attachments = inputs
-      .filter(it => it.type === 'asset' && it.path)
-      .map(it => ({ type: 'asset', path: it.path, name: it.name, size: it.size, mime: it.mime }));
 
     // Phase B 批次 3：用户主动 recall 的 project memory 拼到 chat 头部
     // <memory-recall> 包裹让 agent 知道这是用户主动注入的记忆而不是普通文本
     const pendingRecalls = useGlobalStore.getState().consumePendingMemoryRecalls();
-    let chatWithRecalls = text;
+    let chatWithRecalls = body;
     if (pendingRecalls.length > 0) {
       const recallBlocks = pendingRecalls.map(r => {
         const tag = r.agentType || 'main';
         return `<memory-recall agent="${tag}">\n${r.content}\n</memory-recall>`;
       }).join('\n\n');
-      chatWithRecalls = `${recallBlocks}\n\n${text}`;
+      chatWithRecalls = `${recallBlocks}\n\n${body}`;
     }
 
-    setMessages(ms => [...ms, { id: newId('msg'), role: 'user', content: text }]);
+    // 只发了附件的那条：气泡里得有东西，不然界面上是一个空框。写成附件名，
+    // 跟托盘里刚消失的那几个 chip 对得上。
+    const bubble = body || `（附件：${attachments.map(a => a.name || a.path).join('、')}）`;
+    setMessages(ms => [...ms, { id: newId('msg'), role: 'user', content: bubble }]);
     try {
       // Phase A.1：优先用 ref 拿 sessionId，避开 React async 闭包陈旧。
       // 极快连发场景下 currentSessionId（useParams）还没刷过来，ref 已是最新。
@@ -1977,7 +1988,18 @@ export default function ProjectWorkspace() {
       // 横带越少越好。**浮起来而不是收起高度**——顶栏一参与布局，收展就会
       // 改画布容器高度，相机可视区跟着变、contain 重算，画面会跳。
       overlayTop
-      topSuppressed={artifactWindowOpen}
+      // 顶栏不浮现的两种处境：产物窗开着（屏幕被一件产物占满，08-13）、聊天卡
+      // 开着（卡贴右缘从屏顶铺到屏底，顶栏一浮出来就压住它顶沿那排按钮）。
+      // 两层界面轮流占屏不叠着抢 —— 08-17 拍板，配套把卡的出厂默认从「固定
+      // 展开」翻成「不固定」，否则顶栏等于没了。
+      topSuppressed={artifactWindowOpen || chatDockOpen}
+      /**
+       * 文件夹窗开着 = 右上角有它的关闭叉。产物窗那条路是整条顶栏不浮现
+       * （topSuppressed），文件夹窗不能照办 —— 下面那串面包屑**只有文件夹窗
+       * 开着时才有内容**，收掉顶栏等于把换层的入口一起收掉。所以只让开右上角
+       * 那一段感应带。issue #1 第 4 条。
+       */
+      topRightSafe={!!boardUi?.cwd}
       /**
        * 面包屑 = **当前目录一路拆到根**（2026-08-13）。
        *
@@ -2206,7 +2228,7 @@ export default function ProjectWorkspace() {
         {/* 对话 —— 悬浮 AI 卡（2026-08-13）：关着零遮挡，鼠标贴屏缘唤出，
             图钉固定。放在 canvas section **之外**、视口容器之内：它跟画布
             内容不共用坐标系，画布怎么滚它都待在屏幕原处（这就是「跟随镜头」）。 */}
-        <ChatDock title={currentSessionTitle || '对话'}>
+        <ChatDock title={currentSessionTitle || '对话'} onOpenChange={setChatDockOpen}>
           {({ collapse, pinned, onTogglePin }) => (
           <ChatPanel
             onCollapse={collapse}
