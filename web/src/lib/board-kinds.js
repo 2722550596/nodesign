@@ -136,6 +136,22 @@ export const KINDS = {
   },
 
 
+  // word 文档（2026-08-17）。⚠️ **暂时不给 `card: 'artifact'`** ——
+  // 那张方卡要从 ARTIFACT_FACES 取脸，而 docx 的脸得配一个「渲染第一页成图」
+  // 的服务端接口（LibreOffice 一次 ~700ms、峰值 170MB，在 1 vCPU 上给每张卡
+  // 现渲要先想好缓存和并发闸）。没配好之前挂 artifact 卡 = face 取到
+  // undefined 直接崩。先当条目卡走，至少标签是对的。
+  docx: {
+    chrome: 'card',
+    label: '文档',
+    backing: 'file',
+    size: { w: 224, h: 32 },
+    reader: null,
+    primary: 'openFile',
+    actions: ['add', 'open'],
+    legacyBucket: 'doc',
+  },
+
   image: {
     chrome: 'card',
     label: '图片',
