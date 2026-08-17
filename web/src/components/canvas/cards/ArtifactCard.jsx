@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Presentation, Globe, Map as MapIcon } from 'lucide-react';
+import { Presentation, Globe, Map as MapIcon, FileText } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../../lib/theme.js';
 import { PAPER } from '../../../lib/paper.js';
 import { SITE_VIEWPORTS, DECK_EMBED_W } from '../../../lib/board-geometry.js';
@@ -98,6 +98,37 @@ export const ARTIFACT_FACES = {
         />
       );
     },
+  },
+
+  /**
+   * word 文档（2026-08-17）—— 前两种是 iframe 里跑活页面，这一种是**一张图**。
+   *
+   * 服务端把第一页渲成图（一次渲整份、按源 mtime 缓存，见 lib/docx-pages.js）。
+   * 没有 iframe 也就没有滚轮转发这回事：卡片上只看第一页，翻页是窗里的事。
+   *
+   * ⚠️ 冷启第一次要等两秒左右（LibreOffice 真跑），所以 `loading="lazy"` +
+   * 卡片进视口才挂 —— 一屏十张文档卡同时冷渲会把 1 vCPU 堵死。
+   */
+  docx: {
+    icon: FileText,
+    tip: '双击打开这份文档',
+    summary: (o) => (o.sourceFile ? '文档 · 可改源重建' : '文档 · 外来文件'),
+    Preview: ({ o, projectId, fileVersions, box }) => (
+      <img
+        alt=""
+        loading="lazy"
+        src={Assets.docxPageUrl(projectId, o.deckFile || o.path, 1, {
+          w: Math.round(box.w * 2),                     // 2x 出图，缩略图不糊
+          v: versionOfFile(fileVersions, o.deckFile || o.path),
+        })}
+        style={{
+          width: box.w, height: box.h,
+          objectFit: 'cover', objectPosition: 'top center',
+          border: 0, display: 'block', background: '#fff',
+          pointerEvents: 'none',
+        }}
+      />
+    ),
   },
 
 };

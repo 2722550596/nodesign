@@ -11,7 +11,7 @@
 
 export const DECK_EMBED_W = 640;
 export const ARTIFACT_HEADER_H = 28;
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400 };
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420 };
 
 // file 是 224x32 的细条卡（parity 测试上岗第一天就逮住我猜成 160x120 ——
 // 那是涂鸦的默认身位。别猜，抄表）
@@ -36,7 +36,7 @@ export function estimateSize(id, entry) {
   }
   const s = String(id || '');
   if (s.startsWith('doc:')) return KIND_SIZES.doc;
-  const m = /^(deck|site):/.exec(s);
+  const m = /^(deck|site|docx):/.exec(s);
   if (m) {
     const t = m[1];
     return { w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + ARTIFACT_PREVIEW_H[t] };

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { AlertTriangle, Bot, Wrench, Check, EyeOff, Trash2, RotateCcw, Bug, Lightbulb } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS } from '../lib/theme.js';
-import { Admin } from '../lib/api.js';
+import { Admin } from '../lib/api-admin.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo } from '../lib/helpers.js';
 import { PAPER_SHADOW } from '../lib/paper.js';

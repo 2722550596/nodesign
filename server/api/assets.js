@@ -24,6 +24,9 @@ import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { getProjectCover } from '../lib/cover.js';
+import { makeDocxPageHandler } from './assets/docx-page.js';
+import { mountNotesRoutes } from './assets/notes.js';
+import { safeSegment, parseNoteFrontmatter } from './assets/helpers.js';
 import {
   sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY,
@@ -83,11 +86,6 @@ function decodeUploadName(raw) {
 }
 
 /** 单层文件名：不许带路径、不许 '..'、不许以点开头（隐藏文件） */
-function safeSegment(s) {
-  return typeof s === 'string' && !!s && s.length <= 200
-    && !s.includes('/') && !s.includes('\\') && !s.includes('..') && !s.startsWith('.');
-}
-
 router.post('/:pid/assets', upload.single('file'), async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
@@ -549,6 +547,10 @@ router.get('/:pid/artifacts', async (req, res, next) => {
  * 命中就是读盘；没命中要起一次 chromium，串行排队，冷启动 1-3s。
  * 没产物 / 截图环境不可用 → 204，前端画占位框（不是错误，别报 500）。
  */
+// .docx 页图（画布缩略图 + 产物窗翻页共用一份缓存）。实现在 assets/docx-page.js —— 
+// 它跟这里其余路由一行不共享，而 assets.js 已经在行数棘轮的上限上。
+router.get('/:pid/docx-page', makeDocxPageHandler({ getSharedDir, guardProject }));
+
 router.get('/:pid/cover', async (req, res, next) => {
   try {
     if (!guardProject(req, res)) return;
@@ -567,136 +569,6 @@ router.get('/:pid/cover', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * POST /:pid/notes — 新建灵感便签（第一个非文件上传类产物 kind）。
- * body: { text, title? } → 写 shared/assets/notes/<ts>-<slug>.md。
- * 便签就是 markdown 文件：agent 可 Read（assets/notes/ 在 cwd 软链下），
- * 加入上下文托盘走和图片相同的 attachment 管道。
- */
-router.post('/:pid/notes', express.json(), async (req, res, next) => {
-  try {
-    if (!guardProject(req, res)) return;
-    const text = String(req.body?.text || '').trim();
-    if (!text) return res.status(400).json({ error: 'text required' });
-    if (text.length > 20_000) return res.status(400).json({ error: 'note too long (max 20k chars)' });
-    const sessionId = typeof req.body?.sessionId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(req.body.sessionId)
-      ? req.body.sessionId : null;
-
-    await ensureProjectWorkspace(req.params.pid);
-    const notesDir = path.join(getSharedDir(req.params.pid), 'assets', 'notes');
-    await fs.mkdir(notesDir, { recursive: true });
-
-    // slug：CJK 标题 sanitize 后是一串下划线，折叠+去边；没剩下有效字符就叫 note
-    const slug = sanitizeFilename(String(req.body?.title || text.slice(0, 24)))
-      .replace(/\.+$/, '').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'note';
-    const filename = `${Date.now().toString(36)}-${slug}.md`;
-    // session 归属写进 frontmatter —— 前端按它把便签自动摆进对应工作区
-    const content = sessionId ? `---\nsession: ${sessionId}\n---\n\n${text}` : text;
-    await fs.writeFile(path.join(notesDir, filename), content, 'utf8');
-
-    res.status(201).json({
-      artifact: {
-        kind: 'note', name: filename, path: `assets/notes/${filename}`,
-        size: Buffer.byteLength(content), mtime: new Date().toISOString(),
-        ext: '.md', isImage: false, text,
-        ...(sessionId ? { sessionId } : {}),
-      },
-    });
-  } catch (err) { next(err); }
-});
-
-/** 便签 frontmatter：只认最简单的 `---\nsession: xxx\n---` 头，其余原样当正文 */
-function parseNoteFrontmatter(raw) {
-  const m = /^---\n([\s\S]{0,500}?)\n---\n?/.exec(raw);
-  if (!m) return { body: raw, sessionId: null };
-  const sm = /(?:^|\n)session:\s*([A-Za-z0-9-]{8,64})\s*(?:\n|$)/.exec(m[1]);
-  return { body: raw.slice(m[0].length).replace(/^\n+/, ''), sessionId: sm ? sm[1] : null };
-}
-
-/** DELETE /:pid/notes/:filename — 删便签（仅 notes/ 目录，单层名 + 落点校验） */
-router.delete('/:pid/notes/:filename', async (req, res, next) => {
-  try {
-    if (!guardProject(req, res)) return;
-    const filename = req.params.filename;
-    if (!safeSegment(filename) || !filename.endsWith('.md')) {
-      return res.status(400).json({ error: 'invalid note filename' });
-    }
-    const notesDir = path.join(getSharedDir(req.params.pid), 'assets', 'notes');
-    const filePath = path.resolve(notesDir, filename);
-    if (!filePath.startsWith(notesDir + path.sep)) {
-      return res.status(400).json({ error: 'invalid note filename' });
-    }
-    try {
-      await fs.unlink(filePath);
-    } catch (err) {
-      if (err.code === 'ENOENT') return res.status(404).json({ error: 'note not found' });
-      throw err;
-    }
-    res.status(204).end();
-  } catch (err) { next(err); }
-});
-
-/**
- * 任务便利贴路由（2026-07-30）—— tasks/<任务>/notes/*.md 的用户侧写入口。
- * agent 侧不走这里（它直接 Write 文件）；这两条给前端"共享头脑风暴"用：
- * 用户在贴纸阅读浮层里改内容 / 删贴。
- *
- * 校验：任务名和文件名都可能是 CJK（决策.md），不能套 assets/notes 那条
- * `[A-Za-z0-9._-]` 正则。改为否定式（禁路径分隔符 / .. / 隐藏文件）+
- * resolve 后必须留在 shared/tasks 下的双保险。
- */
-function safeNoteSegment(s, { md = false } = {}) {
-  if (typeof s !== 'string' || !s || s.length > 200) return false;
-  if (s.includes('/') || s.includes('\\') || s.includes('..') || s.startsWith('.')) return false;
-  if (md && !s.endsWith('.md')) return false;
-  return true;
-}
-
-function resolveTaskNote(pid, filename) {
-  const base = path.join(getSharedDir(pid), 'notes');
-  const file = path.resolve(base, filename);
-  if (!file.startsWith(base + path.sep)) return null;
-  return file;
-}
-
-/** PUT /:pid/task-notes/:filename — 写/改便利贴（用户侧编辑） */
-router.put('/:pid/task-notes/:filename', express.json(), async (req, res, next) => {
-  try {
-    if (!guardProject(req, res)) return;
-    const { filename } = req.params;
-    if (!safeNoteSegment(filename, { md: true })) {
-      return res.status(400).json({ error: 'invalid filename' });
-    }
-    const text = String(req.body?.text ?? '');
-    if (!text.trim()) return res.status(400).json({ error: 'text required' });
-    if (text.length > 20_000) return res.status(400).json({ error: 'note too long (max 20k chars)' });
-    const file = resolveTaskNote(req.params.pid, filename);
-    if (!file) return res.status(400).json({ error: 'invalid path' });
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, text, 'utf8');
-    res.json({ ok: true, path: `notes/${filename}` });
-  } catch (err) { next(err); }
-});
-
-/** DELETE /:pid/task-notes/:filename — 删便利贴 */
-router.delete('/:pid/task-notes/:filename', async (req, res, next) => {
-  try {
-    if (!guardProject(req, res)) return;
-    const { filename } = req.params;
-    if (!safeNoteSegment(filename, { md: true })) {
-      return res.status(400).json({ error: 'invalid filename' });
-    }
-    const file = resolveTaskNote(req.params.pid, filename);
-    if (!file) return res.status(400).json({ error: 'invalid path' });
-    try {
-      await fs.unlink(file);
-    } catch (err) {
-      if (err.code === 'ENOENT') return res.status(404).json({ error: 'note not found' });
-      throw err;
-    }
-    res.status(204).end();
-  } catch (err) { next(err); }
-});
 
 /**
  * GET /:pid/artifact-file/*subPath — project 级文件服务（shared/assets 子树）。
@@ -1012,5 +884,8 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     res.end(await fs.readFile(servePath));
   } catch (err) { next(err); }
 });
+
+// 便签增删改（assets/notes.js）——自成一体，不跟这里其余路由共享状态
+mountNotesRoutes({ router, guardProject, getSharedDir, ensureProjectWorkspace, sanitizeFilename });
 
 export default router;

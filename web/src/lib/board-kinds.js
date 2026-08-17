@@ -15,7 +15,7 @@ export const ARTIFACT_HEADER_H = 28;
 const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + previewH });
 
 /** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400 };
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420 };  // docx 是竖版 A4，给高一点
 /** 主角档放大倍数（北极星路线1）：预览区放大、顶栏不变 —— sizeOf 与
  *  ArtifactCard 的画框都从这儿算，两处必须同源否则命中区和视觉错位 */
 export const HERO_SCALE = 1.5;
@@ -136,19 +136,17 @@ export const KINDS = {
   },
 
 
-  // word 文档（2026-08-17）。⚠️ **暂时不给 `card: 'artifact'`** ——
-  // 那张方卡要从 ARTIFACT_FACES 取脸，而 docx 的脸得配一个「渲染第一页成图」
-  // 的服务端接口（LibreOffice 一次 ~700ms、峰值 170MB，在 1 vCPU 上给每张卡
-  // 现渲要先想好缓存和并发闸）。没配好之前挂 artifact 卡 = face 取到
-  // undefined 直接崩。先当条目卡走，至少标签是对的。
+  // word 文档（2026-08-17）。预览是**一张页图**不是活页面 —— 服务端一次渲整份、
+  // 按源 mtime 缓存（lib/docx-pages.js），卡上只看第一页，翻页是窗里的事。
   docx: {
-    chrome: 'card',
     label: '文档',
     backing: 'file',
-    size: { w: 224, h: 32 },
+    chrome: 'card',
+    card: 'artifact',
+    size: artifactCard(ARTIFACT_PREVIEW_H.docx),
     reader: null,
-    primary: 'openFile',
-    actions: ['add', 'open'],
+    primary: 'open',
+    actions: ['add'],
     legacyBucket: 'doc',
   },
 

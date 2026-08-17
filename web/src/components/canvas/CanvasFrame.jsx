@@ -9,6 +9,7 @@ import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 // 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
 const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
 const SiteWindow = lazy(() => import('./SiteWindow.jsx'));
+const DocxWindow = lazy(() => import('./DocxWindow.jsx'));
 
 /**
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
@@ -89,6 +90,7 @@ export default function CanvasFrame({
   // 但内容层各是各的：deck 是等比 letterbox 的设计稿，站点按真实设备宽取景，
   // 世界是地图 + 世界书。同一时刻只开一扇。
   const [siteSrc, setSiteSrc] = useState(null);
+  const [docxSrc, setDocxSrc] = useState(null);
 
   // BoardCanvas ✏️ 入口：
   //   { kind:'session' } | { kind:'task', task, file, title }
@@ -96,9 +98,17 @@ export default function CanvasFrame({
   const openDeck = (desc) => {
     if (desc?.kind === 'site') {
       setSiteSrc(desc);
+      setDocxSrc(null);
       setDeckOpen(false);
       return;
     }
+    if (desc?.kind === 'docx') {
+      setDocxSrc(desc);
+      setSiteSrc(null);
+      setDeckOpen(false);
+      return;
+    }
+    setDocxSrc(null);
     setSiteSrc(null);
     setDeckTaskSrc(desc?.kind === 'task' ? desc : null);
     setDeckTab('edit');
@@ -294,6 +304,22 @@ export default function CanvasFrame({
               isStreaming={isStreaming}
               onIframeReady={onIframeReady}
               onClose={() => setSiteSrc(null)}
+              onToolbarGroups={reportWinGroups}
+            />
+          </Suspense>
+        )}
+
+        {docxSrc && (
+          <Suspense fallback={null}>
+            <DocxWindow
+              projectId={projectId}
+              file={docxSrc.file}
+              title={docxSrc.title}
+              sourceFile={docxSrc.sourceFile}
+              exports={docxSrc.exports}
+              onExport={onExport}
+              version={fileVersions?.[docxSrc.file]}
+              onClose={() => setDocxSrc(null)}
               onToolbarGroups={reportWinGroups}
             />
           </Suspense>

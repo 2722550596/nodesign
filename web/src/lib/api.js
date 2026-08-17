@@ -7,7 +7,7 @@
  * 模块：Projects / Skills / Canvas / Assets / Exports / Turn / Health
  */
 
-async function jsonRequest(method, path, body, opts = {}) {
+export async function jsonRequest(method, path, body, opts = {}) {
   const res = await fetch(path, {
     method,
     headers: {
@@ -74,38 +74,6 @@ export const Me = {
   removeShowcase: (id) => jsonRequest('DELETE', `/api/me/showcase/${id}`),
 };
 
-// ── Admin（仅 admin 可见；后端 adminGuard 兜底）──
-export const Admin = {
-  /** harness 问题库：auto=工具失败自动记录，agent=report_friction 主动报 */
-  issues: ({ status, source, kind } = {}) => {
-    const qs = new URLSearchParams();
-    if (status) qs.set('status', status);
-    if (source) qs.set('source', source);
-    if (kind) qs.set('kind', kind);
-    const q = qs.toString();
-    return jsonRequest('GET', `/api/admin/issues${q ? `?${q}` : ''}`);
-  },
-  setIssueStatus: (id, status) => jsonRequest('PATCH', `/api/admin/issues/${id}`, { status }),
-  removeIssue: (id) => jsonRequest('DELETE', `/api/admin/issues/${id}`),
-  // 控制台（2026-08-02）：用户 / 邀请码 / 公告，后端早齐了，这里只是接线
-  users: () => jsonRequest('GET', '/api/admin/users'),
-  patchUser: (id, patch) => jsonRequest('PATCH', `/api/admin/users/${id}`, patch),
-  invites: () => jsonRequest('GET', '/api/admin/invites'),
-  createInvite: (body) => jsonRequest('POST', '/api/admin/invites', body),
-  patchInvite: (code, body) => jsonRequest('PATCH', `/api/admin/invites/${encodeURIComponent(code)}`, body),
-  notices: () => jsonRequest('GET', '/api/admin/notices'),
-  createNotice: (body) => jsonRequest('POST', '/api/admin/notices', body),
-  retireNotice: (id) => jsonRequest('DELETE', `/api/admin/notices/${id}`),
-  // 内容外审留证（2026-08-02）：拦截在 turn 闸门，这里只读账
-  moderation: ({ userId, limit } = {}) => {
-    const qs = new URLSearchParams();
-    if (userId) qs.set('userId', userId);
-    if (limit) qs.set('limit', String(limit));
-    const q = qs.toString();
-    return jsonRequest('GET', `/api/admin/moderation${q ? `?${q}` : ''}`);
-  },
-  removeFlag: (id) => jsonRequest('DELETE', `/api/admin/moderation/${id}`),
-};
 
 // ── Publish（站点一键上线 Cloudflare Pages，task 级）──
 // 根站的 task 是空串（扁平化后站点住工作区根）。它的 store key 是 '.'，但 '.'
@@ -297,6 +265,20 @@ export const Assets = {
    * 没产物时返 204，<img> 走 onError 兜底成占位框。
    */
   coverUrl: (pid) => `/api/projects/${pid}/cover`,
+  /**
+   * .docx 的页图（画布缩略图 + 产物窗翻页共用）。
+   *
+   * `w` 给了就出缩到那个宽度的 webp（缩略图走这条）。服务端一次渲整份、按
+   * 源 mtime 缓存，所以翻页是零成本的，**别为了省请求在前端预取一堆页** ——
+   * 缓存命中只要 1ms，真正贵的是第一次那 2 秒。
+   * `v` 只用来穿透浏览器缓存，服务端不读它（ETag 已经带了 mtime）。
+   */
+  docxPageUrl: (pid, relPath, page = 1, { w, v } = {}) => {
+    const q = new URLSearchParams({ path: String(relPath || ''), page: String(page) });
+    if (w) q.set('w', String(w));
+    if (v) q.set('v', String(v));
+    return `/api/projects/${pid}/docx-page?${q}`;
+  },
 };
 
 // ── Exports（H3：session-scoped）──

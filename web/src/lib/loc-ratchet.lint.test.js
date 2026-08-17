@@ -27,7 +27,7 @@ const GRANDFATHERED = {
   // （都是大参数包，拆了更难读）。再往下要先想清楚"状态该由谁持有"，不是搬代码能解决的。
   // 08-17 导出重做：exportCard handler 迁去 canvas/card-export.js，
   // annotTargetOf 收进 board-kinds.js（它的形状要跟右键菜单一字不差，抄两份会分叉）
-  'web/src/components/canvas/BoardCanvas.jsx': 2261,
+  'web/src/components/canvas/BoardCanvas.jsx': 2186,
   // 08-17 导出重做：顶栏导出动作迁去 canvas/card-export.js 的 exportFromMenu
   'web/src/routes/ProjectWorkspace.jsx': 2408,
   // server/engine/agent/hooks.js 2026-08-14 拆完出表（1975 → 组装层 ~330，走 600 通用上限）
@@ -37,7 +37,7 @@ const GRANDFATHERED = {
   'server/engine/agent/session-loop.js': 1058,
   'server/projects/workspace.js': 1089,          // 起手模板迁去 workspace-templates.js 后
   'server/api/turn.js': 902,                     // 08-17 组装 user message 迁去 turn-compose.js 后
-  'server/api/assets.js': 1017,
+  'server/api/assets.js': 896,
   'server/api/exports/build-standalone.js': 980,
   // web/src/routes/Home.jsx 08-17 拆完出表（710 → 497，QuickEntry 迁去
   // home-quick-entry.jsx；样式表 08-15 已迁去 home-styles.js）—— 走 600 通用上限

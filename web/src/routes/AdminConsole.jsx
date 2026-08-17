@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_KAI, FONT_MONO, FONT_SANS, BANNER } from '../lib/theme.js';
-import { Admin } from '../lib/api.js';
+import { Admin } from '../lib/api-admin.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { timeAgo, isImeEnter } from '../lib/helpers.js';
 import { IssuesPanel, Segmented } from './Issues.jsx';

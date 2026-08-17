@@ -218,7 +218,7 @@ describe('两条轴', () => {
 describe('派生判定', () => {
   it('走统一方卡的就是那三种产物', () => {
     const artifacts = Object.keys(KINDS).filter(k => cardOf({ type: k }) === 'artifact');
-    expect(artifacts.sort()).toEqual(['deck', 'site']);
+    expect(artifacts.sort()).toEqual(['deck', 'docx', 'site']);
   });
 
   /**
