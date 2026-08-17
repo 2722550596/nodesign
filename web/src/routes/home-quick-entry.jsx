@@ -8,8 +8,9 @@
  *
  * 皮全在 home-styles.js 的 .ndd-pad 那一段，这里只有行为。
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { measureCaret } from '../lib/textarea-caret.js';
 import { Plus } from 'lucide-react';
 import ComposerTray from '../components/chat/ComposerTray.jsx';
 import ModelPicker from '../components/chat/ModelPicker.jsx';
@@ -78,6 +79,39 @@ export default function QuickEntry({ prefill }) {
   const [attachments, setAttachments] = useState([]);
   // [{ id, type:'asset', name, size, mime, _file: File }]
   const ref = useRef(null);
+
+  /**
+   * 自制光标（2026-08-17）。
+   *
+   * 原生 caret 是 1px 的线，落在这张米色纸上找不着 —— 08-15 加空框红光标时就是
+   * 为这个，但当时只管了**空框**：一敲字就交回原生 caret，用户报的
+   * 「一输入内容光标就不显示」说的正是那半截。现在打字时也画同一根 2px 红线，
+   * 位置由 `measureCaret` 用镜像层量出来。
+   *
+   * ⚠️ 中文输入法**组字期间**把原生 caret 放回来（`composing`）：那几百毫秒里
+   * value 和 selectionStart 都在跳，自己画只会抖；而且 IME 的候选框本来就跟着
+   * 原生 caret 走，抢过来反而错位。
+   */
+  const [caretAt, setCaretAt] = useState({ x: 0, y: 0 });
+  const [focused, setFocused] = useState(false);
+  const [composing, setComposing] = useState(false);
+  const syncCaret = useCallback(() => {
+    const ta = ref.current;
+    if (!ta) return;
+    const { x, y } = measureCaret(ta);
+    setCaretAt(c => (c.x === x && c.y === y ? c : { x, y }));
+  }, []);
+  // 文字变了要在 DOM 更新之后量（useLayoutEffect），不然量到的是上一帧
+  useLayoutEffect(() => { syncCaret(); }, [text, syncCaret]);
+  // 视口宽度变了 → 折行位置变了 → 光标跟着变。框自己会变宽（width:100%），
+  // 所以盯的是框不是 window
+  useEffect(() => {
+    const ta = ref.current;
+    if (!ta || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => syncCaret());
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [syncCaret]);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -186,16 +220,28 @@ export default function QuickEntry({ prefill }) {
         <Clip cx="14%" />
         {/* 横线跟 textarea 严丝合缝地同高，见 .ndd-pad .lines 的注释 */}
         <div className="lines">
-          {/* 空框时的邀请光标：一根闪的红竖线蹲在起笔位（原生 caret 这时让位，
-              见 .ndd-pad textarea.empty）。placeholder 前面的 en space 是给它
-              腾的位，所以第一个字落下来不会横跳 */}
-          {!text && <span className="caret" aria-hidden="true" />}
+          {/* 那根红竖线：空框时蹲在起笔位当邀请，打字时跟着插入点走。
+              原生 caret 全程让位（见 .ndd-pad textarea 的 caret-color），只有
+              输入法组字那几百毫秒交还回去。
+              placeholder 前面的 en space 是给它腾的位，第一个字落下来不横跳。
+              不聚焦又有字时不画 —— 那时候没人在编辑，一根闪的线是噪音。 */}
+          {!composing && (!text || focused) && (
+            <span className="caret" aria-hidden="true"
+              style={{ transform: `translate(${caretAt.x}px, ${caretAt.y}px)` }} />
+          )}
           <textarea
             ref={ref}
-            className={text ? undefined : 'empty'}
+            className={composing ? 'composing' : undefined}
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={handleKey}
+            // 光标移动（方向键 / 点到中间 / 拖选）走 onSelect，它比 keyup 全
+            onSelect={syncCaret}
+            onScroll={syncCaret}
+            onFocus={() => { setFocused(true); syncCaret(); }}
+            onBlur={() => setFocused(false)}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => { setComposing(false); syncCaret(); }}
             placeholder={`\u2002${placeholder}`}
             rows={1}
             disabled={submitting}

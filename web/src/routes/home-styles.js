@@ -87,22 +87,31 @@ export const CSS = `
 .ndd-pad .lines { position: relative;
   background-image: linear-gradient(180deg, transparent 0 28px, rgba(43,33,23,0.17) 28px 29px);
   background-size: 100% 29px; background-position: 0 0; }
-/* 空框时的红笔光标（2026-08-15）：一根 1px 的原生 caret 落在米色纸上太弱，
-   而且没聚焦时压根没有 —— 这是首页最该发出的邀请。空的时候画一根粗一档的
-   红竖线在起笔位闪，一敲字就交回原生 caret（.empty 类同步消失，不打架）。
-   placeholder 前面垫了一个 en space 给它让位，所以落笔位置不会跳。 */
-.ndd-pad .caret { position: absolute; left: 0; top: 5px; width: 2px; height: 20px;
+/* 红笔光标（2026-08-15 加，2026-08-17 补上打字时那一半）。
+
+   原生 caret 是 1px 的线，落在米色纸上根本找不着，而且没聚焦时压根没有 ——
+   这是首页最该发出的邀请。所以整个输入区的光标**全程由我们自己画**：一根 2px
+   的红竖线，空框时蹲在起笔位，打字时跟着插入点走（位置由 lib/textarea-caret.js
+   的镜像层量出来，写在 transform 里）。
+   ⚠️ 这里**不能再写 top:5px**。measureCaret 量的是行内盒的顶，它**已经含了
+   29px 行高里那 5px 半行距**，再叠一个 top 就整体低 5px（改完第一版真跑抓到的：
+   空框那根线比 08-15 那版低了一档）。translate 里的 y 就是最终位置。
+   placeholder 前面垫了一个 en space 给它让位，所以落笔位置不会跳。
+
+   ⚠️ 只有一个例外：中文输入法**组字期间**把原生 caret 放回来（.composing）——
+   那几百毫秒里 value 和 selectionStart 都在跳，自己画只会抖，而且 IME 的候选框
+   本来就跟着原生 caret 走。 */
+.ndd-pad .caret { position: absolute; left: 0; top: 0; width: 2px; height: 20px;
   background: var(--red); pointer-events: none;
   animation: nddCaret 1.06s steps(1, end) infinite; }
-.ndd-pad textarea.empty { caret-color: transparent; }
 @keyframes nddCaret { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
 .ndd-pad textarea { width: 100%; background: transparent; border: none; outline: none;
   resize: none; display: block;
   font: 16.5px var(--kai); line-height: 29px; color: var(--ink);
-  /* 红笔光标：墨色光标是一根 1px 的线，落在米色纸上根本找不着。
-     红色跟板上所有「自己写的」标记同一支笔（红钉、红批注、接着做） */
-  caret-color: var(--red);
+  /* 原生 caret 全程让位给上面那根自己画的（唯一例外是组字期间） */
+  caret-color: transparent;
   padding: 0; max-height: 290px; min-height: 116px; overflow: auto; }
+.ndd-pad textarea.composing { caret-color: var(--red); }
 .ndd-pad textarea::placeholder { color: var(--pencil); }
 /* 光标之外还得有个状态信号：整张纸没有边框，光靠一根闪的竖线判断"进没进输入态"
    太吃力。聚焦时纸抬起来一档、横线加深、红边线变实 —— 三样一起动，看不错。 */

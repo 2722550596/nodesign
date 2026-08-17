@@ -282,6 +282,19 @@ if (TYPE) {
   await page.waitForTimeout(900);
 }
 
+/**
+ * `--keys=文字` —— 打字但**不回车**，然后停在那儿。
+ *
+ * `--type` 打完就按 Enter，很多输入框的 Enter 是"提交并跳走"（首页那张纸敲回车
+ * 直接建项目），于是"打了字之后长什么样"这件事根本没法看。要验的偏偏常常是
+ * 输入态本身：光标还在不在、占位符让没让位、按钮亮没亮。
+ */
+const KEYS = opt('keys', null);
+if (KEYS) {
+  await page.keyboard.type(KEYS, { delay: 20 });
+  await page.waitForTimeout(500);
+}
+
 // 事后移动：`--move=x,y[;x,y…]`（分号分航点，每站步进真移动 + 停 700ms）。
 // 放在所有点击之后 —— 验"鼠标离开后自动收起""贴屏缘唤出"这类位置驱动的
 // 时序，点完按钮鼠标停在原地是测不出来的。

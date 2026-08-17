@@ -108,5 +108,7 @@ describe('未定义标识符', () => {
       for (const { name, line } of refs) problems.push(`${rel}:${line} 用了 \`${name}\`，但它没有来处`);
     }
     expect(problems, `拆代码最容易漏的就是这个，而 vite build 不会报：\n${problems.join('\n')}`).toEqual([]);
-  });
+  // 全仓解析一遍，仓库长大它只会更慢（08-17 撞过默认 5s：那次 5.47s，
+  // 报出来是"测试超时"而不是"有未定义标识符"，差点被当成真失败去查代码）
+  }, 60_000);
 });
