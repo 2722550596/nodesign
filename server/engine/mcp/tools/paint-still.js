@@ -32,7 +32,7 @@ import { getUserById } from '../../../auth/users-store.js';
 import {
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor,
 } from '../../../lib/image-variant.js';
-import { boxConfig, shq, runBox, sshArgs, scpArgs } from './h3box-ssh.js';
+import { boxConfig, shq, runBox, sshArgs, scpArgs, localBoxEnabled, BOX_OFF_MSG } from './h3box-ssh.js';
 
 const SSH_TIMEOUT_MS = Number(process.env.NODESIGN_H3BOX_TIMEOUT_MS) || 240_000;
 // krea2 bf16 24G 全驻卡；换模型后的首张要付一次装载（~1 分钟），给足余量
@@ -174,6 +174,9 @@ export async function paintStills(
   const asText = (text, isError = false) =>
     ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
   try {
+    if (!localBoxEnabled()) {
+      return asText(BOX_OFF_MSG, true);
+    }
     const box = boxConfig();
     if (!box) {
       return asText('本地生图盒子未配置（站主没开机或没设 NODESIGN_H3BOX_SSH）。转告用户，改用 generate_image。', true);
@@ -300,18 +303,12 @@ export async function paintStills(
     }
 
     const head = `Batch done ${lines.length}/${stills.length} stills`;
-    const restricted = ['noobai', 'noobai-eps', 'pony', 'anima']
-      .filter((m) => lines.some((l) => l.includes(` ${m} `)));
-    const lic = restricted.length
-      ? `License note: ${restricted.join('/')} are owner-personal-use only — NOT for `
-        + 'commercial work or anything served to other users. Say so if the user plans to ship these.'
-      : null;
     const tail = 'Do not open or inspect the images — hand the paths to the user for review.';
     if (failed.length) {
-      return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, lic, tail]
+      return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, tail]
         .filter(Boolean).join('\n'), lines.length === 0);
     }
-    return asText([head, ...lines, lic, tail].filter(Boolean).join('\n'));
+    return asText([head, ...lines, tail].filter(Boolean).join('\n'));
   } catch (err) {
     return asText(`paint_still 失败：${err.message}`, true);
   }
@@ -323,7 +320,12 @@ export async function paintStills(
 export function makePaintStillTool(deps) {
   return tool(
     'paint_still',
-    `Generate anime/illustration images on the owner's local GPU box. One call =
+    (localBoxEnabled()
+      ? ''
+      : '⛔ CURRENTLY UNAVAILABLE — the owner powers this GPU box on and off by hand, '
+        + 'and it is off right now. Do not call this tool. Use generate_image instead, '
+        + 'and tell the user the local box is off if they asked for it specifically.\n\n')
+    + `Generate anime/illustration images on the owner's local GPU box. One call =
 1-16 stills rendered serially; each finished image lands on the canvas
 immediately. Each still can also set batch=N to get N variations of the SAME
 prompt from one sampling pass — far cheaper than N separate stills, and it is
@@ -342,12 +344,6 @@ Models per still:
 - "krea2": Krea 2 Turbo 12B — natural-language English, aesthetic-first, good
   photoreal/editorial. 8-step, seconds per image once warm (first call after
   another model ~1 min to load 24GB). The negative field is a NO-OP here.
-
-LICENSE — noobai, noobai-eps, pony and anima are OWNER PERSONAL USE ONLY.
-noobai forbids commercialization of the model AND its outputs; pony forbids
-running inference on any monetized site or app. Never present these outputs as
-usable for commercial work or for anything served to other users. krea2 is the
-only local model here that is fine for small-scale commercial use.
 
 REFERENCE IMAGES (SDXL models: noobai / noobai-eps / pony). Three independent
 channels, stackable, all taking workspace-relative paths:

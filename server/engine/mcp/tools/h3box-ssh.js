@@ -8,6 +8,26 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 
+/**
+ * 盒子总开关（2026-08-17）。
+ *
+ * 盒子是站主手动开关的物理机，但 SSH 地址常年配在 .env 里 —— 所以「机器关着」
+ * 跟「没配过」在代码里长得完全不一样：后者 boxConfig() 返回 null 能立刻兜底，
+ * 前者会一路 SSH 到超时才失败（paint_still 单张 240s、krea2 400s，整批还要乘
+ * 系数；roll_film 每镜 900s），agent 和用户一起干等几分钟，还看不出为什么。
+ *
+ * 这个开关让工具在**调用的第一行**就诚实说不可用。开机后把 .env 里那行改回 on
+ * （或整行删掉，默认就是 on）。它管的是整台机器：paint_still 的五个模型和
+ * roll_film 的 box 后端都住在上面。
+ */
+export const localBoxEnabled = () => (process.env.NODESIGN_LOCAL_BOX || 'on').toLowerCase() !== 'off';
+
+/** 关机时给 agent 的统一说辞：说清原因、给替代路径、明确别重试 */
+export const BOX_OFF_MSG = '本地 GPU 盒子当前关着（站主手动开关机）。这台机器上的东西'
+  + '现在都用不了：paint_still 的 noobai / noobai-eps / pony / anima / krea2 五个模型，'
+  + '以及 roll_film 的本地后端。转告用户，生图改走 generate_image；要用本地产线得先开机。'
+  + '别重试，重试也是同样的结果。';
+
 export function boxConfig() {
   const target = process.env.NODESIGN_H3BOX_SSH || '';
   if (!target) return null;

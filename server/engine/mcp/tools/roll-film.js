@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { Events } from '../../agent/events.js';
 import { getProject } from '../../../projects/store.js';
 import { getUserById } from '../../../auth/users-store.js';
-import { boxConfig, runBox, sshArgs, scpArgs } from './h3box-ssh.js';
+import { boxConfig, runBox, sshArgs, scpArgs, localBoxEnabled, BOX_OFF_MSG } from './h3box-ssh.js';
 
 const H3_REPO = process.env.NODESIGN_H3_REPO || '/home/wangang-dev/projects/minimax-h3-modal';
 const MODAL_BIN = process.env.NODESIGN_MODAL_BIN || path.join(os.homedir(), '.local/bin/modal');
@@ -124,6 +124,10 @@ export async function rollFilm(
     }
 
     const backend = (process.env.NODESIGN_FILM_BACKEND || 'box').toLowerCase();
+    // 只拦 box 后端：modal 是另一台机器，站主关本地盒子不影响它
+    if (backend === 'box' && !localBoxEnabled()) {
+      return asText(BOX_OFF_MSG, true);
+    }
     const signal = ctx?.abortController?.signal;
     const outDir = path.join(sharedRoot || workspaceRoot, 'assets', 'generated');
     await fs.mkdir(outDir, { recursive: true });
@@ -216,7 +220,11 @@ export async function rollFilm(
 export function makeRollFilmTool(deps) {
   return tool(
     'roll_film',
-    `Generate video shots (picture + native audio) on the owner's self-hosted
+    ((localBoxEnabled() || (process.env.NODESIGN_FILM_BACKEND || 'box').toLowerCase() === 'modal')
+      ? ''
+      : '⛔ CURRENTLY UNAVAILABLE — the owner powers this GPU box on and off by hand, '
+        + 'and it is off right now. Do not call this tool; tell the user the local box is off.\n\n')
+    + `Generate video shots (picture + native audio) on the owner's self-hosted
 MiniMax-H3 lane (RTX 5090 box, SageAttention, Turbo 8-step, 24fps). One call =
 one batch of 1-16 shots rendered back-to-back; each finished shot lands on the
 canvas immediately. Max 12.25s per shot — longer stories are multiple shots.
