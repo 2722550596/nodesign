@@ -1,5 +1,6 @@
 import deck from './deck.jsx';
 import film from './film.jsx';
+import rp from './rp.jsx';
 
 /**
  * 墙上轮着播的几套构图（2026-08-17）。
@@ -11,4 +12,4 @@ import film from './film.jsx';
  * 每套的 `hold` 各自定：按「读完这一套要多久」来，不是拍脑袋给个统一值。
  * 访客在登录页可能只停十几秒，切太快等于什么都没读到，切太慢等于没动。
  */
-export const SCENES = [deck, film];
+export const SCENES = [deck, film, rp];
