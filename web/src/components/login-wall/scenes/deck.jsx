@@ -55,8 +55,6 @@ const DOODLES = [
 
 export default {
   id: 'deck',
-  /** 停留时长：按「读完一套要多久」定的，不是拍脑袋。六个节拍 + 侧料，慢读一遍约这么久 */
-  hold: 15000,
   css: `
 /* ① 一句话 */
 .ndw .b1 { left: 3.5%; top: 31%; width: 11%; padding: 13px 13px 15px;

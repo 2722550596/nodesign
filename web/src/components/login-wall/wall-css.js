@@ -19,20 +19,45 @@ import { PAPER_VARS } from '../../lib/paper.js';
 import { DESIGN_W, DESIGN_H } from './geometry.js';
 
 /**
- * 定格切换的节拍（毫秒）。**CSS 和 JS 必须用同一份**：轮播那边要知道
- * 「摘完了没有」才能换场景，写两处就会出现纸还没摘完新场景已经钉上来。
- * `step*` 是每张纸之间错开的一格 —— 手不可能同时钉八张。
+ * 一套墙的节拍（毫秒）。**CSS 和 JS 必须用同一份**：轮播那边要知道「摘完了
+ * 没有」才能换场景，写两处就会出现纸还没摘完新场景已经钉上来。
+ *
+ * ## 用户 2026-08-17 定的节奏：一轮 10 秒，一直在动
+ *
+ * 原话「先慢慢展开，然后中速收起再换另一套展开，持续不断」。所以不是"静止
+ * 十几秒 + 眨眼切换"，而是**展开本身就是内容**：
+ *
+ *     慢慢钉上去 5.5s  →  站着 1.4s  →  中速摘下来 3.1s  →  下一套
+ *
+ * `step*` 是每张纸之间错开的一格。二十张纸 × 240ms = 展开要 4.8 秒才轮到最后
+ * 一张 —— 这就是"慢慢"的来源，不是把单张的动画时长拉长（那只会变成慢动作的
+ * 淡入，不是一张张摆上去）。
+ *
+ * ⚠️ **`still` 是这三个数里唯一该动的旋钮。** 墙原本是顺着红线读故事的，10 秒
+ * 里只有 1.4 秒完整站着，读不完一遍是必然的。觉得该给读的时间，把 `still` 调大
+ * 即可，别去改 step —— 那会连带把"一张张摆上去"的手感改掉。
  */
-export const MOTION = { enter: 340, leave: 260, stepIn: 52, stepOut: 34, inkDelay: 120 };
+export const MOTION = {
+  enter: 460, stepIn: 240,     // 单张钉上去的时长 / 张与张之间错开
+  leave: 380, stepOut: 130,    // 单张摘下来的时长 / 错开
+  threadIn: 700,               // 红线画出来（等所有纸钉完才开始）
+  inkOut: 320, boardOut: 420,  // 收起时：线先擦、板上的墨最后淡
+  still: 1400,                 // 钉完之后站着不动的那一拍
+};
 
 /**
- * 一次切换总共要多久 —— 轮播的定时器按它算。
+ * 进场 / 退场各要多久 —— 轮播的定时器按它算，`n` 是这一套有几张纸。
  *
- * ⚠️ 进场的尾巴不是最后一张纸，是**红线那一拨**：它要等所有纸钉完才开始画
- * （见下面的注释）。按纸算完就摘 class 的话，线会在半路被掐掉直接跳到全黑。
+ * ⚠️ 进场的尾巴不是最后一张纸，是**红线那一拨**：它要等所有纸钉完才开始画。
+ * 按纸算完就摘 class 的话，线会在半路被掐掉直接跳到全黑。
+ * ⚠️ 退场的尾巴也不是纸，是**板上的墨**：涂鸦画在板面上、纸压在它们之上，
+ * 所以纸摘光了它们才淡（正好是进场顺序的倒放）。
  */
-export const leaveMs = (n) => MOTION.leave + Math.max(0, n - 1) * MOTION.stepOut;
-export const enterMs = (n) => MOTION.inkDelay + n * MOTION.stepIn + 300 + 240;
+export const enterMs = (n) => n * MOTION.stepIn + MOTION.threadIn;
+export const leaveMs = (n) => Math.max(
+  MOTION.inkOut + Math.max(0, n - 1) * MOTION.stepOut + MOTION.leave,
+  n * MOTION.stepOut + MOTION.boardOut,
+);
 
 export const WALL_CSS = `
 .ndw {
@@ -239,12 +264,13 @@ export const WALL_CSS = `
    (0,2,0)。别把它改成 「.ndw-scene .paper.enter」 那种写法 —— 一旦打平，两条
    动画抢同一个 transform，纸会在切换那一瞬瞬移。 */
 .ndw-scene.enter .paper {
-  animation: ndw-pin-in ${MOTION.enter}ms steps(3, jump-none) both;
+  animation: ndw-pin-in ${MOTION.enter}ms steps(4, jump-none) both;
   animation-delay: calc(var(--i, 0) * ${MOTION.stepIn}ms);
 }
+/* 收起时纸让线先走一步（inkOut），不然线还挂着纸就没了，红线一瞬间凌空 */
 .ndw-scene.leave .paper {
-  animation: ndw-pin-out ${MOTION.leave}ms steps(2, jump-none) both;
-  animation-delay: calc(var(--out, 0) * ${MOTION.stepOut}ms);
+  animation: ndw-pin-out ${MOTION.leave}ms steps(3, jump-none) both;
+  animation-delay: calc(${MOTION.inkOut}ms + var(--out, 0) * ${MOTION.stepOut}ms);
 }
 /* 墨迹分两拨上，**顺序是有意义的**：
    ①「板上的东西」—— 随手涂鸦和写在板子上的字。它们画在板面本身，纸是后来
@@ -252,18 +278,25 @@ export const WALL_CSS = `
    ②「串纸的东西」—— 红线和手写标签。线是用来连两张纸的，纸还没钉上去线就
       先浮出来，读起来是反的（第一版就是这样，抓过一帧看见线先到）。所以
       它们等**所有纸都钉完**再上：延迟 = 纸的张数 × 一格。
-   都走 steps，5 格比纸更碎一点，像墨慢慢洇出来。 */
+   都走 steps，5 格比纸更碎一点，像墨慢慢洇出来。
+
+   **收起是这一切的倒放**：线先擦掉（它浮在最上面）→ 纸倒序摘 → 板上的墨最后
+   淡（它们画在板面上，纸一直压着它们）。顺序反了的话，会看见涂鸦先消失、纸却
+   还挂在空板上。 */
 .ndw-scene.enter .doodle, .ndw-scene.enter .wall {
-  animation: ndw-ink-in 300ms steps(5, jump-none) both;
-  animation-delay: calc(var(--i, 0) * 40ms);
+  animation: ndw-ink-in 420ms steps(5, jump-none) both;
+  animation-delay: calc(var(--i, 0) * 90ms);
 }
 .ndw-scene.enter .hand, .ndw-scene.enter .ndw-thread {
-  animation: ndw-ink-in 300ms steps(5, jump-none) both;
-  animation-delay: calc(${MOTION.inkDelay}ms + var(--pins, 20) * ${MOTION.stepIn}ms + var(--i, 0) * 60ms);
+  animation: ndw-ink-in ${MOTION.threadIn}ms steps(6, jump-none) both;
+  animation-delay: calc(var(--pins, 20) * ${MOTION.stepIn}ms + var(--i, 0) * 110ms);
 }
-.ndw-scene.leave .doodle, .ndw-scene.leave .hand,
-.ndw-scene.leave .wall, .ndw-scene.leave .ndw-thread {
-  animation: ndw-ink-out 200ms steps(3, jump-none) both;
+.ndw-scene.leave .hand, .ndw-scene.leave .ndw-thread {
+  animation: ndw-ink-out ${MOTION.inkOut}ms steps(3, jump-none) both;
+}
+.ndw-scene.leave .doodle, .ndw-scene.leave .wall {
+  animation: ndw-ink-out ${MOTION.boardOut}ms steps(4, jump-none) both;
+  animation-delay: calc(var(--pins, 20) * ${MOTION.stepOut}ms);
 }
 @media (prefers-reduced-motion: reduce) {
   .ndw-scene.enter *, .ndw-scene.leave * { animation: none !important; opacity: 1 !important; }

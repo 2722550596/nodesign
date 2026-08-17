@@ -31,7 +31,6 @@ const DOODLES = [
 
 export default {
   id: 'rp',
-  hold: 15000,
   css: `
 /* ① 一句话 */
 .ndw .r1 { left: 3.5%; top: 26%; width: 11.5%; padding: 13px 13px 15px;

@@ -37,8 +37,6 @@ const DOODLES = [
 
 export default {
   id: 'film',
-  /** 六个节拍加侧料，跟第一套体量相当 */
-  hold: 15000,
   css: `
 /* ① 一句话 */
 .ndw .m1 { left: 4%; top: 30%; width: 11.5%; padding: 13px 13px 15px;
