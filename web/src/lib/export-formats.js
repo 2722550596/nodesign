@@ -13,7 +13,7 @@ const FORMAT_META = {
              siteLabel: '单页自包含 HTML',  siteDesc: '只当前入口页，图片内联' },
   pdf:     { icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）',
              // docx 的 PDF 是 LibreOffice 转的，跟 Word 里「另存为 PDF」不是一回事
-             docxDesc: 'LibreOffice 转（域不更新、中文是替身字体）——正式稿请在 Word 里导' },
+             docxDesc: 'LibreOffice 转（目录不更新、中文是替身字体）——正式稿请在 Word 里导' },
   pptx:    { icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
   site:    { icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 它引用到的图，解压双击就能看' },
   handoff: { icon: Hammer,       label: '工程包',               desc: 'ZIP: 源码 + 用到的素材 + README（含后端接口清单）',

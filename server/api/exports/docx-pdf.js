@@ -6,7 +6,7 @@
  * （LibreOffice 直接出 PDF，没有分页 section 这回事）。
  *
  * ⚠️ 这里出的 PDF 跟用户在 Word 里「另存为 PDF」**不是同一个东西** —— 域
- * （TOC / 页码）不更新、中文是替身字体。给用户下载时说清楚：要发出去的正式
+ * （TOC）不更新、中文是替身字体。给用户下载时说清楚：要发出去的正式
  * PDF，请在 Word 里导；这份是快速预览用的。
  */
 
@@ -37,7 +37,7 @@ export async function docxToPdfResponse(res, target) {
     );
     res.setHeader('Content-Length', buf.length);
     // 让下载方知道这份 PDF 的成色，别拿它当正式稿发出去
-    res.setHeader('X-Docx-Pdf-Note', 'fields-not-updated; substituted-cjk-fonts');
+    res.setHeader('X-Docx-Pdf-Note', 'toc-field-not-updated; substituted-cjk-fonts');
     res.end(buf);
   } finally {
     cleanupRender(out);
