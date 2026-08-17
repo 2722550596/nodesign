@@ -160,6 +160,16 @@ export async function packageBundles(bundles, { format, projectName } = {}) {
 
   const zip = new JSZip();
   const seen = new Set();
+
+  // 裹不裹一层：**只在真会「解压即散落」时裹**。
+  // 根级站点的文件就住在工作区根（`index.html`、`lib/…`），不裹的话 unzip 会把
+  // 一堆东西直接倒进当前目录 —— 旧的 /exports/site 靠 `site/` 前缀避开了这点，
+  // 换新管线不能把它丢了。判据就是"有没有文件贴在包根上"。
+  // ⚠️ 裹是**整体平移**，所有文件和素材同加一个前缀，相对引用原样成立 ——
+  // 仍然零改写，不碰旧那套按深度重写 `../assets/` 的老路（那是裂图事故的根）。
+  const allRels = bundles.flatMap(b => [...b.files, ...b.assets].map(f => f.rel));
+  const needsWrap = allRels.some(r => !r.includes('/'));
+  const wrapBase = needsWrap ? `${safeName(projectName || bundles[0].title, '导出')}/` : '';
   const allMissing = []; const allUnresolved = [];
   const allFiles = []; const allAssets = [];
 
@@ -171,7 +181,7 @@ export async function packageBundles(bundles, { format, projectName } = {}) {
     for (const f of [...b.files, ...b.assets]) {
       if (seen.has(f.rel)) continue;          // 多张卡引用同一张图时只进一次
       seen.add(f.rel);
-      try { zip.file(f.rel, await fs.readFile(f.abs)); } catch { /* 中途被删就跳过 */ }
+      try { zip.file(wrapBase + f.rel, await fs.readFile(f.abs)); } catch { /* 中途被删就跳过 */ }
     }
   }
 

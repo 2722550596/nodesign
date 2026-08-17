@@ -50,28 +50,46 @@ export async function exportCard(projectId, obj) {
 }
 
 /**
+ * 走**按卡导出**那条新管线的格式。key = 菜单里的格式 id，value = 新路由的格式。
+ *
+ * `site`（整站打包）也收进来，是为了消掉一处真分叉：同一个站，菜单原来走
+ * `GET /exports/site`（`site/` 前缀 + 路径改写 + 自己那份扫描器），卡按钮走新路
+ * （工作区相对、零改写、按引用收），**两份 zip 内容不一样**。用户从两条路各导
+ * 一次就会发现对不上，而这种不一致没人查得出是哪来的。
+ *
+ * 不在表里的（html / pdf / pptx）要跑 playwright / esbuild 烘焙管线，仍走老路由。
+ */
+const CARD_PIPELINE = { handoff: 'handoff', site: 'zip', zip: 'zip', raw: 'raw', md: 'md' };
+
+/**
  * 顶栏导出菜单的下载动作。
  *
- * ⭐**工程包走「按卡导出」那条新路**：旧的 `GET /exports/handoff` 把整个项目级
+ * ⭐**工程包与整站打包走「按卡导出」**：旧的 `GET /exports/handoff` 把整个项目级
  * `shared/assets` 打进包（生产上最大的项目 280MB，含别的任务的图），README 还是
- * 静态模板。新路只收这份产物真正引用到的素材，README 带「你的后端要实现哪些接口」
- * 的清单。其余格式（PDF / PPTX / 单页 HTML / 整站 zip）要跑 playwright / esbuild
- * 烘焙管线，仍走各自的老路由。
+ * 静态模板；新路只收这份产物真正引用到的素材，README 带「你的后端要实现哪些接口」。
  *
- * 聚焦不到具体产物时（cardId 为空）退回老路 —— 别让用户点了没反应。
+ * ⚠️ 聚焦不到具体产物（cardId 为空）时：老路由有的格式退回老路；**新管线独有的
+ * 格式（raw/zip/md）没有对应 GET 路由**，退回去只会打到 404 —— 那种「点了没反应
+ * 还不知道为什么」比直接说话糟得多，所以明说。
  */
 export async function exportFromMenu(projectId, format, cardId, fallbackName) {
   const toast = useGlobalStore.getState().showToast;
+  const cardFormat = CARD_PIPELINE[format];
+  if (cardFormat && !cardId) {
+    if (!['handoff', 'site'].includes(format)) {
+      toast('先在画布上点开要导出的那份产物，再从这里导', 'error');
+      return;
+    }
+  }
   try {
-    const useCards = format === 'handoff' && cardId;
-    const { blob, filename } = useCards
-      ? await Exports.cards(projectId, [cardId], 'handoff')
+    const { blob, filename, skipped } = (cardFormat && cardId)
+      ? await Exports.cards(projectId, [cardId], cardFormat)
       : await Exports.download(projectId, format);
     const name = filename || `${fallbackName || 'design'}.${format === 'handoff' ? 'zip' : format}`;
     pushDownload(blob, name);
     toast(`已下载：${name}`, 'success');
+    if (skipped?.total) toast(`有 ${skipped.total} 张没导出`, 'error');
   } catch (err) {
     toast(`导出失败：${err.message}`, 'error');
   }
 }
-

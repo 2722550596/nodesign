@@ -164,3 +164,30 @@ describe('safeName', () => {
     expect(safeName('')).toBe('导出');
   });
 });
+
+describe('packageBundles —— 解压不许散落', () => {
+  it('根级站点（文件贴在包根上）要裹一层，否则 unzip 倒一地', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-wrap-'));
+    await fs.mkdir(path.join(dir, 'assets/generated'), { recursive: true });
+    await fs.mkdir(path.join(dir, 'lib'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'index.html'), '<script src="lib/x.js"></script><img src="assets/generated/图.png">');
+    await fs.writeFile(path.join(dir, 'lib/x.js'), '//x');
+    await fs.writeFile(path.join(dir, 'assets/generated/图.png'), 'x');
+    const b = await collectCard({ workspaceRoot: dir, cardId: 'site:' });
+    const { buffer } = await packageBundles([b], { format: 'zip', projectName: '我的站' });
+    const names = await entries(buffer);
+    expect(names).toContain('我的站/index.html');
+    // ⭐裹是整体平移：素材跟着同一个前缀走，相对引用原样成立，仍然零改写
+    expect(names).toContain('我的站/assets/generated/图.png');
+    expect(names.some(n => n === 'index.html')).toBe(false);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('产物住自己文件夹时不裹（本来就不会散落，别多套一层）', async () => {
+    const b = await collectCard({ workspaceRoot: ws, cardId: 'site:蘑菇书店' });
+    const names = await entries((await packageBundles([b], { format: 'zip', projectName: '蘑菇书店' })).buffer);
+    expect(names).toContain('蘑菇书店/index.html');
+    expect(names).toContain('assets/generated/店招.png');
+    expect(names.some(n => n.startsWith('蘑菇书店/蘑菇书店/'))).toBe(false);
+  });
+});

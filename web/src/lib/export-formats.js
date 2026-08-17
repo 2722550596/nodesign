@@ -13,13 +13,15 @@ const FORMAT_META = {
              siteLabel: '单页自包含 HTML',  siteDesc: '只当前入口页，图片内联' },
   pdf:     { icon: FileText,     label: 'PDF',                desc: 'playwright print 1920×1080（矢量文字 + 4K-ready）' },
   pptx:    { icon: Presentation, label: 'PowerPoint (.pptx)', desc: '每页截图嵌 PPTX（位图，文字不可编辑）' },
-  site:    { icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 图，解压双击就能看' },
+  site:    { icon: Globe,        label: '整站打包 (.zip)',     desc: '全部页面 + 样式 + 它引用到的图，解压双击就能看' },
   handoff: { icon: Hammer,       label: '工程包',               desc: 'ZIP: 源码 + 用到的素材 + README（含后端接口清单）',
              siteDesc: 'ZIP: 整站源码 + 用到的素材 + README（含后端接口清单）' },
   // 按产物卡导出的三种（2026-08-17 重做）。跟上面那几种的区别：上面是「烘焙」
   // （PDF / PPTX / 单页 HTML 要跑 playwright / esbuild），下面是「原样打包」。
   raw:     { icon: FileDown,      label: '原件',                 desc: '就下这一个文件，不打包' },
   zip:     { icon: Package,       label: '打包 (.zip)',          desc: '产物 + 它真正引用到的素材，目录结构原样保留' },
+  // ⚠️ raw/zip/md 只有「按卡导出」那条新管线有，没有对应的 GET 路由 ——
+  // 菜单渲染它们时必须确保 handleExport 会走 card-export.js 的 CARD_PIPELINE 分支
   md:      { icon: FileText,      label: '合并成一份 .md',        desc: '多张便签接成一篇，带来源标注' },
 };
 

@@ -1958,9 +1958,9 @@ export default function ProjectWorkspace() {
   const handleRenameCandidate = () => {};
   const handleSelectCandidate = () => setSelectedAnchor(null);
 
-  /** 顶栏导出：工程包走按卡导出的新路，其余格式仍走烘焙老路由（实现见 card-export.js） */
+  /** 顶栏导出：哪些格式走按卡导出、哪些走烘焙老路由，由 card-export.js 的表决定 */
   const handleExport = (format) =>
-    exportFromMenu(id, format, format === 'handoff' ? boardUi?.artifactCardId : null, project.name);
+    exportFromMenu(id, format, boardUi?.artifactCardId || null, project.name);
 
   return (
     <PanelManagerProvider projectId={id} defaultPanels={defaultPanels} panelMeta={panelMeta}>
