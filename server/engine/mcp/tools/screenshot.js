@@ -34,6 +34,8 @@ import { z } from 'zod';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
+import { can } from '../../../lib/kinds/index.js';
+import { screenshotDocx } from './screenshot-docx.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -318,16 +320,23 @@ Do NOT use this tool when:
         .string()
         .optional()
         .describe("Run before capture: 'scrollToBottom' scrolls through the page and back (fires all scroll-linked animations — ScrollTrigger / IntersectionObserver reveals), or pass a JS snippet evaluated in page context (await supported, 5s timeout). Errors don't block the shot, they're reported in the caption."),
+      pages: z
+        .string()
+        .optional()
+        .describe('WORD (.docx) ONLY. Which pages to render: "3", "2-5", or "all". Defaults to the first 2 pages; max 6 per call. Ignored for decks and sites.'),
       path: z
         .string()
         .optional()
         .describe(CANVAS_PATH_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, beforeShot, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, beforeShot, pages, path: relPath }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
+      // 形态分流按**能力位**不按形态名：能渲染的（docx）走 LibreOffice 页图管线，
+      // 能浏览的（deck / site）继续往下走 playwright。加第四种形态时改注册表不改这里。
+      if (can(target.kind, 'renderable')) return screenshotDocx(target, { pages, detail });
       const notBrowsable = requireBrowsable(target);
       if (notBrowsable) return { content: [{ type: 'text', text: notBrowsable }], isError: true };
       const canvasPath = target.absPath;

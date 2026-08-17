@@ -15,7 +15,7 @@ export const ARTIFACT_HEADER_H = 28;
 const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + previewH });
 
 /** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400 };
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420 };  // docx 是竖版 A4，给高一点
 /** 主角档放大倍数（北极星路线1）：预览区放大、顶栏不变 —— sizeOf 与
  *  ArtifactCard 的画框都从这儿算，两处必须同源否则命中区和视觉错位 */
 export const HERO_SCALE = 1.5;
@@ -135,6 +135,20 @@ export const KINDS = {
     legacyBucket: 'art',
   },
 
+
+  // word 文档（2026-08-17）。预览是**一张页图**不是活页面 —— 服务端一次渲整份、
+  // 按源 mtime 缓存（lib/docx-pages.js），卡上只看第一页，翻页是窗里的事。
+  docx: {
+    label: '文档',
+    backing: 'file',
+    chrome: 'card',
+    card: 'artifact',
+    size: artifactCard(ARTIFACT_PREVIEW_H.docx),
+    reader: null,
+    primary: 'open',
+    actions: ['add'],
+    legacyBucket: 'doc',
+  },
 
   image: {
     chrome: 'card',
@@ -366,7 +380,11 @@ export function annotTargetOf(o) {
  * 抄第三遍之前先收成一份。
  */
 export function cardIdOf(taskId, a) {
+  // site 是唯一的目录型产物：地址是产物根，不是某个文件
   if (a.kind === 'site') return `site:${a.single ? a.entryRel : (a.root || taskId)}`;
-  return `deck:${a.file}`;
+  // 其余都是单文件产物（deck 的 .html、docx 的 .docx）：前缀 = 形态名，地址 = 文件。
+  // 别写死 'deck:' —— 加形态时忘了这行，新产物的卡 id 会伪装成 deck，
+  // 导出那头按 deck 去解析它，错得很安静。
+  return `${a.kind || 'deck'}:${a.file}`;
 }
 

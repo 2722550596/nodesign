@@ -21,10 +21,18 @@ const EXEMPT_FILES = new Set([
   'server/projects/workspace.js',   // tasks/→扁平迁移器：消化旧形状是它的本职
 ]);
 
-/** 剥掉注释（块注释 + 行注释）。粗剥即可 —— 宁可漏报不误报。 */
+/**
+ * 剥掉注释（块注释 + 行注释）。粗剥即可 —— 宁可漏报不误报。
+ *
+ * ⚠️ **必须保住行号**（2026-08-17 修）：原来块注释是整段删掉的，连换行一起没了，
+ * 剥完的数组比原文短（实测一个 98 行的文件短 10 行）。于是命中 `stripped[i]` 之后
+ * 去查 `rawLines[i]` 查的是**另一行** —— `legacy-ok` 豁免机制从来没生效过，
+ * 报出来的行号也是错的，之前"通过"是错位撞的运气。
+ * 现在块注释按原换行数替换成空行，两个数组逐行对齐。
+ */
 function stripComments(src) {
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => '\n'.repeat((m.match(/\n/g) || []).length))
     .split('\n')
     .map(l => l.replace(/\/\/.*$/, ''))
     .join('\n');

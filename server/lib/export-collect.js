@@ -29,13 +29,20 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { walkTaskFiles, loadIgnore, RESERVED_DIRS, isReservedFile } from './task-scan.js';
 import { collectAssetRefs } from './asset-refs.js';
-import { kindDef, taskManifest } from './kinds/index.js';
+import { kindDef, taskManifest, can } from './kinds/index.js';
 import { fileKindOfPath, fileKindDef } from './kinds/file-kinds.js';
+// 越界判据收在一处（原来这里有第二份实现，docx 页图路由抄它的形状时抄漏了 realpath）
+import { safeResolveRead as safeResolve } from './safe-path.js';
 
 /** 目录型产物（有自己的一棵树）。单页站点是例外，见 collectCard */
 const DIR_KINDS = new Set(['site']);
-/** 单文件型的任务产物 */
-const FILE_ARTIFACT_KINDS = new Set(['deck']);
+/**
+ * 单文件型的任务产物。
+ * docx 在列是因为 .docx 本身是自包含的 zip（图片字体全在包里），收集它
+ * **不需要**扫引用 —— 拿二进制去跑引用扫描器纯属浪费，还可能在压缩字节里
+ * 撞出假路径。
+ */
+const FILE_ARTIFACT_KINDS = new Set(['deck', 'docx']);
 
 /**
  * 卡 id → { kind, rel }。
@@ -61,22 +68,6 @@ export function parseCardId(cardId) {
   return { kind: fileKindOfPath(rel), rel };
 }
 
-/**
- * 越界检查。**词法检查不够** —— `path.relative` 挡得住 `../..`，挡不住工作区里
- * 一个指向外面的软链。所以解析完还要按真实路径（realpath）再验一次。
- */
-async function safeResolve(workspaceRoot, rel) {
-  const abs = path.resolve(workspaceRoot, rel);
-  const within = path.relative(workspaceRoot, abs);
-  if (within.startsWith('..') || path.isAbsolute(within)) return null;
-  try {
-    const realRoot = await fs.realpath(workspaceRoot);
-    const real = await fs.realpath(abs);
-    const rw = path.relative(realRoot, real);
-    if (rw.startsWith('..') || path.isAbsolute(rw)) return null;
-  } catch { /* 文件不存在：留给上层 stat 报 404 */ }
-  return abs;
-}
 
 /** 这种形态能导出成什么。single = 单页产物，没有「整站 zip」可言（跟 taskManifest 的 decorate 同一条剥除） */
 export function exportFormatsFor(kind, { single = false } = {}) {
@@ -198,7 +189,11 @@ export async function collectCard({ workspaceRoot, cardId }) {
   // 树外引用只认 `assets/` 和产物自己的目录（旧 /exports/site 有这道闸，别丢）。
   // 根层产物的自有前缀是空串 = 不设闸：它的树本来就是整个工作区，这条认账。
   const ownPrefix = isTree ? (rel ? `${rel}/` : '') : (path.posix.dirname(rel) === '.' ? '' : `${path.posix.dirname(rel)}/`);
-  const scannable = isTree || single || FILE_ARTIFACT_KINDS.has(kind);
+  // 只有**标记语言**产物需要跟着引用扫下去。`browsable` 正好是这条线：能用浏览器
+  // 打开 = 由 html/css 组成 = 有外部引用要带。docx 是自包含的 zip（图片字体都在
+  // 包里），拿二进制去跑引用扫描器是白费力气，还可能在压缩字节里撞出假路径。
+  // 问能力不问形态名 —— 加第四种形态时这行不用动。
+  const scannable = (isTree || single || FILE_ARTIFACT_KINDS.has(kind)) && can(kind, 'browsable');
   let refs = []; let unresolved = []; let candidates = [];
   if (scannable) {
     // ⭐**传递引用要跟着扫下去。** html 引 css、css 再引图 —— 只扫产物自身的话，

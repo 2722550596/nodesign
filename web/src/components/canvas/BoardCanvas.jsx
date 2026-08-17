@@ -15,6 +15,7 @@ import {
 import {
   SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf,
 } from '../../lib/board-kinds.js';
+import { deriveBoardObjects } from '../../lib/board-objects.js';
 import BoardObject from './cards/BoardObject.jsx';
 import FolderCard from './cards/FolderCard.jsx';
 import TransformControls from './TransformControls.jsx';
@@ -272,84 +273,9 @@ export default function BoardCanvas({
   // 2026-08-07 起有**两类**物件：
   //   - 磁盘产物的影子（下面这一大段）：本体是文件，board.json 只存它摆在哪
   //   - 画布原生（涂鸦）：board.json 就是本体，从 layout 里带 kind 的条目还原
-  const objects = useMemo(() => {
-    const out = [];
-    // 画布原生物件先进来（它们不依赖任何数据源，只依赖 layout 本身）
-    for (const [id, l] of Object.entries(layout)) {
-      if (!l?.kind) continue;
-      out.push({ id, type: l.kind, data: l.data, native: true, zoneField: l.zone });
-    }
-    // 项目级文档（记忆 / 品牌）不再当画布物件 —— 2026-07-28 起由桌面顶带
-    // 顶栏「⋯」里的四件套之一（2026-08-07 从画布顶带搬过去），跟指引、文件一起构成"项目区"。
-    //
-    // 会话不再产生画布物件（2026-08-08）：以前每个会话自带一张 deck 卡，那是
-    // 「一个会话一份产出」时代的形状。现在产出是文件、会话是对话线程，桌面上
-    // 该有的是文件，不是对话。对话在左栏和聊天栏里。
-    //
-    // 产物卡（多产物平权 2026-07-29）：tasks[].artifacts 一条一卡，没有主/试作等级。
-    // 站点子页和样式表仍不各自上墙（用户要的是"我那个网站"，不是
-    // index/about/style 三张互不相干的卡）。
-    //
-    // **id = kind 前缀 + 工作区相对路径**（2026-08-08）：
-    //   deck   `deck:主稿.html`、`deck:鉴赏页/初稿/主稿.html`
-    //   站点   `site:伊蕾娜手账研究站`；单页 `site:鉴赏页/_drafts/试作.html`
-    //   文件夹 就是路径本身，`鉴赏页/初稿`
-    //
-    // 画布上的身份和磁盘上的位置是**同一个字符串**。代价是"移动 = 换身份"，
-    // 所以改名必须是一等公民：拖拽走 renameBoardPaths（不是删+插，否则挂在
-    // 卡上的批注会被端点清理连坐删掉），agent 背着画布 mv 的由 git 改名检测
-    // 对账（board-store 的 reconcileBoardRenames），迟到的防抖写入由转发表
-    // 接住。这三条缺一个，症状都是"摆好的版面偶尔自己回到默认位置"。
-    for (const t of tasks) {
-      for (const a of (t.artifacts || [])) {
-        if (a.kind === 'site') {
-          out.push({
-            id: cardIdOf(t.id, a),
-            type: 'site',
-            single: !!a.single,
-            task: t.id,
-            base: a.base || a.root || t.id,
-            entry: a.entry || 'index.html',
-            pages: a.pages || [],
-            root: a.root || '',
-            srcRoot: a.srcRoot || '',
-            exports: a.exports,
-            title: a.title || t.title,
-            mtime: t.mtime,
-          });
-        } else {
-          out.push({
-            id: cardIdOf(t.id, a),
-            type: 'deck',
-            task: t.id,
-            deckFile: a.file,
-            exports: a.exports,
-            title: a.title || t.title,
-            mtime: t.mtime,
-          });
-        }
-      }
-    }
-    for (const a of artifacts) {
-      const sid = a.sessionId || a.meta?.sessionId || null;
-      // noteTask：共享便利贴标记（notes/*.md，agent 和用户共用的头脑风暴层，
-      // 走 task-notes 路由可编辑可删）；null = 项目级灵感便签（assets/notes/，
-      // 走 notes 路由）。⚠️ 判据曾是 `startsWith('tasks/')` —— 扁平化后便利贴
-      // 住 notes/，恒 null：编辑按钮消失、删除打到 assets/notes 的错端点
-      // 静默 404（2026-08-14 扁平残留普查抓到）。
-      if (a.kind === 'note') {
-        out.push({
-          id: a.path, type: 'note', sid,
-          noteTask: a.path.startsWith('notes/') || a.path.startsWith('tasks/'),
-          ...a,
-        });
-      }
-      else if (a.isImage) out.push({ id: a.path, type: 'image', sid, ...a });
-      else if (a.isVideo) out.push({ id: a.path, type: 'video', sid, ...a });
-      else out.push({ id: a.path, type: 'file', sid, ...a });
-    }
-    return out;
-  }, [tasks, artifacts, layout]);
+  // 画布物件的派生搬去 lib/board-objects.js（2026-08-17 行数棘轮拆件）：
+  // 它是纯数据变换（/artifacts 载荷 → 画布物件），没有 React、可单独测。
+  const objects = useMemo(() => deriveBoardObjects({ tasks, artifacts, layout }), [tasks, artifacts, layout]);
 
   // 顶带四张卡的一行摘要
   const bandSummaries = useMemo(() => {

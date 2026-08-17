@@ -48,6 +48,18 @@ export const ENTRY_FILE = Object.freeze(
   Object.fromEntries(Object.values(KINDS).map(k => [k.id, k.entryFile])),
 );
 
+/**
+ * 产物入口**长什么样**（扩展名集合），同样从注册表派生。
+ * `.html` / `.htm` 是 deck+site 的形状，`.docx` 是 word 的 —— 加形态时这里
+ * 自动跟上，不用再回来补一条正则。
+ */
+const ENTRY_EXTS = new Set(
+  Object.values(KINDS)
+    .map(k => (k.entryFile.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase())
+    .filter(Boolean)
+    .concat('.htm'),   // html 的老写法，注册表里只写了 .html
+);
+
 // 形态判定与解析的权威在 kinds/，这里转发老名字（消费方 import 不用改两次）
 export { detectTaskKind, readTaskMarker, taskManifest, kindDef, artifactOfPath };
 export { formatAllowed } from './kinds/index.js';
@@ -59,17 +71,18 @@ const activeArtifact = new Map();
 /**
  * 记住这个会话正在做哪份产物（写文件 / 截图 / 预览时调）。
  *
- * 只认 .html —— 那是产物入口的形状。以前还认"任务内的非 html"（改 style.css
- * 也算在这个任务上干活，寻址时走任务入口），任务层没了之后那一支失去了落点：
- * 改 `style.css` 说明不了在做哪一份 deck，工作区根上可能并排放着好几份。
- * 认不出来就不认，让 resolve 走"只有一份就是它 / 多份报错"那条 —— 比猜一个
- * 错的默认目标强。
+ * 只认**产物入口的形状**（ENTRY_EXTS，从注册表派生）。以前还认"任务内的非
+ * html"（改 style.css 也算在这个任务上干活，寻址时走任务入口），任务层没了之后
+ * 那一支失去了落点：改 `style.css` 说明不了在做哪一份 deck，工作区根上可能并排
+ * 放着好几份。认不出来就不认，让 resolve 走"只有一份就是它 / 多份报错"那条 ——
+ * 比猜一个错的默认目标强。
  */
 export function setActiveArtifact(sessionId, relPath, kind) {
   if (!sessionId || typeof relPath !== 'string') return;
   const p = normalizeRel(relPath);
   if (/\.template\.(html?|css)$/i.test(p)) return;   // 模板不是产物
-  if (!/\.html?$/i.test(p)) return;
+  const ext = (p.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
+  if (!ENTRY_EXTS.has(ext)) return;
   activeArtifact.set(sessionId, { path: p, kind: kind || null });
 }
 
@@ -121,6 +134,11 @@ export async function kindOfPath(workspaceRoot, relPath) {
   }
   if (base === ENTRY_FILE[KIND_DECK]) return KIND_DECK;
   if (base === ENTRY_FILE[KIND_SITE]) return KIND_SITE;
+  // 清单里没有（文件还没写出来）时按扩展名回退。.docx 只可能是 word 形态，
+  // 让它落进 deck 会让感知层拿 playwright 去开一个二进制包。
+  const ext = (p.match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
+  const byExt = Object.values(KINDS).find(k => k.entryFile.toLowerCase().endsWith(ext) && ext !== '.html');
+  if (byExt) return byExt.id;
   return KIND_DECK;   // 认不出的散装 .html 一律按 deck
 }
 
@@ -240,14 +258,22 @@ export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
  */
 export function requireBrowsable(target) {
   if (!target?.kind || can(target.kind, 'browsable')) return null;
-  return `${target.relPath || target.kind} 是 ${target.kind} 形态，没有可以用浏览器打开的入口，`
+  const who = target.relPath || target.kind;
+  // 可渲染形态（docx）要给对路的替代方案。说"直接 Read 它的文件"是**错的建议**
+  // —— 那是个二进制 zip，Read 出来是乱码，而它其实是**看得见**的，只是要先渲染。
+  if (can(target.kind, 'renderable')) {
+    return `${who} 是 ${target.kind} 形态，没有 DOM，读页面 / 查元素 / 取计算样式这几个工具对它无效。`
+      + '看长相用 screenshot（它会渲染成页图，可以带 pages 参数指定范围）；'
+      + '看结构读它的 token 源（同名 .json），别去 Read 那个 .docx 本身，它是二进制包。';
+  }
+  return `${who} 是 ${target.kind} 形态，没有可以用浏览器打开的入口，`
     + '截图 / 读页面 / 查元素这类工具对它没有意义。直接 Read 它的文件。';
 }
 
 /** 给各工具复用的 path 参数描述（保持措辞一致） */
 export const ARTIFACT_PATH_DESC =
-  'Relative path of the html file (deck: "canvas.html", site: "index.html" '
-  + 'or its built output like "dist/index.html"). '
+  'Relative path of the artifact entry (deck: "canvas.html", site: "index.html" '
+  + 'or its built output like "dist/index.html", word: "文档.docx"). '
   + 'Omit to use the artifact you are currently working on.';
 
 // ── 兼容层：老名字继续可用，内部全部走上面的实现 ────────────────────────────

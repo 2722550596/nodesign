@@ -86,6 +86,16 @@ export function useBoardOpen({
         // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
         built: !!(o.root && o.root !== o.srcRoot),
       });
+    } else if (o.type === 'docx') {
+      // word：开的是一份文档，当前看第几页是窗口内部状态（页是排版算出来的，
+      // 不像 deck 的 section 或站点的文件那样可以外部指定）
+      onFocusDeck?.({
+        kind: 'docx', file: o.deckFile, title: o.title,
+        sourceFile: o.sourceFile || null, exports: o.exports,
+        // 卡 id 就是导出的寻址地址，窗里的导出按钮要靠它 —— 不带的话
+        // 导出会退回「当前聚焦」那套猜测，而窗开着的时候那套是空的
+        cardId: o.id,
+      });
     } else {
       // deck：与会话解绑，原地开最大化编辑窗。
       //

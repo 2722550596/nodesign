@@ -1,0 +1,184 @@
+import { describe, it, expect } from 'vitest';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs/promises';
+import { resolveSource, buildFromSource, DocxSourceError } from './build-from-source.js';
+import { readZip, entryData } from './rawzip.js';
+
+/**
+ * 这套盯两件事：
+ *   1. **schema 闭合真的拦得住** —— 没登记过的 token 键必须报错，否则
+ *      agent 写错一个字段名，那条排版指令就静默失效（写了没生效比没写更坏）
+ *   2. **报错要能让 agent 自己修** —— 说清楚哪一条、给出可选项，
+ *      而不是丢一个 `unknown block: undefined` 出去
+ */
+
+describe('resolveSource —— 词典条目当起点', () => {
+  it('preset 提供起点，tokens 在上面覆写', () => {
+    const { tokens } = resolveSource({
+      preset: '公文',
+      tokens: { page: { size: 'A4', landscape: true } },
+      content: [{ t: 'p', text: 'x' }],
+    });
+    expect(tokens.page.landscape).toBe(true);
+    expect(Object.keys(tokens.styles).length).toBeGreaterThan(0);   // preset 的样式还在
+  });
+
+  it('不认识的词典条目要把现有的列出来', () => {
+    expect(() => resolveSource({ preset: '赛博朋克', content: [{ t: 'p' }] }))
+      .toThrow(/没有叫「赛博朋克」的词典条目/);
+    try { resolveSource({ preset: '赛博朋克', content: [{ t: 'p' }] }); } catch (e) {
+      expect(e.detail).toContain('公文');
+      expect(e.detail).toContain('不写 preset');   // 告诉它风格名不是封闭菜单
+    }
+  });
+
+  it('不给 preset 但给完整 tokens 也成立（风格名开放，不强制走词典）', () => {
+    const { tokens } = resolveSource({
+      tokens: { v: 1, fonts: {}, styles: {} },
+      content: [{ t: 'p', text: 'x' }],
+    });
+    expect(tokens.v).toBe(1);
+  });
+});
+
+describe('resolveSource —— `_` 注释键', () => {
+  it('下划线开头的键被剥掉，不会被闭合 schema 当成未登记字段拒掉', () => {
+    const { tokens, content } = resolveSource({
+      _说明: 'JSON 没有注释语法，用 _ 前缀当约定',
+      preset: '办公标准',
+      tokens: { styles: { Normal: { _为什么: '解释这条样式', para: { _注: '两字符', indent: { firstLineChars: 200 } } } } },
+      content: [{ t: 'p', _注: '开场白', text: 'x' }],
+    });
+    expect(tokens.styles.Normal.para.indent.firstLineChars).toBe(200);
+    expect(tokens.styles.Normal._为什么).toBeUndefined();
+    expect(content[0]._注).toBeUndefined();
+  });
+});
+
+describe('resolveSource —— 值域校验（不只是键名）', () => {
+  it("⭐lineRule 写成 'auto' 必须报错 —— 它不会静默失效，会静默生效成每行五英寸", () => {
+    try {
+      resolveSource({
+        preset: '办公标准',
+        tokens: { styles: { Normal: { para: { spacing: { line: 360, lineRule: 'auto' } } } } },
+        content: [{ t: 'p', text: 'x' }],
+      });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.detail).toContain('lineRule');
+      expect(e.detail).toContain('multiple');
+    }
+  });
+
+  it('lineRule=multiple 时给了磅值量级的 line，也要拦', () => {
+    expect(() => resolveSource({
+      preset: '办公标准',
+      tokens: { styles: { Normal: { para: { spacing: { line: 28, lineRule: 'multiple' } } } } },
+      content: [{ t: 'p', text: 'x' }],
+    })).toThrow(/token 没过校验/);
+  });
+
+  it('样式里的字号名写错要报错（原来只校验 base 那一处）', () => {
+    try {
+      resolveSource({
+        preset: '办公标准',
+        tokens: { styles: { Normal: { run: { sizePt: '中四' } } } },
+        content: [{ t: 'p', text: 'x' }],
+      });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.detail).toMatch(/unknown 字号/);
+    }
+  });
+});
+
+describe('resolveSource —— schema 闭合', () => {
+  it('⭐没登记过的 token 键必须报错，不能静默吞掉', () => {
+    expect(() => resolveSource({
+      preset: '办公标准',
+      tokens: { styles: { Normal: { para: { 首行缩进: 2 } } } },
+      content: [{ t: 'p', text: 'x' }],
+    })).toThrow(/token 没过校验/);
+  });
+
+  it('指向不存在的字体槽要报错', () => {
+    try {
+      resolveSource({
+        preset: '办公标准',
+        tokens: { styles: { Normal: { run: { font: '不存在的槽' } } } },
+        content: [{ t: 'p', text: 'x' }],
+      });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e).toBeInstanceOf(DocxSourceError);
+      expect(e.detail).toContain('no such font slot');
+    }
+  });
+});
+
+describe('resolveSource —— 报错要能自修', () => {
+  it('块类型认不出时，指出是第几块并列出合法值', () => {
+    try {
+      resolveSource({ preset: '办公标准', content: [{ t: 'p', text: 'a' }, { t: '段落', text: 'b' }] });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.message).toContain('content[1]');
+      expect(e.detail).toContain("{t:'p'}");
+    }
+  });
+
+  it('content 空了要说会是白纸，不能构建出一份空文档', () => {
+    expect(() => resolveSource({ preset: '公文', content: [] })).toThrow(/白纸/);
+  });
+
+  it('既没 preset 也没 tokens', () => {
+    expect(() => resolveSource({ content: [{ t: 'p' }] })).toThrow(/不知道按什么排版/);
+  });
+});
+
+describe('buildFromSource —— 落盘', () => {
+  it('真写出一个能解开的 docx，styles.xml 里有 preset 的样式', async () => {
+    const d = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-bfs-'));
+    const src = path.join(d, '文档.json');
+    const out = path.join(d, '文档.docx');
+    await fs.writeFile(src, JSON.stringify({
+      preset: '公文',
+      content: [{ t: 'p', style: 'Normal', text: '正文一段。' }],
+      footer: '— 1 —',
+    }));
+    const r = await buildFromSource(src, out);
+    expect(r.blocks).toBe(1);
+    expect(r.preset).toBe('公文');
+    expect(r.bytes).toBeGreaterThan(1000);
+
+    const zip = readZip(await fs.readFile(out));
+    expect([...zip.entries.keys()]).toContain('word/styles.xml');
+    expect([...zip.entries.keys()]).toContain('word/footer1.xml');
+    // ⭐中文用户的地基：eastAsia 槽必须真的写进去了
+    expect(entryData(zip, 'word/styles.xml').toString('utf8')).toContain('w:eastAsia');
+    await fs.rm(d, { recursive: true, force: true });
+  });
+
+  it('页眉页脚：字符串当一行文字，块数组原样传（页码域要靠后者）', () => {
+    const a = resolveSource({ preset: '公文', content: [{ t: 'p', text: 'x' }], footer: '第一页' });
+    expect(a.opts.footer).toEqual([{ t: 'p', style: 'Normal', text: '第一页' }]);
+    const blocks = [{ t: 'p', style: 'Footer', runs: [{ text: '— ' }, { fld: 'PAGE' }, { text: ' —' }] }];
+    const b = resolveSource({ preset: '公文', content: [{ t: 'p', text: 'x' }], footer: blocks });
+    // 内容相等而非同一对象：stripNotes（剥 `_` 注释键）会深拷贝整份源
+    expect(b.opts.footer).toEqual(blocks);
+    expect(resolveSource({ preset: '公文', content: [{ t: 'p', text: 'x' }] }).opts.header).toBeUndefined();
+  });
+
+  it('源文件不是合法 JSON 时报得明白', async () => {
+    const d = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-bfs2-'));
+    await fs.writeFile(path.join(d, 'x.json'), '{ 这不是 json');
+    await expect(buildFromSource(path.join(d, 'x.json'), path.join(d, 'x.docx')))
+      .rejects.toThrow(/不是合法 JSON/);
+    await fs.rm(d, { recursive: true, force: true });
+  });
+
+  it('源文件不存在', async () => {
+    await expect(buildFromSource('/nope/文档.json', '/nope/文档.docx')).rejects.toThrow(/读不到源文件/);
+  });
+});
