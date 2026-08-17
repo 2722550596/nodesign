@@ -48,7 +48,7 @@ const f = join(outdir, 'gongwen.docx');
 writeFileSync(f, buf);
 console.log('built', f);
 
-const res = renderDocx(f, { pngPages: true, dpi: 120 });
+const res = await renderDocx(f, { pngPages: true, dpi: 120 });
 for (const p of res.pngs) copyFileSync(p, join(outdir, p.split('/').pop()));
 copyFileSync(res.pdf, join(outdir, 'gongwen.pdf'));
 console.log(execFileSync('pdffonts', [res.pdf]).toString());

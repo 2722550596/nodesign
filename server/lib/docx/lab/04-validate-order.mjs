@@ -99,9 +99,9 @@ console.log(`${violGood.length === 0 ? 'PASS' : 'FAIL'} 好文档(checkOrder): $
 // ── LO 全部能开（宽容性对照） ──
 for (const f of [...made, badFile]) {
   try {
-    const r = renderDocx(f);
+    const r = await renderDocx(f);
     console.log(`LO opens ${f.split('/').pop()} (${r.ms}ms)`);
-    cleanupRender(r);
+    await cleanupRender(r);
   } catch (e) { console.log(`LO FAILED on ${f}: ${e.message}`); fail += 1; }
 }
 process.exit(fail);

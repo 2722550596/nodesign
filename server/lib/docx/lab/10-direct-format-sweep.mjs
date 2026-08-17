@@ -55,8 +55,8 @@ const changed2 = z1.order.filter((n) => sha(entryData(z1, n)) !== sha(entryData(
 console.log(`变更 entry: ${JSON.stringify(changed2)} (期望只有 word/document.xml)`);
 console.log(`validator: ${vcount(src)} -> ${vcount(out)}`);
 
-const r0 = renderDocx(src, { pngPages: [2, 3], dpi: 100 });
-const r1 = renderDocx(out, { pngPages: [2, 3], dpi: 100 });
+const r0 = await renderDocx(src, { pngPages: [2, 3], dpi: 100 });
+const r1 = await renderDocx(out, { pngPages: [2, 3], dpi: 100 });
 const t0 = execFileSync('pdftotext', [r0.pdf, '-']).toString();
 const t1 = execFileSync('pdftotext', [r1.pdf, '-']).toString();
 console.log(`pdftotext 相同: ${t0 === t1}`);
@@ -66,4 +66,4 @@ r0.pngs.forEach((p, i) => {
 });
 copyFileSync(r1.pngs[0], join(outdir, 'after-p2.png'));
 copyFileSync(r0.pngs[0], join(outdir, 'before-p2.png'));
-cleanupRender(r0); cleanupRender(r1);
+await cleanupRender(r0); await cleanupRender(r1);

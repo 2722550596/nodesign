@@ -44,8 +44,8 @@ console.log(`变更 entry: ${JSON.stringify(changed)} (期望只有 word/styles.
 console.log(`validator: ${vcount(src)} -> ${vcount(out)}`);
 
 // 渲染对比
-const r0 = renderDocx(src, { pngPages: [2, 2], dpi: 100 });
-const r1 = renderDocx(out, { pngPages: [2, 2], dpi: 100 });
+const r0 = await renderDocx(src, { pngPages: [2, 2], dpi: 100 });
+const r1 = await renderDocx(out, { pngPages: [2, 2], dpi: 100 });
 const t0 = execFileSync('pdftotext', [r0.pdf, '-']).toString();
 const t1 = execFileSync('pdftotext', [r1.pdf, '-']).toString();
 console.log(`pdftotext 相同: ${t0 === t1}（样式手术不应动文本）`);
@@ -56,4 +56,4 @@ copyFileSync(r1.pngs[0], join(outdir, 'after-p2.png'));
 // 二次 dump 验证 token 层读得回改动
 const { tokens: t2 } = dumpStyles(edited);
 console.log('再 dump: Heading1 =', JSON.stringify(t2.styles.Heading1?.run));
-cleanupRender(r0); cleanupRender(r1);
+await cleanupRender(r0); await cleanupRender(r1);

@@ -60,7 +60,7 @@ const docx = join(outdir, 'cjk-probe.docx');
 writeFileSync(docx, buf);
 console.log('built', docx, buf.length, 'bytes');
 
-const res = renderDocx(docx, { pngPages: true, dpi: 120 });
+const res = await renderDocx(docx, { pngPages: true, dpi: 120 });
 console.log(`render ${res.ms}ms ->`, res.pdf);
 copyFileSync(res.pdf, join(outdir, 'cjk-probe.pdf'));
 for (const p of res.pngs) copyFileSync(p, join(outdir, p.split('/').pop()));

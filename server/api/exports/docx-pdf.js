@@ -19,7 +19,7 @@ import { renderDocx, cleanupRender } from '../../lib/docx/render.js';
 export async function docxToPdfResponse(res, target) {
   let out;
   try {
-    out = renderDocx(target.absPath, {});     // 只要 pdf，不出 png
+    out = await renderDocx(target.absPath, {});     // 只要 pdf，不出 png
   } catch (err) {
     return res.status(500).json({
       error: 'LibreOffice 转换失败',
@@ -40,7 +40,7 @@ export async function docxToPdfResponse(res, target) {
     res.setHeader('X-Docx-Pdf-Note', 'toc-field-not-updated; substituted-cjk-fonts');
     res.end(buf);
   } finally {
-    cleanupRender(out);
+    await cleanupRender(out);
   }
   return undefined;
 }

@@ -76,7 +76,7 @@ export async function screenshotDocx(target, opts = {}) {
   let res;
   try {
     // pdftoppm 的 -l 超过实际页数会自动截断，所以这里不用先问总页数
-    res = renderDocx(target.absPath, { pngPages: [from, to], dpi });
+    res = await renderDocx(target.absPath, { pngPages: [from, to], dpi });
   } catch (err) {
     return {
       content: [{
@@ -124,6 +124,6 @@ export async function screenshotDocx(target, opts = {}) {
 
     return { content: [{ type: 'text', text: caption.join('\n') }, ...images] };
   } finally {
-    cleanupRender(res);
+    await cleanupRender(res);
   }
 }

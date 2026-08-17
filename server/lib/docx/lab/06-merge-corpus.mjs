@@ -42,8 +42,8 @@ for (const name of readdirSync(dir).filter((f) => f.endsWith('.docx')).sort()) {
     const changed = zip2.order.filter((n) => sha(entryData(zip2, n)) !== before[n]);
     let textSame = null;
     try {
-      const r0 = renderDocx(src); const t0 = execFileSync('pdftotext', [r0.pdf, '-']).toString(); cleanupRender(r0);
-      const r1 = renderDocx(out); const t1 = execFileSync('pdftotext', [r1.pdf, '-']).toString(); cleanupRender(r1);
+      const r0 = await renderDocx(src); const t0 = execFileSync('pdftotext', [r0.pdf, '-']).toString(); await cleanupRender(r0);
+      const r1 = await renderDocx(out); const t1 = execFileSync('pdftotext', [r1.pdf, '-']).toString(); await cleanupRender(r1);
       textSame = t0 === t1;
     } catch { textSame = 'render-failed'; }
     const v0 = vcount(src); const v1 = vcount(out);

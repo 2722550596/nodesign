@@ -16,6 +16,7 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { pageImage } from '../../lib/docx-pages.js';
+import { safeResolveRead } from '../../lib/safe-path.js';
 
 /** 缩略图宽度上限：再大就不是缩略图了，纯粹是让服务端白干 */
 const MAX_WIDTH = 2000;
@@ -27,12 +28,13 @@ export function makeDocxPageHandler({ getSharedDir, guardProject }) {
       const rel = String(req.query.path || '').replace(/\\/g, '/');
       if (!rel || !/\.docx$/i.test(rel)) return res.status(400).json({ error: 'path 得是一个 .docx' });
 
+      // ⚠️ 只做词法检查是不够的：工作区里一个指向 .env 的软链，路径逐字看都在
+      // 工作区内，soffice 会老老实实把明文渲成一张 PNG 发出去。而这条路走的是
+      // **没有沙盒的 server 进程**，绕开了给 agent 设的 permissions.deny。
+      // 判据收在 lib/safe-path.js，别在这儿再抄一遍。
       const root = getSharedDir(req.params.pid);
-      const abs = path.resolve(root, rel);
-      const within = path.relative(root, abs);
-      if (within.startsWith('..') || path.isAbsolute(within)) {
-        return res.status(403).json({ error: 'path escapes workspace' });
-      }
+      const abs = await safeResolveRead(root, rel);
+      if (!abs) return res.status(403).json({ error: 'path escapes workspace' });
 
       let stat;
       try { stat = await fs.stat(abs); } catch { return res.status(404).json({ error: '找不到这份文档' }); }

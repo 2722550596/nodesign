@@ -416,6 +416,9 @@ router.get('/:pid/artifacts', async (req, res, next) => {
             // 现在单页也给 base（= 入口文件所在目录），两种站点一个拼法。
             entry: a.single ? path.basename(a.entryRel || '') : a.entry,
             entryRel: under(rel, a.entryRel),
+            // word 的 token 源。⚠️ 必须过 under() —— manifest 给的是**任务相对**，
+            // 而前端拿它去 artifactFileUrl 要的是**工作区相对**，直接透传会 404
+            ...(a.sourceFile ? { sourceFile: under(rel, a.sourceFile) } : {}),
             base: a.single
               ? under(rel, path.dirname(a.entryRel || '.')).replace(/^\.$/, rel)
               : (under(rel, a.root) || rel),

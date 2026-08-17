@@ -113,22 +113,44 @@ export const ARTIFACT_FACES = {
     icon: FileText,
     tip: '双击打开这份文档',
     summary: (o) => (o.sourceFile ? '文档 · 可改源重建' : '文档 · 外来文件'),
-    Preview: ({ o, projectId, fileVersions, box }) => (
-      <img
-        alt=""
-        loading="lazy"
-        src={Assets.docxPageUrl(projectId, o.deckFile || o.path, 1, {
-          w: Math.round(box.w * 2),                     // 2x 出图，缩略图不糊
-          v: versionOfFile(fileVersions, o.deckFile || o.path),
-        })}
-        style={{
-          width: box.w, height: box.h,
-          objectFit: 'cover', objectPosition: 'top center',
-          border: 0, display: 'block', background: '#fff',
-          pointerEvents: 'none',
-        }}
-      />
-    ),
+    Preview: ({ o, projectId, fileVersions, box }) => {
+      // ⚠️ 必然会 404 的一种正常态：kinds/docx.js 在 agent 刚写完 token 源、
+      // 还没 build 的窗口期就报一份 pending 产物。没有 onError 的话，那几秒里
+      // 卡上是浏览器的**裂图标**（deck/site 没这问题只是因为 iframe 加载失败
+      // 长得像空白）。失败就换成一句话，别把浏览器的错误图标端给用户。
+      const [failed, setFailed] = useState(false);
+      const rel = o.deckFile;
+      if (failed) {
+        return (
+          <div style={{
+            width: box.w, height: box.h, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: PAPER.paper, color: COLOR.sub, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+            textAlign: 'center', padding: GAP.md, boxSizing: 'border-box', lineHeight: 1.7,
+          }}>
+            还没构建出来
+            <br />
+            （改完 token 源要 build 一次）
+          </div>
+        );
+      }
+      return (
+        <img
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+          src={Assets.docxPageUrl(projectId, rel, 1, {
+            w: Math.round(box.w * 2),                     // 2x 出图，缩略图不糊
+            v: versionOfFile(fileVersions, rel),
+          })}
+          style={{
+            width: box.w, height: box.h,
+            objectFit: 'cover', objectPosition: 'top center',
+            border: 0, display: 'block', background: '#fff',
+            pointerEvents: 'none',
+          }}
+        />
+      );
+    },
   },
 
 };

@@ -53,6 +53,7 @@ export default function DocxWindow({
   const [fit, setFit] = useState('height');     // 'height' 铺满高度 | 'width' 铺满宽度
   const [tab, setTab] = useState('preview');    // 'preview' | 'source'
   const [source, setSource] = useState(null);
+  const [imgUrl, setImgUrl] = useState(null);
   const boxRef = useRef(null);
 
   const src = useMemo(
@@ -63,25 +64,37 @@ export default function DocxWindow({
   // 换文档（不是换页）时回到第一页 —— 停在第 7 页看另一份文档是没道理的
   useEffect(() => { setPage(1); setCount(null); }, [file]);
 
-  // 页数从响应头拿（服务端顺带给了，省一次请求）。用 fetch 而不是等 <img>
-  // onLoad —— <img> 拿不到响应头。
+  // 用 fetch 而不是直接把 URL 交给 <img>：页数在**响应头**里（服务端顺带给的），
+  // <img> 拿不到头。
+  //
+  // ⚠️ 拿到的 blob 要当图源用，不能 fetch 一遍再让 <img> 按同一个 URL 再取一遍
+  // —— 那是整张全尺寸 PNG **下载两遍**（服务端的 in-flight 去重防的是重复渲染，
+  // 不防重复传输）。顺带这样 loading 才熄得对：熄在图真的到手时，而不是响应头
+  // 一到就熄、留用户对着一块空白。
   useEffect(() => {
     let dead = false;
+    let url = null;
     setLoading(true);
     setError(null);
     fetch(src)
       .then(async (r) => {
-        if (dead) return;
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
           throw new Error(j.error || `渲染失败（${r.status}）`);
         }
         const n = Number(r.headers.get('X-Docx-Pages'));
+        const blob = await r.blob();
+        if (dead) return;
         if (n > 0) setCount(n);
+        url = URL.createObjectURL(blob);
+        setImgUrl(url);
+        setLoading(false);
       })
-      .catch((e) => { if (!dead) setError(e.message); })
-      .finally(() => { if (!dead) setLoading(false); });
-    return () => { dead = true; };
+      .catch((e) => { if (!dead) { setError(e.message); setLoading(false); } });
+    return () => {
+      dead = true;
+      if (url) URL.revokeObjectURL(url);   // 不收的话翻十页留十份全尺寸位图在内存里
+    };
   }, [src]);
 
   // 看源码：token JSON 就是这份文档的真相源
@@ -202,8 +215,7 @@ export default function DocxWindow({
             <div style={{ position: 'relative', height: fit === 'height' ? '100%' : 'auto', maxWidth: '100%' }}>
               <img
                 alt={`${title || file} 第 ${page} 页`}
-                src={src}
-                onLoad={() => setLoading(false)}
+                src={imgUrl || undefined}
                 style={{ ...imgStyle, display: 'block', background: '#fff', boxShadow: PAPER_SHADOW.mid, borderRadius: 2 }}
               />
               {loading && (

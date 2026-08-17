@@ -22,11 +22,11 @@ const mk = async (name, indent) => {
   ]);
   const f = join(outdir, name);
   writeFileSync(f, buf);
-  const res = renderDocx(f);
+  const res = await renderDocx(f);
   const bbox = execFileSync('pdftotext', ['-bbox', res.pdf, '-']).toString();
   const x = (m) => parseFloat((bbox.match(new RegExp(`<word xMin="([\\d.]+)"[^>]*>[^<]*${m}`)) ?? [])[1]);
   console.log(`${name}: 基准x=${x('基准行')}  探针x=${x('丙探针')}  缩进=${(x('丙探针') - x('基准行')).toFixed(1)}pt (期望 32)`);
-  cleanupRender(res);
+  await cleanupRender(res);
 };
 
 await mk('a-chars-only.docx', { firstLineChars: 200 });

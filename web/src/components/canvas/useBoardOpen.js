@@ -92,6 +92,9 @@ export function useBoardOpen({
       onFocusDeck?.({
         kind: 'docx', file: o.deckFile, title: o.title,
         sourceFile: o.sourceFile || null, exports: o.exports,
+        // 卡 id 就是导出的寻址地址，窗里的导出按钮要靠它 —— 不带的话
+        // 导出会退回「当前聚焦」那套猜测，而窗开着的时候那套是空的
+        cardId: o.id,
       });
     } else {
       // deck：与会话解绑，原地开最大化编辑窗。

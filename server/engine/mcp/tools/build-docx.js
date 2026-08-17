@@ -17,6 +17,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { buildFromSource, DocxSourceError } from '../../../lib/docx/build-from-source.js';
 import { setActiveArtifact } from '../../../lib/artifact-target.js';
+import { safeResolveRead, safeResolveWrite } from '../../../lib/safe-path.js';
 
 const err = (text) => ({ content: [{ type: 'text', text }], isError: true });
 
@@ -62,12 +63,13 @@ whether it looks right.`,
       const outRel = (output || srcRel.replace(/\.json$/i, '.docx')).replace(/\\/g, '/');
       if (!/\.docx$/i.test(outRel)) return err(`输出得是 .docx，收到的是 ${outRel}`);
 
-      const srcAbs = path.resolve(workspaceRoot, srcRel);
-      const outAbs = path.resolve(workspaceRoot, outRel);
-      for (const [p, label] of [[srcAbs, '源'], [outAbs, '产物']]) {
-        const rel = path.relative(workspaceRoot, p);
-        if (rel.startsWith('..') || path.isAbsolute(rel)) return err(`${label}路径跑出工作区了`);
-      }
+      // ⚠️ 词法检查挡不住软链：工作区里一个指向外面的 `out.docx` 软链，会让这个
+      // 工具变成一个**绕过沙盒的任意写原语**（MCP 工具跑在 server 进程里，不在
+      // bwrap 内）。读写判据不同，见 lib/safe-path.js。
+      const srcAbs = await safeResolveRead(workspaceRoot, srcRel);
+      if (!srcAbs) return err('源路径跑出工作区了');
+      const outAbs = await safeResolveWrite(workspaceRoot, outRel);
+      if (!outAbs) return err('产物路径跑出工作区了（目标是软链也会被拒 —— 顺着它写会覆盖工作区外的文件）');
 
       try {
         const r = await buildFromSource(srcAbs, outAbs);

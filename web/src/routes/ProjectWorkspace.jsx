@@ -1959,9 +1959,11 @@ export default function ProjectWorkspace() {
   const handleRenameCandidate = () => {};
   const handleSelectCandidate = () => setSelectedAnchor(null);
 
-  /** 顶栏导出：哪些格式走按卡导出、哪些走烘焙老路由，由 card-export.js 的表决定 */
-  const handleExport = (format) =>
-    exportFromMenu(id, format, boardUi?.artifactCardId || null, project.name);
+  /** 顶栏导出：格式怎么分流由 card-export.js 的表定。⚠️ `cardId` 由**产物窗自己
+   *  报上来**——`boardUi.artifactCardId` 只在文件夹窗有值且取的是里头第一份，
+   *  少了它窗内导出会提示「先点开那份产物」（他正开着）或导出错的一份 */
+  const handleExport = (format, cardId = null) =>
+    exportFromMenu(id, format, cardId || boardUi?.artifactCardId || null, project.name);
 
   return (
     <PanelManagerProvider projectId={id} defaultPanels={defaultPanels} panelMeta={panelMeta}>

@@ -78,7 +78,7 @@ export async function ensurePages(absPath) {
       if (meta?.count > 0) return { dir, count: meta.count };
     } catch { /* 确实没有 */ }
 
-    const res = renderDocx(absPath, { pngPages: true, dpi: CACHE_DPI });
+    const res = await renderDocx(absPath, { pngPages: true, dpi: CACHE_DPI });
     try {
       await fs.mkdir(dir, { recursive: true });
       let n = 0;
@@ -89,7 +89,7 @@ export async function ensurePages(absPath) {
       await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify({ count: n, dpi: CACHE_DPI, ms: res.ms }));
       return { dir, count: n };
     } finally {
-      cleanupRender(res);
+      await cleanupRender(res);
     }
   }).finally(() => inflight.delete(key));
 

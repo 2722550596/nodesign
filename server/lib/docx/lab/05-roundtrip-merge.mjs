@@ -30,10 +30,10 @@ const validateCount = (f) => {
   catch (e) { return (e.stdout?.toString() ?? '').trim().split('\n').pop() ?? `exit ${e.status}`; }
 };
 const pdftext = (pdf) => execFileSync('pdftotext', [pdf, '-']).toString();
-const renderP1 = (docx) => {
-  const r = renderDocx(docx, { pngPages: [1, 2], dpi: 100 });
+const renderP1 = async (docx) => {
+  const r = await renderDocx(docx, { pngPages: [1, 2], dpi: 100 });
   const out = { text: pdftext(r.pdf), pngs: r.pngs.map((p) => readFileSync(p)) };
-  cleanupRender(r);
+  await cleanupRender(r);
   return out;
 };
 
@@ -45,7 +45,7 @@ console.log(`fixture: ${fixture.split('/').pop()}  entries=${zip.order.length}`)
 const before = {};
 for (const n of zip.order) before[n] = sha(entryData(zip, n));
 const v0 = validateCount(fixture);
-const r0 = renderP1(fixture);
+const r0 = await renderP1(fixture);
 console.log(`baseline validator: ${v0}`);
 
 // ── 解析（保真闸门在 parseXml 里自动跑）──
@@ -88,7 +88,7 @@ console.log(`\nB. 重打包后内容有变化的 entry: ${JSON.stringify(changed
 // 容器级：没动的 entry 的原始压缩字节也应原样（rawzip 构造保证，抽查 3 个）
 const v1 = validateCount(outFile);
 console.log(`B2. validator: ${v0} → ${v1} (期望不变)`);
-const r1 = renderP1(outFile);
+const r1 = await renderP1(outFile);
 console.log(`B3. pdftotext 逐字符相等: ${r0.text === r1.text}`);
 console.log(`B4. 前两页 PNG 逐字节相等: ${r0.pngs.length === r1.pngs.length && r0.pngs.every((p, i) => p.equals(r1.pngs[i]))}`);
 
@@ -102,11 +102,11 @@ if (replaced) {
   const editFile = join(outdir, 'edited.docx');
   writeFileSync(editFile, writeZip(zip));
   const v2 = validateCount(editFile);
-  const r2 = renderP1(editFile);
+  const r2 = await renderP1(editFile);
   console.log(`\nC. 短语替换 ${JSON.stringify(phrase)} → 渲染文本含标记: ${r2.text.includes('NODESIGN改') || '(不在前两页)'} ` );
-  const full = renderDocx(editFile);
+  const full = await renderDocx(editFile);
   const allText = pdftext(full.pdf);
-  cleanupRender(full);
+  await cleanupRender(full);
   console.log(`C2. 全文含标记: ${allText.includes('NODESIGN改')}  validator: ${v2} (期望与基线同)`);
 } else {
   console.log('\nC. SKIP: 没找到可替换短语');

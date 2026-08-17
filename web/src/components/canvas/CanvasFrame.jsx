@@ -193,7 +193,7 @@ export default function CanvasFrame({
   }, []);
 
   // 有窗开着 = 屏幕被一件产物占满，外层据此收掉顶栏的浮现
-  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc;
+  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!docxSrc;
   useEffect(() => { onWindowOpenChange?.(!!windowOpen); }, [windowOpen, onWindowOpenChange]);
 
   return (
@@ -317,7 +317,7 @@ export default function CanvasFrame({
               title={docxSrc.title}
               sourceFile={docxSrc.sourceFile}
               exports={docxSrc.exports}
-              onExport={onExport}
+              onExport={(fmt) => onExport?.(fmt, docxSrc.cardId)}
               version={fileVersions?.[docxSrc.file]}
               onClose={() => setDocxSrc(null)}
               onToolbarGroups={reportWinGroups}

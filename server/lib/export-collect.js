@@ -31,6 +31,8 @@ import { walkTaskFiles, loadIgnore, RESERVED_DIRS, isReservedFile } from './task
 import { collectAssetRefs } from './asset-refs.js';
 import { kindDef, taskManifest, can } from './kinds/index.js';
 import { fileKindOfPath, fileKindDef } from './kinds/file-kinds.js';
+// 越界判据收在一处（原来这里有第二份实现，docx 页图路由抄它的形状时抄漏了 realpath）
+import { safeResolveRead as safeResolve } from './safe-path.js';
 
 /** 目录型产物（有自己的一棵树）。单页站点是例外，见 collectCard */
 const DIR_KINDS = new Set(['site']);
@@ -66,22 +68,6 @@ export function parseCardId(cardId) {
   return { kind: fileKindOfPath(rel), rel };
 }
 
-/**
- * 越界检查。**词法检查不够** —— `path.relative` 挡得住 `../..`，挡不住工作区里
- * 一个指向外面的软链。所以解析完还要按真实路径（realpath）再验一次。
- */
-async function safeResolve(workspaceRoot, rel) {
-  const abs = path.resolve(workspaceRoot, rel);
-  const within = path.relative(workspaceRoot, abs);
-  if (within.startsWith('..') || path.isAbsolute(within)) return null;
-  try {
-    const realRoot = await fs.realpath(workspaceRoot);
-    const real = await fs.realpath(abs);
-    const rw = path.relative(realRoot, real);
-    if (rw.startsWith('..') || path.isAbsolute(rw)) return null;
-  } catch { /* 文件不存在：留给上层 stat 报 404 */ }
-  return abs;
-}
 
 /** 这种形态能导出成什么。single = 单页产物，没有「整站 zip」可言（跟 taskManifest 的 decorate 同一条剥除） */
 export function exportFormatsFor(kind, { single = false } = {}) {

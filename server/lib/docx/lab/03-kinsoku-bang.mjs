@@ -21,7 +21,7 @@ for (let k = 30; k <= 38; k++) {
 const buf = await buildDocx(tokens, content);
 const f = join(outdir, 'bang.docx');
 writeFileSync(f, buf);
-const res = renderDocx(f);
+const res = await renderDocx(f);
 const txt = execFileSync('pdftotext', ['-layout', res.pdf, '-']).toString();
 let violations = 0;
 for (const ln of txt.split('\n')) {
@@ -31,4 +31,4 @@ for (const ln of txt.split('\n')) {
   if (t.includes('！')) console.log(`k-line: len=${t.length} bangAt=${t.indexOf('！')}`);
 }
 console.log(violations === 0 ? 'PASS: 全扫描无行首标点（禁则成立）' : `FAIL: ${violations} 处行首标点`);
-cleanupRender(res);
+await cleanupRender(res);
