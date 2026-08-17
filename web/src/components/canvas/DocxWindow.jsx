@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2, Scan, FileJson, Eye, Loader2 } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { COLOR, CANVAS, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -113,12 +113,26 @@ export default function DocxWindow({
     // 只有文档的页是**排版算出来的** —— 改一个字号页数就变，所以页码不能存，
     // 只能每次问渲染管线。
     {
-      id: 'pages',
-      items: [
-        { id: 'prev', icon: ChevronLeft, title: '上一页（← / PageUp）', disabled: page <= 1, onClick: () => go(-1) },
-        { id: 'no', label: count ? `${page} / ${count}` : `${page}`, static: true },
-        { id: 'next', icon: ChevronRight, title: '下一页（→ / PageDown）', disabled: !!count && page >= count, onClick: () => go(1) },
-      ],
+      id: 'pageprev',
+      items: [{ id: 'prev', icon: ChevronLeft, title: '上一页（← / PageUp）', disabled: page <= 1, onClick: () => go(-1) }],
+    },
+    // 页码是**读数不是按钮** —— ToolbarButton 没有"静态项"这回事，塞进 items
+    // 会渲成一颗点不动的按钮。工具栏留了 `node` 逃生舱（SiteWindow 的发布控件
+    // 走的也是它），读数走那条。
+    {
+      id: 'pageno',
+      node: (
+        <span style={{
+          padding: `0 ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+          color: COLOR.text2, whiteSpace: 'nowrap', userSelect: 'none',
+        }}>
+          {count ? `${page} / ${count}` : page}
+        </span>
+      ),
+    },
+    {
+      id: 'pagenext',
+      items: [{ id: 'next', icon: ChevronRight, title: '下一页（→ / PageDown）', disabled: !!count && page >= count, onClick: () => go(1) }],
     },
     {
       id: 'fit',
@@ -151,11 +165,11 @@ export default function DocxWindow({
       onToolbarGroups={onToolbarGroups}
       banner={sourceFile ? null : (
         <span>
-          这是一份**外来文档**（没有 token 源）。现在能看、能导出，
-          <b>改它要等编辑道上线</b> —— 想现在就要改动版本，让 agent 基于它的内容重做一份。
+          这是一份<b>外来文档</b>（没有 token 源）。现在能看、能导出，<b>改它要等编辑道上线</b>
+          —— 想现在就要一个改过的版本，让 agent 基于它的内容重做一份。
         </span>
       )}
-      contentStyle={{ background: COLOR.bg2 || '#efece5' }}
+      contentStyle={{ background: CANVAS.paper }}
     >
       {tab === 'source' ? (
         <pre style={{
@@ -190,7 +204,7 @@ export default function DocxWindow({
                 alt={`${title || file} 第 ${page} 页`}
                 src={src}
                 onLoad={() => setLoading(false)}
-                style={{ ...imgStyle, display: 'block', background: '#fff', boxShadow: PAPER_SHADOW, borderRadius: 2 }}
+                style={{ ...imgStyle, display: 'block', background: '#fff', boxShadow: PAPER_SHADOW.mid, borderRadius: 2 }}
               />
               {loading && (
                 <div style={{
