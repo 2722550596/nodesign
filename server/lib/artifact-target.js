@@ -240,7 +240,15 @@ export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
  */
 export function requireBrowsable(target) {
   if (!target?.kind || can(target.kind, 'browsable')) return null;
-  return `${target.relPath || target.kind} 是 ${target.kind} 形态，没有可以用浏览器打开的入口，`
+  const who = target.relPath || target.kind;
+  // 可渲染形态（docx）要给对路的替代方案。说"直接 Read 它的文件"是**错的建议**
+  // —— 那是个二进制 zip，Read 出来是乱码，而它其实是**看得见**的，只是要先渲染。
+  if (can(target.kind, 'renderable')) {
+    return `${who} 是 ${target.kind} 形态，没有 DOM，读页面 / 查元素 / 取计算样式这几个工具对它无效。`
+      + '看长相用 screenshot（它会渲染成页图，可以带 pages 参数指定范围）；'
+      + '看结构读它的 token 源（同名 .json），别去 Read 那个 .docx 本身，它是二进制包。';
+  }
+  return `${who} 是 ${target.kind} 形态，没有可以用浏览器打开的入口，`
     + '截图 / 读页面 / 查元素这类工具对它没有意义。直接 Read 它的文件。';
 }
 

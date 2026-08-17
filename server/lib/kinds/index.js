@@ -25,16 +25,18 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import deck from './deck.js';
 import site from './site.js';
+import docx from './docx.js';
 import { isReservedFile } from '../task-scan.js';
 
-export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site });
+export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site, [docx.id]: docx });
 
 export { RESERVED_DIRS, isReservedFile } from '../task-scan.js';
 
 /**
  * 判定优先级：canvas.html 在 index.html 之前（一个任务只做一种形态）。
+ * docx 垫底 —— 任务里同时有网页入口和 .docx 时，那个 docx 是素材不是产物。
  */
-const KIND_ORDER = [deck.id, site.id];
+const KIND_ORDER = [deck.id, site.id, docx.id];
 
 export function kindDef(kind) {
   return KINDS[kind] || null;
@@ -51,7 +53,11 @@ export function kindDef(kind) {
  * 只声明**当前真的有人查**的能力，不预先铺一张能力表。
  *
  * @param {string} kind
- * @param {string} cap  目前只有 'browsable'
+ * @param {string} cap
+ *   'browsable'  —— 入口是 html，能塞进 iframe / 交给 playwright（deck / site）
+ *   'renderable' —— 入口是二进制包，要先渲染成页图才能被看见（docx）
+ *   两者互斥不是巧合：它们回答的是同一个问题「这东西怎么才能被看见」，
+ *   感知工具按能力分流而不是按形态名分流，加第四种形态时不用再改工具。
  */
 export function can(kind, cap) {
   return !!KINDS[kind]?.capabilities?.includes(cap);
@@ -137,6 +143,15 @@ export async function taskManifest(taskDir) {
   }
   for (const i of siteInsts.filter(x => x.single)) {
     artifacts.push(decorate(site)(await site.instanceManifest(taskDir, marker, i)));
+  }
+  // docx 只在**没有网页产物**时才算产物 —— 任务里已经有 deck / site 时，
+  // 躺在旁边的 .docx 压倒性地更可能是用户传来当素材的参考文档，不是并列的
+  // 交付物。它照样能被 Read / 被导出，只是不占一张产物卡。
+  // （真要一个任务同时产出网页和文档，拆两个任务；任务是廉价的。）
+  if (!artifacts.length) {
+    for (const i of await docx.discoverInstances(taskDir, marker)) {
+      artifacts.push(decorate(docx)(await docx.instanceManifest(taskDir, marker, i)));
+    }
   }
 
   const kind = artifacts[0]?.kind || (KINDS[marker?.kind] ? marker.kind : null);
