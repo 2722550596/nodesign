@@ -1,111 +1,184 @@
-# generate_image 完整 cookbook
+# generate_image cookbook（后端 = codex + gpt-image-2）
 
 > 此文件由 PreToolUse(mcp__nodesign__generate_image) hook 在 agent 首次调用工具时
-> 注入。SKILL.md 已含精简版核心要点，本文是深度参考——agent 看完后可拿出更稳的 prompt。
+> 注入，每 session 只注一次。SKILL.md 已含精简版核心要点，本文是深度参考。
+>
+> ⚠️ Gemini gateway 时代的参数段（imageSize / thinkingLevel / model 路由 flash-pro /
+> Image Search Grounding / PDF 文档输入 / NB2 model card 失败模式）**已整体移出本文**，
+> 存在同目录 `generate-image-cookbook.gemini-gateway.md`，不再注入。那些旋钮在当前
+> 后端上传了不报错也没效果，留在这里只会让你花心思拨一个不存在的开关。
+> `NODESIGN_IMAGE_PROVIDER=gateway` 重开时再把那份取回来。
 
-**后端（2026-07-27 起）**：默认走 codex 订阅生图。你的 prompt 会被逐字下传给图像
-模型；生效参数只有 prompt + aspectRatio + referenceImages（PDF reference 不支持，
-imageSize / thinkingLevel / useGrounding / model 静默忽略——本文提到这些 Gemini
-参数的段落只在 gateway 模式下适用）。单张 ~45-60s，别挥霍：一张对齐好的 anchor
-胜过一堆试探性变体。prompt 写作方法论（5 元素公式 / 渲文字 / 反例）全部照旧适用。
-落档 `assets/generated/<name>.png`，HTML 里引 `<img src="assets/generated/<name>.png">`
-（softlink 透明）。
+## 前置 · 后端事实 —— 先读这节，它决定下面所有写法
+
+链路：`generate_image` → `codex exec` → codex 自带图像工具 → **gpt-image-2**
+
+| 事实 | 对你的后果 |
+|---|---|
+| **prompt 逐字下传，零改写** | 桥接层写死了禁止改写/增删/翻译/润色。你写什么模型收到什么。这条已被日志逐字节实锤过两次，**不用再自行验证** |
+| **一次调用 = 一张图** | 没有"一个 prompt 出 3 张"这回事。要 N 个候选就串行调 N 次（见 § F） |
+| **无状态** | 模型不记得上一张图，也不记得这次会话。跨图一致性只有一条路：把上一张当 `referenceImages` 喂回去 |
+| **生效参数** | `prompt` / `aspectRatio` / `referenceImages` / `assetRole` / `outputName` |
+| **静默忽略的参数** | `imageSize` / `thinkingLevel` / `responseModalities` / `model` / `useGrounding` —— 传了不报错、也没有任何效果，别浪费心思 |
+| **PDF 参考不支持** | 只吃图：png / jpg / jpeg / webp / gif |
+| **~45-60s 一张** | 一张对齐好的 anchor 胜过一堆试探性变体 |
+| **不支持透明背景** | 永远会填一个底色。要透明走 `remove_background`（§ M） |
+
+落档 `assets/generated/<name>.png`，HTML 里引 `<img src="assets/generated/<name>.png">`（softlink 透明）。
+
+### 比例的真实边界（这条容易踩）
+
+`aspectRatio` 会作为指令转给 codex，由它去拨图像工具的尺寸参数。但 **gpt-image-2 自身
+的硬约束是长短边比 ≤ 3:1**（另有单边 ≤ 3840px、边长为 16 的倍数）。所以：
+
+- ✅ 原生做得到：`1:1` `3:2` `2:3` `4:3` `3:4` `4:5` `5:4` `16:9` `9:16` `21:9`（2.33:1）
+- ❌ 超出 3:1 拿不到：`4:1` `1:4` `8:1` `1:8` —— 枚举里有、传了也不报错，但出不来原生长条
+
+要顶部公告条 / 侧边装饰带这种极端长条：用 `16:9` 出图，再在 HTML 里 `object-fit: cover`
+裁到需要的形状；或者干脆用 CSS 画，别为一条色带烧 60 秒。
+
+**别在 prompt 正文里写尺寸**（`"in 4K resolution"` / `"16:9 widescreen format"`）——比例
+走 `aspectRatio` 参数就够了；写进正文只会让 codex 生成后再 resize 一次，白拉伸一道。
 
 ## 0. Reference 来源策略（生图前先决定从哪儿拿 reference）
 
 | 主体 | 来源 | 触发动作 |
 |---|---|---|
 | 用户上传素材（`assets/*.png\|jpg`）| 直接用 | 把路径喂 `referenceImages[]` |
-| Knowledge cutoff 内的著名实体（Apple Park / Wong Kar-wai 风 / 艺术流派）| 模型脑里有 | prompt 直接点名，不必 reference |
+| 模型脑里有的著名实体（Apple Park / Wong Kar-wai 风 / 艺术流派）| 不必 reference | prompt 直接点名 |
 | **真实存在但模型不熟**（最新发布产品 / 小众品牌 / 用户自有 IP / 特定型号设备）| **`web_search { include_images:true }`** | 工具自动翻英文 + 下载到 `assets/references/`；选 1-2 张最切题的 `local_path` 喂 `referenceImages[]` |
-| 抽象概念 / 装饰 / 隐喻 | 不需要 reference | 直接 prompt（流派 + 5 元素公式）|
+| 抽象概念 / 装饰 / 隐喻 | 不需要 reference | 直接 prompt |
 
 ### `include_images=true` 用法
 
-**使用时机**：用户主题确定后、`generate_image` 之前，当生图主体是**真实存在的物体/品牌/场景**（产品照、地标、明星、设备、车型、食物、自然风光等）。Knowledge cutoff 之前的东西模型脑里有不必搜；**最近发布的产品 / 小众品牌 / 用户自有 IP** 必搜。
+**使用时机**：用户主题确定后、`generate_image` 之前，当生图主体是**真实存在的物体/品牌/场景**（产品照、地标、设备、车型、食物、自然风光等）。模型脑里有的东西不必搜；**最近发布的产品 / 小众品牌 / 用户自有 IP** 必搜。
 
 **Provider 路由（auto）**：
 - CJK query → **baidu**（母语图搜，不翻英；image 条目 + web 条目附图都收）
 - 英文 query → **tavily**（描述质量最高，几乎条条有详细 caption）
-- exa fallback（页面代表图 `results[].image` + 页面内 `extras.imageLinks`）
+- exa fallback（页面代表图 + 页面内 imageLinks）
 - ⚠️ zhipu **不支持**图搜，include_images 模式下被拒
 
 **输入 / 输出契约**：
 ```
 mcp__nodesign__web_search { query: "新能源汽车 充电桩 产品", include_images: true, count: 5 }
-↓ 内部：auto-route → baidu (CJK 不翻) / tavily (CJK→en 翻译) / exa
 ↓ 下载 top-N 到 <workspace>/assets/references/ref-<hash>.<ext>
 ↓ 返回值：
    • 1 个 text block：markdown，含 hits + "## Reference images (downloaded, N)"
      每条带 description / local_path / size / source / url
-   • N 个 image content block：每张下载到的 reference 图按 markdown 编号
-     顺序内嵌，**当 turn 你直接 vision-check 即可，不必再调 Read**
+   • N 个 image content block：每张下载到的 reference 图内嵌，
+     **当 turn 你直接 vision-check 即可，不必再调 Read**
 ```
 
-**vision-check → 选图 → 喂 generate_image**：拿到结果后扫一眼内嵌的 N 张图，按视觉切题度选 1-2 张最好的（光线/构图/主体清晰度），把对应 markdown 条目里的 `local_path` 字段塞进 `referenceImages[]`。靠 description 文字盲选会踩坑（描述准确度参差，特别是 baidu 用 parent title 兜底的条目）。
+**`count` 不用抠**（默认 5，上限 10）。挑参考图本来就得看得够多才挑得准 —— 主体关键时
+开到 8-10 完全可以，宁可多看几张选对，也别为省几张图选错了锚。真正要控的是**查询次数**：
+每张图作为 inline image block 回传且不释放，所以同一回合别跑超过 2-3 次查询，那才是上下文
+膨胀的主因。
 
-**关键页例外 — 让用户挑而不是 agent 默选**：cover / 跨页 anchor / portrait 这种**会被当 referenceImages 跨页种子**复用的页型，agent 默选错一张全 deck 漂。这些页的 reference 选择**主动调 AskUserQuestion + image preview**：每个 option 贴一张候选图（用 `local_path` 转 base64 或用 markdown image url），让用户视觉对比挑哪张当种子。装饰 / 普通页 agent 自选即可不必问。
+**搜图是为了锚定具体对象，不是为了理解风格**：风格名（Bauhaus / 拼贴 / risograph）模型
+自己就懂，搜它纯属白烧。要搜的是**模型不认识的具体东西** —— 用户点名的 IP、角色、真人、
+某个产品型号、小众品牌。
 
-**衔接 generate_image**：从 `local_path` 直接喂 `referenceImages[]`：
-```
-mcp__nodesign__generate_image {
-  prompt: "...",
-  referenceImages: ["assets/references/ref-a3f2b1.png"],
-  ...
-}
-```
-- ⚠️ **referenceImages 只接 workspace 相对路径** —— 喂 http url 会被拒
-- ⚠️ **选 1-2 张最切题的** —— 全 5 张全喂反而稀释 anchor，模型不知道该锚哪张
+**vision-check → 选图 → 喂 generate_image**：拿到结果后扫一眼内嵌的图，按视觉切题度选 1-2 张最好的（光线/构图/主体清晰度），把对应条目里的 `local_path` 塞进 `referenceImages[]`。靠 description 文字盲选会踩坑（描述准确度参差）。
 
-**何时不该用 `include_images`**：
-- 抽象 / 装饰类（icon, decoration, pattern, texture）—— 模型自己脑补就行
-- 概念图（流程、拼贴、隐喻）—— 没有"真实参考"的语义
-- knowledge cutoff 内的著名实体（"Apple Park"、"Wong Kar-wai cinematography"）—— 直接 prompt 就够准
+**关键页例外 —— 让用户挑而不是 agent 默选**：cover / 跨页 anchor / portrait 这种**会被当 referenceImages 跨页种子**复用的页型，agent 默选错一张全篇漂。这些页主动调 AskUserQuestion + image preview 让用户视觉对比。装饰 / 普通页 agent 自选即可。
 
-## A. 模型本质 —— 用之前先看一眼
+**何时不该用 `include_images`**：抽象/装饰类（icon、pattern、texture）、概念图（流程、隐喻）、模型本来就熟的著名实体。
 
-| 事实 | 你能利用什么 |
-|---|---|
-| **knowledge cutoff 2025-01** | brand / 名人 / 地标 / 艺术家 / 流派 / 影视 / 摄影器材 / film stock 全在脑里 |
-| **131K input token** | 跨页讲故事 + 多 reference 拼合不会爆 |
-| **reference cap：4 character + 10 object（共 14）** | 超过 4 char ref 模型会 blur 角色 identity；按角色/物体细分预算更稳 |
-| **听得懂 conversational editing** | "Keep composition, change lighting to golden hour" 比重生整张准 |
-| **多变体单 prompt** | "Create THREE distinct variations" 一次出 3 张，省 60% token |
-| **角色命名锚定** | 给角色起名（"Maya"），下个 turn 它脑里就锚定了 |
-| **不擅长 negation** | "no cars" 改写成 "empty pedestrianized street" |
-| **多语言文字渲染 + in-image localization** | 不止翻文字，还能换 props / 文化语境（详见 § D）|
-| **Thinking 永远在跑** | `thinkingLevel: minimal\|high` 是预算不是开关；thinking tokens 永远计费即便不返回 |
-| **Aspect ratio 严格遵守（NB2 改进）** | 传啥比例就出啥，prompt 里不必再"in 16:9 widescreen format"重复 |
+## B. 怎么写 prompt
 
-**直接点名**——别犹豫：
-- ✅ "Wong Kar-wai cinematography"  ✅ "Apple Park building"  ✅ "Van Gogh-style oil painting"
-- ✅ "Beatles' Abbey Road photo composition"  ✅ "Fujifilm color science"  ✅ "Bauhaus poster aesthetic"
-- ✅ "Saul Bass minimalist title sequence"  ✅ "ukiyo-e woodblock print style"  ✅ "1980s VHS aesthetic"
+### B0. 先在脑内把画面立起来（铁律，优先于下面所有技巧）
 
-**别让 NB2 干这些（不是它的活）**：
+写 prompt 之前，像描述一张**已经存在的画**那样，从机位开始把画面从左到右、从前到后走
+一遍：每件东西在哪、朝哪、被什么光照着。写出来的应该是"我看见了什么"。
 
-| 想做的事 | 别叫 NB2 干，改叫 |
-|---|---|
-| 调工具 / function calling | 主 agent 自己（NB2 不支持 tool use）|
-| 返结构化 JSON | 主 agent + AskUserQuestion 或自己解析 |
-| 执行代码 / 算公式 | 主 agent 用 Bash 跑 Python |
-| 抓 URL / 浏览网页 | `mcp__nodesign__web_search` |
-| 用 file search / 读文档 | 主 agent Read，重要文档用 `referenceImages` 喂 PDF（见 § K）|
-| Maps grounding | 不支持 |
-| 持久 context caching | 不支持，每次请求自带需要的 reference |
-| 语音 / 视频输入输出 | NB2 仅吃 text + image + PDF，输出仅 image + text |
+**不要靠堆叠否定句**。禁令只能封住已知的错法，模型会换一种没被禁的错法；正面成像把
+自由度直接占满，错法没有落脚点。出错时先怀疑"画面没想清楚"，而不是"禁令写得不够多"。
+`Avoid:` 段只留真正的底线（零文字、无他人这类全局军规），单张图的造型要求一律转成正面描述。
 
-## B. 5 元素叙述公式（强约束 prompt 结构）
+空间关系用成像语言（"A 在 B 前面 / 被 C 挡住"），不要写"A 不许穿过 B"。
+
+### B1. 结构 —— 5 元素叙述公式
+
+固定顺序：**场景/背景 → 主体 → 关键细节 → 约束 → 用途**。展开成句就是：
 
 ```
 [Subject] + [Action] + [Location/context] + [Composition] + [Style]
 ```
 
-3-5 句自然段比关键词列表准 10×。每段给 1-2 个具体属性。
+3-5 句自然段比关键词列表准一个量级，每段给 1-2 个具体属性。带上用途（广告 / UI 稿 /
+信息图）来定完成度；复杂请求用 § B3 的短标签行，别写成一大坨。
 
 **反例 vs 正例**：
 - ❌ `"a woman on a street, blue dress, day"`
 - ✅ `"[Subject] A young woman in a light blue linen shirt and tailored beige slacks, [Action] standing at a zebra crosswalk waiting for the light to change, [Location] in central Lisbon's Chiado district, midday overcast light filtered by tall pastel buildings, [Composition] medium shot at street level, slightly low angle, [Style] documentary photography style, 85mm shallow depth of field f/2.0, natural skin tones, Fujifilm color science"`
+
+### B2. 具体度政策（最容易做反的一条）
+
+- 用户的描述**已经具体**了 → **规范化**成干净的 spec，**不要加创意要求**
+- 用户的描述**很泛** → 可以适度补，但只补那些真正提升成片的
+
+| 允许补 | 不许补 |
+|---|---|
+| 构图与取景提示 | 没被暗示的额外人物、道具、物体 |
+| 用途与完成度提示 | 没被暗示的品牌色、标语、故事线 |
+| 版面留白（给标题让位） | 没有版面依据的左右位置指定 |
+| 支撑该请求的场景具体化 | —— |
+
+要写实照片就直接写 `photorealistic`，并给具体真实质感（毛孔、织物磨损、材料颗粒、
+日常的不完美），别靠"高级感"这类抽象词。
+
+### B3. 标签化 spec（复杂请求用它）
+
+```text
+Use case: <下面 B4 的 slug>
+Asset type: <这张图用在哪>
+Primary request: <主诉求>
+Input images: <Image 1: 角色; Image 2: 角色>   （有参考图时才写）
+Scene/backdrop: <环境>
+Subject: <主体>
+Style/medium: <照片 / 插画 / 3D / …>
+Composition/framing: <远近、视角、位置>
+Lighting/mood: <光线 + 情绪>
+Color palette: <配色>
+Materials/textures: <表面质感>
+Text (verbatim): "<精确文字>"
+Constraints: <必须保持 / 必须避免>
+Avoid: <底线级禁令>
+```
+
+只用帮得上忙的那几行，别把模板填满。这是脚手架不是表单。
+
+### B4. 用例分类 slug（分类决定了上面该重点写哪几行）
+
+**生成**：`photorealistic-natural` · `product-mockup` · `ui-mockup` · `infographic-diagram` ·
+`scientific-educational` · `ads-marketing` · `productivity-visual` · `logo-brand` ·
+`illustration-story` · `stylized-concept` · `historical-scene`
+
+**编辑**：`text-localization` · `identity-preserve` · `precise-object-edit` ·
+`lighting-weather` · `background-extraction` · `style-transfer` · `compositing` ·
+`sketch-to-render`
+
+### B5. 分类要点（挑你这次用得上的看）
+
+| slug | 重点 |
+|---|---|
+| photorealistic-natural | 当成"此刻真的拍下来的一张照片"来写；摄影语言（镜头/光线/取景）；要真实质感；别加过度精修感 |
+| product-mockup | 描述产品与材质；轮廓干净、标签清晰；有文字就要求逐字还原并指定字体 |
+| ui-mockup | **先说清完成度**（可交付的高保真稿 还是 低保真线框），再谈布局、层级、实际 UI 元素；别用概念艺术的措辞 |
+| infographic-diagram | 定读者与信息流向；显式标注各部分；要求文字逐字还原 |
+| logo-brand | 简单可缩放；强剪影、留白平衡；不要装饰性花活 |
+| ads-marketing | 当创意 brief 写：定位、受众、调性、场景、精确标语 |
+| productivity-visual | 点名具体产物（幻灯片/图表/流程图），定画布与层级，给真实标签与数据 |
+| illustration-story | 定分格或场景节拍，每个动作写具体 |
+| stylized-concept | 指定风格线索、材质完成度、渲染方式（3D / 厚涂 / 黏土），别顺手编故事 |
+| historical-scene | 写明地点年代与考据要求，服装道具环境都要卡住 |
+| identity-preserve | 锁死身份（脸、身形、姿态、发型、表情），只改指定项，光影要接上 |
+| precise-object-edit | 精确说明删/换什么，周围材质与光照保持不变 |
+| lighting-weather | 只改环境（光、影、大气、降水），几何与取景与主体身份不动 |
+| style-transfer | 说清要保留什么（构图/剪影/位置）、要改什么，加一句 `no extra elements` 防漂 |
+| compositing | 按 index 引用输入图，说明谁挪到哪，匹配光照/透视/比例 |
+| sketch-to-render | 保住布局、比例、透视，只补材质与光照，不加新元素 |
 
 ## C. 词汇库（按场景分类）
 
@@ -118,450 +191,293 @@ mcp__nodesign__generate_image {
 | 材质 | navy blue tweed, etched silver leaf, matte ceramic, brushed steel, raw linen, hand-blown glass, weathered concrete, lacquered wood, brushed velvet |
 | 艺术流派 / 海报 | Bauhaus, Wabi-sabi, Memphis design, brutalist concrete, art nouveau lithograph, ukiyo-e, Mucha poster, Mondrian primary, Saul Bass minimalist, Swiss International typographic |
 
-## D. 渲文字 4 条铁律（Nano Banana 2 杀手级能力）
+直接点名不要犹豫：`Wong Kar-wai cinematography` / `Van Gogh-style oil painting` /
+`Fujifilm color science` / `Bauhaus poster aesthetic` / `ukiyo-e woodblock print style`。
 
-1. **目标文字必带引号**：`render the words 'Annual Report 2026' on the cover`
-2. **指定字体风格 OR 字体名**：`in flowing Brush Script font` / `in Century Gothic 12pt` / `in heavy blocky Impact font`
-3. **多语言**：用一种语言写 prompt + 指定输出语言（`output the text in Japanese using a brush calligraphy style`）
-4. **复杂排版先对话再生图**：> 3 行字 / 多种字体混排时，先用 chat 跟模型对齐文字内容，再要求生图
+## D. 图里的文字
 
-**典型 prompt（cover 多字段并存）**：
-> "A high-end glossy magazine cover, deep cherry red background. Render three lines of text with the following exact styling: top line 'GLOW' in flowing elegant Brush Script font; middle line '10% OFF' in heavy blocky Impact font; bottom line 'Your First Order' in thin minimalist Century Gothic font. Translate the text into Korean and Arabic for the bottom-right corner."
+1. **精确文字加引号或全大写**：`render the words 'Annual Report 2026' on the cover`
+2. **指定字体风格或字号颜色位置**：`in flowing Brush Script font` / `in heavy blocky Impact font`
+3. **生僻词逐字母拼**，并要求逐字还原、不许多字
+4. **多语言**：用一种语言写 prompt + 指定输出语言
 
-**进阶玩法 — typographic poster**（cover / section-divider 必看）：
-> "A typographic poster with a solid black background, bold letters spell 'NEW YORK', filling the center of the frame. The text acts as a cut-out window. A photograph of New York skyline is visible ONLY inside the letterforms."
+**什么该交给 HTML 而不是模型**：小字（等效 12px 以下容易糊）、超过 3 行的正文段落、
+需要精确数量的重复元素（"正好 5 张卡"不一定真出 5 张）、以及任何数据与事实性内容
+（模型会编数字）。让模型只渲大标题和标语，正文用 HTML 叠上去。
+
+**多字段并存的封面**（每行单独指定字体）：
+
+> "A high-end glossy magazine cover, deep cherry red background. Render three lines of
+>  text with the following exact styling: top line 'GLOW' in flowing elegant Brush Script
+>  font; middle line '10% OFF' in heavy blocky Impact font; bottom line 'Your First Order'
+>  in thin minimalist Century Gothic font."
+
+**进阶：字体当取景窗（typographic poster）** —— cover 和 section-divider 必看的一招：
+
+> "A typographic poster with a solid black background, bold letters spell 'NEW YORK',
+>  filling the center of the frame. The text acts as a cut-out window. A photograph of
+>  the New York skyline is visible ONLY inside the letterforms."
 
 ### In-image localization（已有图本地化，不只是翻文字）
 
-NB2 会本地化**整个视觉文化语境**——文字翻译只是其中一项，还能换 props / 货币 / 着装 / 食物 / 场景文化语境。规则：保留品牌身份 + 主体构图，调整其他即可：
+模型能本地化**整个视觉文化语境**——文字翻译只是其中一项，还能换道具、货币、着装、
+食物、场景。规则是：保留品牌身份与主体构图，其余按目标市场调。
 
 > "Localize this ad for the Japanese market.
 >  Translate the headline exactly to Japanese: '〜こだわりの一杯〜'.
 >  Adapt background props, packaging context, and lifestyle cues for Tokyo consumers.
 >  Keep the product, logo, composition, and brand colors unchanged."
 
-适合：跨地区营销素材 / 多语言 deck 版本 / 品牌 global → local 适配。
+适合：跨地区营销素材 / 多语言版本 / 品牌 global → local 适配。
 
-## E. Reference image 4 大模式（max 14 张：≤4 character ref + ≤10 object ref）
+## E. Reference image
 
-**multi-modal formula**：
+**契约**：
+- ⚠️ 只接 **workspace 相对路径**，喂 http url 会被拒
+- ⚠️ **选 1-2 张最切题的**。全喂反而稀释锚点，模型不知道该锚哪张
+- 每张图在 prompt 里标明 index 和角色（`Image 1: 编辑目标`、`Image 2: 风格参考`）
+- ⚠️ **参考图只影响画风与主体特征，不提供逐格/逐像素对齐能力**（见 § H）
+
+| 模式 | 怎么用 |
+|---|---|
+| **风格一致（跨页锚）** | 第 1 张 cover 当种子，后续 hero / section-divider 都引它 → 整篇像同一部片子 |
+| **角色一致（多页叙事）** | portrait 跨页引 + 给角色起名（"Maya, the woman in Reference 1"）|
+| **logo / brand 嵌入** | 用户上传 logo 进 `assets/`，prompt 写 "Place the logo from Reference 1 etched into the bottle in Reference 2" |
+| **精修而非重画** | `screenshot_canvas` 截当前页当 reference，配 § G 的模板 |
+| **真实主体锚定** | `web_search { include_images: true }` 拿真图 → 喂进来 + "Use the product in Reference 1 as the subject; render it in [场景]" |
+
+**multi-modal 公式**：
 
 ```
-[Reference images] + [Relationship instruction] + [New scenario]
+[参考图] + [关系说明] + [新场景]
 
-例: "Using the napkin sketch (Reference 1) as the structure
+例："Using the napkin sketch (Reference 1) as the structure
     and the fabric sample (Reference 2) as the texture,
     transform this into a high-fidelity 3D armchair render.
     Place it in a sun-drenched, minimalist living room."
 ```
 
-| 模式 | 怎么用 |
-|---|---|
-| **风格一致（cross-page anchor）** | 第 1 张 cover 当 referenceImages 种子，所有后续 hero/section-divider 都引它 → 整 deck 像同一张片子 |
-| **角色一致（多页叙事）** | portrait 跨页引 + 给角色起名（"Maya, the woman in Reference 1"）→ 同一个角色穿越不同场景 |
-| **logo / brand 嵌入** | 用户上传 logo 进 `assets/`，每张 product mockup 把 logo 当 reference + prompt"Place the logo from Reference 1 etched into the bottle in Reference 2" → 真实嵌融 |
-| **In-painting（精修而非重画）** | 调 `screenshot_canvas` 截当前页 → 把截图当 reference + 用 conversational editing 语言（详见 § G semantic masking）|
-| **真实主体锚定（web 搜来的 reference）** | 模型不熟的产品/品牌/最新事件 → 先 `web_search { include_images: true }` 拿真实图，再把 `assets/references/ref-xxx.<ext>` 喂 `referenceImages` + prompt"Use the product in Reference 1 as the subject; render it in [your scene]" |
+### 进阶 edit modes
 
-### 进阶 edit modes（reference 工作流的高级用法）
+#### 多图合成（product-on-model / element-transfer）
 
-#### Multi-image composition（product-on-model / element-transfer）
-
-NB2 高保真合成的官方杀手能力。模板：
-
-```
-Image 1 = [object/product/garment/logo]
-Image 2 = [person/environment/surface]
-Instruction: "Take [element from Image 1] and place it on/with [element from Image 2].
-              Preserve [protected details] exactly.
+```text
+Image 1 = [物体 / 产品 / 服装 / logo]
+Image 2 = [人 / 环境 / 表面]
+Instruction: "Take [Image 1 里的元素] and place it on/with [Image 2 里的元素].
+              Preserve [要保护的细节] exactly.
               Adjust lighting, shadows, perspective, and material interaction naturally."
 ```
 
-具体例：
 > "Take the blue floral dress from Image 1 and put it on the woman in Image 2.
 >  Preserve her face, hair, pose, and the cafe background exactly.
 >  Match lighting and shadow direction to the cafe scene; render fabric drape naturally."
 
-适合：服装上身 mockup / 产品上场景 / logo 烙印物体 / 标牌嵌建筑。
+适合：服装上身 mockup / 产品进场景 / logo 烙印物体 / 标牌嵌建筑。
 
-#### Style transfer（保构图，只换 style）
+#### Style transfer（保构图，只换风格）
 
-不只是"梵高风"——关键是 **preserve composition / placement / silhouette**，只换 rendering style：
+不是单纯说一句"梵高风"，关键在**显式保住构图、位置、剪影**，只换渲染方式：
 
 > "Transform this product photo into a Bauhaus poster illustration.
 >  Preserve the product shape, orientation, and composition.
 >  Change only the rendering style: flat geometric forms, primary color blocks,
 >  clean vector edges, 1920s Bauhaus poster design."
 
-#### Sketch-to-final（线稿/wireframe → polished）
+加一句 `no extra elements` 防止它顺手加东西。
 
-用户给草图 / 线稿 / wireframe → 你输出 polished 视觉，**保留几何结构**：
+#### Sketch-to-final（草图 / 线框 → 成品）
+
+用户给草图或 wireframe，你输出成品视觉，**几何结构必须保住**：
 
 > "Turn this rough wireframe into a polished 16:9 SaaS product hero visual.
 >  Keep the layout, card hierarchy, and main dashboard geometry from Reference 1.
 >  Add premium glassmorphism UI, soft blue studio lighting, and realistic depth.
 >  Leave top-right negative space for HTML title overlay."
 
-适合：用户上传草图想要 hero / 产品 mockup / 概念图。
+#### 角色圣经（跨页一致）
 
-#### Character bible（多视角 + 跨页一致）
-
-对于跨多页出现的角色 / mascot / 关键产品，先建 identity sheet：
+角色 / 吉祥物 / 关键产品要跨多页出现时，先建 identity sheet：
 
 ```
-Step 1: 生成"identity sheet"（front view + 关键服装/装备特写）
-Step 2: 后续每个角度（3/4 / profile / back / action pose）都把 identity sheet 当 reference
+Step 1: 生成 identity sheet（正面 + 关键服装/装备特写）
+Step 2: 后续每个角度（3/4 / 侧面 / 背面 / 动作）都把 identity sheet 当 reference
 Step 3: 给角色起名锚定（"Maya, character from Reference 1"）
-        outfit / hairstyle / silhouette / 关键材质锚点 不允许跨页变
+        服装 / 发型 / 剪影 / 关键材质不允许跨页变
 ```
 
-适合：deck 主角跨多页出现 / 品牌 mascot / 产品多视图说明。
+**给角色起名是有效的锚**：一旦在 prompt 里把参考图里的人命名为 Maya，后面用
+"Maya" 指代比每次重描一遍五官稳。
 
-## F. 多变体单 prompt（省 token 大杀器）
+## F. 要多个候选怎么办
 
+⚠️ **旧版这里教的"一个 prompt 出 3 张"在当前后端不成立** —— 一次调用只落一个文件。
+照着那么做会拿到一张图却按三张的剧本走（往 AskUserQuestion 里塞两个不存在的路径）。
+
+两条正确路子：
+
+1. **串行调 N 次**，每次只改关键差异词（golden hour / blue hour / overcast），其余原样。
+   然后 AskUserQuestion 每个 option 贴对应那张真图。
+2. **一次出一张"三格对照条"**：prompt 里明说 `one image containing three labeled panels`，
+   让用户先挑方向；方向定了再对选中的那个单独出一张干净的。省时间，但单格分辨率低，
+   只适合定方向不适合当成品。
+
+## G. 精修优于重画
+
+用自然语言定义编辑区域，不需要画 mask。万能模板：
+
+```text
+"Change only [要改的语义目标].
+ Keep [其余：主体 / 构图 / 光线 / 配色] unchanged."
 ```
-单 prompt 出 3 候选 →
-"Create THREE distinct variations of this cover hero,
- vary the lighting and atmosphere (golden hour / blue hour / overcast)
- but keep the subject and composition consistent"
 
-→ 1 次 generate_image 出 3 张候选，紧跟 AskUserQuestion（每个 option 用 preview 字段贴对应图）让用户并排选
-→ 比连调 3 次省 60% token，且变体间风格更统一
-```
+⚠️ **我们的桥是无状态的**，所以"接着上一张改"必须显式做两件事：把上一张图放进
+`referenceImages`，并且**每一轮都重述不变量**（不重述就会漂）。别指望模型记得上一轮说过什么。
 
-适用场景：cover 候选 / portrait 朝向候选 / palette 候选 / 标题排版候选。
-
-## G. Semantic masking & Conversational editing（精修 ≫ 重画）
-
-NB2 不需要用户画 mask——你用**自然语言定义编辑区域**，模型自己分割（semantic masking）。万能模板：
-
-```
-"Change only [semantic target].
- Keep [everything else: subject / composition / lighting / palette] unchanged."
-```
-
-具体例：
-> "Change only the blue sofa to a vintage brown leather chesterfield sofa.
->  Keep the pillows, lighting, floor, wall art, and camera angle unchanged."
-
-这是 regenerate / tweak 的**默认模板**——比"重画一张差不多的"准 10×。
-
-| 想做的 | ❌ 重生整张（浪费） | ✅ semantic masking |
+| 想做的 | ❌ 重生整张 | ✅ 精修 |
 |---|---|---|
-| 改光线 | 重生整张 | "Keep composition, change only lighting to golden hour" |
-| 换背景 | 重生整张 | "Replace only the background with a neon-lit city street; keep subject and pose" |
-| 删元素 | 重生整张 | "Remove only the person on the left, extend the sidewalk; keep everything else" |
-| 换字体 | 重生整张 | "Keep layout, change only headline font to a bold serif; body text unchanged" |
-| 局部精修 | 重生整张 | screenshot_canvas + "Soften only the headline color in top-left corner; everything else identical" |
-| 换主体材质 | 重生整张 | "Change only the table material from wood to brushed steel; keep shape, position, scene" |
+| 改光线 | 重画 | "Keep composition, change only lighting to golden hour" |
+| 换背景 | 重画 | "Replace only the background with a neon-lit city street; keep subject and pose" |
+| 删元素 | 重画 | "Remove only the person on the left, extend the sidewalk; keep everything else" |
+| 换字体 | 重画 | "Keep layout, change only headline font to a bold serif; body text unchanged" |
+| 换材质 | 重画 | "Change only the table material from wood to brushed steel; keep shape, position, scene" |
 
-配合 `screenshot_canvas` 截当前页当 reference → 上面这种 prompt = 精修而非重画，token / latency / 一致性全赢。
+每次只改一处，改完再看，别一轮里改五件事。
 
-## H. 工具签名 + Aspect ratio / image size 详解
+## H. 连续帧的能力边界（实测，别重新踩）
 
-### 工具签名
+| 用法 | 结果 |
+|---|---|
+| 一张图里出**多个不同动作**（同一角色，九宫格） | ✅ 很好，同次生成内角色一致性最佳，比分九次调用稳 |
+| 九宫格 / 2×2 出**连续动画帧** | ❌ 每格独立采样，缩放、位置、发型逐格都在变 |
+| **横向长条三帧** | ✅ 成立。静区逐帧重合度极高，只有指定部位在动 |
+| 完整场景含人物（一次成图） | ✅ 接地感、透视、光照天然统一 |
+| 抠好的角色叠到另一张背景上 | ⚠️ 没有接地信息，必然是贴纸感 |
 
-```js
-mcp__nodesign__generate_image({
-  prompt: "<3-5 句自然段，5 元素公式>",
-  model: "flash",        // 'flash'(default NB2) | 'pro'(锚点图升档，见下方 model 路由)
-  aspectRatio: "16:9",   // 14 种官方比例，见下表
-  imageSize: "1K",       // '512' | '1K' | '2K' | '4K'
-  assetRole: "cover",    // 必传 — emit + record_decision 都靠它定位
-  outputName: "deck-cover-v1",
-  referenceImages: [     // 可选, max 14（≤4 character + ≤10 object）
-    "assets/user-uploaded-logo.png",
-    "assets/generated/cover-anchor.jpg",  // 用作 cross-page 风格种子
-    // 也可以是 .pdf —— 见 § K Document-to-visual
-  ],
-  thinkingLevel: "minimal",  // 'minimal'(default) | 'high'；预算不是开关，永远在跑且永远计费
-  useGrounding: false,        // opt-in；真实地标/产品/场景开 ✅，人物/装饰/抽象不开 ❌（详见 § L）
-})
-```
+**根因**：模型没有"上一帧"的概念，每格是独立采样的一张相似的画。参考图救不了这件事。
 
-### Aspect ratio × imageSize 映射（14 比例 + 4 size）
+**结论：动画交给 CSS，绘画交给模型。** 一朵云 + `translateX` 就是完全连贯的飘动；
+多出几朵不同的云，价值在"不重样"，不在"能动"。
 
-NB2 不出"标准 1920×1080"——实际像素见下表（部分常用组合）：
+**头身比指令基本无效**：要 4.5 头身给你 7 头身。拿 Q 版图当参考图的结果是大头配长腿的
+恐怖谷，比不控制更糟。要 Q 版就整套重画，别指望中间态。
 
-| 比例 | 用例 | 1K 实际像素 | 2K | 4K |
-|---|---|---:|---:|---:|
-| 16:9 | deck cover / hero / 视频缩略图 | 1376×768 | 2752×1536 | 5504×3072 |
-| 9:16 | mobile story / 竖屏宣传 | 768×1376 | 1536×2752 | 3072×5504 |
-| 21:9 | 网站超宽 hero / 影院遮幅 | 1584×672 | 3168×1344 | 6336×2688 |
-| 4:5 / 5:4 | portrait / Instagram 图 | ~1144×1432 | ~2288×2864 | ~4576×5728 |
-| 3:2 / 2:3 | 横/竖摄影标准 | 1248×832 | 2496×1664 | 4992×3328 |
-| 4:3 / 3:4 | 老 deck / 印刷 | 1184×888 | 2368×1776 | 4736×3552 |
-| 1:1 | icon / pattern / 头像 | 1024×1024 | 2048×2048 | 4096×4096 |
-| **8:1 / 1:8** | 顶部公告条 / 侧边装饰带 | 3072×384 / 384×3072 | 6144×768 | 12288×1536 |
-| **4:1 / 1:4** | hero strip / 长卷海报 | ~2192×548 | ~4384×1096 | ~8768×2192 |
+## I. 出图不理想时，对照这 6 条看
 
-**512 (0.5K) tier**：长边 ~512px。专给 icon / sticker / decoration / UI 元素用——latency 和成本各降 ~50%，对小尺寸用例效果跟 1K 看不出差。**别用 1K 出 32px icon**。
+- **结构** —— 关键词堆砌 vs 自然段落描述。后者稳得多，见 § B1
+- **逻辑** —— 否定描述（`no cars`）容易被理解反；改成肯定场景（`empty pedestrianized street`）
+- **修饰词** —— `nice` / `cool` / `高级感` 太抽象；换成具体视觉词（光线 / 材质 / 色温）
+- **风格锚** —— 没点流派或摄影风格，输出会游移；点名一两个参考就定向了
+- **文字精度** —— 不带引号、不指定字体 → 跑样
+- **跨页一致** —— 缺 referenceImages 锚，每页独立生成必漂
 
-### Size 决策表
+**另外两条**：
+- icon / sticker 会带底色（不支持透明）—— 明确写 `white background` 或事后走 § M
+- 同一个 prompt 连 reroll 3 次以上收益递减；改关键参数或回头问用户方向更有效
 
-| 用例 | 推荐 size | 理由 |
+### 已知失败模式（final 接受前必扫）
+
+| 维度 | 坑 | 检查 / 对策 |
 |---|---|---|
-| icon / sticker / 装饰 / UI 元素 | **512** | 渲染目标本来就小，更高分辨率纯浪费 |
-| draft / 候选 / approval gate 预览 | 1K | default，approval 通过再升档 |
-| deck cover / hero / 关键页 final | 2K | 渲染清晰、token 还可控 |
-| 印刷 / 大屏展示 / 商用素材 | 4K | token 翻倍，approval 后再升 |
-
-### 反规则：尺寸/比例只走 API 参数
-
-❌ 别在 prompt 里写 "in 4K resolution" / "16:9 widescreen format" / "high resolution image" —— NB2 看 API 参数（`aspectRatio` / `imageSize`），prompt 里写这些是噪音
-✅ prompt 只描述场景内容，size/ratio 全靠工具参数控制
-
-### Thinking 透明度
-
-| 字段 | 值 | 含义 |
-|---|---|---|
-| `thinkingLevel` | `minimal` (default) | NB2 用最少 thinking budget 出图，latency 优先 |
-| `thinkingLevel` | `high` | 复杂 composition / 多 reference / 嵌大段文字 / 关键 final 时升 |
-| 内部 `includeThoughts` | wrapper 默认 `false` | 不返回 interim thought images（只返 final 那张）|
-
-**注意**：thinking tokens 永远计费——不是"关 thinking 省钱"的开关，而是"用多少 thinking 思考"的预算。`high` 比 `minimal` 慢 + 贵，但对 plan compliance / 文字精度 / 多 reference 一致性的提升常常值得。
-
-### Model 路由：flash (default) vs pro
-
-NB2 有两档：
-
-| `model` | id | 用 | 不用 |
-|---|---|---|---|
-| `'flash'` (default) | gemini-3.1-flash-image-preview | 几乎所有图——装饰 / 场景 / portrait / icon / 单页用 hero / 多变体探索 / 草稿 | — |
-| `'pro'` | gemini-3-pro-image-preview | **会成为 referenceImages 种子的 anchor 图**：cover hero / character bible identity sheet / brand mockup hero / 标志性数据可视化 final | 装饰 / 单页用图 / 草稿 / 探索阶段 / 多变体候选 |
-
-**判断规则**（一句话）：**这张图会被后续 ≥3 张图引用为 reference？** 是 → `pro`，否 → `flash`。
-
-**为啥锚点图升 pro 值得**：
-- pro 比 flash 慢 ~2-3× + 贵 ~2-3×（单图成本几分钱差距）
-- 但锚点图错了，downstream 引它的所有图全漂、整个 deck 视觉散——返工成本远超 pro 单图溢价
-- 锚点图通常 1 个 deck 只有 2-5 张（cover / 主角 portrait / brand mockup），总额外成本可控
-
-**反例**（这些场景**别**升 pro，纯浪费）：
-- 多变体单 prompt（`"Create THREE distinct variations"` 出 3 张候选选哪张当锚）—— 探索阶段用 flash 出候选，**只对最终选中的那张** rerun 一次 pro
-- 装饰元素 / 单页用图 / icon / sticker —— 用不上的优化
-- 草稿 / approval gate 之前的预览 —— 用 flash + 1K 看方向，approval 后再决定 pro 升档
-
-## I. Prompt 质量自检 6 维度（输出不理想时对照看）
-
-- **结构** — 关键词堆砌（`"woman blue dress sunny"`）vs 自然段落描述。后者通常输出更稳，见 § B 5 元素公式
-- **逻辑** — 否定描述（`"no cars"` / `"without people"`）模型容易理解反；改用肯定场景（`"empty pedestrianized street"`）更可控
-- **修饰词** — `"nice"` / `"pretty"` / `"cool"` / `"高级感"` 过度抽象；用具体视觉词（灯光 / 材质 / 色温 / 字号）替代效果更可控
-- **风格锚** — 没指定艺术流派 / 摄影风格 → 输出容易游移；点名一两个参考（`"Saul Bass minimalist"` / `"Fujifilm color science"`）会定向
-- **文字精度** — 渲文字不带引号 + 不指定字体 → 容易跑样；明确 `render the text "XXX" in [Font Name]` 更稳
-- **跨页一致** — 多页角色故事缺 referenceImages anchor → 每页独立生成时角色 / 调性容易漂；第 1 张定好后用 referenceImages 跨页复用
-
-**额外注意**：
-- icon / sticker 默认会出灰底（NB2 不支持 transparent）— 明确 `"white background"` 可消除
-- 同 outputName 反复 reroll（≥3 次同 prompt）收益递减；改 prompt 关键参数或询问用户新方向通常更有效
-
-### NB2 已知失败模式（model card 列出的常见坑）
-
-NB2 不是万能的——以下是 final 接受前**必扫**的 checklist：
-
-| 维度 | 坑 | 检查 |
-|---|---|---|
-| **小字** | 1K 下 < 12px 等效字号容易模糊 | 关键文字单独大字 + 升 2K，或用 HTML overlay 覆盖文字别让 NB2 渲 |
-| **长段落 / page-length text** | 模型在 > 1 段正文时容易跑样 | > 3 行字 / 整段 paragraph 让 HTML 渲，NB2 只渲 headline / 标语 |
-| **角色漂** | 跨页生成同角色容易微变（脸型 / 发色 / 服装细节）| 跨页用 § E character bible 工作流（identity sheet + reference 链）|
-| **左右 / 空间定位** | "left of"/"right of"/"behind" 偶尔反 | 关键定位用绝对短语（"in the foreground"/"in the bottom-right corner"）|
-| **数量** | "exactly 5 cards" 不一定真出 5 张 | 数字关键时让 HTML 复制 N 份，NB2 只出 1 张 template |
-| **Mask / sketch 残墨** | reference 是带涂鸦/标注的截图时 NB2 偶尔把标注当主体复制 | 截图前清干净 reference 上的标注 / 红框 / 箭头 |
-| **Paste-artifact** | 多 reference 合成时偶尔把 reference 的局部 1:1 paste 进来 | 检查输出图有没有突兀的"贴片"边缘；有就改 prompt 强调 "naturally blend" / "reinterpret" |
-| **factuality** | reference 没给的信息 NB2 可能编（datestamp / sources / 数字）| 数据 / 事实类内容用 HTML 渲，别让 NB2 自己写 |
-| **transparent bg** | NB2 模型本身不支持，永远填某色背景 | **server 端独立工具兜底**：调 `mcp__nodesign__remove_background({ inputPath })` 抠任意 workspace 图片（rembg isnet + alpha matting），输出 RGBA PNG。warm ~8s。默认档已开 alpha matting，飘发 / 烟雾这类软边留得住；硬边主体（产品 / 图标 / UI 截图）主动降到 quality:'fast' 拿更利落的切口。SVG 图标仍优先 lucide-react。详见 § M |
-| **SynthID watermark** | 所有 NB2 生图自带不可见 watermark | 知道即可；商用素材用户该知情 |
+| **小字** | 等效 12px 以下容易糊 | 关键文字单独放大，或用 HTML overlay 覆盖，别让模型渲 |
+| **长段落** | 超过一段正文就跑样 | 3 行以上让 HTML 渲，模型只渲标题和标语 |
+| **角色漂** | 跨图生成同一角色会微变（脸型 / 发色 / 服装细节） | 走上面的角色圣经工作流，identity sheet + reference 链 |
+| **左右与空间** | `left of` / `right of` / `behind` 偶尔会反 | 关键定位改用绝对短语（`in the foreground` / `in the bottom-right corner`） |
+| **数量** | `exactly 5 cards` 不一定真出 5 张 | 数字关键时让 HTML 复制 N 份，模型只出 1 张模板 |
+| **残墨** | 参考图是带涂鸦 / 红框 / 箭头的截图时，模型偶尔把标注当主体画进去 | 截图前把标注清干净再当 reference |
+| **贴片感** | 多图合成时偶尔把参考图的局部 1:1 粘进来 | 检查有没有突兀的拼接边缘；有就在 prompt 里强调 `naturally blend` / `reinterpret` |
+| **编内容** | 参考图没给的信息模型会自己编（日期 / 来源 / 数字） | 数据与事实类内容一律 HTML 渲，别让模型写 |
 
 ## J. 调完必做
 
-1. **`record_decision`** —— 把 prompt + role + path + 用户评价记进任务便利贴（`notes/决策.md`），重生时能查回，用户在画布上也看得到
-2. **关键节点的反馈循环**：cover / 第一个 portrait / logo 嵌入这种页面级 anchor（会被当 referenceImages 种子用于 downstream），生完图后在自然回话里邀请用户反馈一下方向（例如："这个 cover 当全 deck 视觉锚 OK 吗？想换风格告诉我"）。这些是 downstream 的种子，早定早收益；用户下一轮 chat 反馈就是 conversational gate（generate_image 的 image content block 已自动渲染在 chat，用户能直接看到）。
-3. **落档后 read_page / list_pages 看到的是 thumbnail 快照**（`/api/canvas` GET 时把 `assets/generated/<n>.<ext>` 透明重写到 `.thumbnails/<n>.thumb.jpg`），真实 HTML / 文件系统中的 `<img src>` 不变。如果你 Read canvas.html 想确认 src 已写进去——直接看 Read 结果（不经 thumbnail 重写）；如果想知道 preview iframe 加载哪张图——查 `.thumbnails/` 目录。重生原图 N 秒内 thumbnail 自动更新，preview 刷新即见最新。
+1. **`record_decision`** —— 把 prompt + role + path + 用户评价记进任务便利贴
+   （`notes/决策.md`）。重生时能查回，用户在画布上也看得到。
+   ⚠️ 入参是 `title`（必填）/ `rationale`（必填）/ `scope` / `alternatives`，**没有 `topic`**。
+2. **关键节点的反馈循环**：cover / 第一个 portrait / logo 嵌入这种会被当跨页种子的 anchor，
+   生完在自然回话里邀请用户看一眼方向（生图的 image block 已自动渲染在 chat，他直接看得到）。
+   种子早定早收益。
+3. **落档后 read_page / list_pages 看到的是 thumbnail 快照**（`assets/generated/<n>.<ext>` 被
+   透明重写到 `.thumbnails/<n>.thumb.jpg`），真实 HTML 里的 `<img src>` 不变。想确认 src
+   写进去没有就直接看 Read 结果；重生原图后 thumbnail 数秒内自动更新。
 
-## K. Document-to-visual（PDF 输入 → 信息可视化）
+## M. remove_background —— 独立工具抠透明背景
 
-NB2 把 `.pdf` 当 reference 喂进去会**真读 PDF 文本 + 表格**，然后按你的 prompt 生成 accurate 信息可视化。spike 实测一份 745 字节的 Q3 sales report PDF，模型把 "$4.2M / +18% / APAC / 42% / 8,500 / +25% YoY" 全部精准还原进 4 stat card 信息图。
+gpt-image-2 不支持透明背景（永远填一个底色），跟画布底色冲突时图会直接糊在上面。
+`mcp__nodesign__remove_background({ inputPath })` 调 server 端 rembg 抠掉背景，输出 RGBA PNG。
 
-**用法**：直接把 PDF 路径放 `referenceImages`，跟 image reference 同接口：
+**为什么是独立工具不是生图的 flag**：要抠的不止刚生的图——用户上传的产品照、之前生过的图、
+截图都该能抠。生图后想抠就再调一次，0 重复 token。
 
-```js
-mcp__nodesign__generate_image({
-  prompt: "<想要的可视化 — 见下方 4 类场景>",
-  aspectRatio: "16:9",
-  imageSize: "2K",
-  assetRole: "infographic",
-  referenceImages: ["assets/uploads/q3-sales-report.pdf"],
-})
-```
+### 两个正交的轴
 
-### 4 类高 ROI 场景
+**quality（边缘精细度）**：
 
-| 场景 | 用户行为 | prompt 模板 |
+| quality | 组成 | 什么时候用 |
 |---|---|---|
-| **研究报告 → infographic** | 用户上传白皮书 / 行业报告 PDF | `"Use the provided PDF as the factual source. Extract the [N] most important [data points / findings / metrics] for [audience]. Create a [aspect] [infographic / dashboard / chart] with [N zones / cards / sections]. Use [visual style: minimal / corporate / editorial]. Do not invent facts not present in the PDF."` |
-| **brand guideline → 风格锚** | 用户上传 brand book / VI 手册 PDF | `"Use the provided brand guideline PDF as the visual reference. Generate a [hero / cover / mood board] that strictly follows the brand's primary palette, typography spirit, and tonal system from the PDF. Apply to a [deck cover / product mockup / scene]."` —— 后续每张图都引同一个 PDF 让整 deck 锁品牌 |
-| **outline / meeting notes → deck 视觉骨架** | 用户上传 outline / 纪要 PDF | `"Read the document outline in the PDF. For each section, generate a thumbnail-style visual representing its core idea. Layout as a [N×M grid] storyboard for a [deck] structure."` |
-| **竞品 deck → 模仿+创新** | 用户上传竞品 deck PDF | `"Reference the layout, color, and visual hierarchy of the provided competitor deck PDF. Create a similar visual style for [your topic]. Adapt their best layout patterns but use [your brand palette]."` |
+| `balanced`（默认） | isnet-general-use + alpha matting | **默认就用它**。人物 / 毛发 / 烟雾 / 织物 / 任何软边 |
+| `fast` | isnet-general-use，不开 AM | **主动降档**：硬边主体，软边反而像糊——产品图 / 图标 / logo / UI 截图 / 平涂图形。大批量也用它 |
+| `best` | birefnet-general-lite + AM | 峰值内存 2.4GB+，**当前被 `NODESIGN_REMBG_QUALITY_CAP` 禁着**，调了会被显式拒绝。别写进方案里 |
 
-### Prompt 写作要点
+**style（底模画风）**：与 quality 正交，只换 `fast`/`balanced` 的底模。
 
-- **明确"用 PDF 作为 factual source"** —— 防止 NB2 把 PDF 当装饰参考随便发挥；要它**真读内容**
-- **明确"don't invent facts not in the PDF"** —— 信息可视化场景幻觉成本极高（编一个数字 = 整张图作废）
-- **指定数据维度** —— "extract the 5 most important metrics" 比 "summarize the report" 准
-- **指定视觉风格** —— editorial / corporate / minimal / dashboard 等具体词，别留 "good design"
+| style | 底模 | 用在 |
+|---|---|---|
+| 缺省 | isnet-general-use | 照片、真实物体 |
+| `'anime'` | isnet-anime（动漫线稿专训） | **二次元立绘 / 插画 / 贴纸 / 生成的动漫角色**。通用版会把浅色主体判成背景把人抠没，这条线路就是为治那个病加的 |
 
-### 已知限制
-
-- **PDF 单文件 ≤ 50MB**（gateway 限制）；超大 PDF 拆成多个分别喂
-- **PDF 只读文本 + 表格** —— PDF 里的图片、复杂图表、扫描页 NB2 不一定准确还原；纯图片 PDF 应当成 image reference 处理
-- **PDF 算 reference budget** —— 1 个 PDF = 占 1 个 reference 槽位（共 14 槽）
-- **PDF 不能做 character ref** —— PDF 算 object，不占 4 char ref 槽位
-
-## L. Image Search Grounding（NB2 调 Google Image Search 锚真实场景）
-
-NB2 独有能力：传 `useGrounding: true`，模型在生图前可调 Google Image Search 拿真实参考，渲染出来的视觉**锚到现实实体**——不是模型脑里"通用印象"。
-
-spike 实测：地标场景（Cape Coast Castle）开 grounding 出来的图能看到加纳国旗 + 真实建筑细节；不开 grounding 是模型脑里"通用非洲殖民堡垒"。
-
-### 用 vs 不用决策表
-
-| 场景 | 用 grounding？ | 理由 |
-|---|:---:|---|
-| 真实地标 / 建筑 / 城市风貌 | ✅ | 模型对最近发布 / 小众建筑不熟，grounding 救场 |
-| 真实产品 / 设备（特别是新发布）| ✅ | knowledge cutoff 之后的产品脑里没参考 |
-| 自然风光 / 特定地理位置 | ✅ | 季节 / 气候 / 时段细节模型容易脑补错 |
-| 特定品牌门店 / 工厂 / 办公场景 | ✅ | 品牌识别度强的场景 |
-| 历史事件场景 / 新闻图风格 | ⚠️ 慎用 | 新闻图敏感，attribution 必须显，cookbook agent 不直接做 |
-| **真实人物 / 名人 / 角色 / 二次元 IP** | ❌ 没用 | model 自己拒触发（Google guardrail "no Image Search for people"），传了也是 vanilla 行为 |
-| 抽象 / 装饰 / 纹样 / 图标 | ❌ 没用 | 没有"真实参考"语义，浪费 60-90s |
-| 概念图 / 隐喻 / 象征 | ❌ 没用 | 同上 |
-| 草稿 / 探索阶段 | ❌ 别用 | 慢 + 后期不一定用，纯浪费 |
-
-### 调用
-
-```js
-mcp__nodesign__generate_image({
-  prompt: "A photorealistic image of Cape Coast Castle in Ghana as it looks today, midday tropical sun, aerial shot showing the white fortress walls and Atlantic Ocean.",
-  useGrounding: true,    // ← opt-in
-  aspectRatio: "16:9",
-  imageSize: "2K",
-  assetRole: "section-divider",
-})
-```
-
-### 工作流约束
-
-| 项 | 说明 |
-|---|---|
-| **Latency** | 真触发 grounding 时 ~60-90s（vs 普通生图 ~15-30s）。draft 阶段别开 |
-| **成本** | gateway 可能按 search query 额外计费，但单图溢价不大；锚点图值得 |
-| **人物自动跳** | 模型对 portrait / character / "specific person" 类 prompt 不会真触发 grounding，wrapper 返回 caption 会带上 "(grounding requested but model didn't fire — likely person/character query)" 让你知道 |
-| **Attribution** | wrapper 把完整 attribution metadata 落到 `assets/generated/<name>.grounding.json` sidecar；CallToolResult 里第二个 text block 显示 queries + top sources URL 让你简短报给用户（"已用 Google Image Search 锚 5 个 source"）|
-| **Reference 互补** | 跟 `referenceImages` 不冲突——grounding 是模型动态拉，referenceImages 是你显式喂；同时用得到，模型会综合两边 |
-
-### 反例：别凡事都开
-
-错误用法 → 浪费 60-90s + 出图也没区别：
-- ❌ 装饰背景 / pattern / 抽象艺术 → 不开 grounding
-- ❌ 角色 / portrait → 不开（模型自己拒）
-- ❌ 多变体探索 → 用 vanilla 出 3 个候选选一个，**只对最终选中的那张** rerun + grounding
-- ❌ 同 prompt 反复 reroll —— grounding 不是质量万能药，prompt 不准 grounding 也救不回
-
-## M. remove_background —— 独立 MCP 工具抠透明背景
-
-NB2 模型本身不支持 transparent bg（永远填某色背景），canvas bg 跟 NB2 默认色冲突时（agent 写黄底 deck，NB2 出灰底图直接糊）。**独立工具** `mcp__nodesign__remove_background({ inputPath })` 调 server 端 rembg 抠掉背景，输出 RGBA PNG 给你叠在任何 canvas 上。
-
-**默认 quality = `balanced`（isnet-general-use + alpha matting）**，warm ~8s。alpha matting 是消 halo 的关键：不开的话抠完会剩大约 34% 的半透明杂散像素，开了降到 10%，飘发这类细节也留得住。
-
-**为什么独立工具不绑 generate_image flag**：实际场景比"刚生的图想透明"更广——用户上传的产品照、之前生过的图、截图都该能抠。生图后想抠就再调一次本工具，0 重复 token。
-
-### quality 三档
-
-| quality | 组成 | warm 时间 | 什么时候用 |
-|---|---|---|---|
-| `balanced` (default) | isnet + alpha matting | ~8s | **默认就用它**。人物 / 毛发 / 皮草 / 烟雾 / 织物 / 任何软边 |
-| `fast` | isnet，不开 AM | ~7s | **主动降档**：硬边主体，软边会被看成糊——产品图 / 图标 / logo / UI 截图 / 平涂图形。大批量时也用它 |
-| `best` | birefnet-general-lite + AM | 视机器 | 峰值内存 2.4GB+，**当前机器上被禁用**。只有 balanced 把主体形状本身分割错时才值得试 |
-
-**别为了提速预先缩图**：alpha matting 限死在 1024 长边算完再把 alpha 放大回原尺寸，耗时不随输入像素数增长。缩了只会白丢分辨率。
-
-**超上限会被显式拒绝**，不会静默降档。拿到拒绝信息就按它说的改档重试，别反复试同一档。
-
-**warm vs cold**：server 启动时已 spawn 常驻 `rembg-service` python 进程（onnxruntime session 在内存），一般情况都走这条 warm 路径。service 不可用时 fallback 到 per-call cold spawn，每次多付 20-40s 模型 load，结果一样只是慢。
-
-deck 里要抠 N 张串行调即可。**别并行**：这台机器 1 核，并行只会一起变慢还把内存峰值叠起来。
+alpha matting 是消 halo 的关键：不开会剩大约三成半透明杂散像素，开了降到一成。
+**别为提速预先缩图** —— alpha matting 限死 1024 长边算完再放大回原尺寸，耗时不随输入像素增长。
+**超上限会被显式拒绝，不会静默降档**；拿到拒绝信息按它说的改档，别反复试同一档。
 
 ### 何时调
 
-| 场景 | 调 remove_background? |
+| 场景 | 调？ |
 |---|---|
-| 角色 / portrait 叠到自定 bg 上（lifestyle photo + 品牌色背景） | ✅ |
-| 产品 / 物体（咖啡杯 / 鞋 / 瓶子）做 hero 主图 | ✅ |
-| 复杂带形状的 logo / 徽章 NB2 出底色冲突 | ✅ |
-| 用户上传的参考图带白底 / 复杂背景，要叠到 deck | ✅ |
-| 装饰性 pattern / texture / gradient 背景 | ❌（这些就是要带 bg） |
-| 整页 cover / hero（背景就是整页主调） | ❌ |
-| 简单线性图标（孤立图形，无渐变 / 阴影） | ❌——直接 `import { Heart } from 'lucide-react'` 走 SVG，免成本天然透明 |
+| 角色 / portrait 叠到自定背景上 | ✅ |
+| 产品 / 物体做 hero 主图 | ✅ |
+| 二次元立绘要叠进版面 | ✅ 且带 `style: 'anime'` |
+| 用户上传的图带白底 / 杂背景，要叠进版面 | ✅ |
+| 装饰性 pattern / texture / 渐变背景 | ❌ 这些就是要带背景 |
+| 整页 cover / hero | ❌ 背景本身就是设计的一部分，抠掉等于自废武功 |
+| 简单线性图标 | ❌ 直接用 SVG 图标库，免成本天然透明 |
 
 ### 调用
 
 ```js
-// Case 1: 给刚生的图抠（生图 → 抠 两步）
-const gen = mcp__nodesign__generate_image({
-  prompt: "A glossy ceramic coffee mug with steaming hot drink, photorealistic, top-down view, 85mm macro, soft natural light",
-  aspectRatio: "1:1",
-  imageSize: "1K",
-  assetRole: "decoration",
-  outputName: "coffee-mug",
-});
-// agent 看完图觉得想要透明叠到黄底上 →
-mcp__nodesign__remove_background({
-  inputPath: "assets/generated/coffee-mug.png",
-});
-// 落 assets/generated/coffee-mug-nobg.png（RGBA）
+// 给刚生的图抠
+mcp__nodesign__remove_background({ inputPath: "assets/generated/coffee-mug.png" });
+// → assets/generated/coffee-mug-nobg.png（RGBA）
 
-// Case 2: 给用户上传的图抠
+// 二次元立绘：换动漫底模
 mcp__nodesign__remove_background({
-  inputPath: "assets/user-uploaded-product.jpg",
-  outputName: "product-isolated",  // 可选，default 是 <inputBaseName>-nobg
+  inputPath: "assets/generated/character-a.png",
+  style: "anime",
 });
 
-// Case 3: 已存在 outputName 时，default 加 timestamp 后缀防误覆盖；想覆盖：
-mcp__nodesign__remove_background({
-  inputPath: "assets/photo.png",
-  outputName: "photo-clean",
-  overwrite: true,
-});
+// 硬边主体降档拿更利落的切口
+mcp__nodesign__remove_background({ inputPath: "assets/product.jpg", quality: "fast" });
 
-// Case 4: 关键 hero shot 要 SOTA 边缘 → quality:'best'
+// 自定输出名；同名已存在时默认加时间戳防误覆盖，想覆盖传 overwrite
 mcp__nodesign__remove_background({
-  inputPath: "assets/generated/cover-portrait.png",
-  outputName: "cover-portrait-clean",
-  quality: "best",   // 首次会下 880MB birefnet-general 模型，~3-5min
+  inputPath: "assets/photo.png", outputName: "photo-clean", overwrite: true,
 });
-
-// Case 5: 批量抠 N 张装饰图 → quality:'fast' 省时间
-for (const img of decorations) {
-  mcp__nodesign__remove_background({ inputPath: img, quality: "fast" });
-}
 ```
 
-agent 拿到的 caption 形如 `Removed background from assets/photo.png → assets/generated/photo-nobg.png (RGBA PNG, 245.3 KB, 3120ms, quality=balanced)` + image content block 直接 vision 看到效果。HTML 直接 `<img src="assets/generated/photo-nobg.png" style="...">` 叠在任何 bg 色上。
+拿到的 caption 形如 `Removed background from … → … (RGBA PNG, 245.3 KB, 3120ms, quality=balanced)`
+外加 image content block，直接 vision 看效果。
 
 ### 工作流约束
 
 | 项 | 说明 |
 |---|---|
-| **Latency** | server 常驻 service 路径（warm）：fast ~5-10s / balanced ~10-20s / best ~20-40s。service down 时 fallback per-call spawn（cold）：fast ~30-60s / balanced ~60-180s / best ~120-300s |
-| **首次模型下载** | balanced（birefnet-general-lite）214MB；best（birefnet-general）880MB——首次调用会现场下载到 `~/.u2net/`，下完缓存跨 session 复用 |
-| **输出格式** | 强制 .png（RGBA 必须 PNG）。input 支持 png/jpg/jpeg/webp/gif/bmp/tiff |
-| **边缘质量** | balanced + alpha matting 已能消除大部分 halo / 色边伪影；薄透元素（玻璃 / 烟雾 / 飘发 / 半透明披纱）即便 best 也可能边缘软或抠不全 |
-| **依赖前提** | server 端 `.venv-rembg/` 装了 rembg + onnxruntime（部署一次），跨 session 共享。不可用时工具返 isError + 提示 setup 命令 |
-| **路径安全** | inputPath 必须 workspace-relative，不允许绝对路径 / .. traversal。候选路径解析顺序：cwd → sharedRoot |
+| **串行不并行** | 这台机器 1 核，并行只会一起变慢还把内存峰值叠起来。要抠 N 张就串行调 N 次 |
+| **Latency** | 常驻 service（warm）：fast ~5-10s / balanced ~10-20s。service 不可用时 fallback 到每次冷启，多付 20-40s 模型加载，结果一样只是慢 |
+| **输出格式** | 强制 .png（RGBA 必须 PNG）。输入支持 png/jpg/jpeg/webp/gif/bmp/tiff |
+| **边缘质量** | balanced + AM 已能消掉大部分 halo；玻璃 / 烟雾 / 半透明披纱这类薄透元素边缘仍可能软或抠不全 |
+| **路径安全** | inputPath 必须 workspace 相对路径，不允许绝对路径或 `..`。解析顺序 cwd → sharedRoot |
 
 ### 反例
 
-- ❌ 给每张生图都自动 follow-up 抠 —— 5-10s × N 累计很快；只对**真要叠合**的图按需调
-- ❌ 给整页 cover / hero 抠 —— cover 本身的 bg 就是设计的一部分，抠掉等于自废武功
-- ❌ 期望 SVG 级精度抠图 —— ML 抠图永远是 raster + 边缘软化，要硬边走 SVG / Figma 切图
-- ❌ 复杂遮挡（人在树后） —— 模型可能抠掉树或抠掉手，预期管理
+- ❌ 给每张生图都自动跟一次抠图 —— 累计很快，只对**真要叠合**的图调
+- ❌ 期望 SVG 级精度 —— ML 抠图永远是 raster + 边缘软化，要硬边走 SVG
+- ❌ 复杂遮挡（人在树后）—— 可能抠掉树或抠掉手，预期管理

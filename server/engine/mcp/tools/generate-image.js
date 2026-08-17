@@ -361,58 +361,57 @@ export function makeGenerateImageTool({ workspaceRoot, sharedRoot = null, ctx } 
 Use this to add hero / cover / background / frame / icon / decoration / portrait
 / illustration / quote-backdrop / section-divider / pattern visuals to canvas.html.
 
-BACKEND NOTE: default backend is codex-imagegen (subscription). Under it the
-parameters that matter are prompt + aspectRatio + referenceImages (+ assetRole /
-outputName for naming). imageSize / thinkingLevel / responseModalities / model /
-useGrounding are Gemini-gateway-only and silently ignored; PDF referenceImages
-are NOT supported (images only). Expect ~45-60s per image — batch wisely and
+BACKEND: codex-imagegen (subscription) -> gpt-image-2. What actually works is
+prompt + aspectRatio + referenceImages (+ assetRole / outputName for naming).
+imageSize / thinkingLevel / responseModalities / model / useGrounding are
+Gemini-gateway-only and SILENTLY IGNORED — do not spend effort on them.
+PDF referenceImages are NOT supported (images only). One call produces exactly
+ONE image; there is no "3 variations in one prompt". Expect ~45-60s per image —
 prefer one good anchor shot over many speculative variants.
 
 Saves the image to assets/generated/<name>.png inside the workspace (visible
 across sessions via the shared/ softlink). Returns the image as an inline
 content block so you can vision-check it immediately.
 
-PROMPT WRITING (Gemini official guide):
+PROMPT WRITING:
+  - Picture the finished frame first, then describe what you see, in order.
+    Positive description beats piling up negations.
   - Describe the scene narratively, don't list keywords.
+  - If the user's prompt is already detailed, normalize it — do not expand it
+    with creative additions they did not ask for.
   - For photorealism use camera language: 85mm lens, wide-angle, macro,
     golden-hour lighting, three-point softbox, etc.
   - For icons / stickers: explicitly say "white background" (transparent is
-    not supported).
-  - For text-in-image: state the font style descriptively
+    not supported; use remove_background afterwards if you need alpha).
+  - For text-in-image: quote the exact text and state the font style
     ("clean sans-serif", "bold serif headline").
-  - Iterate over multi-turn rather than over-specifying once.
+  - Do NOT write size or ratio into the prompt body ("in 4K", "16:9
+    widescreen") — that only makes the backend resize once for nothing.
+    Ratio goes in aspectRatio.
 
 ASPECT RATIO defaults by use:
   - cover/hero/landscape: 16:9 or 21:9
   - portrait/avatar:      4:5 or 2:3
   - icon/sticker/pattern: 1:1
-  - vertical banner:      9:16 / 1:4 / 1:8
+  - vertical banner:      9:16
+  HARD LIMIT: gpt-image-2 cannot exceed a 3:1 long-to-short ratio. 4:1, 1:4,
+  8:1 and 1:8 are accepted by the schema but CANNOT be produced natively — for
+  a thin banner, render 16:9 and crop it with CSS object-fit instead.
 
-IMAGE SIZE pricing (tokens scale with size):
-  - 512:  747t (avatars, thumbnails)
-  - 1K:   1120t (default, most decorations)
-  - 2K:   1680t (hero, cover, full-bleed bg)
-  - 4K:   2520t (use sparingly — only when print-grade detail matters)
-
-REFERENCES (max 14 per Gemini 3.1 Flash docs, ≤4 character / ≤10 object):
+REFERENCES:
   Pass workspace-relative paths (e.g., 'assets/photo.jpg' or
   'assets/generated/prev.png'). Image formats: png/jpg/jpeg/webp/gif.
-  PDF documents (.pdf) also accepted — NB2 reads PDF text + tables and can
-  generate accurate visualizations from them (research reports, brand
-  guidelines, outlines). See cookbook § K Document-to-visual.
+  HTTP urls are rejected. Pass the 1-2 most on-point images — feeding many
+  dilutes the anchor. Label each image's role in the prompt text
+  ("Image 1: edit target, Image 2: style reference").
   Use cases:
   - Style transfer: pass an image, describe the new style
   - Character consistency: pass 1-2 portraits across multi-page deck
   - Composition / mockup: pass logo + model image, describe how they combine
   - Inpainting: pass the canvas screenshot, describe what to change
-  - Document → infographic: pass a PDF, describe the target visualization
-
-GROUNDING (useGrounding: true, opt-in):
-  Lets NB2 invoke Google Image Search during generation for real-world
-  visual fidelity. Best for landmarks / cities / real products / nature /
-  specific brand contexts. Adds ~60-90s latency. Auto-skipped by model
-  for people/character queries (Google guardrail) — those return same as
-  vanilla generation. See cookbook § L Image Search Grounding.
+  NOTE: the backend is stateless — it does not remember earlier images or this
+  conversation. To iterate on a previous image, pass it back in referenceImages
+  and restate the invariants every round.
 
 WHEN TO USE:
   - You're building a deck / landing / report and want real imagery
@@ -426,7 +425,8 @@ WHEN NOT TO USE:
   - Simple inline icons (≤5 per page) — use lucide-react inline SVG
 
 ALWAYS pair generation with mcp__nodesign__record_decision so the prompt + role
-become part of the spec.json design history.`,
+land on the shared decision sticky (notes/decisions). Its params are title +
+rationale (both required), scope, alternatives — there is no "topic" param.`,
     {
       prompt: z
         .string()

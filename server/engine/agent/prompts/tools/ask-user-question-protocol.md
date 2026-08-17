@@ -74,7 +74,9 @@
 ### 何时用 image preview vs HTML preview vs 不带 preview
 
 - **image preview**（base64 / asset path）：多张候选图选哪张（cover / portrait / decoration）→ 先 generate_image 出 3 变体，每个 option 的 preview 字段贴对应图
-- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 → 每个元素 `style="..."` 属性演示主色 / 字体 / 排版差异（**别用 `<style>` 块、`<script>`、`<html>`/`<body>`——SDK validator 拒**）
+- **HTML preview**（240×140 self-contained）：视觉方向 / 配色 / 字体 / 排版 / **风格名候选** → 每个元素 `style="..."` 属性演示主色 / 字体 / 排版差异（**别用 `<style>` 块、`<script>`、`<html>`/`<body>`——SDK validator 拒**）
+
+⚠️ **别把 web_search 搜来的图片网址直接当 preview**：判据要求地址以 `.png/.jpg/.jpeg/.webp/.gif/.svg` 结尾（可带 `?查询串`），很多图床地址不满足，会**静默退成纯文本**，用户看到一行网址而不是图。搜来的图是给你自己对齐理解用的；要让用户看，用 HTML 小样，或先 generate_image 再贴 base64。
 - **不带 preview**：离散文字决策（yes/no, deck-kind 选择, 是否需要 PDF）→ 选项标签足够说明
 
 ---
