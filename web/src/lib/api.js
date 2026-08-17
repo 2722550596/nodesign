@@ -318,9 +318,13 @@ export const Exports = {
     return { blob: await res.blob(), filename: parseFilenameFromDisposition(res.headers.get('content-disposition')) };
   },
 
-  /** 下载文件，返回 { blob, filename }，调用方自行触发 a.click() */
-  download: async (pid, format) => {
-    const res = await fetch(`/api/projects/${pid}/exports/${format}`);
+  /**
+   * 烘焙类导出（html / pdf / pptx）。relPath 点名导哪一份产物 —— 不传就走寻址层
+   * 的默认目标。这几种要跑 playwright / esbuild，跟按卡打包不是一条管线。
+   */
+  download: async (pid, format, relPath) => {
+    const q = relPath ? `?path=${encodeURIComponent(relPath)}` : '';
+    const res = await fetch(`/api/projects/${pid}/exports/${format}${q}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw Object.assign(new Error(data.error || res.statusText), { status: res.status });

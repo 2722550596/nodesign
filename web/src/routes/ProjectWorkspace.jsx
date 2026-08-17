@@ -25,7 +25,7 @@ import DirectEditModal from '../components/canvas/DirectEditModal.jsx';
 import PlanReviewCard from '../components/project/PlanReviewCard.jsx';
 import PlanRequestBanner from '../components/project/PlanRequestBanner.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
-import PickExportModal from '../components/project/PickExportModal.jsx';
+import ExportPicker from '../components/project/ExportPicker.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
 import ElicitationModal from '../components/run/ElicitationModal.jsx';
 import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_KAI, FONT_MONO, STAGE } from '../lib/theme.js';
@@ -233,6 +233,7 @@ export default function ProjectWorkspace() {
   const [chatDockOpen, setChatDockOpen] = useState(false);
   const [exportsListOpen, setExportsListOpen] = useState(false);
   const [pickExportOpen, setPickExportOpen] = useState(false);
+  const [pickType, setPickType] = useState(null);   // 从菜单点进来的产物类型
   const [actionsOpen, setActionsOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
@@ -2019,12 +2020,10 @@ export default function ProjectWorkspace() {
             <ExportMenu
               open={exportOpen}
               onClose={() => setExportOpen(false)}
-              onExport={handleExport}
+              projectId={id}
+              onPickType={(t) => { setPickType(t); setPickExportOpen(true); }}
               onOpenList={() => setExportsListOpen(true)}
-              onPick={() => setPickExportOpen(true)}
               onShare={() => setShareOpen(true)}
-              artifactKind={boardUi?.artifactKind || null}
-              artifactExports={boardUi?.artifactExports || null}
               anchorRef={exportBtnRef}
             />
           </div>
@@ -2254,11 +2253,11 @@ export default function ProjectWorkspace() {
       </div>
 
       <ShareModal show={shareOpen} onClose={() => setShareOpen(false)} project={project} />
-      <PickExportModal
+      <ExportPicker
         open={pickExportOpen}
         onClose={() => setPickExportOpen(false)}
         projectId={id}
-        sessionId={currentSessionId}
+        initialType={pickType}
         onToast={showToast}
       />
 

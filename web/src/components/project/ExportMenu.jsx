@@ -1,18 +1,27 @@
-import { exportItemsFor } from '../../lib/export-formats.js';
-import { useEffect, useRef } from 'react';
-import { FileCode, FileText, Presentation, Hammer, FolderOpen, CheckSquare, Globe, Share2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { FolderOpen, Share2, Download } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { Assets } from '../../lib/api.js';
+import { groupArtifacts } from '../../lib/export-groups.js';
 
 /**
  * ExportMenu — 顶栏导出下拉
  *
- * 三项 active（HTML / PDF / Handoff）调 GET /api/projects/:pid/exports/:format
- * 由父级 onExport 接走 Exports.download → blob → a.click()
+ * 2026-08-17 改成**类型优先**：直接列项目里有哪几类产物（带数量），点一类进
+ * ExportPicker 挑具体哪几个。
  *
- * PPTX 标灰禁点，留 P0+。
+ * 之前是跟着**当前聚焦的产物**给格式（聚焦 deck 就给 PDF/PPTX，聚焦站点就给
+ * 整站打包）。那个设计把内部实现泄给了用户：想导几张图，得先去画布上点开某个
+ * 任务 —— 而图根本不属于哪个任务。用户原话是「导出按钮应该直接提供产物类型
+ * 按钮，点击后选择想要导出的产物」。
+ *
+ * 类型和数量从 `/artifacts` 现拉（菜单开的时候才拉），判据全在服务端，
+ * 这里不自己数也不自己判。
  */
-export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenList, onPick, onShare, artifactKind = null, artifactExports = null }) {
+export default function ExportMenu({ open, onClose, projectId, onPickType, onOpenList, onShare, anchorRef }) {
   const ref = useRef(null);
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   // 点外面关闭
   useEffect(() => {
@@ -26,124 +35,77 @@ export default function ExportMenu({ open, onClose, onExport, anchorRef, onOpenL
     return () => window.removeEventListener('mousedown', onClick);
   }, [open, onClose, anchorRef]);
 
+  useEffect(() => {
+    if (!open || !projectId) return;
+    let cancelled = false;
+    setLoading(true);
+    Assets.artifacts(projectId)
+      .then(p => { if (!cancelled) setGroups(groupArtifacts(p)); })
+      .catch(() => { if (!cancelled) setGroups([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, projectId]);
+
   if (!open) return null;
+
+  const rowStyle = {
+    display: 'flex', alignItems: 'center', gap: GAP.sm, width: '100%',
+    padding: `${GAP.sm}px ${GAP.md}px`,
+    background: 'transparent', border: 0, borderRadius: RADIUS.sm, cursor: 'pointer',
+    fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, textAlign: 'left',
+  };
+  const hover = {
+    onMouseEnter: e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; },
+    onMouseLeave: e => { e.currentTarget.style.background = 'transparent'; },
+  };
+  const divider = <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />;
 
   return (
     <div
       ref={ref}
       style={{
         position: 'absolute', top: 'calc(100% + 6px)', right: 0,
-        minWidth: 240,
-        background: COLOR.bgWhite,
-        borderRadius: 2,
-        boxShadow: SHADOW.pop,
-        padding: GAP.xs,
-        zIndex: 50,
+        minWidth: 240, background: COLOR.bgWhite, borderRadius: 2,
+        boxShadow: SHADOW.pop, padding: GAP.xs, zIndex: 50,
       }}
     >
-      {/* 分享排第一（2026-07-30）：对创作者，分享链接和导出文件是同一件事的两种出口，
-          原来它们是顶栏上两个并排按钮，合并成一个菜单省一个常驻元素。 */}
+      {/* 分享排第一（2026-07-30）：对创作者，分享链接和导出文件是同一件事的两种出口 */}
       {onShare && (
         <>
-          <button
-            onClick={() => { onClose?.(); onShare(); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: GAP.sm, width: '100%',
-              padding: `${GAP.sm}px ${GAP.md}px`,
-              background: 'transparent', border: 0, borderRadius: RADIUS.md, cursor: 'pointer',
-              fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, textAlign: 'left',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
+          <button onClick={() => { onClose?.(); onShare(); }} style={rowStyle} {...hover}>
             <Share2 size={12} /> 分享链接…
           </button>
-          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
-        </>
-      )}
-      {exportItemsFor(artifactKind, artifactExports).map(item => {
-        const Icon = item.icon;
-        return (
-          <button
-            key={item.id}
-            disabled={item.disabled}
-            onClick={() => {
-              if (item.disabled) return;
-              onExport?.(item.id);
-              onClose?.();
-            }}
-            style={{
-              width: '100%',
-              display: 'flex', alignItems: 'flex-start', gap: GAP.md,
-              padding: `${GAP.sm + 1}px ${GAP.md + 2}px`,
-              background: 'transparent',
-              border: 'none',
-              borderRadius: RADIUS.sm,
-              cursor: item.disabled ? 'not-allowed' : 'pointer',
-              textAlign: 'left',
-              opacity: item.disabled ? 0.45 : 1,
-            }}
-            onMouseEnter={e => { if (!item.disabled) e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <Icon size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>{item.label}</div>
-              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>{item.desc}</div>
-            </div>
-          </button>
-        );
-      })}
-
-      {/* 挑着导出：整包之外，用户经常只要"那三张图"/"就这份 deck"（2026-07-28）*/}
-      {onPick && (
-        <>
-          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
-          <button
-            onClick={() => { onPick(); onClose?.(); }}
-            style={{
-              width: '100%',
-              display: 'flex', alignItems: 'flex-start', gap: GAP.md,
-              padding: `${GAP.sm + 1}px ${GAP.md + 2}px`,
-              background: 'transparent', border: 'none', borderRadius: RADIUS.sm,
-              cursor: 'pointer', textAlign: 'left',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <CheckSquare size={14} color={COLOR.text4} style={{ flexShrink: 0, marginTop: GAP.xxs }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>挑着导出…</div>
-              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>当前任务的产物，勾哪个下哪个</div>
-            </div>
-          </button>
+          {divider}
         </>
       )}
 
-      {/* C31：分隔线 + 已生成的交付文件入口（agent export_handoff 写到 workspace/exports/）*/}
+      {loading && (
+        <div style={{ ...rowStyle, cursor: 'default', color: COLOR.sub }}>读取产物…</div>
+      )}
+
+      {!loading && !groups.length && (
+        <div style={{ ...rowStyle, cursor: 'default', color: COLOR.sub }}>还没有可导出的产物</div>
+      )}
+
+      {!loading && groups.map(g => (
+        <button
+          key={g.type}
+          onClick={() => { onClose?.(); onPickType?.(g.type); }}
+          style={rowStyle}
+          {...hover}
+        >
+          <Download size={13} color={COLOR.text4} style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, fontFamily: FONT_MONO, fontWeight: 500, color: COLOR.text }}>{g.label}</span>
+          {/* 数量写出来 —— 「图片 47」比光写「图片」有用得多，用户据此判断值不值得点 */}
+          <span style={{ color: COLOR.sub, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs }}>{g.items.length}</span>
+        </button>
+      ))}
+
       {onOpenList && (
         <>
-          <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
-          <button
-            onClick={() => { onOpenList(); onClose?.(); }}
-            style={{
-              width: '100%',
-              display: 'flex', alignItems: 'center', gap: GAP.md,
-              padding: `${GAP.sm + 1}px ${GAP.md + 2}px`,
-              background: 'transparent',
-              border: 'none',
-              borderRadius: RADIUS.sm,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.04)'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <FolderOpen size={14} color={COLOR.text4} style={{ flexShrink: 0 }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>agent 打过的包</div>
-              <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>agent 主动 export_handoff 后产出</div>
-            </div>
+          {divider}
+          <button onClick={() => { onOpenList(); onClose?.(); }} style={rowStyle} {...hover}>
+            <FolderOpen size={12} /> 已生成的交付文件
           </button>
         </>
       )}
