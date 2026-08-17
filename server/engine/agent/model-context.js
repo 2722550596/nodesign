@@ -58,7 +58,7 @@ const APP_MODEL_REAL_WINDOW = {
 export const SELECTABLE_MODELS = Object.freeze([
   Object.freeze({
     id: 'claude-sonnet-5[1m]',
-    label: 'Sonnet',
+    label: 'Sonnet 5',
     desc: '快 · 日常改稿和铺页够用',
   }),
   Object.freeze({

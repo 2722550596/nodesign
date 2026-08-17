@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Cpu, Check, Loader2 } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions } from '../../lib/api.js';
+import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
 
 /**
  * 模型选择 —— Composer 工具栏里的小 picker。
@@ -21,16 +22,29 @@ import { Sessions } from '../../lib/api.js';
  *
  * 可选清单也来自服务端（model-context.js 的 SELECTABLE_MODELS）—— 前端硬编码
  * model id 写错一个字，spoofing 和真实容量两张表都查不到，两处都只会静默降级。
+ *
+ * ## 「默认」那一档 2026-08-17 撤了
+ *
+ * 用户拍板：清单里只留 Sonnet 5 和 Opus 5 两项。「默认」原来的作用是**清掉会话
+ * 覆盖、回到 NODESIGN_MODEL**，但它在界面上表达的是第三种模型，而实际上跑的仍是
+ * 那两个之一 —— 一个选项，两层含义。撤掉之后勾永远打在**真正在跑的那个**上。
+ *
+ * 代价说清楚：会话一旦选过就没有"退回跟随全局默认"的入口了。两个选项的清单里
+ * 这不是损失（想要哪个直接点哪个），但**如果以后清单变长、或者 NODESIGN_MODEL
+ * 要当成一个能被跟随的档位**，这一档得连同它的语义一起加回来，别只加个按钮。
  */
 
 /** 服务端拿不到时的兜底清单（离线 / 接口挂了也别让按钮变成死的） */
 const FALLBACK_OPTIONS = [
-  { id: 'claude-sonnet-5[1m]', label: 'Sonnet', desc: '快 · 日常改稿和铺页够用' },
+  { id: 'claude-sonnet-5[1m]', label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用' },
   { id: 'claude-opus-5[1m]', label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开' },
 ];
 
+/** 重档模型（按钮画成实心的那一档）—— 判 id 不判位置，清单换序不会跟着错 */
+const isHeavy = (id) => /opus/i.test(String(id || ''));
+
 function shortLabel(id, options) {
-  if (!id) return '默认';
+  if (!id) return '';
   const hit = options.find(o => o.id === id);
   if (hit) return hit.label;
   if (/opus/i.test(id)) return 'Opus';
@@ -90,17 +104,24 @@ export default function ModelPicker({
   }, [hasSession, projectId, sessionId]);
 
   const options = remote?.options?.length ? remote.options : FALLBACK_OPTIONS;
-  // 生效值：有会话看服务端，没会话看本地偏好（本地 null = 跟随服务端默认）
-  const effective = hasSession ? (remote?.model || null) : modelPref;
-  // 打勾打在"用户选过的那一档"上：没覆盖就打在「默认」，跟按钮上显示的实际模型
-  // 是两回事 —— 按钮说"现在跑什么"，勾说"你选了什么"
-  const chosen = hasSession ? (remote?.override ?? null) : modelPref;
-  const isDefault = chosen === null;
+  /**
+   * 现在跑的是哪个。有会话看服务端（`remote.model` 已经把覆盖和全局默认算完，
+   * 永远是个具体模型）；没会话看本地偏好。
+   *
+   * ⚠️ 没会话又没选过时回落到清单第一项 —— 之所以诚实，是因为服务端的
+   * `NODESIGN_MODEL` 就是 Sonnet 5，跟第一项同一个。**哪天全局默认挪出清单头部，
+   * 这里就会写着 Sonnet 却跑着别的**（这个文件顶上那段说的正是这类病）。真要挪，
+   * 得给"没有会话"的处境开一条能问到全局默认的路，别在这儿猜。
+   */
+  const effective = (hasSession ? remote?.model : modelPref) || options[0]?.id || null;
 
   const select = useCallback(async (id) => {
     setOpen(false);
     if (!hasSession) { setModelPref(id); return; }
-    if (id === chosen) return;
+    // 点的就是正在跑的那个 → 什么也不做。别拿"覆盖字段是不是空"当判据：override
+    // 为 null 时写一次会让 changed=true，服务端顺手把空闲的 query 关掉重开，
+    // 而模型压根没变 —— 用户只是点了一下确认。
+    if (id === effective) return;
     // 大上下文切模型要重新过一遍缓存，先把代价说清楚再让他按
     if (contextTokens >= WARN_FROM_TOKENS) {
       const est = contextTokens * COLD_START_USD_PER_TOKEN;
@@ -127,10 +148,17 @@ export default function ModelPicker({
     } finally {
       setSaving(false);
     }
-  }, [hasSession, chosen, remote, projectId, sessionId, setModelPref, showToast, contextTokens]);
+  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens]);
 
   const label = shortLabel(effective, options);
   const busy = disabled || saving;
+  /**
+   * 实心 = 现在跑在重档上。
+   *
+   * 撤掉「默认」之前，实心表达的是"你手动选过"—— 那个区别用户看不见也用不上。
+   * 换成"这一档烧得快"之后按钮才在说一件有用的事：Opus 一眼认得出来。
+   */
+  const heavy = isHeavy(effective);
 
   return (
     <div ref={ref} className={className} style={{ position: 'relative' }}>
@@ -141,25 +169,28 @@ export default function ModelPicker({
         title={
           disabled ? '这一轮跑完再切（切换从下一条消息生效）'
             : hasSession
-              ? `这个会话跑在 ${effective || options[0]?.id || '默认模型'}${isDefault ? '（跟随全局默认）' : ''}。切换从下一条消息生效，对话不丢`
-              : `新会话将用 ${label}${isDefault ? '（跟随服务端默认）' : ''}`
+              ? `这个会话跑在 ${effective}。切换从下一条消息生效，对话不丢`
+              : `新会话将用 ${label}`
         }
         style={{
           display: 'inline-flex', alignItems: 'center', gap: GAP.xs,
           padding: `${GAP.xs}px ${GAP.sm}px`,
           fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, fontWeight: 500,
-          color: isDefault ? COLOR.text2 : COLOR.btnText,
-          background: isDefault ? 'transparent' : COLOR.btn,
-          border: `1px solid ${isDefault ? COLOR.borderMd : COLOR.btn}`,
+          color: heavy ? COLOR.btnText : COLOR.text2,
+          background: heavy ? COLOR.btn : 'transparent',
+          border: `1px solid ${heavy ? COLOR.btn : COLOR.borderMd}`,
           borderRadius: RADIUS.md,
           cursor: busy ? 'not-allowed' : 'pointer',
           opacity: busy ? 0.5 : 1,
           transition: 'all 0.15s',
         }}
       >
+        {/* 图标用 Claude 的星芒，不用通用的 CPU 图标 —— 这颗按钮选的就是 Claude
+            的哪一档，跟精灵、输出框那边同一个身份标（ui/ClaudeMark.jsx）。
+            实心态底色是墨块，品牌橙压不住，那一档跟着文字走。 */}
         {saving
           ? <Loader2 size={11} style={{ animation: 'nd-model-spin 0.9s linear infinite' }} />
-          : <Cpu size={11} />}
+          : <ClaudeMark size={12} color={heavy ? COLOR.btnText : CLAUDE_BRAND} />}
         {label}
       </button>
 
@@ -176,18 +207,10 @@ export default function ModelPicker({
           padding: GAP.xs,
           zIndex: 60,
         }}>
-          <Option
-            active={isDefault}
-            label="默认"
-            desc={remote?.default
-              ? `跟随全局默认（${shortLabel(remote.default, options)}）`
-              : '跟随服务端默认'}
-            onClick={() => select(null)}
-          />
           {options.map((o) => (
             <Option
               key={o.id}
-              active={chosen === o.id}
+              active={effective === o.id}
               label={o.label}
               desc={o.desc}
               onClick={() => select(o.id)}
