@@ -44,7 +44,7 @@ const GRANDFATHERED = {
   'web/src/components/canvas/DragOverlay.jsx': 927,
   // 08-17 导出重做：按卡导出迁去 exports/cards.js，旧交付包打包逻辑（待退役）
   // 整块迁去 exports/handoff.js —— 圈起来是为了退役时整份删，不用在大文件里挑
-  'server/api/exports.js': 812,
+  'server/api/exports.js': 691,
   'server/engine/runs/active-runs.js': 912,
   'server/engine/mcp/tools/generate-image.js': 843,
   'web/src/components/canvas/SiteWindow.jsx': 841,

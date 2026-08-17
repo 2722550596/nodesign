@@ -19,6 +19,7 @@ import { cardIdOf } from './board-kinds.js';
 const TYPE_META = [
   { type: 'site',  label: '站点' },
   { type: 'deck',  label: '幻灯' },
+  { type: 'docx',  label: '文档' },
   { type: 'image', label: '图片' },
   { type: 'video', label: '视频' },
   { type: 'note',  label: '便签' },

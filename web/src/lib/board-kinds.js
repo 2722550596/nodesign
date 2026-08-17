@@ -366,7 +366,11 @@ export function annotTargetOf(o) {
  * 抄第三遍之前先收成一份。
  */
 export function cardIdOf(taskId, a) {
+  // site 是唯一的目录型产物：地址是产物根，不是某个文件
   if (a.kind === 'site') return `site:${a.single ? a.entryRel : (a.root || taskId)}`;
-  return `deck:${a.file}`;
+  // 其余都是单文件产物（deck 的 .html、docx 的 .docx）：前缀 = 形态名，地址 = 文件。
+  // 别写死 'deck:' —— 加形态时忘了这行，新产物的卡 id 会伪装成 deck，
+  // 导出那头按 deck 去解析它，错得很安静。
+  return `${a.kind || 'deck'}:${a.file}`;
 }
 

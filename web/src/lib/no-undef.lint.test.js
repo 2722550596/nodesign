@@ -56,9 +56,19 @@ const GLOBALS = new Set([
   'Buffer', '__dirname', '__filename', 'require', 'module', 'exports',
 ]);
 
+/**
+ * 不扫的目录。
+ *
+ * ⚠️ `projects-data` 是**用户的生产数据** —— agent 给用户做的站点就落在那儿，
+ * 里面的 script.js 引用 CDN 全局（GSAP 的 ScrollTrigger、ECharts…）是**正常的**，
+ * 那些名字来自页面上的 <script> 标签，静态扫描永远看不见。拿这把尺子量用户
+ * 产物 = 用户每做一个带库的站，我们的 CI 就红一次。这把尺子是量**我们的源码**的。
+ */
+const SKIP_DIRS = new Set(['node_modules', 'projects-data', 'dist', 'coverage']);
+
 function sourceFiles(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+    if (SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) { sourceFiles(p, out); continue; }
     if (/\.(jsx?|mjs)$/.test(e.name)) out.push(p);
