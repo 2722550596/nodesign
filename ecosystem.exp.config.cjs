@@ -28,6 +28,15 @@ module.exports = {
       watch: false,
       max_memory_restart: '1200M',
       node_args: '--env-file-if-exists=.env --max-old-space-size=1024',
+      // ⛔ **隔离/权限那几个开关已经从这里挪进 exp 的 `.env`**（2026-08-18）。
+      //    为什么：pm2 只在**用配置文件启动**时注入 env 段，之后一次普通
+      //    `pm2 restart` 就把它们丢掉，而且一声不响。实测账：08-15 13:16 开起来、
+      //    14:36 还在，**08-16 05:13 起全没了**，一直到 08-18 12:22 才被发现 ——
+      //    也就是"先在 exp 观察一段再上生产"的那个观察，实际只跑了 3 小时 20 分。
+      //    唯一的痕迹是启动日志里 platform dump 的 `sandboxEnabled` 从 true 变 false。
+      //    （同一个坑这仓库吃过第二次：下面 HOME 那段注释写的也是它。）
+      //    `.env` 由 node 自己每次启动用 `--env-file-if-exists` 读，跟 pm2 怎么被
+      //    调用无关 —— 开关放那儿才活得住。**别再往这个 env 段里加开关。**
       env: {
         NODE_ENV: 'production',
         HOME: '/home/wangang-dev',
