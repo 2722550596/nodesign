@@ -42,6 +42,10 @@ export function recordTaskNotification(msg) {
   }
 }
 
+/** 已经消费过的 id（用来区分"没记上"和"记过又用掉了"，见下面那段） */
+const consumed = new Set();
+let missing = 0;
+
 /** 报告"看起来是空的"的判据 —— 短于这个就不像一份报告 */
 const SUSPICIOUS_LEN = 200;
 
@@ -50,7 +54,23 @@ export function makePostToolUseSubagentReportRecovery() {
     const id = input?.tool_use_id;
     if (!id) return {};
     const note = lastNotification.get(id);
-    if (!note) return {};
+    if (!note) {
+      // ⚠️ 这条分支是「静默死」的经典形状：`recordTaskNotification` 必须**先于**
+      // 这个 hook 跑，否则整个 handler 什么都不做而且一声不响。这个仓库为
+      // 「hook 静默死」付过三次账（最贵一次 19 个会话 0 触发、38k tokens 白跑），
+      // 所以宁可留一行日志：真出问题时它会成堆出现，而不是一片安静。
+      // 正常也会走到这儿（同一个 id 第二次进来，note 已被一次性消费掉），
+      // 所以只在**从来没见过这个 id** 时才记。
+      if (!consumed.has(id)) {
+        missing += 1;
+        console.warn(`[subagent-report] tool_use_id ${id} 没有对应的 task_notification`
+          + `（累计 ${missing} 次）—— 如果这个数字在涨，说明 recordTaskNotification`
+          + ' 没有跑在这个 hook 之前，兜底其实是死的。');
+      }
+      return {};
+    }
+    consumed.add(id);
+    if (consumed.size > MAX_TRACKED) consumed.delete(consumed.values().next().value);
     lastNotification.delete(id);          // 一次性
 
     const looksEmpty = note.summary.trim().length < SUSPICIOUS_LEN;
