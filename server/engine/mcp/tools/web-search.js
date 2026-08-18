@@ -322,7 +322,7 @@ queries prefer baidu, English queries prefer tavily.
 Use this tool when:
 - You need current information (latest design trends, library docs, recent events)
 - You need to verify a fact or find a citation
-- You need to find a URL to web_fetch later
+- You need to find a URL to then GO LOOK AT: for anything visual, follow up with browser_navigate and browse the site's inner pages — snippets carry no layout, type or colour. (Or web_fetch for text.)
 - You need REFERENCE IMAGES for generate_image (set include_images=true; see below)
 
 DO NOT:

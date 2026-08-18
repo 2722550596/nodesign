@@ -101,6 +101,13 @@ export function useBoardOpen({
   };
 
   const focusDeck = (o, previewPath) => {
+    // 浏览器卡（2026-08-18）：开的不是产物窗，是那扇播画面的窗。它跟下面三种
+    // 的区别在于**背后可能没有活实例** —— 窗自己会问、会给一颗"打开"按钮，
+    // 这里只负责把窗开出来并告诉它上次在哪一页。
+    if (o.type === 'browse') {
+      onFocusDeck?.({ kind: 'browse', url: o.url || null });
+      return;
+    }
     if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
@@ -119,6 +126,8 @@ export function useBoardOpen({
       onFocusDeck?.({
         kind: 'docx', file: o.deckFile, title: o.title,
         sourceFile: o.sourceFile || null, exports: o.exports,
+        // word 文件夹：成员表进窗（导航切换多版本）。单份 .docx 时是 null
+        members: o.members || null,
         // 卡 id 就是导出的寻址地址，窗里的导出按钮要靠它 —— 不带的话
         // 导出会退回「当前聚焦」那套猜测，而窗开着的时候那套是空的
         cardId: o.id,

@@ -15,7 +15,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { pageImage } from '../../lib/docx-pages.js';
+import { pageImage, docPdf } from '../../lib/docx-pages.js';
 import { safeResolveRead } from '../../lib/safe-path.js';
 
 /** 缩略图宽度上限：再大就不是缩略图了，纯粹是让服务端白干 */
@@ -60,6 +60,44 @@ export function makeDocxPageHandler({ getSharedDir, guardProject }) {
       // 页数给前端画翻页控件，省一次单独的请求
       res.set('X-Docx-Pages', String(out.count));
       res.type(out.mime).send(out.buf);
+    } catch (err) { next(err); }
+  };
+}
+
+/**
+ * `GET /:pid/docx-pdf` —— 整份 PDF，产物窗「PDF 视图」的 iframe 吃它。
+ * 跟页图同一份渲染缓存（docx → PDF 本来就是页图链路的中间站），同一套
+ * mtime ETag：agent 一 rebuild 浏览器自然重取，视图永不陈旧。
+ */
+export function makeDocxPdfHandler({ getSharedDir, guardProject }) {
+  return async (req, res, next) => {
+    try {
+      if (!guardProject(req, res)) return;
+      const rel = String(req.query.path || '').replace(/\\/g, '/');
+      if (!rel || !/\.docx$/i.test(rel)) return res.status(400).json({ error: 'path 得是一个 .docx' });
+      // 软链判据同上：收在 lib/safe-path.js，别抄
+      const root = getSharedDir(req.params.pid);
+      const abs = await safeResolveRead(root, rel);
+      if (!abs) return res.status(403).json({ error: 'path escapes workspace' });
+      let stat;
+      try { stat = await fs.stat(abs); } catch { return res.status(404).json({ error: '找不到这份文档' }); }
+      const etag = `"${stat.mtimeMs}-${stat.size}-pdf"`;
+      if (req.headers['if-none-match'] === etag) return res.status(304).end();
+      let out;
+      try {
+        out = await docPdf(abs);
+      } catch (err) {
+        console.warn('[docx-pdf] render failed:', err.message);
+        return res.status(err.status || 500).json({
+          error: '渲染失败',
+          details: String(err.message || err).slice(0, 300),
+        });
+      }
+      res.set('ETag', etag);
+      res.set('Cache-Control', 'private, max-age=60');
+      // inline：在浏览器的 PDF 阅读器里看，不触发下载（要文件走导出）
+      res.set('Content-Disposition', `inline; filename="${encodeURIComponent(path.basename(rel))}"`);
+      res.type('application/pdf').send(out.buf);
     } catch (err) { next(err); }
   };
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Maximize2, Scan, FileJson, Eye, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, Scan, FileJson, Eye, FileType2, Loader2 } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { COLOR, CANVAS, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
+import { versionOfFile } from '../../lib/file-versions.js';
 import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -33,36 +34,50 @@ const PAD = 24;
 
 export default function DocxWindow({
   projectId,
-  /** 工作区相对路径，例如 '文档.docx' */
+  /** 工作区相对路径，例如 '文档.docx'；word 文件夹时 = 主成员 */
   file,
   title,
   /** token 源文件名（有就说明是我们造的，可以看源码 / 改源重建） */
   sourceFile = null,
+  /**
+   * word 文件夹的成员表 `[{ file, title, sourceFile }]`（多版本并排放，这里的
+   * 导航切换）。单份 .docx 时是 null —— 窗里就没有切换器，其余一切照旧
+   */
+  members = null,
   /** 服务端形态注册表给的可导出格式 */
   exports: artifactExports,
+  /** (fmt, file) —— 第二参是当前看的成员，导出点名它而不是整卡 */
   onExport,
   onClose,
   onToolbarGroups,
-  /** 文件版本号，用来穿透浏览器缓存 */
-  version,
+  /** 版本表（穿透浏览器缓存）。按**当前成员**取版本，切成员各取各的 */
+  fileVersions = null,
 }) {
   const [page, setPage] = useState(1);
   const [count, setCount] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [fit, setFit] = useState('height');     // 'height' 铺满高度 | 'width' 铺满宽度
-  const [tab, setTab] = useState('preview');    // 'preview' | 'source'
+  const [tab, setTab] = useState('preview');    // 'preview' | 'pdf' | 'source'
   const [source, setSource] = useState(null);
   const [imgUrl, setImgUrl] = useState(null);
   const boxRef = useRef(null);
 
+  // 当前看哪个成员。卡片双击进来时看主成员；prop 换了（开了另一张卡）跟着换
+  const [cur, setCur] = useState(file);
+  useEffect(() => { setCur(file); }, [file]);
+  const curMember = members?.find(m => m.file === cur) || null;
+  const curSource = curMember ? curMember.sourceFile : sourceFile;
+  const version = versionOfFile(fileVersions, cur);
+
   const src = useMemo(
-    () => Assets.docxPageUrl(projectId, file, page, { v: version }),
-    [projectId, file, page, version],
+    () => Assets.docxPageUrl(projectId, cur, page, { v: version }),
+    [projectId, cur, page, version],
   );
 
-  // 换文档（不是换页）时回到第一页 —— 停在第 7 页看另一份文档是没道理的
-  useEffect(() => { setPage(1); setCount(null); }, [file]);
+  // 换文档（不是换页）时回到第一页 —— 停在第 7 页看另一份文档是没道理的。
+  // 源码缓存也清：那是上一份的源
+  useEffect(() => { setPage(1); setCount(null); setSource(null); }, [cur]);
 
   // 用 fetch 而不是直接把 URL 交给 <img>：页数在**响应头**里（服务端顺带给的），
   // <img> 拿不到头。
@@ -99,12 +114,12 @@ export default function DocxWindow({
 
   // 看源码：token JSON 就是这份文档的真相源
   useEffect(() => {
-    if (tab !== 'source' || !sourceFile || source != null) return;
-    fetch(Assets.artifactFileUrl(projectId, sourceFile))
+    if (tab !== 'source' || !curSource || source != null) return;
+    fetch(Assets.artifactFileUrl(projectId, curSource))
       .then(r => r.text())
       .then(setSource)
       .catch(() => setSource('（读不到源文件）'));
-  }, [tab, sourceFile, projectId, source]);
+  }, [tab, curSource, projectId, source]);
 
   const go = useCallback((delta) => {
     setPage(p => Math.min(Math.max(1, p + delta), count || p + delta));
@@ -122,6 +137,28 @@ export default function DocxWindow({
   }, [go]);
 
   const groups = useMemo(() => [
+    // ⭐word 文件夹的导航：成员（多版本）切换。site 的「页」是文件、docx 文件夹
+    // 的「份」也是文件 —— 但版本不是页，翻页键留给页，切版本用选择器。
+    // 单份文档（members 空）没有这一组，窗跟原来一模一样。
+    (members && members.length > 1) ? {
+      id: 'member',
+      node: (
+        <select
+          value={cur}
+          onChange={(e) => setCur(e.target.value)}
+          title="这个文件夹里的文档（多版本并排放，选一份看）"
+          style={{
+            maxWidth: 180, padding: '2px 4px', border: `1px solid ${COLOR.border}`,
+            borderRadius: 4, background: COLOR.bgWhite, color: COLOR.text,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, cursor: 'pointer',
+          }}
+        >
+          {members.map(m => (
+            <option key={m.file} value={m.file}>{m.title || m.file}</option>
+          ))}
+        </select>
+      ),
+    } : null,
     // ⭐word 特制控件：翻页。deck 的"页"是 section、站点的"页"是文件，
     // 只有文档的页是**排版算出来的** —— 改一个字号页数就变，所以页码不能存，
     // 只能每次问渲染管线。
@@ -154,15 +191,21 @@ export default function DocxWindow({
         { id: 'fitW', icon: Scan, title: '铺满宽度（看细节）', active: fit === 'width', onClick: () => setFit('width') },
       ],
     },
-    ...(sourceFile ? [{
+    {
       id: 'tab',
       items: [
         { id: 'preview', icon: Eye, title: '看页面', active: tab === 'preview', onClick: () => setTab('preview') },
-        { id: 'source', icon: FileJson, title: `看源码（${sourceFile}）—— 改这份再 build，别改 .docx`, active: tab === 'source', onClick: () => setTab('source') },
+        // PDF 视图按需现渲、跟着 .docx 的 mtime 走 —— 做成查看态而不是落盘文件，
+        // 就是为了它永远不陈旧（落一份 PDF 在文件夹里，改完 docx 忘了重转，
+        // 用户看到的就是旧的）。真要 PDF 文件走导出。
+        { id: 'pdf', icon: FileType2, title: '连续阅读（浏览器 PDF 视图，可搜索选字）', active: tab === 'pdf', onClick: () => setTab('pdf') },
+        ...(curSource ? [
+          { id: 'source', icon: FileJson, title: `看源码（${curSource}）—— 改这份再 build，别改 .docx`, active: tab === 'source', onClick: () => setTab('source') },
+        ] : []),
       ],
-    }] : []),
-    exportToolGroup({ kind: 'docx', exports: artifactExports, onExport }),
-  ].filter(Boolean), [page, count, fit, tab, sourceFile, artifactExports, onExport, go]);
+    },
+    exportToolGroup({ kind: 'docx', exports: artifactExports, onExport: onExport ? (fmt) => onExport(fmt, cur) : null }),
+  ].filter(Boolean), [page, count, fit, tab, curSource, artifactExports, onExport, go, members, cur]);
 
   const imgStyle = fit === 'height'
     ? { height: '100%', width: 'auto', maxWidth: '100%' }
@@ -171,12 +214,12 @@ export default function DocxWindow({
   return (
     <ArtifactWindow
       kind="docx"
-      title={title || file}
+      title={curMember?.title ? `${title || file} · ${curMember.title}` : (title || file)}
       subtitle={count ? `${count} 页` : null}
       onClose={onClose}
       groups={groups}
       onToolbarGroups={onToolbarGroups}
-      banner={sourceFile ? null : (
+      banner={curSource ? null : (
         <span>
           这是一份<b>外来文档</b>（没有 token 源）。现在能看、能导出，<b>改它要等编辑道上线</b>
           —— 想现在就要一个改过的版本，让 agent 基于它的内容重做一份。
@@ -184,7 +227,16 @@ export default function DocxWindow({
       )}
       contentStyle={{ background: CANVAS.paper }}
     >
-      {tab === 'source' ? (
+      {tab === 'pdf' ? (
+        // 浏览器自带的 PDF 阅读器：连续滚动、可搜索、可选字 —— 页图给不了的
+        // 都在这。key 带版本：agent 一 rebuild，iframe 换 src 自动重载
+        <iframe
+          key={`${cur}?v=${version}`}
+          title={`${title || cur} PDF`}
+          src={Assets.docxPdfUrl(projectId, cur, { v: version })}
+          style={{ width: '100%', height: '100%', border: 0, display: 'block' }}
+        />
+      ) : tab === 'source' ? (
         <pre style={{
           margin: 0, padding: GAP.lg, height: '100%', overflow: 'auto',
           fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, lineHeight: 1.6,
@@ -214,7 +266,7 @@ export default function DocxWindow({
           ) : (
             <div style={{ position: 'relative', height: fit === 'height' ? '100%' : 'auto', maxWidth: '100%' }}>
               <img
-                alt={`${title || file} 第 ${page} 页`}
+                alt={`${title || cur} 第 ${page} 页`}
                 src={imgUrl || undefined}
                 style={{ ...imgStyle, display: 'block', background: '#fff', boxShadow: PAPER_SHADOW.mid, borderRadius: 2 }}
               />

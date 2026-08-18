@@ -74,13 +74,14 @@ describe('detect 判定', () => {
     expect(m.artifacts[0].sourceFile).toBe('文档.json');
   });
 
-  it('⭐deck 任务里的 .docx 是素材，不能把任务判成 word，也不占产物卡', async () => {
+  it('⭐deck 任务里的 .docx 不参与形态判定，但照样出卡（2026-08-18 拍板）', async () => {
     const d = await mkTask({ 'canvas.html': '<section data-page="1">x</section>' });
     await fs.writeFile(path.join(d, '参考资料.docx'), docxBuf);
     const m = await taskManifest(d);
-    expect(m.kind).toBe('deck');
-    expect(m.artifacts).toHaveLength(1);
+    expect(m.kind).toBe('deck');                     // 垫底：形态还是 deck 说了算
+    expect(m.artifacts).toHaveLength(2);             // 但 word 附件不隐身
     expect(m.artifacts[0].kind).toBe('deck');
+    expect(m.artifacts[1].kind).toBe('docx');
   });
 
   it('site 任务同理', async () => {
@@ -93,6 +94,55 @@ describe('detect 判定', () => {
     const d = await mkTask({});
     await fs.writeFile(path.join(d, '~$文档.docx'), 'lock');
     expect(await detectTaskKind(d)).toBeNull();
+  });
+});
+
+describe('word 文件夹（2026-08-18：目录型实例，成员 = 多版本）', () => {
+  it('⭐子目录顶层有 .docx 且无网页入口 → 一件目录型产物，成员齐全', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '报告'));
+    await fs.writeFile(path.join(d, '报告', '文档.docx'), docxBuf);
+    await fs.writeFile(path.join(d, '报告', '文档.json'), '{}');
+    await fs.writeFile(path.join(d, '报告', '终稿v2.docx'), docxBuf);
+    const m = await taskManifest(d);
+    expect(m.artifacts).toHaveLength(1);             // 整个文件夹是一件，不是两件
+    const a = m.artifacts[0];
+    expect(a.kind).toBe('docx');
+    expect(a.root).toBe('报告');                     // 卡即文件夹的认领范围
+    expect(a.file).toBe('报告/文档.docx');           // 主成员（默认名排头）
+    expect(a.members.map(x => x.file)).toEqual(['报告/文档.docx', '报告/终稿v2.docx']);
+    expect(a.members[0].sourceFile).toBe('报告/文档.json');
+    expect(a.members[1].sourceFile).toBeNull();
+  });
+
+  it('子目录里有 html → 不是 word 文件夹（那是站点/deck 的地盘）', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '官网'));
+    await fs.writeFile(path.join(d, '官网', 'index.html'), '<p>x</p>');
+    await fs.writeFile(path.join(d, '官网', '需求.docx'), docxBuf);
+    const m = await taskManifest(d);
+    expect(m.artifacts.some(a => a.kind === 'docx' && a.root === '官网')).toBe(false);
+  });
+
+  it('成员路径能寻址回这件产物（artifactOfPath 认 members）', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '报告'));
+    await fs.writeFile(path.join(d, '报告', '文档.docx'), docxBuf);
+    await fs.writeFile(path.join(d, '报告', '文档.json'), '{}');
+    await fs.writeFile(path.join(d, '报告', 'v2.docx'), docxBuf);
+    const m = await taskManifest(d);
+    const { artifactOfPath } = await import('./index.js');
+    expect(artifactOfPath(m, '报告/v2.docx')?.kind).toBe('docx');
+    expect(artifactOfPath(m, '报告/文档.json')?.kind).toBe('docx');
+  });
+
+  it('只有 token 源的 word 文件夹也报 pending 产物（声明即意图）', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '公文'));
+    await fs.writeFile(path.join(d, '公文', '文档.json'), '{}');
+    const m = await taskManifest(d);
+    expect(m.artifacts[0].kind).toBe('docx');
+    expect(m.artifacts[0].file).toBe('公文/文档.docx');
   });
 });
 

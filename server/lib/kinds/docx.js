@@ -21,7 +21,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { isReservedFile } from '../task-scan.js';
+import { isReservedFile, RESERVED_DIRS } from '../task-scan.js';
 
 /** token + 内容的源文件名。产物 .docx 与它同级同名 */
 const SOURCE = '文档.json';
@@ -33,17 +33,53 @@ async function exists(p) {
   try { await fs.access(p); return true; } catch { return false; }
 }
 
-/** 任务根顶层的 .docx（排掉保留文件和临时文件） */
-async function topLevelDocx(taskDir) {
+/**
+ * 一堆文件名 → 排好序的产物 .docx 名单（排掉保留文件和临时文件）。
+ * 导出收集器（export-collect）反解 `docx:<文件夹>` 卡时用同一份判据挑主成员，
+ * 别在那边再抄一遍排序。
+ */
+function sortDocxNames(names) {
+  return names
+    .filter(n => /\.docx$/i.test(n))
+    // Word 自己开着文件时会留 `~$xxx.docx` 锁文件，那不是产物
+    .filter(n => !n.startsWith('.') && !n.startsWith('~$'))
+    .filter(n => !isReservedFile(n))
+    .sort((a, b) => (b === ENTRY) - (a === ENTRY) || a.localeCompare(b, 'zh'));
+}
+
+/** 目录顶层的 .docx */
+async function topLevelDocx(dir) {
+  let entries = [];
+  try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { /* */ }
+  return sortDocxNames(entries.filter(e => e.isFile()).map(e => e.name));
+}
+
+/**
+ * word 文件夹（2026-08-18）：一级子目录顶层有 .docx（或 token 源）、且没有任何
+ * 网页入口 → 整个文件夹是**一件**目录型 word 产物，里面的 .docx 是它的成员
+ * （多版本并排放，窗里切换）。这跟 site 的「无根站时一级子目录各自为站」同构。
+ *
+ * 「没有网页入口」这条挡两种误伤：站点内部目录（posts/ 里全是 html）和
+ * deck 文件夹 —— 它们各有自己的解析器，word 不去认领。
+ */
+async function wordDirs(taskDir) {
+  const out = [];
   let entries = [];
   try { entries = await fs.readdir(taskDir, { withFileTypes: true }); } catch { /* */ }
-  return entries
-    .filter(e => e.isFile() && /\.docx$/i.test(e.name))
-    // Word 自己开着文件时会留 `~$xxx.docx` 锁文件，那不是产物
-    .filter(e => !e.name.startsWith('.') && !e.name.startsWith('~$'))
-    .filter(e => !isReservedFile(e.name))
-    .map(e => e.name)
-    .sort((a, b) => (b === ENTRY) - (a === ENTRY) || a.localeCompare(b, 'zh'));
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name.startsWith('.') || e.name.startsWith('_')) continue;
+    if (RESERVED_DIRS.has(e.name)) continue;
+    let sub = [];
+    try { sub = await fs.readdir(path.join(taskDir, e.name), { withFileTypes: true }); } catch { continue; }
+    if (sub.some(x => x.isFile() && /\.html?$/i.test(x.name))) continue;
+    const files = sortDocxNames(sub.filter(x => x.isFile()).map(x => x.name));
+    if (files.length) out.push({ dir: e.name, files });
+    else if (sub.some(x => x.isFile() && x.name === SOURCE)) {
+      // 源已就位、还没 build 的窗口期：跟根层 pending 同款「声明即意图」
+      out.push({ dir: e.name, files: [ENTRY], pending: true });
+    }
+  }
+  return out;
 }
 
 export default {
@@ -66,20 +102,56 @@ export default {
   artifactRoot: async () => '',
 
   /**
-   * 实例发现：顶层每个 .docx 各是一份平等产物（跟 deck 顶层每个 .html 同构）。
+   * 实例发现，两种粒度：
+   *   - **根层**每个 .docx 各是一份单文件产物（跟 deck 顶层每个 .html 同构）——
+   *     桌面上并排躺着的文档未必互相有关，不硬捆成一组
+   *   - **word 文件夹**（一级子目录）整个是一件目录型产物，里面的 .docx 全是
+   *     它的成员（多版本并排，窗里的导航切换）—— 跟 site 的子目录站同构
    *
    * 特例：有 `文档.json` 但还没构建出 .docx 时，也要报一份 —— 这是 site.js
    * 「声明即意图」那条的同款处理（agent 刚写完源还没 build 的窗口期，寻址该
    * 指向将要出现的地方，而不是让整个任务在那几秒里没有形态）。
    */
   async discoverInstances(taskDir) {
+    const out = [];
     const files = await topLevelDocx(taskDir);
-    if (files.length) return files.map(f => ({ file: f }));
-    if (await exists(path.join(taskDir, SOURCE))) return [{ file: ENTRY, pending: true }];
-    return [];
+    if (files.length) out.push(...files.map(f => ({ file: f })));
+    else if (await exists(path.join(taskDir, SOURCE))) out.push({ file: ENTRY, pending: true });
+    out.push(...await wordDirs(taskDir));
+    return out;
   },
 
   async instanceManifest(taskDir, _marker, inst) {
+    // ── word 文件夹：目录型实例，members 是它的版本清单 ──
+    if (inst.dir) {
+      const members = [];
+      for (const f of inst.files) {
+        const stem = f.replace(/\.docx$/i, '');
+        members.push({
+          file: `${inst.dir}/${f}`,
+          title: stem === '文档' ? inst.dir : stem,
+          sourceFile: (await exists(path.join(taskDir, inst.dir, `${stem}.json`)))
+            ? `${inst.dir}/${stem}.json` : null,
+        });
+      }
+      const primary = members[0];
+      return {
+        kind: 'docx',
+        // root = 文件夹本身：前端卡 id（docx:<root>）和舞台寻址的认领范围都从它来
+        root: inst.dir,
+        srcRoot: inst.dir,
+        entry: primary.file,
+        entryRel: primary.file,
+        // file 仍指主成员（不是 null）：单文件消费方（卡脸的第一页缩略图、
+        // setActiveArtifact、导出兜底）拿它就能干活，不用都学会 members
+        file: primary.file,
+        members,
+        pages: null,
+        single: false,
+        title: inst.dir,
+        sourceFile: primary.sourceFile,
+      };
+    }
     const stem = inst.file.replace(/\.docx$/i, '');
     return {
       kind: 'docx',
@@ -115,6 +187,7 @@ export default {
     }
   },
 
-  // 给别处复用，别再各写各的字符串
+  // 给别处复用，别再各写各的字符串 / 排序
   SOURCE,
+  sortDocxNames,
 };

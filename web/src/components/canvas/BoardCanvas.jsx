@@ -13,7 +13,7 @@ import {
   EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf,
+  SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf, passesFilter,
 } from '../../lib/board-kinds.js';
 import { deriveBoardObjects } from '../../lib/board-objects.js';
 import BoardObject from './cards/BoardObject.jsx';
@@ -139,7 +139,7 @@ export default function BoardCanvas({
   // 数据层（加载 / 持有 / 落盘）—— 2026-08-13 拆进 useBoardData.js（刀 4 续）。
   // 派生（objects/folderView）留在本组件：它跟拖拽、影子区缠在一起。
   const {
-    artifacts, tasks, folders, sessions, memoryDocs,
+    artifacts, tasks, folders, sessions, memoryDocs, browse, filter, filterGroup,
     layout, setLayout, zones, setZones, bindings, setBindings, boardHero,
     guideText, fileCount,
     reload, scheduleSave, patchLayout,
@@ -275,7 +275,7 @@ export default function BoardCanvas({
   //   - 画布原生（涂鸦）：board.json 就是本体，从 layout 里带 kind 的条目还原
   // 画布物件的派生搬去 lib/board-objects.js（2026-08-17 行数棘轮拆件）：
   // 它是纯数据变换（/artifacts 载荷 → 画布物件），没有 React、可单独测。
-  const objects = useMemo(() => deriveBoardObjects({ tasks, artifacts, layout }), [tasks, artifacts, layout]);
+  const objects = useMemo(() => deriveBoardObjects({ tasks, artifacts, layout, browse }).filter(o => passesFilter(o, filter)), [tasks, artifacts, layout, browse, filter]);
 
   // 顶带四张卡的一行摘要
   const bandSummaries = useMemo(() => {
@@ -1394,7 +1394,7 @@ export default function BoardCanvas({
    */
   const artifactRoots = useMemo(() => (
     objects
-      .filter(o => o.type === 'site')
+      .filter(o => o.type === 'site' || (o.type === 'docx' && o.members))   // word 文件夹也是目录型（判据 members 不是 root —— deck 卡也带 root）
       .map(o => ({
         path: o.id.slice(o.id.indexOf(':') + 1),
         id: o.id,
@@ -1613,8 +1613,8 @@ export default function BoardCanvas({
 
   const boardToolGroups = useMemo(() => buildBoardToolGroups({
     tool, setTool, drawMode, setDrawMode, scale,
-    tidyBoard, zoomFit: zoomFitStable, zoomBy: zoomByStable, zoomTo: zoomToStable,
-  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable]);
+    tidyBoard, zoomFit: zoomFitStable, zoomBy: zoomByStable, zoomTo: zoomToStable, filterGroup,
+  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable, filterGroup]);
 
   useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
 

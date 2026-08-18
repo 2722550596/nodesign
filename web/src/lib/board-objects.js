@@ -10,11 +10,23 @@
 import { cardIdOf } from './board-kinds.js';
 
 /**
- * @param {{tasks?:Array, artifacts?:Array, layout?:object}} src
+ * @param {{tasks?:Array, artifacts?:Array, layout?:object, browse?:object|null}} src
  * @returns {Array} 画布物件
  */
-export function deriveBoardObjects({ tasks = [], artifacts = [], layout = {} }) {
+export function deriveBoardObjects({ tasks = [], artifacts = [], layout = {}, browse = null }) {
     const out = [];
+    // 浏览器卡（2026-08-18）：`/artifacts` 给 `browse` 才有，也就是"这个项目
+    // 逛过站"。它的真相在服务端的 `.browser/state.json`，所以**浏览器实例被空闲
+    // 回收之后卡还在**，双击它把浏览器起回上次那一页（这就是"随时能进"）。
+    //
+    // id 固定 `'browse'`：一个项目一只浏览器（registry 按 projectId 键），
+    // 不需要也不该有第二张。不带斜杠 → `zoneOfObjectId` 返回 null → 住桌面根上，
+    // 跟顶层产物平级。
+    // 判据跟服务端一致：有访问记录**或者**采到过东西（`browseCard` 头注释里
+    // 有为什么是两者之一）。只看 url 的话"采过但没有访问记录"的项目会没有卡。
+    if (browse?.url || browse?.sites?.length) {
+      out.push({ id: 'browse', type: 'browse', ...browse, title: browse.title || browse.host });
+    }
     // 画布原生物件先进来（它们不依赖任何数据源，只依赖 layout 本身）
     for (const [id, l] of Object.entries(layout)) {
       if (!l?.kind) continue;
@@ -69,6 +81,10 @@ export function deriveBoardObjects({ tasks = [], artifacts = [], layout = {} }) 
             deckFile: a.file,
             // word 有没有 token 源，决定「能不能看源码 / 能不能改源重建」
             sourceFile: a.sourceFile || null,
+            // word 文件夹：root = 认领的文件夹（舞台寻址收敛用），members =
+            // 版本清单（窗里的导航切换）。单份 .docx 两个都空着
+            root: a.root || '',
+            members: a.members || null,
             exports: a.exports,
             title: a.title || t.title,
             mtime: t.mtime,

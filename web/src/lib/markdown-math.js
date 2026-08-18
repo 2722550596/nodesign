@@ -6,13 +6,15 @@
  * katex 的 CSS 和字体在这儿 import，打进包不吃 CDN；字体是按需加载的，
  * 没公式的页面不会去取。
  *
- * ⭐ 美元符号的取舍（这个产品满屏都是「$0.75 / $3.75 每百万」这种价钱）：
- *   - 行内公式**不认单美元**（singleDollarTextMath: false）。一开单美元，两个
- *     价钱之间那段文字就被当公式吃掉，账目直接烂给用户看。
+ * ⭐ 美元符号的取舍（这个产品满屏都是「$0.75 / $3.75 每百万」这种价钱，
+ *    而模型答数学时又满屏 `$r(AB)\le r(A)$` 这种单美元行内公式）：
+ *   - 单美元**开**（2026-08-18；08-15 曾整个关掉，代价是数学消息里行内公式
+ *     全部露源码 —— 用户实报）。价钱靠**预转义**保护：长得像钱的 `$`（紧跟
+ *     数字、且数字串之后不是数学续写）先换成 `\$`，剩下的 `$…$` 才交给
+ *     remark-math。`$15$` 这种刻意写的纯数字公式照常放行（判据看闭合 $）。
  *   - 模型常写的 `\( … \)` / `\[ … \]` 在进 markdown 前换成 `$$ … $$` —— 前者
- *     留在行内（math text），后者独占段落（math flow）。于是"模型写 LaTeX 括号"
- *     和"用户写 $$"两条路都通，而单美元照旧是钱。
- *   - 换写法只在**代码之外**做：围栏代码块和行内 code 里的 `\(` 是代码不是公式。
+ *     留在行内（math text），后者独占段落（math flow）。
+ *   - 两步都只在**代码之外**做：围栏代码块和行内 code 里的 `\(`、`$` 是代码。
  */
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -22,17 +24,28 @@ import 'katex/dist/katex.min.css';
 /** 围栏代码块 / 行内 code：这些片段原样留着，别在里面动手 */
 const CODE_SPANS = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
 
-/** `\( … \)` → 行内 `$$ … $$`；`\[ … \]` → 独占一段的 `$$ … $$` */
+/**
+ * 长得像钱的 `$`：`$3`、`$0.75`、`$1,200 每百万`。判据 = `$` 紧跟数字，且数字串
+ * （含 `,` 千分位、`.` 小数）之后**不是**数学续写（`^ _ \ { } =` 或字母）也不是
+ * 紧跟的闭合 `$`。命中就转义成 `\$`，这样它对 remark-math 隐形。
+ * `$2^n$`（数字后是 ^）和 `$15$`（数字后是闭合 $）都不命中，照常当公式。
+ */
+// ⚠️ 续写禁集里必须含 `\d , .`：不含的话 `[\d,]*` 少吃一位就能让 `$15$` 的
+// 「5」冒充续写字符绕过检查（回溯），钱形判定误伤刻意写的纯数字公式
+const CURRENCY = /\$(?=\d[\d,]*(?:\.\d+)?(?![\d,.$^_\\{}=a-zA-Z]))/g;
+
+/** `\( … \)` → 行内 `$$ … $$`；`\[ … \]` → 独占一段的 `$$ … $$`；钱形 `$` 转义 */
 function convertDelimiters(seg) {
   return seg
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, body) => `\n\n$$\n${body.trim()}\n$$\n\n`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_, body) => `$$${body.trim()}$$`);
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, body) => `$$${body.trim()}$$`)
+    .replace(CURRENCY, '\\$');
 }
 
 /** 只在代码之外换公式写法（导出给测试钉住这条边界） */
 export function normalizeMath(text) {
   const s = String(text ?? '');
-  if (!s.includes('\\(') && !s.includes('\\[')) return s;
+  if (!s.includes('\\(') && !s.includes('\\[') && !s.includes('$')) return s;
   return s.split(CODE_SPANS).map((seg, i) => (i % 2 ? seg : convertDelimiters(seg))).join('');
 }
 
@@ -52,6 +65,8 @@ export function normalizeMath(text) {
  * 内容有机会先被别的规则吃掉。顺序在这种插件链里是语义不是风格。
  */
 export const MATH_PLUGINS = Object.freeze({
-  remarkPlugins: [remarkGfm, [remarkMath, { singleDollarTextMath: false }]],
+  // 单美元开着：钱已经在 normalizeMath 里预转义了（CURRENCY），这里放行的
+  // 全是真公式。⚠️ 两处是一对 —— 谁绕过 normalizeMath 直接渲染，价钱就会被吃
+  remarkPlugins: [remarkGfm, [remarkMath, { singleDollarTextMath: true }]],
   rehypePlugins: [[rehypeKatex, { throwOnError: false, strict: 'ignore' }]],
 });

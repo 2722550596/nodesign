@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   KINDS, kindOf, traitsOf, sizeOf, actionsOf, primaryOf, readerOf,
   chromeOf, cardOf, isFileBacked, legacyBucketOf, isMarkdown, SIZES,
+  CATEGORIES, SOURCES, categoryOf, sourceOf, passesFilter,
 } from './board-kinds.js';
 
 /**
@@ -192,9 +193,18 @@ describe('两条轴', () => {
   });
 
   it('每种形态都得声明 backing，不能漏', () => {
+    // 'runtime' 是 2026-08-18 为浏览器卡开的第三个值：真相在服务端进程里，
+    // 既不是磁盘文件也不是 board.json 记录。**加值要来改这里**，别默默扩容。
     for (const [name, k] of Object.entries(KINDS)) {
-      expect(['file', 'canvas'], `${name} 的 backing`).toContain(k.backing);
+      expect(['file', 'canvas', 'runtime'], `${name} 的 backing`).toContain(k.backing);
     }
+  });
+
+  it('只有 file backing 算"磁盘上有东西"（改名/搬家/导出/加上下文的判据）', () => {
+    expect(isFileBacked({ type: 'deck' })).toBe(true);
+    expect(isFileBacked({ type: 'scribble' })).toBe(false);
+    // 浏览器卡最容易被误判成 file —— 它长得像产物卡，但背后没有路径
+    expect(isFileBacked({ type: 'browse' })).toBe(false);
   });
 
   it('markdown 变体只改 file，不影响别的形态', () => {
@@ -216,9 +226,9 @@ describe('两条轴', () => {
 });
 
 describe('派生判定', () => {
-  it('走统一方卡的就是那三种产物', () => {
+  it('走统一方卡的就是那几种（三种产物 + 浏览器）', () => {
     const artifacts = Object.keys(KINDS).filter(k => cardOf({ type: k }) === 'artifact');
-    expect(artifacts.sort()).toEqual(['deck', 'docx', 'site']);
+    expect(artifacts.sort()).toEqual(['browse', 'deck', 'docx', 'site']);
   });
 
   /**
@@ -311,5 +321,53 @@ describe('涂鸦墨色词汇表两端一致', () => {
       be.match(/\['ink'[^\]]*\]/)[0].replace(/'/g, '"')).sort();
 
     expect(feKeys).toEqual(beKeys);
+  });
+});
+
+/**
+ * 两条轴（2026-08-18）。它们是**桌面过滤的判据**，而过滤判错的症状是"东西不见了"
+ * —— 用户会以为文件丢了。所以每一条都钉住。
+ */
+describe('内容轴 × 来源轴', () => {
+  const ids = CATEGORIES.map(c => c.id);
+
+  it('每种形态都在内容轴上表态，而且是表里有的那几档', () => {
+    for (const [name, k] of Object.entries(KINDS)) {
+      expect(ids, `${name} 的 category`).toContain(k.category);
+    }
+  });
+
+  it('两条轴的档位不重名（过滤器把它们放在一起显示）', () => {
+    const all = [...ids, ...SOURCES.map(s => s.id)];
+    // 'tool' 两条轴上都有是**故意的**（工具卡的内容是工具，来源也是工具），
+    // 除它之外不该再有重名 —— 否则界面上两排一样的词，谁也说不清点的是哪条轴
+    expect(all.filter(x => all.indexOf(x) !== all.lastIndexOf(x))).toEqual(['tool', 'tool']);
+  });
+
+  it('来源按物件的实际出处判，不跟着形态走', () => {
+    // 同一种形态（图）三种来源 —— 这正是"来源不能写在形态表里"的原因
+    expect(sourceOf({ type: 'image', kind: 'upload', path: 'assets/x.png' })).toBe('user');
+    expect(sourceOf({ type: 'image', kind: 'generated', path: 'assets/generated/x.png' })).toBe('tool');
+    expect(sourceOf({ type: 'image', path: 'assets/references/web/a.com/x.screenshot.webp' })).toBe('tool');
+    expect(sourceOf({ type: 'deck', deckFile: '主稿.html' })).toBe('agent');
+    // 工具卡本身
+    expect(sourceOf({ type: 'browse' })).toBe('tool');
+    expect(categoryOf({ type: 'browse' })).toBe('tool');
+    // 老形状的上传路径（扁平化之前那种）不能被判成 agent 做的
+    expect(sourceOf({ type: 'file', path: '../../shared/assets/品牌规范.pdf' })).toBe('user');   // legacy-ok
+  });
+
+  it('空过滤器 = 全都看得见（不是全都不要）', () => {
+    const o = { type: 'deck' };
+    expect(passesFilter(o, null)).toBe(true);
+    expect(passesFilter(o, { categories: [], sources: [] })).toBe(true);
+  });
+
+  it('两条轴取交集', () => {
+    const shot = { type: 'image', path: 'assets/references/web/a.com/x.screenshot.webp' };
+    expect(passesFilter(shot, { categories: ['material'] })).toBe(true);
+    expect(passesFilter(shot, { sources: ['tool'] })).toBe(true);
+    // 内容对、来源不对 → 不显示
+    expect(passesFilter(shot, { categories: ['material'], sources: ['user'] })).toBe(false);
   });
 });

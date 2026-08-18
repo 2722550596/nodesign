@@ -62,7 +62,7 @@ const ENTRY_EXTS = new Set(
 
 // 形态判定与解析的权威在 kinds/，这里转发老名字（消费方 import 不用改两次）
 export { detectTaskKind, readTaskMarker, taskManifest, kindDef, artifactOfPath };
-export { formatAllowed } from './kinds/index.js';
+export { formatAllowed, docxClaimedFiles } from './kinds/index.js';
 export { can };
 
 /** sessionId → { path, kind }。会话结束不清也无妨（几个短字符串） */

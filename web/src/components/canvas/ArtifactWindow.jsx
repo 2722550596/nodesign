@@ -105,8 +105,19 @@ export default function ArtifactWindow({
   // 工具组交给外层那条常驻工具栏；窗一关就撤回（否则关了窗还留着这扇窗的工具）
   useEffect(() => {
     onToolbarGroups?.(groups);
-    return () => onToolbarGroups?.(null);
   }, [groups, onToolbarGroups]);
+
+  /**
+   * 撤销上报**只在窗真的没了的时候**做（依赖里刻意没有 `groups`）。
+   *
+   * ⚠️ 原来这两件事写在同一条 effect 里：换 groups 时清理函数先报一个 `null`
+   * 再报新值。上游那道签名守卫（CanvasFrame 的 `reportWinGroups`）拦得住
+   * "同内容新数组"，**但拦不住 null↔groups 来回跳** —— 于是只要哪个窗的
+   * `groups` memo 依赖里混进一个每渲染都新的函数，就是一个无限渲染循环，
+   * 而且症状（"Maximum update depth"）指不到任何一方。2026-08-18 真踩到了。
+   * 拆开之后，不稳定的 memo 最多多报一次，不再是死循环。
+   */
+  useEffect(() => () => onToolbarGroups?.(null), [onToolbarGroups]);
 
   useEffect(() => {
     if (!onClose || !escToClose) return;

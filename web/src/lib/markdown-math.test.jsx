@@ -40,11 +40,42 @@ describe('渲染', () => {
     expect(render('$$\n\\frac{1}{3}\n$$')).toContain('katex-display');
   });
 
-  it('⭐ 价钱不是公式：单美元原样留着', () => {
+  it('⭐ 价钱不是公式：单美元的钱原样留着', () => {
     const html = render('一轮约 $0.75 / $3.75 每百万 token');
     expect(html).not.toContain('katex');
     expect(html).toContain('$0.75');
     expect(html).toContain('$3.75');
+  });
+
+  it('⭐ 无空格的价钱对也不被吃（08-15 关单美元的原始案发现场）', () => {
+    const html = render('输入$0.75/$3.75输出');
+    expect(html).not.toContain('katex');
+    expect(html).toContain('$0.75');
+    expect(html).toContain('$3.75');
+  });
+
+  // 2026-08-18：单美元行内公式打开（用户实报：数学消息里 $…$ 全露源码）。
+  // 用的就是用户截图里的原样例。
+  it('⭐ 单美元行内公式渲染成 katex', () => {
+    for (const md of ['像 $\\operatorname{Im}B$ 这样', '有 $r(AB)\\le r(A)$ 成立', '矩阵 $A_{m\\times n}$ 的秩']) {
+      const html = render(md);
+      expect(html).toContain('katex');
+      // 源码不许露在正文里。⚠️ 别断言不含 `operatorname` —— KaTeX 的 MathML
+      // annotation 里合法地嵌着 TeX 源码；露源码的特征是带着 `$` 的原文
+      expect(html).not.toContain('$\\operatorname');
+      expect(html).not.toContain('$r(AB)');
+    }
+  });
+
+  it('数字后跟数学续写 / 闭合 $ 的仍是公式：$2^n$、$15$', () => {
+    expect(render('共 $2^n$ 种')).toContain('katex');
+    expect(render('第 $15$ 项')).toContain('katex');
+  });
+
+  it('行内 code 里的 $ 是代码不是公式也不是钱', () => {
+    const html = render('写成 `$x^2$` 就行');
+    expect(html).not.toContain('katex');
+    expect(html).toContain('$x^2$');
   });
 
   it('写坏的公式只红一行，不炸整条消息', () => {

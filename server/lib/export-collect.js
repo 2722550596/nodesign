@@ -177,6 +177,15 @@ export async function collectCard({ workspaceRoot, cardId }) {
       // 离截断远着 —— 用错坐标系会往交付物里印假警报。
       if (f.rel.split('/').length >= 6) deepWarn.push(r);
     }
+  } else if (kind === 'docx' && stat.isDirectory()) {
+    // word 文件夹卡（`docx:报告`）：地址是文件夹，导出对象是主成员 —— 窗里的
+    // 导出按钮会点名具体成员（`docx:报告/文档v2.docx`），走上面的单文件分支；
+    // 这条是卡级导出的兜底。挑主成员的判据在 kinds/docx.js，别在这儿抄第二份。
+    let names = [];
+    try { names = kindDef('docx').sortDocxNames(await fs.readdir(abs)); } catch { /* 下面报 404 */ }
+    if (!names.length) throw Object.assign(new Error(`${rel} 里没有 .docx`), { status: 404 });
+    rel = `${rel}/${names[0]}`;
+    files.push({ abs: path.join(abs, names[0]), rel });
   } else {
     if (!stat.isFile()) throw Object.assign(new Error(`${rel} 不是文件`), { status: 400 });
     files.push({ abs, rel });

@@ -64,7 +64,7 @@ describe('ArtifactCard 渲染冒烟', () => {
   });
 });
 
-describe('三张脸的信息量一个都不能丢', () => {
+describe('每张脸的信息量一个都不能丢', () => {
   it('站点说得出页数；单页说得出它是单页', () => {
     expect(ARTIFACT_FACES.site.summary(SITE)).toBe('站点 · 3 个页面');
     expect(ARTIFACT_FACES.site.summary({ single: true })).toBe('单页');
@@ -90,7 +90,7 @@ describe('三张脸的信息量一个都不能丢', () => {
    * 站点和世界在 2026-08-13 之前都用 `Globe` —— 桌面上一眼分不出这张卡是
    * 站点还是世界。收成一套之后图标是仅剩的形态标识，撞了就等于没有。
    */
-  it('三种形态的图标互不相同', () => {
+  it('每种形态的图标互不相同（站点和浏览器都想用 Globe，撞过一次）', () => {
     const icons = Object.values(ARTIFACT_FACES).map(f => f.icon);
     expect(new Set(icons).size).toBe(icons.length);
   });

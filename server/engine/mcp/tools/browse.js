@@ -32,6 +32,8 @@ import { requestHelp } from '../../browse/handover.js';
 import { checkUrl } from '../../../lib/ssrf-guard.js';
 import { normalizeShot } from './screenshot.js';
 import { capture } from '../../browse/capture.js';
+import { collectPage, formatPage } from '../../browse/page-digest.js';
+import { recordVisit, saveFrame } from '../../browse/state.js';
 
 const NAV_TIMEOUT = _limits.NAV_TIMEOUT_MS;
 const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
@@ -54,18 +56,29 @@ async function where(page) {
 export function makeBrowserNavigateTool({ projectId, ctx }) {
   return tool(
     'browser_navigate',
-    `Open a URL in this project's persistent browser and report what loaded.
+    `Open a URL in this project's persistent browser. Returns a digest of the page
+it landed on: heading outline, a text excerpt, and the in-site links — so you
+usually do NOT need a follow-up browser_read.
 
 This is a REAL browser session, not a one-shot fetch: cookies, logins and
 dismissed consent banners persist — across turns and across conversations for
 this project. So you can go three levels into a site instead of guessing URLs.
 
-Workflow this exists for: agree a design direction with the user, search for
-sites that actually have that design, then come here and LOOK at them —
-navigate, click through, screenshot what is worth borrowing.
+## web_search finds sites; this one looks at them
 
-Pair it with browser_read (text + the links on the page, so you can pick where
-to go next), browser_click (for links that JS handles) and browser_screenshot.
+Search snippets carry no layout, no type, no colour. The normal move is
+search → open → read → CLICK DEEPER → capture. Both halves, every time you
+need a visual reference.
+
+## Go deeper than the homepage
+
+⭐ A site's homepage is its most polished and most generic screen. What is
+actually worth learning lives on the inner pages: case studies, product detail,
+pricing, a single blog post, the about page. **When a site turns out to be
+good, do not screenshot the front page and leave** — follow the in-site links
+two or three levels in. That capability is the entire reason this tool exists
+instead of screenshot_url (which is a one-shot glance). Then decide what to
+browser_capture.
 
 Only http/https. Internal and private addresses are refused by a hard network
 gate — that is a security boundary, not a setting. If a site is behind a
@@ -74,13 +87,16 @@ some walls score the server's IP and no amount of retrying changes that.
 
 Note: one browser per project, at most ${_limits.MAX_RESIDENT} on this machine
 (1 vCPU). It shuts down after ${Math.round(_limits.IDLE_MS / 60000)} minutes idle
-and reopens on the next call — the profile survives, so you stay logged in.`,
+and reopens on the next call — the profile survives, so you stay logged in.
+The user has a browser card on their desktop and can watch, or take over.`,
     {
       url: z.string().min(4).describe('Absolute http(s) URL.'),
       waitUntil: z.enum(['domcontentloaded', 'load', 'networkidle']).optional()
-        .describe("How long to wait. Default 'domcontentloaded' (fastest, enough to read). Use 'networkidle' when the page builds itself with JS and comes back empty."),
+        .describe("How long to wait. Default 'domcontentloaded' — fastest and enough to read; measured on this machine, 'networkidle' costs an extra 1.6-4s per page, so do not reach for it by reflex. Use it only when a JS-built page comes back empty."),
+      digest: z.boolean().optional()
+        .describe('Include the page digest (default true). Set false only when you are navigating purely to screenshot and do not want the text.'),
     },
-    async ({ url, waitUntil }) => {
+    async ({ url, waitUntil, digest }) => {
       try {
         return await withBrowser(projectId, async ({ page, guard }) => {
           // ⭐ 先判再动，不要让浏览器为一个我们已经知道会被拒的地址离开当前页面。
@@ -137,10 +153,25 @@ and reopens on the next call — the profile survives, so you stay logged in.`,
           // 让用户看得见 agent 在逛什么：低频信号走现有 EventBus，前端开/更新那扇窗。
           // 像素不走这里（那是 /ws/projects/:pid/browser 的活）。
           try { ctx?.emit?.({ type: 'run.browser_opened', url: page.url(), ts: new Date().toISOString() }); } catch { /* */ }
+          await recordVisit(projectId, page);
+
+          // 摘要跟导航同一个回合回来 —— 省掉的是一整次模型往返，见 page-digest.js
+          let lines = [];
+          if (digest !== false) {
+            try {
+              const data = await collectPage(page);
+              if (!data.missing) lines = formatPage(data, { compact: true });
+            } catch (err) {
+              // 采不到摘要不该让"已经打开了"这件事变成失败
+              lines = [`（页面摘要没取到：${err.message.split('\n')[0]} —— 用 browser_read 再试）`];
+            }
+          }
           return asText([
             `已打开${status ? `（HTTP ${status}）` : ''}：${await where(page)}`,
             gate,
-            '下一步：browser_read 看内容和站内链接，browser_screenshot 看长什么样。',
+            ...lines,
+            '\n下一步：顺着上面的站内链接 browser_click / browser_navigate 往里翻（好站的东西在内页），'
+            + 'browser_screenshot 看版面，browser_capture 把可复用的带回来。',
           ].filter(Boolean).join('\n'));
         });
       } catch (err) {
@@ -153,11 +184,16 @@ and reopens on the next call — the profile survives, so you stay logged in.`,
 export function makeBrowserReadTool({ projectId }) {
   return tool(
     'browser_read',
-    `Read the current page: its heading outline, its text, and the links on it.
+    `Read the current page in full: heading outline, text, and every link on it.
 
-The link list is the point — it is how you decide where to go next without
-guessing URLs. Links are reported with their visible text so you can tell a
-navigation item from a footer legal link.
+browser_navigate already gives you a short digest, so reach for this when you
+want MORE than that: the whole text, one region in detail, or the full link
+list.
+
+The link list is how you go deeper without guessing URLs. Links come with their
+visible text and their region tag, so you can tell a real content link from a
+footer legal link — and content links are the ones worth following. A good
+site's substance is on its inner pages, not its front page.
 
 Pass a selector to read one region instead of the whole page (e.g. "main",
 "article", ".pricing") when the page is long and you only need one part.`,
@@ -173,80 +209,13 @@ Pass a selector to read one region instead of the whole page (e.g. "main",
       try {
         return await withBrowser(projectId, async ({ page, guard }) => {
           const since = guard.blocked.length;
-          const data = await page.evaluate(({ sel, want }) => {
-            const root = sel ? document.querySelector(sel) : (document.querySelector('main') || document.body);
-            if (!root) return { missing: true };
-            const headings = [...root.querySelectorAll('h1,h2,h3')]
-              .map(h => `${'#'.repeat(Number(h.tagName[1]))} ${(h.textContent || '').trim().slice(0, 90)}`)
-              .filter(t => t.length > 2).slice(0, 40);
-            // ⛔ 链接**不能**跟正文共用 root。没传 selector 时正文 root 是
-            // `main`（对：导航文字是噪音），但链接跟着 main 一收，站名、整条
-            // 导航、页脚法务链接就全没了 —— 实测 6 个链接只报出 1 个。而这个
-            // 工具的卖点就是"链接清单是重点，你靠它决定下一步去哪"，
-            // browser_click 的全部意义也是跟这些链接。
-            // 所以：正文按 root 收，链接按**整页**收，再标出它在哪个区。
-            const linkRoot = sel ? root : document;
-            const regionOf = (el) => {
-              for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
-                const tag = n.tagName ? n.tagName.toLowerCase() : '';
-                if (tag === 'nav') return 'nav';
-                if (tag === 'header') return 'header';
-                if (tag === 'footer') return 'footer';
-                if (tag === 'aside') return 'aside';
-                const role = n.getAttribute && n.getAttribute('role');
-                if (role === 'navigation') return 'nav';
-                if (role === 'contentinfo') return 'footer';
-              }
-              return 'content';
-            };
-            const seen = new Set();
-            const RANK = { content: 0, header: 1, nav: 1, aside: 2, footer: 3 };
-            // ⚠️ **排序必须在截断之前**，而且得在页面里做：按文档顺序取前 80 条，
-            // 侧边导航就把配额吃干了（MDN 实测 79 条站内链接里前 30 条 29 条是 nav，
-            // 正文那几条一条都没进来）。agent 要跟的多半是正文里那几条。
-            const all = want ? [...linkRoot.querySelectorAll('a[href]')].map((a) => {
-              const href = a.href;
-              if (!href || !/^https?:/.test(href) || seen.has(href)) return null;
-              seen.add(href);
-              const label = (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-              return { href, label, internal: a.hostname === location.hostname, region: regionOf(a) };
-            }).filter(Boolean) : [];
-            const linkList = all
-              .map((l, i) => ({ l, i }))
-              .sort((x, y) => (RANK[x.l.region] ?? 0) - (RANK[y.l.region] ?? 0) || x.i - y.i)
-              .map(x => x.l)
-              .slice(0, 80);
-            return {
-              text: (root.innerText || '').replace(/\n{3,}/g, '\n\n').trim(),
-              headings, linkList,
-              textScope: sel || (document.querySelector('main') ? 'main' : 'body'),
-              counts: {   // ⚠️ 这几个数是**整页**的，别跟着正文 root 缩（原来标着"页面结构"其实是 main 里的）
-                sections: document.querySelectorAll('section, article').length,
-                images: document.querySelectorAll('img').length,
-                forms: document.querySelectorAll('form').length,
-              },
-            };
-          }, { sel: selector || null, want: wantLinks });
+          const data = await collectPage(page, { selector: selector || null, links: wantLinks });
 
           if (data.missing) return asText(`选择器没匹配到元素：${selector}`, true);
 
-          const body = data.text.length > cap
-            ? `${data.text.slice(0, cap)}\n… （还有 ${data.text.length - cap} 个字符，要全文就加大 maxChars 或用 selector 缩范围）`
-            : data.text;
-          // linkList 已经在页面里按区排过序（正文优先），这里只分站内/站外
-          const inner = data.linkList.filter(l => l.internal);
-          const outer = data.linkList.filter(l => !l.internal);
-          // 区标只在非 content 时打 —— 正文链接是默认情况，标了全是噪音
-          const fmt = (l) => `  ${l.label || '(无文字)'}${l.region && l.region !== 'content' ? ` [${l.region}]` : ''} → ${l.href}`;
-
           return asText([
             `页面：${await where(page)}`,
-            `结构（整页）：${data.counts.sections} 个 section/article · ${data.counts.images} 张图 · ${data.counts.forms} 个表单`,
-            `正文读的是 <${data.textScope}>${data.textScope === 'main' ? '（导航/页脚的文字不在里面，但它们的链接在下面）' : ''}`,
-            data.headings.length ? `\n标题层级：\n${data.headings.join('\n')}` : null,
-            `\n正文：\n${body || '(读不到文字 —— 可能整页是图或靠 JS 渲染，试 browser_navigate 带 waitUntil:"networkidle"，或直接截图看)'}`,
-            inner.length ? `\n站内链接（${inner.length}）：\n${inner.slice(0, 30).map(fmt).join('\n')}` : null,
-            outer.length ? `\n站外链接（${outer.length}，只列前 8）：\n${outer.slice(0, 8).map(fmt).join('\n')}` : null,
+            ...formatPage(data, { cap }),
             blockedNote(guard, since),
           ].filter(Boolean).join('\n'));
         });
@@ -302,6 +271,7 @@ the URL directly instead.`,
           } catch (err) { clickErr = err.message.split('\n')[0]; }
 
           const after = page.isClosed() ? '(页面被关了)' : page.url();
+          if (after !== before) await recordVisit(projectId, page);   // 点击也会换页，桌面那张卡要跟上
           return asText([
             clickErr ? `点击报错：${clickErr}` : `点了 ${selector}`,
             after === before ? `地址没变（${before}）—— 可能是页内交互，或者那个元素不是链接。`
@@ -358,6 +328,9 @@ selector for one component you want to look at closely.`,
             buf = await loc.screenshot({ type: 'png' });
           } else {
             buf = await page.screenshot({ type: 'png', fullPage: fullPage === true });
+            // 顺手把这张存成桌面卡片的预览 —— **不额外截图**，只是这一张本来就有。
+            // 整页图不用：卡片是一块 16:10 的画框，塞一张长图进去看不出东西。
+            if (fullPage !== true) await saveFrame(projectId, buf);
           }
           const shot = await normalizeShot(buf);
           return {

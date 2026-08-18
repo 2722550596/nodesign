@@ -169,6 +169,13 @@ export const Elicit = {
 // ── Browse（浏览器窗：刷新后拿回状态。窗是瞬态的，服务端答案也是瞬态的）──
 export const Browse = {
   state: (pid) => jsonRequest('GET', `/api/projects/${pid}/browse`),
+  /**
+   * 用户主动进浏览器：空闲回收之后卡片还在，双击走这条把它起回上次那一页。
+   * 满了会 503（这台机器常驻上限是硬的），原样往上抛，别静默转圈。
+   */
+  open: (pid, url) => jsonRequest('POST', `/api/projects/${pid}/browse/open`, url ? { url } : {}),
+  /** 「这张卡我不看了」：关实例 + 删痕迹，卡片消失。登录态（profile）留着。 */
+  end: (pid) => jsonRequest('DELETE', `/api/projects/${pid}/browse`),
 };
 
 // ── PendingChanges（C4：用户直接编辑 + 评论 buffer，项目级）──
@@ -271,12 +278,9 @@ export const Assets = {
    */
   coverUrl: (pid) => `/api/projects/${pid}/cover`,
   /**
-   * .docx 的页图（画布缩略图 + 产物窗翻页共用）。
-   *
-   * `w` 给了就出缩到那个宽度的 webp（缩略图走这条）。服务端一次渲整份、按
-   * 源 mtime 缓存，所以翻页是零成本的，**别为了省请求在前端预取一堆页** ——
-   * 缓存命中只要 1ms，真正贵的是第一次那 2 秒。
-   * `v` 只用来穿透浏览器缓存，服务端不读它（ETag 已经带了 mtime）。
+   * .docx 的页图（画布缩略图 + 产物窗翻页共用）。`w` 给了就出缩宽 webp（缩略图）。
+   * 服务端一次渲整份、按源 mtime 缓存 —— 翻页零成本，**别在前端预取一堆页**。
+   * `v` 只用来穿透浏览器缓存，服务端不读它（ETag 已经带 mtime）。
    */
   docxPageUrl: (pid, relPath, page = 1, { w, v } = {}) => {
     const q = new URLSearchParams({ path: String(relPath || ''), page: String(page) });
@@ -284,6 +288,19 @@ export const Assets = {
     if (v) q.set('v', String(v));
     return `/api/projects/${pid}/docx-page?${q}`;
   },
+
+  /** .docx 的整份 PDF（产物窗「PDF 视图」的 iframe）。跟页图同一份渲染缓存 */
+  docxPdfUrl: (pid, relPath, { v } = {}) =>
+    `/api/projects/${pid}/docx-pdf?${new URLSearchParams({ path: String(relPath || ''), ...(v ? { v: String(v) } : {}) })}`,
+
+  /**
+   * 浏览器卡上那块预览（`image/webp`，服务端存的最近一帧）。
+   *
+   * `at` 只用来换 src —— 响应是 `no-store`，但同一个 URL React 不会重新拉，
+   * agent 翻了页之后 `at` 变了这里才换图。服务端不读这个参数。
+   */
+  browsePreviewUrl: (pid, at) =>
+    `/api/projects/${pid}/browse/preview${at ? `?at=${encodeURIComponent(at)}` : ''}`,
 };
 
 // ── Exports（H3：session-scoped）──

@@ -1,18 +1,31 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { ArrowLeft, RotateCw, Hand, Play, Loader2, Globe } from 'lucide-react';
+import { ArrowLeft, RotateCw, Hand, Play, Loader2, Globe, PowerOff, FolderOpen, ChevronDown } from 'lucide-react';
 import { COLOR, CANVAS, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import ArtifactWindow from './ArtifactWindow.jsx';
+import { Browse, Assets } from '../../lib/api.js';
 
 /**
  * BrowserWindow —— 播放 agent 当前的浏览器画面，必要时你接手（2026-08-18）
  *
  * ## 它跟另外三扇窗的根本区别
  *
- * deck / 站点 / word 都是**产物**：落盘的文件、进 kinds 注册表、上画布当卡片。
- * 这扇窗**不是产物**，是**会话级的临时活物** —— agent 正在看什么。所以它不进
- * board.json、不进 kinds、没有导出、关掉就没了。这条判断省掉了一大票接入改动
- * （artifact-target / export-collect / board-relations / ArtifactCard …），
- * 而且它本来就该是这个性质：你不会想在桌面上永久摆着一张"某次浏览"的卡片。
+ * deck / 站点 / word 都是**产物**：落盘的文件、进 kinds 注册表。这扇窗背后
+ * 不是文件，是一只**可能不在**的 chromium（空闲 5 分钟就回收）。所以它不进
+ * kinds 注册表、没有导出、不能加入上下文。
+ *
+ * ⚠️ **这里原来写着「你不会想在桌面上永久摆着一张'某次浏览'的卡片」，
+ * 用户 2026-08-18 拍反了**，而理由比我那句判断硬：agent 逛站这件事用户要能
+ * **随时进去看、随时接手**。只由 `run.browser_opened` 事件开窗意味着"错过就没了"
+ * —— 刷新一下、切个项目回来，这扇窗和它背后正等着人的 agent 就都找不见了。
+ * 所以现在桌面上有一张 `browse` 卡（`lib/board-kinds.js` + `engine/browse/card.js`），
+ * 双击它进这扇窗；没有活实例时下面那颗按钮把浏览器起回上次那一页。
+ *
+ * ## 它是「工具卡」的窗，所以装两样东西（2026-08-18 下午）
+ *
+ * 用户定的类别：「工具存放工具采集到的内容，**以及**可互动工具的显示」。所以这扇窗
+ * 上半是**活的画面**（能接手操作），下半是**它采回来的东西**（按站分组，一站一
+ * 文件夹 —— 存放格式按站点产物那条范式）。两样在一扇窗里，因为它们是同一件东西的
+ * 两面：你逛完一个站顺手采下来，回头找的时候也是从"我在哪逛过"想起的。
  *
  * ## 画面怎么来
  *
@@ -41,6 +54,11 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
   const [gotFrame, setGotFrame] = useState(false);
   // 刷新后 hello 帧补回来的求助文案（prop 那份来自一次性事件，刷新即失传）
   const [liveHelp, setLiveHelp] = useState(null);
+  const [opening, setOpening] = useState(false);
+  // 采到的东西（按站分组）。跟画面同一个端点来的（`GET /browse` 就是那张卡的载荷）
+  const [sites, setSites] = useState([]);
+  const [openSite, setOpenSite] = useState(null);
+  const [shelfOpen, setShelfOpen] = useState(true);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const takeoverRef = useRef(false);
@@ -50,6 +68,25 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
     const ws = wsRef.current;
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
   }, []);
+
+  /**
+   * 用户主动把浏览器起回来（空闲回收之后走这条）。
+   * 起完**重新订阅**：WS 还连着，但服务端那边当时 peek 是空的，得再问一次。
+   */
+  const openBrowser = useCallback(async () => {
+    setOpening(true);
+    setNote(null);
+    try {
+      const r = await Browse.open(projectId);
+      setAddr(r.url || '');
+      setStatus('connecting');
+      send({ type: 'subscribe' });
+    } catch (err) {
+      // 常驻名额满了（503）是**要如实说**的一档：这台机器上限是硬的
+      setStatus('error');
+      setNote(err?.message || '打不开');
+    } finally { setOpening(false); }
+  }, [projectId, send]);
 
   // ── WS 生命周期 ──
   useEffect(() => {
@@ -99,6 +136,16 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
   }, [projectId, send]);
 
   useEffect(() => { if (url) setAddr(url); }, [url]);
+
+  // 采集清单：进窗拉一次。**不跟着帧刷** —— 采集是低频动作（agent 主动调
+  // browser_capture 才有），跟着画面刷等于每秒问一遍磁盘。
+  useEffect(() => {
+    let alive = true;
+    Browse.state(projectId)
+      .then(r => { if (alive) setSites(Array.isArray(r?.sites) ? r.sites : []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [projectId]);
 
   // ── 接手：鼠标/键盘 → WS ──
   useEffect(() => {
@@ -157,6 +204,20 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
       ],
     },
     {
+      id: 'end',
+      items: [{
+        id: 'end',
+        icon: PowerOff,
+        // 「关掉这扇窗」和「不逛了」是两件事：前者只是不看，卡片和实例都还在。
+        // 没有这颗按钮的话，桌面上那张卡一旦出现就永远赶不走（判据是痕迹在不在）。
+        title: '不逛了 —— 关掉浏览器并把桌面上那张卡收走（在站点上的登录留着）',
+        onClick: async () => {
+          try { await Browse.end(projectId); } catch { /* 关不掉也照样收窗 */ }
+          onClose?.();
+        },
+      }],
+    },
+    {
       id: 'takeover',
       items: [{
         id: 'hand',
@@ -171,7 +232,7 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
         },
       }],
     },
-  ], [addr, takeover, send]);
+  ], [addr, takeover, send, projectId, onClose]);
 
   const stateLine = {
     connecting: '连接中…',
@@ -198,8 +259,10 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
       ) : null}
       contentStyle={{ background: CANVAS.paper }}
     >
+      {/* ⚠️ `flex:1 + minHeight:0` 不是 `height:100%` —— 内容区是 flex 列，
+          下面还有一条"采到的东西"的架子；写 100% 会把它挤出窗外看不见。 */}
       <div style={{
-        height: '100%', width: '100%', display: 'flex', alignItems: 'center',
+        flex: 1, minHeight: 0, width: '100%', display: 'flex', alignItems: 'center',
         justifyContent: 'center', padding: GAP.md, boxSizing: 'border-box', position: 'relative',
       }}>
         <canvas
@@ -215,6 +278,7 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
             outlineOffset: 3,
           }}
         />
+        {/* 空白态提示（下面那块）与画面共用这块容器 */}
         {(!gotFrame || stateLine) && (
           <div style={{
             position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
@@ -223,15 +287,116 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
           }}>
             {status === 'connecting' && <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />}
             <span>{stateLine || '等第一帧…'}</span>
-            {status === 'idle' && (
-              <span style={{ color: COLOR.sub, fontSize: FONT_SIZE.xs, maxWidth: 360, lineHeight: 1.7 }}>
-                让 agent 去看一个站（它有 browser_navigate），这里就会亮起来。
-                静止的页面不会一直传帧 —— 画面不动是正常的，不是卡住了。
-              </span>
+            {(status === 'idle' || status === 'closed') && (
+              <>
+                {addr && (
+                  <button
+                    type="button"
+                    disabled={opening}
+                    onClick={openBrowser}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: `${GAP.xs}px ${GAP.md}px`, cursor: opening ? 'default' : 'pointer',
+                      fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm,
+                      color: COLOR.text, background: CANVAS.paper,
+                      border: `1px solid ${COLOR.border}`, borderRadius: 3,
+                      opacity: opening ? 0.6 : 1,
+                    }}
+                  >
+                    {opening ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={13} />}
+                    {opening ? '正在打开…' : '打开上次那一页'}
+                  </button>
+                )}
+                <span style={{ color: COLOR.sub, fontSize: FONT_SIZE.xs, maxWidth: 360, lineHeight: 1.7 }}>
+                  {addr
+                    ? '浏览器空闲 5 分钟会自己休息（登录态留着）。打开之后你可以直接接手操作，agent 下次也接着用这一页。'
+                    : '让 agent 去看一个站（它有 browser_navigate），这里就会亮起来。'}
+                  <br />
+                  静止的页面不会一直传帧 —— 画面不动是正常的，不是卡住了。
+                </span>
+              </>
             )}
           </div>
         )}
       </div>
+
+      {/* ── 它采回来的东西：一站一文件夹（存放格式按站点产物那条范式）── */}
+      {!!sites.length && (
+        <div style={{
+          flexShrink: 0, borderTop: `1px solid ${COLOR.border}`,
+          background: COLOR.bgCard, maxHeight: shelfOpen ? 220 : 30, overflow: 'hidden',
+          transition: 'max-height .18s ease',
+        }}>
+          <button
+            type="button"
+            onClick={() => setShelfOpen(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+              padding: `4px ${GAP.md}px`, cursor: 'pointer', background: 'transparent',
+              border: 0, color: COLOR.text2, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+            }}
+          >
+            <FolderOpen size={12} />
+            采到的东西 · {sites.length} 个站 · {sites.reduce((n, x) => n + x.count, 0)} 件
+            <ChevronDown size={12} style={{
+              marginLeft: 'auto', opacity: 0.6,
+              transform: shelfOpen ? 'none' : 'rotate(-90deg)', transition: 'transform .18s ease',
+            }} />
+          </button>
+          {shelfOpen && (
+            <div style={{ display: 'flex', gap: GAP.sm, padding: `0 ${GAP.md}px ${GAP.sm}px`, overflowX: 'auto' }}>
+              {sites.map(st => (
+                <div key={st.site} style={{ flexShrink: 0, width: 150 }}>
+                  <button
+                    type="button"
+                    title={`${st.dir}（${st.count} 件）`}
+                    onClick={() => setOpenSite(openSite === st.site ? null : st.site)}
+                    style={{
+                      display: 'block', width: '100%', padding: 0, cursor: 'pointer',
+                      background: CANVAS.paper, border: `1px solid ${openSite === st.site ? COLOR.text : COLOR.border}`,
+                      borderRadius: 2, overflow: 'hidden',
+                    }}
+                  >
+                    {st.cover ? (
+                      <img
+                        alt=""
+                        loading="lazy"
+                        // ⚠️ 这里**不能**加 `?w=`：响应式档只认 png/jpg 源
+                        // （`image-variant.js` 的 TRANSCODABLE），而采集的截图是
+                        // webp（走感知层那条归一化）。加了是个静默无效的参数，
+                        // 看起来像做了优化其实没有。封面 ~60KB，靠 lazy + 折叠够了。
+                        src={Assets.artifactFileUrl(projectId, st.cover)}
+                        style={{ width: '100%', height: 84, objectFit: 'cover', objectPosition: 'top center', display: 'block' }}
+                      />
+                    ) : (
+                      <div style={{
+                        height: 84, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: COLOR.sub, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxs,
+                      }}>没有截图</div>
+                    )}
+                    <div style={{
+                      padding: '3px 5px', textAlign: 'left',
+                      fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.text2,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{st.site}</div>
+                  </button>
+                  {openSite === st.site && (
+                    <div style={{
+                      paddingTop: 3, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxs,
+                      color: COLOR.sub, lineHeight: 1.6,
+                    }}>
+                      {/* 路径给出来就够了：文件在工作区里，agent 下个会话直接引用它 */}
+                      <span style={{ fontFamily: FONT_MONO }}>{st.dir}/</span>
+                      <br />
+                      {st.count} 件（截图 / 调色板 / 字体 / 结构 / CSS，类别在文件名里）
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </ArtifactWindow>
   );
 }

@@ -86,6 +86,9 @@ export async function ensurePages(absPath) {
         n += 1;
         await fs.copyFile(png, path.join(dir, `page-${n}.png`));
       }
+      // 中间产物 PDF 顺手留下（产物窗的「PDF 视图」直接吃它）——渲染链路本来就
+      // 经过它，扔掉再为 PDF 视图单开一次 soffice 是白烧
+      await fs.copyFile(res.pdf, path.join(dir, 'doc.pdf'));
       await fs.writeFile(path.join(dir, 'meta.json'), JSON.stringify({ count: n, dpi: CACHE_DPI, ms: res.ms }));
       return { dir, count: n };
     } finally {
@@ -123,4 +126,23 @@ export async function pageImage(absPath, page, opts = {}) {
 /** 页数（窗口要用它画翻页控件）。会触发渲染，跟取图共用缓存和闸门 */
 export async function pageCount(absPath) {
   return (await ensurePages(absPath)).count;
+}
+
+/**
+ * 整份 PDF（产物窗「PDF 视图」用，跟着 .docx 的 mtime 走 —— 永不陈旧，这是
+ * 它做成按需视图而不是落盘文件的全部理由）。
+ * @returns {Promise<{ buf: Buffer }>}
+ */
+export async function docPdf(absPath) {
+  const { dir } = await ensurePages(absPath);
+  const p = path.join(dir, 'doc.pdf');
+  try {
+    return { buf: await fs.readFile(p) };
+  } catch { /* 加 PDF 缓存之前渲的旧目录里没有它 → 补一次 */ }
+  const job = withSlot(async () => {
+    const res = await renderDocx(absPath, {});
+    try { await fs.copyFile(res.pdf, p); } finally { await cleanupRender(res); }
+  });
+  await job;
+  return { buf: await fs.readFile(p) };
 }

@@ -9,8 +9,9 @@
  * 告诉用户"这个站从这台机器过不去"，而那两分钟其实是有人在的。
  * 所以进项目时问服务端一句"现在什么状况"（浏览器在跑吗、是不是有人在等）。
  *
- * 服务端那份答案也是瞬态的（进程内的 registry），pm2 重启就没了 —— 这是对的：
- * 浏览器真的没了。
+ * 服务端那份答案一半是瞬态的（`live` 来自进程内 registry，pm2 重启就没了 —— 这是
+ * 对的：浏览器真的没了），一半落盘（上次逛到哪）。桌面上那张浏览器卡吃的是后者，
+ * 所以卡活得比实例长；这个 hook 只管"要不要**替他把窗弹出来**"。
  */
 
 import { useState, useEffect } from 'react';
@@ -27,8 +28,13 @@ export function useBrowseWindow(projectId) {
     let alive = true;
     Browse.state(projectId)
       .then((st) => {
-        if (!alive || !st?.live) return;
-        setBrowseWin({ url: st.url || null, help: st.help || null });
+        if (!alive) return;
+        // ⭐ **只有 agent 正举着手才自动弹窗**（2026-08-18 加了桌面卡之后收紧）。
+        // 原来是"浏览器活着就开窗"，那是**卡片还不存在时**唯一的找回办法；
+        // 现在打开项目会被一扇全屏窗糊住，而用户可能只是来看别的东西。
+        // 活着但没在求助 → 桌面上那张浏览器卡会写着"在跑"，他想看自己双击。
+        if (!st?.live || !st?.help) return;
+        setBrowseWin({ url: st.url || null, help: st.help });
       })
       .catch(() => { /* 没有就没有，不打扰 */ });
     return () => { alive = false; };

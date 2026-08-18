@@ -95,6 +95,20 @@ const ALWAYS_LOAD_TOOLS = new Set([
   // screenshot_url 常驻：explorer 显式 tools 列表没有 ToolSearch，defer 了它就
   // 永远拉不到 schema；schema 本身很小（4 字段），常驻成本可忽略
   'screenshot_url',
+  // ⭐ 浏览通道六件（2026-08-18 当天从 deferred 改常驻）。
+  //
+  // 它们最初跟着「新工具默认 deferred」的习惯走，而那条习惯的依据是**成本**：
+  // defer 掉的是 expose_tweaks / paint_still / roll_film 那种十万字符级的胖子。
+  // 这六个实测 description 合计 4980 字符、连参数区 ≈ 6.9k —— 比那几个小
+  // 30~100 倍，塞进被缓存的 system prompt 每轮增量约等于零。
+  //
+  // 而 deferred 的代价是具体的：agent 只看得到**名字**。`browser_capture`
+  // 这个名字一个字都没说它能带回调色板、字体、命中的 CSS 规则和结构三数 ——
+  // 于是它不会去搜这个 schema，做 deck / 做文档的会话里整条浏览通道等于不存在
+  // （只有加载了 site-craft skill 才会被点名）。**名字自解释的工具可以 defer，
+  // 卖点藏在描述里的不能。**
+  'browser_navigate', 'browser_read', 'browser_click', 'browser_screenshot',
+  'browser_request_help', 'browser_capture',
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
@@ -177,7 +191,13 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 常驻一个 chromium（按项目键、带持久 profile），所以能点链接、翻子页、
       // 留住登录态。跟 screenshot_url 的分工：那个是一次性一张图，这组是有会话的逛。
       // ⭐ 每个请求都过 lib/ssrf-guard.js 的出网闸（含跳转每一跳、iframe、子资源），
-      // 闸在工具实现体里，agent 关不掉。全部走 deferred（用得上时自然搜到）。
+      // 闸在工具实现体里，agent 关不掉。**全部常驻**（理由见 ALWAYS_LOAD_TOOLS）。
+      //
+      // ⚠️ 刻意**没给 explorer 子代理**：registry 按 projectId 键 = 主 agent 和
+      // 子代理共用同一只浏览器、同一个 page。mutex 保证不撕裂，但保证不了不抢 ——
+      // 子代理一导航就把主 agent 正在看的那一页带走了，症状是"我刚打开的页面
+      // 自己变了"。要给的话得先有"借用后还原"（存 URL、用完 goto 回去），
+      // 或者第二个常驻名额；1 vCPU 上后者不成立。
       makeBrowserNavigateTool({ projectId, ctx }),
       makeBrowserReadTool({ projectId }),
       makeBrowserClickTool({ projectId }),
@@ -197,7 +217,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // word 形态的构建道：token JSON（真相源）→ .docx（产物）。
       // agent 拿到的是一条命令不是一个构建系统 —— 写 JSON、调它、再 screenshot 看。
-      makeBuildDocxTool({ workspaceRoot, sessionId }),
+      makeBuildDocxTool({ workspaceRoot, sessionId, ctx }),
 
       // 反馈层：用户在 canvas 上的直接编辑 + 评论 buffer
       // 前端在 chat 时由 turn.js 注入 system 提示，agent 主动调下面两个工具读 + 清

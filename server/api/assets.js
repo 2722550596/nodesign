@@ -21,12 +21,12 @@ import {
 import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
 import { moveEntry, MoveError } from '../projects/move-entry.js';
 import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
-import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
+import { taskManifest, ENTRY_FILE, KIND_SITE, docxClaimedFiles } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { listReferences } from '../lib/reference-assets.js';
 import { resolveArtifactFile, isServablePath } from '../lib/artifact-file-path.js';
 import { getProjectCover } from '../lib/cover.js';
-import { makeDocxPageHandler } from './assets/docx-page.js';
+import { makeDocxPageHandler, makeDocxPdfHandler } from './assets/docx-page.js';
 import { mountNotesRoutes } from './assets/notes.js';
 import { safeSegment, parseNoteFrontmatter } from './assets/helpers.js';
 import {
@@ -430,9 +430,9 @@ router.get('/:pid/artifacts', async (req, res, next) => {
             // 现在单页也给 base（= 入口文件所在目录），两种站点一个拼法。
             entry: a.single ? path.basename(a.entryRel || '') : a.entry,
             entryRel: under(rel, a.entryRel),
-            // word 的 token 源。⚠️ 必须过 under() —— manifest 给的是**任务相对**，
-            // 而前端拿它去 artifactFileUrl 要的是**工作区相对**，直接透传会 404
+            // word 的 token 源与成员表。⚠️ 都过 under()：manifest 给任务相对路径，前端要工作区相对，透传 404
             ...(a.sourceFile ? { sourceFile: under(rel, a.sourceFile) } : {}),
+            ...(a.members ? { members: a.members.map(m => ({ ...m, file: under(rel, m.file), sourceFile: m.sourceFile ? under(rel, m.sourceFile) : null })) } : {}),
             base: a.single
               ? under(rel, path.dirname(a.entryRel || '.')).replace(/^\.$/, rel)
               : (under(rel, a.root) || rel),
@@ -511,8 +511,11 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     // （文件在磁盘上完好，2026-08-14 实案）。根站只吞**自己的地盘**：根层
     // 散文件（.md 除外 —— 那是阅读卡）+ 认领子目录（pages 顶层段）里的文件；
     // 别的文件夹照常上墙。口径与前端 resolveObjectId / exports 的根站规则一致。
+    // word 认领的文件（.docx + token 源）不当散文件卡，同 .html 被产物卡代表一条规则（判据在 kinds/index.js）
+    const docxClaims = docxClaimedFiles(tasks);
     const filtered = artifacts.filter((a) => {
       if (a.kind !== 'task-file') return true;
+      if (docxClaims.has(String(a.path))) return false;
       if (hasRootSite) {
         const p = String(a.path);
         const slash = p.indexOf('/');
@@ -565,8 +568,8 @@ router.get('/:pid/artifacts', async (req, res, next) => {
  * 没产物 / 截图环境不可用 → 204，前端画占位框（不是错误，别报 500）。
  */
 // .docx 页图（画布缩略图 + 产物窗翻页共用一份缓存）。实现在 assets/docx-page.js —— 
-// 它跟这里其余路由一行不共享，而 assets.js 已经在行数棘轮的上限上。
 router.get('/:pid/docx-page', makeDocxPageHandler({ getSharedDir, guardProject }));
+router.get('/:pid/docx-pdf', makeDocxPdfHandler({ getSharedDir, guardProject }));   // 整份 PDF，同一份缓存
 
 router.get('/:pid/cover', async (req, res, next) => {
   try {

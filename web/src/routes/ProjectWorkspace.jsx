@@ -842,8 +842,10 @@ export default function ProjectWorkspace() {
         // 同任务里的其他 deck 纹丝不动（多 deck 任务整屏闪的根因）。
         // 站点的 .css / .js 也算 —— 它们不自己渲染，但整站版本会跟着涨。
         // .md 也算：任务便利贴（tasks/*/notes/*.md）要当场上墙
+        // .docx 也算：build_docx 完会发一笔（卡片的页图 ?v= 按它换，不发的话
+        // 卡片停在旧页图等 60 秒缓存过期）
         if (typeof evt.filePath === 'string'
-            && (/\.(html?|css|js|md)$/i.test(evt.filePath) || /(^|\/)assets\//.test(evt.filePath))) {
+            && (/\.(html?|css|js|md|docx)$/i.test(evt.filePath) || /(^|\/)assets\//.test(evt.filePath))) {
           setFileVersions(prev => bumpFileVersion(prev, evt.filePath));
           bumpListSoon();   // 新文件要进产物墙，但去抖合并，不是每笔都拉
         }
@@ -1158,6 +1160,9 @@ export default function ProjectWorkspace() {
       // 像素和输入走专用通道 /ws/projects/:pid/browser
       case 'run.browser_opened':
         if (!isStale) setBrowseWin({ url: evt.url || null, help: null });
+        // 桌面上那张浏览器卡也要跟着换页（它吃 GET /browse，靠 reload 拉）——
+        // 不 bump 的话卡会一直停在上一页，直到别的什么事情触发了重拉
+        if (!isStale) bumpListSoon();
         break;
 
       case 'run.browser_help':
@@ -2097,8 +2102,7 @@ export default function ProjectWorkspace() {
             projectId={id}
             sessionId={currentSessionId}
             decisionsReloadKey={decisionsReloadKey}
-            browseWin={browseWin}
-            onCloseBrowse={() => setBrowseWin(null)}
+            browseWin={browseWin} onBrowse={setBrowseWin}
             // 产物窗只吃**元素标注**：画布标注的锚点是一件东西不是一个元素，
             // 混进去会让窗里的「评论 (N)」多算，也会让标记层拿着 {board:…}
             // 去 querySelector（anchor.path 那一支正好是选择器串，`鉴赏页` 这种

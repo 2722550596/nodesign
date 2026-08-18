@@ -15,7 +15,8 @@ export const ARTIFACT_HEADER_H = 28;
 const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + previewH });
 
 /** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420 };  // docx 是竖版 A4，给高一点
+// browse 是 1440×900 视口按 640 宽等比缩 = 400，跟站点同高（都是"一屏网页"）
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 400 };  // docx 是竖版 A4，给高一点
 /** 主角档放大倍数（北极星路线1）：预览区放大、顶栏不变 —— sizeOf 与
  *  ArtifactCard 的画框都从这儿算，两处必须同源否则命中区和视觉错位 */
 export const HERO_SCALE = 1.5;
@@ -37,7 +38,7 @@ export const HERO_SCALE = 1.5;
  *
  * ## 两条轴
  *
- * - `backing`：这个物件的真相在**磁盘**还是只在 **board.json**。
+ * - `backing`：这个物件的真相在**磁盘**、只在 **board.json**、还是在**运行时**。
  *   现有七种全是 `file`（产物即真相，路径派生归属），只有 `doc` 例外（它是
  *   记忆/品牌/指引三张卡的画布分身）。**annotation 会是第一个真正的 canvas
  *   物件**：agent 写在画布上的说明文字不对应任何文件，删了也不该动磁盘。
@@ -83,7 +84,10 @@ export function isOrchestration(o) {
  *
  * 字段：
  * - `label`        中文名，给调试和无障碍标签用
- * - `backing`      `'file'` = 磁盘产物 / `'canvas'` = 只活在 board.json
+ * - `backing`      `'file'` = 磁盘产物 / `'canvas'` = 只活在 board.json /
+ *                  `'runtime'` = 真相在服务端进程里（浏览器卡，见下）。
+ *                  只有 `'file'` 能加入上下文 / 改名 / 搬家 / 导出（`isFileBacked`）；
+ *                  另两种各自不能的东西不一样，所以不能合并成一个布尔
  * - `size`         卡片脚印（布局系统按矩形排布，尺寸必须可预知）。
  *                  **卡体是 height:auto，这里的高度只用来占位** —— 声明得比
  *                  实渲高，每一行就白留那么多；2026-08-07 在浏览器里逐个量过
@@ -97,11 +101,13 @@ export function isOrchestration(o) {
  * - `primary`      双击的默认动作：`'read'|'detail'|'open'|'openFile'`
  * - `actions`      hover 工具条按钮，**顺序即渲染顺序**
  * - `legacyBucket` 没有工作区可归时掉进桌面底部收纳带的哪一摞
+ * - `category`     **内容轴**：这东西是什么。桌面过滤的两条轴之一，见 CATEGORIES
  */
 export const KINDS = {
   doc: {
     chrome: 'card',
     label: '文档',
+    category: 'doc',
     backing: 'canvas',
     size: { w: 200, h: 96 },
     reader: 'memory',
@@ -112,6 +118,7 @@ export const KINDS = {
 
   deck: {
     label: '幻灯',
+    category: 'work',
     backing: 'file',
     chrome: 'card',
     card: 'artifact',
@@ -125,6 +132,7 @@ export const KINDS = {
 
   site: {
     label: '站点',
+    category: 'work',
     backing: 'file',
     chrome: 'card',
     card: 'artifact',
@@ -140,6 +148,7 @@ export const KINDS = {
   // 按源 mtime 缓存（lib/docx-pages.js），卡上只看第一页，翻页是窗里的事。
   docx: {
     label: '文档',
+    category: 'work',
     backing: 'file',
     chrome: 'card',
     card: 'artifact',
@@ -150,9 +159,39 @@ export const KINDS = {
     legacyBucket: 'doc',
   },
 
+  /**
+   * agent 的浏览器（2026-08-18）。**唯一一张 backing 既不是 file 也不是 canvas
+   * 的卡** —— 它的真相是一段浏览痕迹（服务端 `.browser/state.json`），
+   * 背后那只 chromium 是运行时，可以不在。
+   *
+   * 所以：不能加入上下文（没有工作区路径可给）、没有阅读器、没有导出、
+   * 删不掉（它不是文件；不逛了自然就没了）。
+   *
+   * ⚠️ `backing` 给它开了第三个值 `'runtime'`，**不能拿 `'canvas'` 凑**：
+   * `sizeOf` 对 canvas backing 会去读 `pos.w/h`（涂鸦的尺寸是画出来的），
+   * 这张卡一旦被写进过带 w/h 的 layout 就会顶着一个错的脚印参与命中判定 ——
+   * 正是"存量 expanded 隐形脚印"那个病的形状。
+   *
+   * 卡上的预览是**上次看到的样子**（服务端存的一帧 webp），跟 word 卡的页图
+   * 同一路数。活画面流只在窗里给：实测每 fps 约 3.1pp 单核。
+   */
+  browse: {
+    label: '浏览器',
+    category: 'tool',
+    backing: 'runtime',
+    chrome: 'card',
+    card: 'artifact',
+    size: artifactCard(ARTIFACT_PREVIEW_H.browse),
+    reader: null,
+    primary: 'open',
+    actions: [],
+    legacyBucket: 'art',
+  },
+
   image: {
     chrome: 'card',
     label: '图片',
+    category: 'material',
     backing: 'file',
     size: { w: 200, h: 176 },
     reader: null,
@@ -166,6 +205,7 @@ export const KINDS = {
   video: {
     chrome: 'card',
     label: '视频',
+    category: 'material',
     backing: 'file',
     size: { w: 240, h: 160 },
     reader: null,
@@ -177,6 +217,7 @@ export const KINDS = {
   note: {
     chrome: 'card',
     label: '便签',
+    category: 'material',
     backing: 'file',
     size: { w: 200, h: 148 },
     reader: 'note',
@@ -201,6 +242,7 @@ export const KINDS = {
   scribble: {
     chrome: 'bare',
     label: '涂鸦',
+    category: 'ink',
     backing: 'canvas',
     size: { w: 160, h: 120 },
     reader: null,
@@ -222,6 +264,7 @@ export const KINDS = {
   text: {
     chrome: 'bare',
     label: '文字',
+    category: 'ink',
     backing: 'canvas',
     size: { w: 220, h: 40 },
     reader: null,
@@ -235,6 +278,7 @@ export const KINDS = {
   file: {
     chrome: 'card',
     label: '文件',
+    category: 'material',
     backing: 'file',
     size: { w: 224, h: 32 },
     reader: null,
@@ -252,6 +296,84 @@ export const KINDS = {
     },
   },
 };
+
+/**
+ * 桌面过滤的**两条轴**（2026-08-18 用户定的："产物和来源叠加"）。
+ *
+ * ## 为什么是两条，而不是一张大清单
+ *
+ * 「这东西是什么」和「谁弄出来的」是两个互不包含的问题。一张站点卡可能是 agent
+ * 写的，也可能是用户传上来的一整包；一张图可能是他自己拍的、生图产线画的、
+ * 或者工具从参照站采回来的。压成一条轴就得列 `agent的站点 / 用户的站点 / …`
+ * 这种笛卡尔积 —— 加一种形态就翻一倍。**两条独立的轴各自过滤、结果取交集**，
+ * 加形态只需要在一条轴上表态。
+ *
+ * ## 内容轴（`category`，写在形态表上）
+ *
+ * - `work`     产物：agent 做出来交付的东西（deck / 站点 / word）
+ * - `material` 素材：图、视频、便签、散文件 —— 用来做产物的原料
+ * - `tool`     **工具卡**：既装着工具采集到的内容，本身又能点进去交互（浏览器）
+ * - `ink`      画布上的笔迹：涂鸦、手写字（只给自己看，agent 读不到）
+ * - `doc`      项目文档（记忆 / 品牌）的画布分身
+ *
+ * ## 来源轴（`sourceOf(o)`，从物件本身判，不写在形态表上）
+ *
+ * 它**不能**写在形态表里：同一种形态可以有不同来源（一张图可以是上传的也可以是
+ * 生图产线画的）。所以按物件的实际出处判。
+ *
+ * - `user` 用户自己放进来的（上传）
+ * - `tool` 工具产出/采集的（生图产线、浏览器采集）
+ * - `agent` 其余 —— agent 写的产物和便签
+ */
+export const CATEGORIES = Object.freeze([
+  { id: 'work', label: '产物' },
+  { id: 'material', label: '素材' },
+  { id: 'tool', label: '工具' },
+  { id: 'ink', label: '笔迹' },
+  { id: 'doc', label: '文档' },
+]);
+
+export const SOURCES = Object.freeze([
+  { id: 'agent', label: 'agent 做的' },
+  { id: 'tool', label: '工具采的' },
+  { id: 'user', label: '我放的' },
+]);
+
+/** 内容轴。未知形态按 file 走（= material）。 */
+export function categoryOf(o) {
+  return kindOf(o).category || 'material';
+}
+
+/**
+ * 来源轴。判据的**顺序有讲究**：先看路径（那是最硬的证据 —— 文件真的躺在
+ * 工具的目录里），再看服务端给的 `kind`（upload/generated 是扫描时分的栏），
+ * 最后才兜底 agent。
+ */
+export function sourceOf(o) {
+  if (kindOf(o).category === 'tool') return 'tool';
+  const p = String(o?.path || o?.rel || '');
+  if (p.startsWith('assets/references/')) return 'tool';    // 浏览器采集 / 搜索下载
+  if (p.startsWith('assets/generated/')) return 'tool';     // 生图产线
+  if (o?.kind === 'generated') return 'tool';
+  if (o?.kind === 'upload') return 'user';
+  // ⚠️ 老形状：上传的东西路径长 `../../shared/assets/x`（扁平化前的写法）。
+  // 不认它的话用户上传的素材会被标成"agent 做的"。
+  if (/(^|\/)shared\/assets\/[^/]+$/.test(p)) return 'user';   // legacy-ok
+  return 'agent';
+}
+
+/**
+ * 过滤器：两条轴各自一个"要显示哪些"的集合，**结果取交集**。
+ * `null` / 空集 = 这条轴不过滤（不是"全都不要"）—— 默认状态就该是全都看得见。
+ */
+export function passesFilter(o, filter) {
+  if (!filter) return true;
+  const cats = filter.categories;
+  const srcs = filter.sources;
+  if (cats && cats.length && !cats.includes(categoryOf(o))) return false;
+  if (srcs && srcs.length && !srcs.includes(sourceOf(o))) return false;
+  return true;
+}
 
 /** 未知 type 一律按 file 处理（跟老的 `SIZES[o.type] || SIZES.file` 同口径）。 */
 export function kindOf(o) {
@@ -380,8 +502,11 @@ export function annotTargetOf(o) {
  * 抄第三遍之前先收成一份。
  */
 export function cardIdOf(taskId, a) {
-  // site 是唯一的目录型产物：地址是产物根，不是某个文件
+  // site 是目录型产物：地址是产物根，不是某个文件
   if (a.kind === 'site') return `site:${a.single ? a.entryRel : (a.root || taskId)}`;
+  // word 文件夹（带成员表）也是目录型：卡即文件夹，地址 = 文件夹路径。
+  // 根层散放的单份 .docx 没有 members，走下面的单文件规则
+  if (a.kind === 'docx' && a.members) return `docx:${a.root}`;
   // 其余都是单文件产物（deck 的 .html、docx 的 .docx）：前缀 = 形态名，地址 = 文件。
   // 别写死 'deck:' —— 加形态时忘了这行，新产物的卡 id 会伪装成 deck，
   // 导出那头按 deck 去解析它，错得很安静。

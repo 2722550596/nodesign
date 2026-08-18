@@ -12,7 +12,9 @@
  * 一个项目就一个站，它就是这个项目的脸，天然主角。
  */
 
-const ELIGIBLE = new Set(['deck', 'site']);
+// ⚠️ 加形态时别漏这张表（docx 曾漏了一天：纯 word 项目永远没有主角卡，版面
+// 比 site 项目平 —— 「加形态漏掉的写死表」家族第五处）
+const ELIGIBLE = new Set(['deck', 'site', 'docx']);
 /** 手画线的关注度加分：每条 +0.5，单卡封顶 +1.5（三条线之后不再更"焦点"） */
 const FOCUS_PER_EDGE = 0.5;
 const FOCUS_CAP = 1.5;

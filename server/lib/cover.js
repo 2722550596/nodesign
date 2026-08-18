@@ -60,8 +60,9 @@ export async function pickCoverArtifact(sharedDir) {
     // ⚠️ 2026-08-18：docx 进来之后这里会挑到一个 .docx 当封面，chromium 打开它
     // 只会触发 "Download is starting"，封面整个渲不出来（生产日志实锤）。
     // 加形态时最容易漏的就是这种「默认所有产物都能用浏览器打开」的假设 ——
-    // 按能力位问，别按形态名问。
-    if (!can(art.kind, 'browsable')) continue;
+    // 按能力位问，别按形态名问。renderable（docx）也能当封面：renderCoverShot
+    // 里按能力分流走 LO 页图，不进 chromium —— 纯 word 项目的首页卡不再开天窗。
+    if (!can(art.kind, 'browsable') && !can(art.kind, 'renderable')) continue;
     const taskDir = sharedDir;
     const absPath = path.join(taskDir, art.entryRel);
     let fileMtime = 0;
@@ -90,6 +91,12 @@ export async function pickCoverArtifact(sharedDir) {
  *   缩略图，没有 agent 会被误导，宁可退化也别让首页卡片开天窗。
  */
 export async function renderCoverShot(cover, pctx = {}) {
+  // renderable 产物（docx）没有 DOM：封面 = 第一页页图，跟画布缩略图同一份
+  // LibreOffice 缓存，别把二进制包喂给 chromium（那只会触发下载弹窗）
+  if (!can(cover.kind, 'browsable')) {
+    const { pageImage } = await import('./docx-pages.js');
+    return (await pageImage(cover.absPath, 1, { width: OUT_WIDTH })).buf;
+  }
   const html = await fs.readFile(cover.absPath, 'utf8').catch(() => '');
   const viewport = cover.kind === 'deck'
     ? (() => { const d = resolveDeckSize(extractDeckAspect(html)); return { width: d.width, height: d.height }; })()

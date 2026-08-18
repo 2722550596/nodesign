@@ -22,8 +22,20 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
-/** 最多下探几层（`references/` 下面还有 `web/` 一层） */
-const MAX_DEPTH = 2;
+/**
+ * 最多下探几层：`references/`(0) → `web/`(1) → `<站名>/`(2) → 文件。
+ *
+ * ⭐ 2026-08-18 下午 +1：`browser_capture` 改成**一站一文件夹**（按站点产物那条
+ * 范式：目录 = 单位）。深度不够的话整棵采集树在清单里凭空消失 —— 而"扫描根/深度
+ * 不够"正是当初参考素材完全看不见的真因（见文件头），同一个坑别踩第二次。
+ */
+const MAX_DEPTH = 3;
+
+/** 这份素材属于哪个参照站（`assets/references/web/<站名>/…` 的那一段） */
+function siteOf(rel) {
+  const m = /^assets\/references\/web\/([^/]+)\//.exec(rel);
+  return m ? m[1] : null;
+}
 
 /**
  * @param {string} assetsDir  `<工作区>/assets` 的绝对路径
@@ -54,9 +66,15 @@ export async function listReferences(assetsDir) {
         meta = JSON.parse(await fs.readFile(path.join(dir, '.meta', `${stem}.json`), 'utf8'));
       } catch { /* 无出处 */ }
 
+      const rel = `${relPrefix}/${e.name}`;
       out.push({
-        rel: `${relPrefix}/${e.name}`,
+        rel,
         name: e.name,
+        site: siteOf(rel),
+        // 类别写在文件名里（`.screenshot.webp` / `.palette.json` / `.css` …），
+        // sidecar 里也记着一份 —— 文件名优先，它是用户和 agent 直接看到的那个
+        category: /\.(screenshot)\.\w+$/.test(e.name) ? 'screenshot'
+          : (/\.(palette|fonts|skeleton)\.json$/.exec(e.name)?.[1] || (e.name.endsWith('.css') ? 'css' : null)),
         size: st.size,
         mtime: st.mtime.toISOString(),
         ...(meta ? {

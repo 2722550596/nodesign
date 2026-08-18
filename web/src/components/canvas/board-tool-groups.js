@@ -17,12 +17,15 @@ import { Maximize2, Minus, Plus, MousePointer2, Move, Hand, Type, PenLine, Layou
  * @param {number} p.scale                    当前缩放（只用来印百分比）
  * @param {Function} p.tidyBoard              整理
  * @param {Function} p.zoomFit / p.zoomBy / p.zoomTo   **要传 ref 转过手的稳定引用**
+ * @param {object} [p.filterGroup]  按类别过滤那颗漏斗（`{id, node}`，自己带 JSX ——
+ *   本文件是 .js 且"只造数据不渲染"，所以节点在 board-filter.jsx 里造好了递进来）
  */
 export function buildBoardToolGroups({
   tool, setTool, drawMode, setDrawMode, scale,
-  tidyBoard, zoomFit, zoomBy, zoomTo,
+  tidyBoard, zoomFit, zoomBy, zoomTo, filterGroup,
 }) {
   return ([
+    ...(filterGroup ? [filterGroup] : []),
     {
       id: 'view',
       items: [

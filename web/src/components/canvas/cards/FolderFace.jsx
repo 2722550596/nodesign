@@ -148,6 +148,17 @@ export default function FolderFace({ z, projectId, fileVersions, scale = 1 }) {
             } else if (o && (it.kind === 'deck' || it.kind === 'site') && live && liveBudget > 0) {
               liveBudget -= 1;
               inner = <LiveTile o={o} projectId={projectId} fileVersions={fileVersions} />;
+            } else if (o && it.kind === 'docx' && o.deckFile && live) {
+              // word 卡的内窥 = 第一页页图。是 <img> 不是 iframe，不占 live 预算
+              inner = (
+                <img
+                  src={Assets.docxPageUrl(projectId, o.deckFile, 1, {
+                    w: TILE_W * 2, v: versionOfFile(fileVersions, o.deckFile),
+                  })}
+                  alt={it.title} loading="lazy" draggable={false}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top center', display: 'block', background: '#fff' }}
+                />
+              );
             } else {
               inner = <IconTile kind={it.kind} title={it.title} />;
             }

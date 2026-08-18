@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Presentation, Globe, Map as MapIcon, FileText } from 'lucide-react';
+import { Presentation, Globe, Map as MapIcon, FileText, Compass } from 'lucide-react';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../../lib/theme.js';
 import { PAPER } from '../../../lib/paper.js';
 import { SITE_VIEWPORTS, DECK_EMBED_W } from '../../../lib/board-geometry.js';
@@ -112,7 +112,11 @@ export const ARTIFACT_FACES = {
   docx: {
     icon: FileText,
     tip: '双击打开这份文档',
-    summary: (o) => (o.sourceFile ? '文档 · 可改源重建' : '文档 · 外来文件'),
+    summary: (o) => {
+      // word 文件夹：一张卡装着几份（多版本），报个数比报"可改源重建"更有用
+      if (o.members?.length > 1) return `文档 · ${o.members.length} 份 · 窗里切换`;
+      return o.sourceFile ? '文档 · 可改源重建' : '文档 · 外来文件';
+    },
     Preview: ({ o, projectId, fileVersions, box }) => {
       // ⚠️ 必然会 404 的一种正常态：kinds/docx.js 在 agent 刚写完 token 源、
       // 还没 build 的窗口期就报一份 pending 产物。没有 onError 的话，那几秒里
@@ -142,6 +146,68 @@ export const ARTIFACT_FACES = {
             w: Math.round(box.w * 2),                     // 2x 出图，缩略图不糊
             v: versionOfFile(fileVersions, rel),
           })}
+          style={{
+            width: box.w, height: box.h,
+            objectFit: 'cover', objectPosition: 'top center',
+            border: 0, display: 'block', background: '#fff',
+            pointerEvents: 'none',
+          }}
+        />
+      );
+    },
+  },
+
+  /**
+   * agent 的浏览器（2026-08-18）—— **上次看到的样子**，一张服务端存的帧。
+   *
+   * 为什么不是活画面：实测每 fps 约 3.1pp 单核、满帧 40%，而这台机器只有 1 个核。
+   * 桌面上摆着一张永远在推流的卡等于把核送出去。活画面在窗里（双击进去）。
+   *
+   * 那张帧只在**本来就截了图**的时候产生（agent 的视口截图 / 用户正看着画布时
+   * preview 端点现截一张），所以卡上的画面可能落后于 agent 当前在看的页面 ——
+   * 顶栏那行小字写的是"上次看到"，不是"实时"，别让人误判。
+   */
+  browse: {
+    // ⚠️ 不能用 Globe —— 站点卡已经是 Globe 了，画布上一眼分不出哪张是"我的站"
+    // 哪张是"agent 在外面逛"。图标互不相同这条有测试钉着（正是它逮住了我）。
+    icon: Compass,
+    tip: '双击进这个浏览器（能看，也能自己接手操作）',
+    summary: (o) => {
+      const t = formatClock(o.at);
+      // 装了多少要写在卡上 —— 工具卡的一半价值是"它替我攒了什么"，
+      // 不写的话那些东西只有点进去才知道存在
+      const n = o.sites?.length || 0;
+      const got = n ? ` · 采过 ${n} 个站` : '';
+      // 只有采集、没有访问记录的老项目：别写"已休息 · <站名> · <时间>"那种
+      // 假装它刚逛过的话，直接说它装着什么
+      if (!o.url) return `采集${got}`;
+      return `${o.live ? '在跑' : '已休息'} · ${o.host}${t ? ` · ${t}` : ''}${got}`;
+    },
+    Preview: ({ o, projectId, box }) => {
+      const [failed, setFailed] = useState(!o.hasPreview);
+      if (failed) {
+        return (
+          <div style={{
+            width: box.w, height: box.h, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: GAP.sm,
+            background: PAPER.paper, color: COLOR.sub, fontFamily: FONT_SANS,
+            fontSize: FONT_SIZE.xs, textAlign: 'center', padding: GAP.md,
+            boxSizing: 'border-box', lineHeight: 1.7,
+          }}>
+            <Compass size={18} style={{ opacity: 0.4 }} />
+            <span style={{ fontFamily: FONT_MONO, color: COLOR.text2 }}>{o.host}</span>
+            <span>还没有画面 —— 双击进去看</span>
+          </div>
+        );
+      }
+      return (
+        <img
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+          // ⚠️ 地址里带上 `at`：预览是 no-store 的，但 React 不会因为同一个 src
+          // 重新拉 —— agent 翻了页、`at` 变了，这里才换图
+          src={Assets.browsePreviewUrl(projectId, o.at)}
           style={{
             width: box.w, height: box.h,
             objectFit: 'cover', objectPosition: 'top center',

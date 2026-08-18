@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Assets, Sessions, Memory, Instruction } from '../../lib/api.js';
+import { Assets, Sessions, Memory, Instruction, Browse } from '../../lib/api.js';
+import { useBoardFilter } from './board-filter.jsx';
 
 /**
  * useBoardData —— 画布的数据层（2026-08-13 刀 4 续，从 BoardCanvas 拆出）。
@@ -31,6 +32,12 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
   const [tasks, setTasks] = useState([]);         // 有产物的文件夹（含工作区根，id=''）
   // 磁盘上全部文件夹的相对路径（含空文件夹）。文件夹卡的权威来源。
   const [folders, setFolders] = useState([]);
+  // 桌面按类别过滤（两条轴，见 board-filter.jsx）。**只影响看得见什么**，
+  // 不动数据 —— 放在数据层是因为"哪些数据在场"是同一个问题的两半。
+  const { filter, group: filterGroup } = useBoardFilter(projectId);
+  // 浏览器卡：逛过站才有（服务端读 .browser/state.json 判）。⚠️ 跟上面三个不一样，
+  // 它**要能变回 null** —— 项目从没逛过站时服务端给 null，那时桌面上就不该有这张卡。
+  const [browse, setBrowse] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [memoryDocs, setMemoryDocs] = useState([]);
   // 布局（saved + 本地改动合一）：{ [id]: {x,y,z} }；zones：{ [路径]: {x,y} }
@@ -66,6 +73,9 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
     if (Array.isArray(a?.artifacts)) setArtifacts(a.artifacts);
     if (Array.isArray(a?.tasks)) setTasks(a.tasks);
     if (Array.isArray(a?.folders)) setFolders(a.folders);
+    // 浏览器卡走**自己的端点**（不在 /artifacts 里）：它的真相在服务端进程 +
+    // 一份浏览痕迹，跟磁盘扫描不是一回事。见 server/api/browse.js 头注。
+    Browse.state(projectId).then(r => setBrowse(r?.url ? r : null)).catch(() => {});
     if (Array.isArray(s?.sessions)) setSessions(s.sessions);
     if (Array.isArray(m?.memory)) setMemoryDocs(m.memory);
     if (b?.board && !layoutLoadedRef.current) {
@@ -128,7 +138,7 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
   }, [scheduleSave]);
 
   return {
-    artifacts, tasks, folders, sessions, memoryDocs,
+    artifacts, tasks, folders, sessions, memoryDocs, browse, filter, filterGroup,
     layout, setLayout, zones, setZones, bindings, setBindings, boardHero,
     guideText, fileCount,
     reload, scheduleSave, patchLayout,

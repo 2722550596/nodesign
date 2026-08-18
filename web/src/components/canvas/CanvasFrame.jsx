@@ -37,8 +37,10 @@ export default function CanvasFrame({
   onRemoveCandidate,
   onRenameCandidate,
   project, deckSpec, projectId, sessionId, decisionsReloadKey,
-  // 浏览器窗（2026-08-18）：会话级临时活物，由事件驱动开关，不是产物
-  browseWin, onCloseBrowse,
+  // 浏览器窗（2026-08-18）：画面是活的，但**入口是桌面上那张 browse 卡**
+  // （2026-08-18 用户拍板加的）。所以开关由这一层管：事件能开（agent 举手）、
+  // 双击卡片也能开。`onBrowse(null)` = 关。
+  browseWin, onBrowse,
   comments = [],
   /** 画布上每件东西攒了几条待发标注（卡片角标用） */
   boardNoteCounts = {},
@@ -99,6 +101,12 @@ export default function CanvasFrame({
   //   { kind:'session' } | { kind:'task', task, file, title }
   //   { kind:'site', task, base, entry, title, pages, built }
   const openDeck = (desc) => {
+    // 浏览器窗不是产物窗：它不占 siteSrc/docxSrc/deckOpen 那三个位子，
+    // 可以跟产物窗同时开着（你在看站点、agent 在旁边逛参考站，两件事）。
+    if (desc?.kind === 'browse') {
+      onBrowse?.({ url: desc.url || null, help: null });
+      return;
+    }
     if (desc?.kind === 'site') {
       setSiteSrc(desc);
       setDocxSrc(null);
@@ -186,6 +194,13 @@ export default function CanvasFrame({
     boardSigRef.current = sig;
     setBoardGroups(gs || []);
   }, []);
+
+  /**
+   * 关浏览器窗。**必须是稳定引用**：BrowserWindow 把它算进工具栏 `groups` 的
+   * useMemo 依赖，而工具栏一变就会向上报一次 —— 每渲染都新的内联箭头会把
+   * "上报"变成无限循环（2026-08-18 真踩到，一小时才定位）。
+   */
+  const closeBrowse = useCallback(() => onBrowse?.(null), [onBrowse]);
 
   const winSigRef = useRef('');
   const reportWinGroups = useCallback((gs) => {
@@ -319,9 +334,12 @@ export default function CanvasFrame({
               file={docxSrc.file}
               title={docxSrc.title}
               sourceFile={docxSrc.sourceFile}
+              members={docxSrc.members}
               exports={docxSrc.exports}
-              onExport={(fmt) => onExport?.(fmt, docxSrc.cardId)}
-              version={fileVersions?.[docxSrc.file]}
+              // 窗里可能切到别的成员：导出按当前成员点名（`docx:<文件>` 反解成
+              // 单文件卡），没点名再退回整卡地址
+              onExport={(fmt, file) => onExport?.(fmt, file ? `docx:${file}` : docxSrc.cardId)}
+              fileVersions={fileVersions}
               onClose={() => setDocxSrc(null)}
               onToolbarGroups={reportWinGroups}
             />
@@ -334,7 +352,7 @@ export default function CanvasFrame({
               projectId={projectId}
               url={browseWin.url}
               help={browseWin.help}
-              onClose={onCloseBrowse}
+              onClose={closeBrowse}
               onToolbarGroups={reportWinGroups}
             />
           </Suspense>

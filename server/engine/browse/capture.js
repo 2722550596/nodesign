@@ -30,8 +30,50 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
-/** 采集落点（工作区相对）。web-search 的搜索图在同一个 references 根下、分栏放。 */
+/**
+ * 采集根（工作区相对）。web-search 的搜索图在同一个 references 根下、分栏放。
+ *
+ * ⭐ **一个参照站一个文件夹**（2026-08-18 下午，用户拍板"按 site 那种范式"）：
+ * `assets/references/web/<站名>/`。理由是一次采集的五档本来就是**一个单位**
+ * （同一个站、同一次、同一个 lookingFor），平铺到十几个文件之后靠文件名前缀
+ * 认亲太弱；而目录 = 单位正是站点产物那条既有范式，桌面上一张卡装一个站。
+ * 目录里再按**文件名表明类别**（`.screenshot.webp` / `.palette.json` / …）。
+ */
 export const CAPTURE_DIR = path.posix.join('assets', 'references', 'web');
+
+/** 站名 → 目录名。去掉 www.、端口里的冒号，别让它在 Windows 上炸 */
+export const siteDirOf = (url) => {
+  try {
+    const u = new URL(url);
+    return slug(`${u.hostname.replace(/^www\./, '')}${u.port ? `-${u.port}` : ''}`);
+  } catch { return 'page'; }
+};
+
+/**
+ * 命中规则 → **真的能抄的 CSS 文本**。
+ *
+ * 这一档的全部价值是"照抄就能复现那个技术"，而包在 json 里的它得先被解开一层
+ * 才能用。写成 .css 之后类别由扩展名表明，人和 agent 都能直接读。
+ * 顺序 = CDP 给的级联顺序（后面的覆盖前面的），头注释里写清出处。
+ */
+function cssText(rules, info, selector) {
+  const head = [
+    '/* 从参照站采下来的命中规则（按级联顺序，后面的覆盖前面的）',
+    ` * 元素：${selector}`,
+    ` * 来源：${info.url}`,
+    ` * 采于：${new Date().toISOString()}`,
+    ' */',
+    '',
+  ];
+  const body = rules.map((r) => {
+    const decls = r.declarations.map(d => `  ${d};`).join('\n');
+    const rule = `${r.selector} {\n${decls}\n}`;
+    return r.media?.length
+      ? `@media ${r.media.join(' and ')} {\n${rule.replace(/^/gm, '  ')}\n}`
+      : rule;
+  });
+  return `${head.concat(body).join('\n')}\n`;
+}
 
 const slug = (s) => String(s || '')
   .replace(/[^\w一-龥-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'capture';
@@ -198,23 +240,69 @@ function collectorSource() {
 export async function capture({
   page, workspaceRoot, kinds, name, lookingFor, selector, ids = {}, normalize,
 }) {
-  const dir = path.join(workspaceRoot, CAPTURE_DIR);
+  const info = await page.evaluate(`(${collectorSource().toString()})()`);
+  // 一站一文件夹（见 CAPTURE_DIR 的注释）。子目录相对工作区根的前缀，
+  // 落盘和返回给 agent 的 rel 都从它拼 —— 只有一处拼法。
+  const siteDir = path.posix.join(CAPTURE_DIR, siteDirOf(info.url));
+  const dir = path.join(workspaceRoot, siteDir);
   const metaDir = path.join(dir, '.meta');
   await fs.mkdir(metaDir, { recursive: true });
 
-  const info = await page.evaluate(`(${collectorSource().toString()})()`);
-  const host = (() => { try { return new URL(info.url).hostname.replace(/^www\./, ''); } catch { return 'page'; } })();
-  const stem = slug(name || `${host}-${new Date(Date.now() + 8 * 3600e3).toISOString().slice(5, 16).replace(/[T:]/g, '')}`);
+  // 文件名主干不再重复站名（目录已经说了是哪个站）：给的名字优先，
+  // 否则用页面在站内的位置 + 时间 —— 同一个站逛三层会采三份，得分得开。
+  const pageSlug = (() => {
+    try {
+      const segs = new URL(info.url).pathname.split('/').filter(Boolean);
+      return segs.length ? slug(segs.slice(-2).join('-')) : '首页';
+    } catch { return '页面'; }
+  })();
+  // `0818-2253`（月日-时分，+8 时区）。原来是 `.slice(5,16)` 直接把 ISO 的
+  // `08-18T22:53` 去掉分隔符，读出来是 `08-182253` —— 文件名是给人看的
+  const iso = new Date(Date.now() + 8 * 3600e3).toISOString();
+  const stamp = `${iso.slice(5, 7)}${iso.slice(8, 10)}-${iso.slice(11, 13)}${iso.slice(14, 16)}`;
+  const stem = slug(name || `${pageSlug}-${stamp}`);
 
   const files = [];
   const failed = [];
+
+  /** 出处 sidecar 的键 = 文件名去掉最后一节扩展名（`listReferences` 用的是同一条规则） */
+  const metaStemOf = (fileName) => fileName.replace(/\.[^.]+$/, '');
+
+  /**
+   * 写一份素材 + 它自己的出处。
+   *
+   * ⭐ **类别写在文件名里**（2026-08-18 用户拍板）：`.screenshot.webp` /
+   * `.palette.json` / `.fonts.json` / `.skeleton.json` / `.css`。这跟站点产物是
+   * 同一条规矩 —— 形态由文件名表明，不用打开文件才知道里面是什么。
+   * 在这之前调色板/字体/结构/CSS **全挤在一个 `<名>.json` 里**，抽屉里看到的
+   * 是一个什么都可能的 json，agent 下个会话想复用得先读一遍才知道有没有它要的。
+   *
+   * 出处**一份文件一份**，不是一次采集一份：每份素材要能单独被认出来
+   * （三天后 `assets/references/web/` 里的东西是靠自己说明自己的）。
+   */
   const write = async (suffix, body, kind) => {
-    const rel = path.posix.join(CAPTURE_DIR, `${stem}${suffix}`);
-    const abs = path.join(workspaceRoot, rel);
-    await fs.writeFile(abs, body);
+    const fileName = `${stem}${suffix}`;
+    const rel = path.posix.join(siteDir, fileName);
+    await fs.writeFile(path.join(workspaceRoot, rel), body);
     files.push({ rel, kind, bytes: Buffer.byteLength(body) });
+    await fs.writeFile(path.join(metaDir, `${metaStemOf(fileName)}.json`), `${JSON.stringify({
+      kind,
+      sourceUrl: info.url,
+      pageTitle: info.title,
+      capturedAt: new Date().toISOString(),
+      viewportWidth: info.viewportWidth,
+      lookingFor: lookingFor || null,
+      selector: selector || null,
+      sessionId: ids.sessionId ?? null,
+      runId: ids.runId ?? null,
+    }, null, 2)}\n`, 'utf8');
     return rel;
   };
+
+  /** 一档一个 json，各自带齐来历 —— 拿单独一份出来看也知道它是什么 */
+  const writeJson = (suffix, payload, kind) => write(suffix, `${JSON.stringify({
+    source: info.url, title: info.title, kind, ...payload,
+  }, null, 2)}\n`, kind);
 
   // ⚠️ **每一种单独 try**。第一版是一路顺着写下来的，真跑时 `selector: 'main'` 在
   // MDN 上等了 30 秒超时 → 整个函数抛错 → 调色板/字体/结构/CSS 明明都已经采到了
@@ -235,7 +323,7 @@ export async function capture({
       // 无损，而 76MB 的 references 目录已经是这个项目的既有账
       const shot = normalize ? await normalize(raw) : null;
       const buf = shot ? Buffer.from(shot.data, 'base64') : raw;
-      await write(shot ? '.webp' : '.png', buf, 'screenshot');
+      await write(shot ? '.screenshot.webp' : '.screenshot.png', buf, 'screenshot');
     } catch (err) {
       failed.push(`screenshot: ${err.message.split('\n')[0]}`
         + (selector ? `（选择器 ${selector} 可能选不中或不可见 —— 先用 browser_read 看页面上有什么）` : ''));
@@ -274,26 +362,19 @@ export async function capture({
       failed.push(`css: ${err.message.split('\n')[0]}`);
     }
   }
-  if (Object.keys(bundle).length) {
-    try {
-      await write('.json', `${JSON.stringify({ source: info.url, title: info.title, ...bundle }, null, 2)}\n`, 'data');
-    } catch (err) { failed.push(`data json: ${err.message}`); }
+  // 一档一文件。写盘也各自 try —— 一档写不下去不该把别的档带走
+  // （跟上面「每一种单独 try」同一条理由，只是这次是磁盘不是页面）。
+  for (const [key, suffix] of [['palette', '.palette.json'], ['fonts', '.fonts.json'], ['skeleton', '.skeleton.json']]) {
+    if (bundle[key] == null) continue;
+    try { await writeJson(suffix, { [key]: bundle[key] }, key); }
+    catch (err) { failed.push(`${key}: 写盘失败 ${err.message}`); }
   }
-
-  // 出处 sidecar —— 没有它，三天后这就是一堆不知道哪来的文件
-  await fs.writeFile(path.join(metaDir, `${stem}.json`), `${JSON.stringify({
-    sourceUrl: info.url,
-    pageTitle: info.title,
-    capturedAt: new Date().toISOString(),
-    viewportWidth: info.viewportWidth,
-    lookingFor: lookingFor || null,
-    kinds,                          // agent 要的
-    captured: files.map(f => f.kind),   // 真采到的（跟上面可能不一样，别让 sidecar 说谎）
-    failed,
-    selector: selector || null,
-    sessionId: ids.sessionId ?? null,
-    runId: ids.runId ?? null,
-  }, null, 2)}\n`, 'utf8');
+  if (bundle.css) {
+    // ⭐ CSS 落成**真的 CSS**，不是包在 json 里的字符串数组：这一档的全部价值
+    // 就是"能照抄"，而 json 里的它要先被解开一层才能用。扩展名本身就是类别。
+    try { await write('.css', cssText(bundle.css, info, selector), 'css'); }
+    catch (err) { failed.push(`css: 写盘失败 ${err.message}`); }
+  }
 
   return { files, failed, data: { ...bundle, url: info.url, title: info.title } };
 }

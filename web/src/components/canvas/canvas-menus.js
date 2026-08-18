@@ -85,7 +85,13 @@ export function buildBoardMenu(ctx, act) {
         target: act.annotTargetOf(obj),
       }) },
       { divider: true },
-      { id: 'del', icon: Trash2, label: '删除', danger: true, onClick: () => act.handleDeleteNote(obj) },
+      // 删除只给**真有东西可删**的：磁盘上有文件（note/图/文件…）或者 board.json
+      // 里有一条记录（涂鸦/手写字）。浏览器卡两样都不是 —— 它的真相在服务端进程里，
+      // 给了这颗按钮只会走进 `Assets.removeNote(pid, undefined)` 静默 404
+      // （native 物件当年就是这么"删了没反应"的）。
+      ...(isFileBacked(obj) || obj.native
+        ? [{ id: 'del', icon: Trash2, label: '删除', danger: true, onClick: () => act.handleDeleteNote(obj) }]
+        : []),
     ];
   }
 

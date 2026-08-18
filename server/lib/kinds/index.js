@@ -144,14 +144,11 @@ export async function taskManifest(taskDir) {
   for (const i of siteInsts.filter(x => x.single)) {
     artifacts.push(decorate(site)(await site.instanceManifest(taskDir, marker, i)));
   }
-  // docx 只在**没有网页产物**时才算产物 —— 任务里已经有 deck / site 时，
-  // 躺在旁边的 .docx 压倒性地更可能是用户传来当素材的参考文档，不是并列的
-  // 交付物。它照样能被 Read / 被导出，只是不占一张产物卡。
-  // （真要一个任务同时产出网页和文档，拆两个任务；任务是廉价的。）
-  if (!artifacts.length) {
-    for (const i of await docx.discoverInstances(taskDir, marker)) {
-      artifacts.push(decorate(docx)(await docx.instanceManifest(taskDir, marker, i)));
-    }
+  // docx **垫底但不隐身**（2026-08-18 拍板）：任务里已有 deck / site 时，旁边的
+  // .docx 不参与形态判定（KIND_ORDER 已保证），但照样出卡 —— 「不当判定依据」
+  // 和「不显示」是两回事，用户产出的 word 附件消失在画布上比多一张卡更坏。
+  for (const i of await docx.discoverInstances(taskDir, marker)) {
+    artifacts.push(decorate(docx)(await docx.instanceManifest(taskDir, marker, i)));
   }
 
   const kind = artifacts[0]?.kind || (KINDS[marker?.kind] ? marker.kind : null);
@@ -185,6 +182,11 @@ export function artifactOfPath(manifest, relInTask) {
   const files = manifest.artifacts.filter(a => a.file);
   const hit = files.find(a => a.file === rel);
   if (hit) return hit;
+  // word 文件夹的成员（多版本 .docx 和各自的 token 源）都归那一件产物 ——
+  // 不认的话，改 v2 的源会被寻址成「不属于任何产物的散文件」
+  const memberHit = manifest.artifacts.find(a =>
+    a.members?.some(m => m.file === rel || m.sourceFile === rel));
+  if (memberHit) return memberHit;
   // 目录型产物（site 的目录站）。判据用「没有 file 字段」而不是写死 kind ——
   // 注册表的意义就是别在寻址层再列一遍形态名。
   const dirs = manifest.artifacts
@@ -197,6 +199,26 @@ export function artifactOfPath(manifest, relInTask) {
       || rel === a.root || rel.startsWith(`${a.root}/`)) return a;
   }
   return null;
+}
+
+/**
+ * word 产物认领的文件全集（.docx 本体 + token 源，含 members），键是工作区相对
+ * 路径。散文件过滤靠它把这些文件从文件卡里收编 —— 不然一份文档在桌面上是三张卡
+ * （docx 产物卡 + .docx 文件条 + .json 文件条），双击到哪张全看运气。
+ * @param {Array<{artifacts?:Array}>} tasks  /artifacts 路由的 tasks（路径已加前缀）
+ */
+export function docxClaimedFiles(tasks) {
+  const out = new Set();
+  for (const t of tasks || []) {
+    for (const a of (t.artifacts || [])) {
+      if (a.kind !== 'docx') continue;
+      for (const m of [a, ...(a.members || [])]) {
+        if (m.file) out.add(m.file);
+        if (m.sourceFile) out.add(m.sourceFile);
+      }
+    }
+  }
+  return out;
 }
 
 /** 这个形态允不允许某种导出格式（导出路由的守卫从这里查，不再各自 if kind） */

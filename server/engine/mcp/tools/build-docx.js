@@ -18,10 +18,11 @@ import { z } from 'zod';
 import { buildFromSource, DocxSourceError } from '../../../lib/docx/build-from-source.js';
 import { setActiveArtifact } from '../../../lib/artifact-target.js';
 import { safeResolveRead, safeResolveWrite } from '../../../lib/safe-path.js';
+import { Events } from '../../agent/events.js';
 
 const err = (text) => ({ content: [{ type: 'text', text }], isError: true });
 
-export function makeBuildDocxTool({ workspaceRoot, sessionId }) {
+export function makeBuildDocxTool({ workspaceRoot, sessionId, ctx }) {
   return tool(
     'build_docx',
     `Build a .docx from its token source file.
@@ -75,6 +76,10 @@ whether it looks right.`,
         const r = await buildFromSource(srcAbs, outAbs);
         // 记成当前产物，这样后面 screenshot / 导出不传 path 也能找到它
         setActiveArtifact(sessionId, outRel, 'docx');
+        // emit file_changed —— 让画布上的 docx 卡**当场**换新页图。MCP 工具写盘
+        // 不走 PostToolUse(Write|Edit) 那条直发（matcher 匹配不到 mcp__nodesign__*），
+        // 不发的话卡片停在旧页图，最多等 60 秒缓存自然过期（generate-image 同款补发）
+        try { ctx?.emit?.(Events.fileChanged(outRel, 'change')); } catch { /* fail-safe */ }
         return {
           content: [{
             type: 'text',
