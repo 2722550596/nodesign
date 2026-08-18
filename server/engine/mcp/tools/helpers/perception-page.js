@@ -109,6 +109,13 @@ export async function openArtifactPage(browser, {
 }) {
   const contextOpts = { colorScheme: 'light', deviceScaleFactor };
   if (viewport) contextOpts.viewport = viewport;
+  // ⭐ `?nd=raw` 只挂在**主文档**的 URL 上，页面里 `<img src="assets/x.png">` 发出去的
+  // 请求不带任何 query —— 于是主文档拿到了原样 HTML，图片却照旧走派生图。实测：
+  // 一张 1.36MB 的 PNG 发出去是 **35.7KB 的 webp（2.6%）**。两个后果都真实：
+  //   ① 没有 CSS 宽约束的图按**固有尺寸**排版，派生图尺寸不同 → 版面跟访客不一样；
+  //   ② `profile_scroll` 的"图片总字节"少报了几十倍，而它的头号建议就是按体积开药。
+  // 每个请求都带一个头最省：query 要改写 HTML（那就不叫 raw 了）。
+  contextOpts.extraHTTPHeaders = { ...(contextOpts.extraHTTPHeaders || {}), 'X-ND-Raw': '1' };
   const context = await browser.newContext(contextOpts);
 
   let url = null;

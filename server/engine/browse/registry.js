@@ -170,6 +170,16 @@ async function evictOne() {
 export async function withBrowser(projectId, fn) {
   return mutex(`browse:${projectId}`, async () => {
     let entry = live.get(projectId);
+    // ⚠️ 页可能已经不在了而 entry 还在：出网闸连到坏 IP 时会 `page.close()`
+    // （ssrf-guard 的 [connected] 兜底）。任意页面塞一个
+    // `<link rel=prefetch href=http://127.0.0.1:4001/>` 就能让常驻页变成一具尸体，
+    // 而 5 分钟空闲计时器才会清它 —— 等于给外站开了个远程杀开关。
+    // 这里发现就重建（别让 agent 拿着 "Target has been closed" 猜发生了什么）。
+    if (entry && entry.page.isClosed()) {
+      console.log(`[browse] ${projectId} 的页已被掐（多半是出网闸），重建`);
+      await closeFor(projectId, 'page was closed underneath us');
+      entry = null;
+    }
     if (!entry) {
       if (live.size >= MAX_RESIDENT && !(await evictOne())) {
         throw Object.assign(
@@ -204,6 +214,58 @@ export async function withBrowser(projectId, fn) {
 //      生命周期判 —— 后者跟"浏览器还有没有人要用"其实不是一回事。
 // 与其造一个用不上的导出摆在这儿（这个仓库有过"全仓无人写入的字段假装第一优先级"
 // 那种账），不如写清为什么没有。
+
+/**
+ * 把某个项目的浏览器**钉住**：期间它不空闲、不会被 LRU 挤掉、不会被空闲计时器关。
+ *
+ * 为什么需要（审查抓到的）：`browser_request_help` 是在 `withBrowser` **外面**等人的
+ * （它必须放开 mutex，否则人在窗里点的每一下都会排在 agent 这次调用后面 = 死锁）。
+ * 于是等人的那 120 秒里 `busy` 是 false、`lastUsed` 不动 —— `evictOne` 正好挑
+ * "最久没用的空闲实例"，它就是那个**人正在过验证码的浏览器**。
+ *
+ * @returns {() => void} 松手（幂等）
+ */
+export function hold(projectId, why = 'held') {
+  const entry = live.get(projectId);
+  if (!entry) return () => {};
+  entry.busy = true;
+  entry.holds = (entry.holds || 0) + 1;
+  touch(entry);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const e = live.get(projectId);
+    if (!e) return;
+    e.holds = Math.max(0, (e.holds || 1) - 1);
+    if (!e.holds) e.busy = false;
+    touch(e);            // 松手时重新起计时，别让它带着旧计时器立刻被回收
+    console.log(`[browse] ${projectId} 松手（${why}）`);
+  };
+}
+
+/**
+ * 人在窗里动了一下 → 重置空闲计时。
+ * 没有这条的话：人安静看五分钟，浏览器在他眼前被关掉（空闲计时只认 agent 的调用）。
+ */
+export function touchProject(projectId) {
+  const entry = live.get(projectId);
+  if (entry) touch(entry);
+  return !!entry;
+}
+
+/**
+ * 刷新页面之后拿回「现在有没有浏览器 / agent 是不是正举着手」。
+ * 求助 banner 原来只靠一次性的 WS 事件，刷新即失传 —— agent 在那儿等两分钟没人知道。
+ */
+export function browseState(projectId) {
+  const e = live.get(projectId);
+  return {
+    live: !!e,
+    url: e ? e.page.url() : null,
+    busy: e ? !!e.busy : false,
+  };
+}
 
 /**
  * 拿到某项目**已经在跑**的浏览器（不懒启动）。

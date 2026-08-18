@@ -112,6 +112,19 @@ Note it reports the FIRST element matching the selector.`,
         if (computed === null) return asText(`Selector matched no elements: ${selector}`, true);
 
         const cdp = await page.context().newCDPSession(page);
+        // styleSheetId → 文件名。同一个 selector 出现在两个文件里时（reset + 组件，
+        // 最常见的那种），光打 `.card` 两行人分不出谁是谁。**必须在 CSS.enable
+        // 之前挂监听** —— 已有的样式表是在 enable 的那一刻补发的。
+        const sheetName = new Map();
+        cdp.on('CSS.styleSheetAdded', (ev) => {
+          // ⚠️ `isInline` 要**先**判：`<style>` 块的 sourceURL 是文档自己的地址，
+          // 按 URL 取名会打出 `page.html?nd=raw` 这种（连我们内部的 raw 参数都漏给
+          // agent 看），而它其实是"页面里那段 <style>"
+          const url = ev?.header?.sourceURL || '';
+          const name = ev?.header?.isInline ? '<style> 内联'
+            : (url ? decodeURIComponent((url.split('?')[0] || url).split('/').pop() || url) : '');
+          if (ev?.header?.styleSheetId) sheetName.set(ev.header.styleSheetId, name);
+        });
         await cdp.send('DOM.enable');
         await cdp.send('CSS.enable');
         const { root } = await cdp.send('DOM.getDocument', { depth: -1 });
@@ -126,9 +139,12 @@ Note it reports the FIRST element matching the selector.`,
             if (d.disabled) continue;
             const a = affects(String(d.name).toLowerCase(), prop);
             if (!a.hit) continue;
+            // ⚠️ CDP 这一版的 `d.value` **本身就带着** `!important`，再拼一次会打出
+            // `color: red !important !important` —— 看起来像源码里真写了两遍
+            const val = String(d.value).replace(/\s*!\s*important\s*$/i, '');
             rows.push({
               where,
-              decl: `${d.name}: ${d.value}${d.important ? ' !important' : ''}`,
+              decl: `${d.name}: ${val}${d.important ? ' !important' : ''}`,
               important: !!d.important,
               viaShorthand: a.viaShorthand,
               ...extra,
@@ -136,24 +152,34 @@ Note it reports the FIRST element matching the selector.`,
           }
         };
 
+        let ruleIdx = 0;
         for (const m of matched.matchedCSSRules ?? []) {
           const sel = m.rule?.selectorList?.text ?? '?';
           const sheet = m.rule?.origin === 'user-agent' ? 'browser default'
             : (matched.cssKeyframesRules ? null : null);
           const media = (m.rule?.media ?? []).map(x => x.text).filter(Boolean).join(' and ');
-          push(`${sel}${media ? ` @media ${media}` : ''}${sheet ? ` [${sheet}]` : ''}`, m.rule?.style, {
+          const from = sheet || sheetName.get(m.rule?.styleSheetId) || '';
+          push(`${sel}${media ? ` @media ${media}` : ''}${from ? ` [${from}]` : ''}`, m.rule?.style, {
             origin: m.rule?.origin,
+            ruleIdx: ruleIdx++,   // ⭐ 合并键，见下面那段注释
           });
         }
-        if (matched.inlineStyle) push('element inline style="…"', matched.inlineStyle, { inline: true });
+        if (matched.inlineStyle) push('element inline style="…"', matched.inlineStyle, { inline: true, ruleIdx: 'inline' });
 
         // 合并同一条规则里的重复条目。CDP 会把简写和它展开出来的长手**都**列一遍
         // （`.wrap { margin: 0 auto }` 出两条：`margin: 0 auto` + `margin-bottom: 0px`），
         // 直接打印就是四行里两行是同一件事。留长手那条（它给的是真正生效的值），
         // 把"来自哪个简写"作为标注挂上去。
+        //
+        // ⛔ 合并键必须是**规则本身**（ruleIdx），不能是 selector 文本。审查实测：
+        // `reset.css` 里 `.card{color:red!important}` 加 `component.css` 里
+        // `.card{color:blue}` —— 两条不同规则碰巧同 selector，按文本合并会折成一条，
+        // `same.decl = r.decl` 留下后者的值（蓝）、`same.important ||=` 又把 red 的
+        // important 标志过继给它，于是工具报「蓝赢」而浏览器画的是红，**真正的赢家
+        // 一行都没出现**。正好命中它的目标人群：手写 CSS 上面又叠了 reset/工具类。
         const merged = [];
         for (const r of rows) {
-          const same = merged.find(x => x.where === r.where);
+          const same = merged.find(x => x.ruleIdx === r.ruleIdx);
           if (!same) { merged.push({ ...r }); continue; }
           const rIsLonghand = !r.viaShorthand;
           if (rIsLonghand) {

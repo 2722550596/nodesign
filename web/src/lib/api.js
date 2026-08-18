@@ -166,6 +166,11 @@ export const Elicit = {
       { action, content }),
 };
 
+// ── Browse（浏览器窗：刷新后拿回状态。窗是瞬态的，服务端答案也是瞬态的）──
+export const Browse = {
+  state: (pid) => jsonRequest('GET', `/api/projects/${pid}/browse`),
+};
+
 // ── PendingChanges（C4：用户直接编辑 + 评论 buffer，项目级）──
 // 前端 push edit / comment item，下次发 chat 时 turn.js 在 user message 前
 // prepend system 提示 → agent 主动调 mcp__nodesign__get_pending_changes 拉详情。

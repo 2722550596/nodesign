@@ -77,8 +77,13 @@ export async function subscribe(projectId, ws, page) {
       return { ok: false, reason: '另一路画面正在建立，稍等一下再打开这扇窗。' };
     }
     if (activeCount() >= MAX_ACTIVE) {
-      return { ok: false, reason: '同时只能看一路浏览器画面 —— 这台机器只有 1 个 CPU 核，'
-        + '满帧推流要吃掉约 40% 个核（实测）。先关掉另一扇浏览器窗。' };
+      // ⚠️ 这个上限是**全机器**的（CPU 是全机器的），所以占着它的那一路很可能
+      // 属于**别的项目、甚至别的用户**。原来的话术是"先关掉另一扇浏览器窗"，
+      // 那扇窗他既看不见也关不掉 —— 一句让人白忙的假指令。说实话就行。
+      const mine = casts.get(projectId)?.subs?.size ? '（就是这个项目自己的那扇）' : '（在别的会话里，你看不到也关不掉）';
+      return { ok: false, reason: `这台机器同时只能推一路浏览器画面，现在有一路在跑${mine}。`
+        + '满帧推流约吃 40% 个核（实测），而这里只有 1 个核。等那边看完再打开，'
+        + '或者让 agent 用截图代替实时画面。' };
     }
     subscribing = true;
   }

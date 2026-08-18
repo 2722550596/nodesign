@@ -831,7 +831,9 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     // 感知通道带它 —— 为什么必须带见 mcp/tools/helpers/perception-page.js 的
     // artifactFileUrl 注释（注入的 sizes 会把横向溢出藏起来，而发布出去的站点没有
     // 这层注入，agent 的眼睛该看交付物）。用户预览照旧走改写层。
-    const rawRequested = req.query?.nd === 'raw';
+    // `?nd=raw` 给主文档；`X-ND-Raw` 头给它的**子资源**（img/css/js 的请求上没有
+    // query 可挂，感知 context 用 extraHTTPHeaders 一次性盖住整页）。
+    const rawRequested = req.query?.nd === 'raw' || req.headers['x-nd-raw'] === '1';
 
     const editable = ext === '.html' || ext === '.htm' || ext === '.css' || ext === '.js';
     res.setHeader('Cache-Control', editable ? 'no-store' : imageCacheControl(req));

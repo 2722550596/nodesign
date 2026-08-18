@@ -20,6 +20,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './screenshot.js';
 import { checkUrl, attachSsrfGuard } from '../../../lib/ssrf-guard.js';
+import { startBrowseProxy } from '../../../lib/browse-proxy.js';
 
 const RASTER_SCALE = 0.6;
 const DEVICE_VIEWPORTS = {
@@ -110,10 +111,21 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
       let browser;
       try {
         const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+        // ⭐ 走同一个出网代理（2026-08-18 二次修）。CDP 那道闸看不见四类东西：
+        // WebSocket 握手、`<link rel=prefetch>`、`sendBeacon`、还没装闸的弹窗
+        // —— 四条都是攻出来的，而这个工具吃的正是**任意用户给的 URL**，同一批
+        // 绕过一字不改就能用在它身上。代理是所有出网的必经之路，且连的是自己
+        // 解析并验过的那个 IP（顺带根除 DNS 重绑定）。
+        // `bypass: ''`：默认会放过 loopback，那正是最要拦的。
+        const { port: proxyPort } = await startBrowseProxy();
+        browser = await chromium.launch({
+          headless: true,
+          args: FIDELITY_LAUNCH_ARGS,
+          proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: '' },
+        });
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
         const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: rasterScale, colorScheme: 'light' });
-        const guard = await attachSsrfGuard(ctx);
+        const guard = await attachSsrfGuard(ctx, undefined, { proxied: true });
         const page = await ctx.newPage();
         await guard.armPage(page);   // ⭐ 必须 await 完才导航（竞态是攻出来的）
         const diag = attachPageDiagnostics(page);

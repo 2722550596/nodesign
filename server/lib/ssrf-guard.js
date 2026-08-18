@@ -186,12 +186,21 @@ const OFFLINE_SCHEMES = new Set(['data:', 'blob:', 'about:']);
  * @returns {Promise<{ok: true, ips: string[]} | {ok: false, reason: string}>}
  */
 /**
- * 主机名 → 判定结果的短期缓存。
+ * 主机名 → 判定结果的短期缓存。**只缓 DENY，不缓 ALLOW。**
  *
- * 一个页面几十个子资源，每个都查一次 DNS 在 1 vCPU 上不划算。
- * ⚠️ 缓存跟 DNS 重绑定的关系要说清：TTL 内我们**认一次结果**，这**缩小**了
- * "两次解析之间答案变了"的窗口，但也意味着 TTL 内的变化我们看不见 ——
- * 兜底仍然是第二道（连上后看 remoteIPAddress）。TTL 故意短。
+ * 一个页面几十个子资源，每个都查一次 DNS 在 1 vCPU 上不划算。但缓存方向不对称：
+ *
+ * ⛔ 原来两种都缓，注释写的是「TTL 内认一次结果，**缩小**了两次解析之间答案变了
+ *    的窗口」。这句话只在「先 DENY 后翻成公网」时成立。反方向 ——
+ *    **先拿一个公网名骗到 ALLOW，再把解析翻向 127.0.0.1** —— 缓存把窗口从
+ *    「两次 DNS 之间」**放大成保证的 30 秒**：这道闸在 30 秒里根本不查 DNS。
+ *    审查时确定性复现过。
+ * ⭐ 缓 DENY 没有这个方向问题：最坏是把一个刚变干净的主机多拦 30 秒。
+ *    拦错了的代价是"看不到一个参考站"，放错了的代价是内网。
+ *
+ * 真正的强制点在 `lib/browse-proxy.js`：它**每个请求**重解析并连**验过的那个 IP**
+ * （不给系统第二次解析的机会），所以常驻浏览器那条路对重绑定是免疫的。这里的
+ * checkUrl 是预筛 + `screenshot_url` 用（后者也已经走同一个代理）。
  */
 const HOST_TTL_MS = 30_000;
 const hostCache = new Map();   // host → { at, verdict }
@@ -237,8 +246,10 @@ export async function checkUrl(raw, { timeoutMs = 4000 } = {}) {
     const why = blockReason(a.address);
     if (why) { verdict = { ok: false, reason: `${host} → ${why}` }; break; }
   }
-  hostCache.set(host, { at: Date.now(), verdict });
-  if (hostCache.size > 500) hostCache.delete(hostCache.keys().next().value);
+  if (!verdict.ok) {   // 只缓 DENY，见上面
+    hostCache.set(host, { at: Date.now(), verdict });
+    if (hostCache.size > 500) hostCache.delete(hostCache.keys().next().value);
+  }
   return verdict;
 }
 

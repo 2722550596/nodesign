@@ -39,6 +39,8 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
   const [addr, setAddr] = useState(url || '');
   const [takeover, setTakeover] = useState(false);
   const [gotFrame, setGotFrame] = useState(false);
+  // 刷新后 hello 帧补回来的求助文案（prop 那份来自一次性事件，刷新即失传）
+  const [liveHelp, setLiveHelp] = useState(null);
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const takeoverRef = useRef(false);
@@ -76,6 +78,9 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
       }
       let msg; try { msg = JSON.parse(e.data); } catch { return; }
       if (msg.type === 'subscribed') { setStatus('live'); if (msg.url) setAddr(msg.url); }
+      // hello 带着「agent 是不是正举着手」—— 刷新后 banner 靠它回来（一次性事件已经过去了）
+      if (msg.type === 'hello' && msg.help) setLiveHelp(msg.help);
+      if (msg.type === 'released') setLiveHelp(null);
       if (msg.type === 'idle') { setStatus('idle'); setNote(msg.reason); }
       if (msg.type === 'error') { setStatus('error'); setNote(msg.reason); }
       if (msg.type === 'closed') { setStatus('closed'); setNote(msg.reason); }
@@ -114,11 +119,16 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
     };
     cv.addEventListener('click', onClick);
     cv.addEventListener('wheel', onWheel, { passive: false });
-    window.addEventListener('keydown', onKey);
+    // ⚠️ **挂在画面上，不是 window 上**。挂 window 的话接手一开，用户自己的聊天
+    // 输入框就打不出字了 —— 每一次击键都被 preventDefault 掉送进第三方页面。
+    // canvas 拿得到键盘事件的前提是它可聚焦（tabIndex）+ 真的被聚焦，所以下面
+    // 顺手 focus() 一下：接手时焦点本来就该在这块画面上。
+    cv.addEventListener('keydown', onKey);
+    cv.focus?.();
     return () => {
       cv.removeEventListener('click', onClick);
       cv.removeEventListener('wheel', onWheel);
-      window.removeEventListener('keydown', onKey);
+      cv.removeEventListener('keydown', onKey);
     };
   }, [takeover, send]);
 
@@ -179,9 +189,9 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
       onClose={onClose}
       groups={groups}
       onToolbarGroups={onToolbarGroups}
-      banner={help ? (
+      banner={(help || liveHelp) ? (
         <span>
-          <b>agent 需要你帮个手</b>：{help}
+          <b>agent 需要你帮个手</b>：{help || liveHelp}
           　—— 点工具栏上的<b>手形按钮</b>接手，弄完再点一次（变成 ▶）把控制权交回去。
           它正停在那儿等你。
         </span>
@@ -194,6 +204,8 @@ export default function BrowserWindow({ projectId, url, help, onClose, onToolbar
       }}>
         <canvas
           ref={canvasRef}
+          tabIndex={takeover ? 0 : -1}
+          title={takeover ? '接手中：点一下这块画面再打字（键盘只在这里生效）' : undefined}
           style={{
             maxWidth: '100%', maxHeight: '100%', display: gotFrame ? 'block' : 'none',
             background: '#fff', borderRadius: 2,

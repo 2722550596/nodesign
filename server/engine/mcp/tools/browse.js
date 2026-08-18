@@ -27,7 +27,7 @@
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { withBrowser, peek, _limits } from '../../browse/registry.js';
+import { withBrowser, peek, hold, _limits } from '../../browse/registry.js';
 import { requestHelp } from '../../browse/handover.js';
 import { checkUrl } from '../../../lib/ssrf-guard.js';
 import { normalizeShot } from './screenshot.js';
@@ -370,7 +370,11 @@ click will help; say that rather than making them try three times.`,
         if (!live) return asText('现在没有在跑的浏览器 —— 先 browser_navigate 打开一个页面再求助。', true);
         // 让前端把窗开起来 / 顶到前台 + 亮 banner（低频信号走现有 EventBus）
         ctx?.emit?.({ type: 'run.browser_help', reason, url: live.page.url(), ts: new Date().toISOString() });
-        const r = await requestHelp(projectId, reason);
+        // 钉住这个实例：等人的这两分钟里它在 registry 眼里是"空闲最久"的那个，
+        // 不钉就可能被 LRU 挤掉 —— 挤掉的正是人正在过验证码的浏览器
+        const unhold = hold(projectId, 'human takeover');
+        let r;
+        try { r = await requestHelp(projectId, reason); } finally { unhold(); }
         if (!r.released) {
           return asText([
             `等了 ${Math.round(r.waitedMs / 1000)} 秒没人接手。`,

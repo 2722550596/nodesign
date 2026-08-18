@@ -47,6 +47,7 @@ import { bumpFileVersion, versionOfFile } from '../lib/file-versions.js';
 // 谁进哪条管线是"精灵丢状态"病族的老巢，判据改动要连测试一起动
 import { STAGE_EVENTS, CHAT_STREAM_EVENTS, isStaleEvent } from '../lib/event-router.js';
 import { usePendingEdits } from '../hooks/usePendingEdits.js';
+import { useBrowseWindow } from '../hooks/useBrowseWindow.js';
 
 export default function ProjectWorkspace() {
   // 会话真相源收敛（2026-08-13 E1b）：**服务端指针**（projects.active_session_id）
@@ -124,7 +125,7 @@ export default function ProjectWorkspace() {
   const [selectedAnchor, setSelectedAnchor] = useState(null);
   // 浏览器窗（2026-08-18）：会话级临时活物，不是产物 —— 不进 kinds 注册表、
   // 不进 board.json。null = 没开；{url, help} = 开着（help 非空时窗上亮 banner）
-  const [browseWin, setBrowseWin] = useState(null);
+  const [browseWin, setBrowseWin] = useBrowseWindow(id);   // 含刷新后拿回状态，见 hook 文件头
   const [iframeDoc, setIframeDoc] = useState(null);
   // 刷新粒度（2026-07-28 重做）：
   //   fileVersions —— 按文件记版本，谁被改了只有谁的 iframe 换 ?v=

@@ -19,13 +19,14 @@
 
 import { WebSocketServer } from 'ws';
 import { requestUser } from '../auth/session.js';
+import { originAllowed } from '../auth/origin-guard.js';
 import { userOwnsProject } from '../api/_guard.js';
 import { getProject, validateProjectId } from '../projects/store.js';
-import { peek, _limits } from '../engine/browse/registry.js';
+import { peek, touchProject, _limits } from '../engine/browse/registry.js';
 
 const { VIEWPORT } = _limits;
 import { subscribe, unsubscribe, frameMeta } from '../engine/browse/screencast.js';
-import { releaseHelp } from '../engine/browse/handover.js';
+import { releaseHelp, pendingHelp } from '../engine/browse/handover.js';
 
 export const BROWSE_WS_RE = /^\/ws\/projects\/([^/]+)\/browser$/;
 
@@ -98,11 +99,15 @@ function handleConn(ws, pid) {
       if (msg.type === 'subscribe') {
         if (!live) return send({ type: 'idle', reason: 'agent 还没开始浏览（没有常驻浏览器）' });
         const r = await subscribe(pid, ws, live.page);
+        if (r.ok) touchProject(pid);
         return send(r.ok ? { type: 'subscribed', url: live.page.url() } : { type: 'error', reason: r.reason });
       }
       if (msg.type === 'unsubscribe') return void unsubscribe(pid, ws);
       if (msg.type === 'input') {
         if (!live) return send({ type: 'idle', reason: '浏览器已经关了' });
+        // 人的每一次输入都算"用过" —— 空闲计时器只认 agent 的调用，不认这条通道，
+        // 于是安静看五分钟会被在眼前关掉
+        touchProject(pid);
         await dispatchInput(live.page, pid, msg);
         return;
       }
@@ -110,6 +115,7 @@ function handleConn(ws, pid) {
         // 人接手时的后退/刷新。⚠️ **不提供"输入地址"** —— 那等于给人开一条绕过
         // 出网闸的入口的错觉（其实闸在网络层照样拦，但不如不提供这个入口）。
         if (!live) return send({ type: 'idle', reason: '浏览器已经关了' });
+        touchProject(pid);
         if (msg.action === 'back') await live.page.goBack({ timeout: 15000 }).catch(() => {});
         if (msg.action === 'reload') await live.page.reload({ timeout: 20000 }).catch(() => {});
         return send({ type: 'url', url: live.page.url() });
@@ -127,7 +133,11 @@ function handleConn(ws, pid) {
   const bye = () => { unsubscribe(pid, ws).catch(() => {}); };
   ws.on('close', bye);
   ws.on('error', bye);
-  send({ type: 'hello', hasBrowser: !!peek(pid) });
+  // ⭐ hello 要带上「agent 是不是正举着手」：求助 banner 原来只由一次性的
+  // `run.browser_help` 事件驱动，**刷新一下就失传** —— 于是 agent 在那儿等两分钟、
+  // 超时、告诉用户"这站过不去"，而用户从头到尾没看见过它举手。
+  const help = pendingHelp(pid);
+  send({ type: 'hello', hasBrowser: !!peek(pid), help: help ? help.reason : null });
 }
 
 /**
@@ -141,6 +151,12 @@ export function createBrowseWS() {
   return {
     matches: (pathname) => pathname.match(BROWSE_WS_RE),
     accept(req, socket, head, m) {
+      // 上游 upgrade 已经拦过一道；这里再拦是因为闸不该靠「谁先调用谁」成立
+      // —— 这条通道自带 WebSocketServer，将来换挂载点也不能失守
+      if (!originAllowed(req)) {
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        return socket.destroy();
+      }
       const pid = decodeURIComponent(m[1]);
       try { validateProjectId(pid); } catch {
         socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');

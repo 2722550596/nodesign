@@ -23,6 +23,7 @@ import { withConfigDir } from '../lib/sdk-session.js';
 import { platform } from '../runtime/platform.js';
 import { getProjectBus } from './broker.js';
 import { requestUser } from '../auth/session.js';
+import { originAllowed } from '../auth/origin-guard.js';
 import { userOwnsProject } from '../api/_guard.js';
 import {
   getCurrentTurnRunId,
@@ -117,6 +118,15 @@ export function setupWS(httpServer) {
   });
 
   httpServer.on('upgrade', (req, socket, head) => {
+    // ⛔ CSRF 闸（2026-08-18）：cookie 是 SameSite=Lax，而已发布站点与应用主机
+    // 同 eTLD+1 = 同站，Lax 照发（真跑验过，见 auth/origin-guard.js 文件头）。
+    // 这里**不学下面那个 4401 的握手后再关**：那套是为了让我们自己的前端看得见
+    // 原因好停止重连；外站页面不需要体面的错误，403 直接掐在升级前最省。
+    if (!originAllowed(req)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return socket.destroy();
+    }
+
     // 登录墙（2026-07-30 多用户）：解析身份而非布尔。cookie 无效不再写 HTTP 401
     // 拒 upgrade —— 浏览器拿不到 upgrade 阶段的状态码，只见 close 1006，前端
     // ws-client 会无限指数退避重连。改为完成握手后 close(4401)，前端把它列为

@@ -15,6 +15,7 @@
 import http from 'http';
 import express from 'express';
 import cors from 'cors';
+import { originAllowed } from './auth/origin-guard.js';
 
 import { setupWS } from './ws/index.js';
 import { primeOwnAddresses } from './lib/ssrf-guard.js';
@@ -31,6 +32,7 @@ import instructionRouter from './api/instruction.js';
 import memoryRouter from './api/memory.js';
 import boardRouter from './api/board.js';
 import pendingChangesRouter from './api/pending-changes.js';
+import browseRouter from './api/browse.js';
 import publishRouter from './api/publish.js';
 import chataiRouter from './api/chatai.js';
 import recentRouter from './api/recent.js';
@@ -51,7 +53,12 @@ const PORT = Number(process.env.PORT || 4001);
 
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+// cors：origin:true 是「反射任何来源」，配 credentials 等于把 REST 也交给同站
+// 攻击面（见 auth/origin-guard.js）。收成同一份判据。
+app.use(cors((req, cb) => cb(null, {
+  origin: originAllowed(req) ? (req.headers.origin || true) : false,
+  credentials: true,
+})));
 app.use(express.json({ limit: '4mb' }));
 
 // ── Health ──
@@ -96,6 +103,7 @@ app.use('/api/projects', instructionRouter);
 app.use('/api/projects', memoryRouter);
 app.use('/api/projects', boardRouter);
 app.use('/api/projects', pendingChangesRouter);  // C4: 用户直接编辑 + 评论 buffer
+app.use('/api/projects', browseRouter);          // 刷新后拿回浏览器窗/求助状态
 app.use('/api/projects', publishRouter);         // 站点一键上线 Cloudflare Pages
 app.use('/api/projects', chataiRouter);          // 演出端点：页面 → chatai 通路（编排/闸门见 api/chatai.js）
 app.use('/api/projects', projectPluginsRouter);  // 2026-05-18: project 级 plugin 上传/卸载/列表
