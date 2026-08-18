@@ -73,8 +73,26 @@ see the render, this one is for **the user**.`,
           // 站点的子页：站点是整站一扇窗，打开的是站不是那一页 —— 如实说
           try {
             const manifest = await taskManifest(workspaceRoot);
-            const site = (manifest?.artifacts || []).find(a => a.kind === 'site' && !a.single
-              && (a.root ? p.startsWith(`${a.root}/`) : true));
+            const arts = manifest?.artifacts || [];
+            // ⛔ 原判据是 `(a.root ? p.startsWith(`${a.root}/`) : true)`。**根站的
+            // root 是空字符串**（site.js 里 `out.push({ srcRoot:'', root, ... })`），
+            // 于是三元退化成"任意路径都算这个站的一页"。后果是 `preview_deck("报告.docx")`
+            // 和 `preview_deck("_drafts/试作.html")` 都被回一句自信的假话
+            // 「还不在这个站的页面清单里…用户看到的是入口 index.html」——
+            // 两句都假：docx 开在 DocxWindow，草稿开在自己那扇 single:true 的窗。
+            // 改动本意是消灭"静默成功"，结果换成了反向的自信错话。
+            //
+            // 先看有没有**别的产物正好就是这个路径**（单页站、docx、deck…）——
+            // 有就是它自己开，跟根站无关。
+            const ownedByOther = arts.some(a => a.entryRel === p || a.file === p
+              || (a.single && (a.pages || []).includes(p)));
+            const site = ownedByOther ? null : arts.find((a) => {
+              if (a.kind !== 'site' || a.single) return false;
+              if (a.root) return p.startsWith(`${a.root}/`);   // 目录即边界，前缀够用
+              // 根站没有目录边界可用，只能按"是不是一张网页"+页面清单判
+              if (!/\.html?$/i.test(p)) return false;
+              return true;
+            });
             if (site && p !== (site.entryRel || 'index.html')) {
               // 2026-08-18 起子页**真的**开在那一页上（前端 entry 一路传到 SiteWindow）。
               // 但只有在产物清单认得这一页时才成立 —— 不在清单里（比如刚写出来还没

@@ -34,6 +34,7 @@
 import path from 'node:path';
 import { getProject } from '../../../../projects/store.js';
 import { COOKIE_NAME, mintToken, authEnabled } from '../../../../auth/session.js';
+import { getUserById } from '../../../../auth/users-store.js';
 
 // ── 渲染层保真（2026-08-07 立，2026-08-18 从 screenshot.js 挪来收成一份）──
 // Chromium 的强制暗色（Auto Dark）会在 paint 层反转颜色，而页面自己的 JS
@@ -87,6 +88,24 @@ export function artifactFileUrl(projectId, relPath, { raw = true } = {}) {
 }
 
 /**
+ * 退化提示 → 一行可以直接拼进返回文本的话。
+ *
+ * `openArtifactPage` 的契约是「note 非空 = 没能走成 http，调用方必须把它写进
+ * 返回文本」。⛔ 实测只有 screenshot 一个调用方照做了，另外五个工具连 `.note`
+ * 两个字都没出现过（grep 计数 0）—— 也就是 07-29 那个「file:// 静默回退」的
+ * bug 被重新种了一遍：`profile_scroll` 的描述铁口直断"走 http 同源"，一旦回退，
+ * 它按 Resource Timing 报「images 0 files 0KB」，那正好是它主诊断的反面，
+ * 而唯一能解释这件事的 note 被丢掉了。
+ *
+ * 所以把措辞收成一份，调用点无脑拼。配套有个 lint 钉住"import 了就必须用"。
+ */
+export function degradedNote(opened) {
+  if (!opened?.note) return null;
+  return `⚠️ 这一页没能按用户预览的方式打开（${opened.note}）。`
+    + 'fetch/XHR/localStorage 的行为跟用户那边不一样，凡是依赖它们的结论都不作数。';
+}
+
+/**
  * 打开一个产物页面，返回 { page, context, url, note }。
  *
  * - `note` 非空表示**没能走成 http**（退回了 file://），调用方应把它写进 caption：
@@ -131,12 +150,23 @@ export async function openArtifactPage(browser, {
     if (authEnabled()) {
       // 项目所有者的身份 —— guardProject 只认 owner 或 admin
       const ownerId = getProject(projectId)?.ownerId;
-      if (ownerId) {
+      // ⚠️ 光有 ownerId 不够：`mintToken` 只把 id 烤进签名，而 `requestUser` 会
+      // **重新查库**并拒掉 disabled / 已删除的用户。于是账号一被停用，六个感知工具
+      // 全部报「artifact-file returned HTTP 401」—— 一句完全指不到根因的话
+      // （真因是账号状态，跟文件、路径、权限配置都无关）。这里提前认出来，
+      // 退到 file:// 并把真原因写进 note（note 会被所有调用方拼进返回文本，
+      // 有 lint 钉着）。
+      const owner = ownerId ? getUserById(ownerId) : null;
+      if (ownerId && owner && !owner.disabled) {
         await context.addCookies([{
           name: COOKIE_NAME, value: mintToken(ownerId), url: PERCEPTION_ORIGIN,
         }]);
       } else {
-        note = 'project owner unknown — loaded via file:// (fetch/XHR/localStorage behave differently from the user preview)';
+        const why = !ownerId ? 'project owner unknown'
+          : (!owner ? `owner account ${ownerId} no longer exists`
+            : `owner account ${owner.username} is disabled — an admin has to re-enable it; `
+              + 'this is an account-state problem, not a file or path problem');
+        note = `${why} — loaded via file:// (fetch/XHR/localStorage behave differently from the user preview)`;
         url = null;
       }
     }

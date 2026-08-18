@@ -175,7 +175,23 @@ export function resolveSource(rawSrc) {
     );
   }
 
-  return { tokens, content, opts: { header: hdrFtr(src.header), footer: hdrFtr(src.footer) } };
+  // ⚠️ 页眉/页脚以前**完全不过校验** —— 而它恰好是这套校验为之而写的那个 bug 的
+  // 案发现场（起手模板教的 `{"para":{align:'center'}}` 页脚居中从来没生效过）。
+  // content 修好了、页脚照旧静默丢：`{"para":{align:'center'}}` 不报错，生成的
+  // `<w:ftr>` 里根本没有 `<w:pPr>/<w:jc>`。同一份判据必须盖到这两处。
+  const header = hdrFtr(src.header);
+  const footer = hdrFtr(src.footer);
+  for (const [name, blocks] of [['header', header], ['footer', footer]]) {
+    if (!Array.isArray(blocks) || !blocks.length) continue;
+    const errs = validateContent(blocks, tokens.numbering);
+    if (errs.length) {
+      throw new DocxSourceError(`${name}（页${name === 'header' ? '眉' : '脚'}）里有认不出的字段`,
+        `${errs.join('\n')}\n（页眉页脚跟 content 里的块是同一套写法：对齐/缩进这些键**平铺在块上**，`
+        + '不要包一层 para。）');
+    }
+  }
+
+  return { tokens, content, opts: { header, footer } };
 }
 
 /**

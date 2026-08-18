@@ -12,7 +12,7 @@
  */
 
 import path from 'node:path';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from '../engine/mcp/tools/helpers/perception-page.js';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from '../engine/mcp/tools/helpers/perception-page.js';
 import fs from 'node:fs/promises';
 
 /** 圈外多留这么多像素当上下文 */
@@ -36,7 +36,7 @@ function serialize(fn) {
  * @param {{width,height}} p.viewport 用户当时的取景宽高
  * @param {string} [p.projectId]      有它就走 http（与用户预览同源）
  * @param {string} [p.workspaceRoot]  同上，两个都给才走 http
- * @returns {Promise<{ buffer: Buffer, clip: {x,y,width,height} }>}
+ * @returns {Promise<{ buffer: Buffer, clip: {x,y,width,height}, degraded: string|null }>}
  */
 export async function renderRegionShot({ absPath, region, viewport, projectId, workspaceRoot }) {
   return serialize(async () => {
@@ -94,6 +94,19 @@ export async function renderRegionShot({ absPath, region, viewport, projectId, w
       clip.width = Math.max(1, Math.min(clip.width, viewport.width - clip.x));
       clip.height = Math.max(1, Math.min(clip.height, viewport.height - clip.y));
 
+      // ⚠️ 滚完要**等一拍**再截。上面那个 500ms 花在滚动**之前**，滚完立刻截 →
+      // 视口里新进来的懒加载图（`loading=lazy` / IntersectionObserver）还没解码，
+      // 图里是空的。而 `get_pending_changes` 把这张图当作"用户所见的 ground truth"
+      // 交给 agent —— 空白处会被当成"用户圈了一块空白"。
+      await page.evaluate(async () => {
+        // 给 IO 回调一次机会，再等两帧确保解码后的图上了屏
+        await new Promise(r => setTimeout(r, 250));
+        await Promise.all([...document.images].filter(i => !i.complete)
+          .map(i => new Promise((res) => { i.addEventListener('load', res, { once: true });
+            i.addEventListener('error', res, { once: true }); setTimeout(res, 1200); })));
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      }).catch(() => { /* 页面自己抛错也照截 */ });
+
       const png = await page.screenshot({ type: 'png', clip });
       await ctx.close();
 
@@ -102,7 +115,9 @@ export async function renderRegionShot({ absPath, region, viewport, projectId, w
         .resize({ width: OUT_LONG_EDGE, height: OUT_LONG_EDGE, fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 82 })
         .toBuffer();
-      return { buffer, clip };
+      // note 非空 = 没走成 http。圈选截图尤其在意这个：file:// 下 fetch 回来的
+      // 内容不会出现在图里，而这张图是被当"ground truth"用的
+      return { buffer, clip, degraded: degradedNote(opened) };
     } finally {
       await browser?.close().catch(() => {});
     }

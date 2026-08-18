@@ -17,7 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from './helpers/perception-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
@@ -177,10 +177,12 @@ never HTML entities ("&quot;" reaches the selector literally and breaks it).`,
           ? ` (showing first ${MAX_RESULTS} of ${result.total} matches)`
           : '';
 
+        const degraded = degradedNote(opened);   // 契约：note 非空必须写进返回文本
         return {
           content: [{
             type: 'text',
-            text: `Matched ${result.total} element(s)${truncatedNote}:\n\n${JSON.stringify(result.items, null, 2)}`,
+            text: `${degraded ? `${degraded}\n\n` : ''}Matched ${result.total} element(s)${truncatedNote}:`
+              + `\n\n${JSON.stringify(result.items, null, 2)}`,
           }],
         };
       } catch (err) {

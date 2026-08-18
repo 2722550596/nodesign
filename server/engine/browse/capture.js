@@ -99,7 +99,9 @@ function collectorSource() {
     const vw = window.innerWidth;
     const cand = [...document.querySelectorAll('body *')].filter((el) => {
       const r = el.getBoundingClientRect();
-      if (r.width < vw * 0.7 || r.height < 120) return false;
+      // 高度门槛跟视口挂钩而不是写死 120 —— 真站上一条 104px 的 stats strip
+      // 就这么整条消失了（它确实是"一节"，人一眼就看见）
+      if (r.width < vw * 0.7 || r.height < Math.max(72, window.innerHeight * 0.08)) return false;
       const s = cs(el);
       return s.display !== 'none' && s.visibility !== 'hidden';
     });
@@ -116,7 +118,10 @@ function collectorSource() {
       const s = cs(el);
       const layout = s.gridTemplateColumns !== 'none' ? 'grid'
         : (s.display.includes('flex') ? (s.flexDirection.startsWith('row') ? 'row' : 'col') : 'block');
-      const hasImg = el.querySelector('img, picture, video, svg') ? 'img' : 'noimg';
+      // ⚠️ `querySelector` **只找后代**。最内层的那条带很可能**自己就是**那张
+      // 全幅 hero 图/视频 —— 于是它被标成 noimg，图 hero 和纯文字 hero 聚成一类。
+      const IMGISH = 'img, picture, video, svg';
+      const hasImg = (el.matches(IMGISH) || el.querySelector(IMGISH)) ? 'img' : 'noimg';
       const chars = (el.textContent || '').trim().length;
       const density = chars < 120 ? 'bare' : (chars < 800 ? 'some' : 'lots');
       return `${layout}|${hasImg}|${density}`;
@@ -126,13 +131,32 @@ function collectorSource() {
       const k = sig(el);
       shapes.set(k, (shapes.get(k) || 0) + 1);
     }
-    // 交互重心：值得动手的东西
+    // 交互重心：值得动手的东西。
+    // ⚠️ 三个坑，都是审查在真站上撞出来的：
+    //   ① `[class*=tab]` 是子串匹配 → `.tabular-figures`、`.tabbed-wrapper` 全中；
+    //      `:not([class*=table])` 也补不完。改成按 class **token** 比对。
+    //   ② 一个元素同时命中两条选择器（既 `[role=tab]` 又 `.tab-item`）会被数两遍。
+    //      改用 Set 存元素再取 size。
+    //   ③ 裸 `[aria-expanded]` 把汉堡菜单、下拉导航全算成"手风琴"。它们确实是
+    //      disclosure，但不是"这页的交互重心"。单列一档，别混进 accordions。
+    const clsTokens = (el) => (typeof el.className === 'string'
+      ? el.className.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean) : []);
+    const hasTok = (el, names) => clsTokens(el).some(t => names.has(t));
+    const setOf = (sel, pred) => {
+      const out = new Set();
+      for (const el of document.querySelectorAll(sel)) { if (!pred || pred(el)) out.add(el); }
+      return out;
+    };
+    const TAB_TOK = new Set(['tab', 'tabs']);
+    const ACC_TOK = new Set(['accordion', 'accordions', 'collapse', 'collapsible', 'disclosure']);
     const interactive = {
-      forms: document.querySelectorAll('form').length,
-      tabs: document.querySelectorAll('[role=tab], [class*=tab]:not([class*=table])').length,
-      accordions: document.querySelectorAll('details, [class*=accordion], [aria-expanded]').length,
-      draggables: document.querySelectorAll('[draggable=true], input[type=range]').length,
-      videos: document.querySelectorAll('video').length,
+      forms: setOf('form').size,
+      tabs: setOf('[role=tab], [role=tablist], [class]', el => el.getAttribute('role') === 'tab'
+        || el.getAttribute('role') === 'tablist' || hasTok(el, TAB_TOK)).size,
+      accordions: setOf('details, [class]', el => el.tagName === 'DETAILS' || hasTok(el, ACC_TOK)).size,
+      disclosures: setOf('[aria-expanded]').size,   // 多半是导航开关，单独列
+      draggables: setOf('[draggable=true], input[type=range]').size,
+      videos: setOf('video').size,
     };
 
     return {
@@ -146,8 +170,12 @@ function collectorSource() {
         shapeKinds: shapes.size,
         shapes: [...shapes.entries()].map(([k, n]) => ({ signature: k, count: n })),
         interactive,
-        interactivePoints: Object.values(interactive).reduce((a, b) => a + b, 0),
-        _note: '启发式：节的形状种类是按布局签名聚类数出来的，当对照数字用，别当真相',
+        // disclosures 不计进"交互点"：它多半是汉堡菜单/下拉导航，
+        // 每个站都有，加进去只会把这个数字变成噪音
+        interactivePoints: ['forms', 'tabs', 'accordions', 'draggables', 'videos']
+          .reduce((a, k) => a + interactive[k], 0),
+        _note: '启发式：节的形状种类是按布局签名聚类数出来的，当对照数字用，别当真相。'
+          + '同一页做 A/B 最可靠；跨页比较受各家标记方式影响，看数量级别抠个位数。',
       },
     };
   };
@@ -226,7 +254,10 @@ export async function capture({
       await cdp.send('DOM.enable'); await cdp.send('CSS.enable');
       const { root } = await cdp.send('DOM.getDocument', { depth: -1 });
       const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector });
-      if (nodeId) {
+      if (!nodeId) {
+        // 原来这里没有 else：选择器选不中就静默少一份产物，agent 看不到
+        failed.push(`css: 选择器 ${selector} 在页面上选不中（先 browser_read 看页面上有什么）`);
+      } else {
         const m = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
         bundle.css = (m.matchedCSSRules || []).map(r => ({
           selector: r.rule?.selectorList?.text,
@@ -236,7 +267,12 @@ export async function capture({
             .map(d => `${d.name}: ${d.value}${d.important ? ' !important' : ''}`),
         })).filter(r => r.declarations.length);
       }
-    } catch (err) { bundle.cssError = err.message; }
+    } catch (err) {
+      // ⚠️ 原来只写进磁盘 JSON 的 cssError，返回给 agent 的文本里**一个字都没有**
+      // （打印分支只在 `r.data.css` 存在时才跑）→ css 这一档完全静默失败
+      bundle.cssError = err.message;
+      failed.push(`css: ${err.message.split('\n')[0]}`);
+    }
   }
   if (Object.keys(bundle).length) {
     try {

@@ -27,7 +27,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, requireBrowsable } from '../../../lib/artifact-target.js';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from './helpers/perception-page.js';
 
 /** 简写 → 它能设置的长手属性（只列常踩的那些，够覆盖真实事故） */
 const SHORTHAND_OF = {
@@ -207,7 +207,9 @@ Note it reports the FIRST element matching the selector.`,
         const importants = rows.filter(r => r.important);
         const winner = importants.length ? importants[importants.length - 1] : rows[rows.length - 1];
 
+        const degraded = degradedNote(opened);   // 契约：note 非空必须写进返回文本
         const lines = [
+          ...(degraded ? [degraded, ''] : []),
           `${selector} → ${prop} computes to "${computed}"  (viewport ${W}px)`,
           '',
           'Declarations that matched, weakest first:',

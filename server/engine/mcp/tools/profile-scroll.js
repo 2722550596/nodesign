@@ -23,7 +23,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, requireBrowsable } from '../../../lib/artifact-target.js';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from './helpers/perception-page.js';
 
 const DEVICE_W = { desktop: 1440, tablet: 834, mobile: 390 };
 const DEVICE_H = { desktop: 900, tablet: 1112, mobile: 844 };
@@ -247,7 +247,12 @@ raw percentage to the user as if it were their experience.`,
         // 60% 是留给平滑滚库正常惯性的余量。
         const hijacked = askedPx > 400 && followRatio < 60;
 
+        // 契约：note 非空必须写进返回文本。这个工具尤其不能漏 —— 它的描述铁口
+        // 直断"走 http 同源"，退回 file:// 后它按 Resource Timing 报的
+        // 「images 0 files 0KB」正好是它主诊断的反面。
+        const degraded = degradedNote(opened);
         const lines = [
+          ...(degraded ? [degraded, ''] : []),
           `profile_scroll — ${target.relPath} @ ${dev} ${viewport.width}×${viewport.height}`,
           `scroll container ${geom.isWindow ? 'window' : 'an inner element (overflow:auto)'}`
             + `, scrollable ${scrollable}px, real wheel events ${perFrame}px × ${nFrames} @60Hz`,

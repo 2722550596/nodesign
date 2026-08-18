@@ -166,7 +166,8 @@ buffer so subsequent turns don't see the same changes again.`,
         for (const it of attach) {
           try {
             const buf = await fs.readFile(path.join(workspaceRoot, it.shot));
-            content.push({ type: 'text', text: `↓ 圈选 ${it.id}（${it.path}）用户框住的那一块：` });
+            content.push({ type: 'text', text: `↓ 圈选 ${it.id}（${it.path}）用户框住的那一块：`
+              + (it.shotNote ? `\n${it.shotNote}（所以这张图不等于用户当时看到的画面）` : '') });
             content.push({ type: 'image', data: buf.toString('base64'), mimeType: 'image/webp' });
           } catch (err) {
             content.push({

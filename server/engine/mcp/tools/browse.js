@@ -179,21 +179,51 @@ Pass a selector to read one region instead of the whole page (e.g. "main",
             const headings = [...root.querySelectorAll('h1,h2,h3')]
               .map(h => `${'#'.repeat(Number(h.tagName[1]))} ${(h.textContent || '').trim().slice(0, 90)}`)
               .filter(t => t.length > 2).slice(0, 40);
+            // ⛔ 链接**不能**跟正文共用 root。没传 selector 时正文 root 是
+            // `main`（对：导航文字是噪音），但链接跟着 main 一收，站名、整条
+            // 导航、页脚法务链接就全没了 —— 实测 6 个链接只报出 1 个。而这个
+            // 工具的卖点就是"链接清单是重点，你靠它决定下一步去哪"，
+            // browser_click 的全部意义也是跟这些链接。
+            // 所以：正文按 root 收，链接按**整页**收，再标出它在哪个区。
+            const linkRoot = sel ? root : document;
+            const regionOf = (el) => {
+              for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+                const tag = n.tagName ? n.tagName.toLowerCase() : '';
+                if (tag === 'nav') return 'nav';
+                if (tag === 'header') return 'header';
+                if (tag === 'footer') return 'footer';
+                if (tag === 'aside') return 'aside';
+                const role = n.getAttribute && n.getAttribute('role');
+                if (role === 'navigation') return 'nav';
+                if (role === 'contentinfo') return 'footer';
+              }
+              return 'content';
+            };
             const seen = new Set();
-            const linkList = want ? [...root.querySelectorAll('a[href]')].map((a) => {
+            const RANK = { content: 0, header: 1, nav: 1, aside: 2, footer: 3 };
+            // ⚠️ **排序必须在截断之前**，而且得在页面里做：按文档顺序取前 80 条，
+            // 侧边导航就把配额吃干了（MDN 实测 79 条站内链接里前 30 条 29 条是 nav，
+            // 正文那几条一条都没进来）。agent 要跟的多半是正文里那几条。
+            const all = want ? [...linkRoot.querySelectorAll('a[href]')].map((a) => {
               const href = a.href;
               if (!href || !/^https?:/.test(href) || seen.has(href)) return null;
               seen.add(href);
               const label = (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
-              return { href, label, internal: a.hostname === location.hostname };
-            }).filter(Boolean).slice(0, 60) : [];
+              return { href, label, internal: a.hostname === location.hostname, region: regionOf(a) };
+            }).filter(Boolean) : [];
+            const linkList = all
+              .map((l, i) => ({ l, i }))
+              .sort((x, y) => (RANK[x.l.region] ?? 0) - (RANK[y.l.region] ?? 0) || x.i - y.i)
+              .map(x => x.l)
+              .slice(0, 80);
             return {
               text: (root.innerText || '').replace(/\n{3,}/g, '\n\n').trim(),
               headings, linkList,
-              counts: {
-                sections: root.querySelectorAll('section, article').length,
-                images: root.querySelectorAll('img').length,
-                forms: root.querySelectorAll('form').length,
+              textScope: sel || (document.querySelector('main') ? 'main' : 'body'),
+              counts: {   // ⚠️ 这几个数是**整页**的，别跟着正文 root 缩（原来标着"页面结构"其实是 main 里的）
+                sections: document.querySelectorAll('section, article').length,
+                images: document.querySelectorAll('img').length,
+                forms: document.querySelectorAll('form').length,
               },
             };
           }, { sel: selector || null, want: wantLinks });
@@ -203,13 +233,16 @@ Pass a selector to read one region instead of the whole page (e.g. "main",
           const body = data.text.length > cap
             ? `${data.text.slice(0, cap)}\n… （还有 ${data.text.length - cap} 个字符，要全文就加大 maxChars 或用 selector 缩范围）`
             : data.text;
+          // linkList 已经在页面里按区排过序（正文优先），这里只分站内/站外
           const inner = data.linkList.filter(l => l.internal);
           const outer = data.linkList.filter(l => !l.internal);
-          const fmt = (l) => `  ${l.label || '(无文字)'} → ${l.href}`;
+          // 区标只在非 content 时打 —— 正文链接是默认情况，标了全是噪音
+          const fmt = (l) => `  ${l.label || '(无文字)'}${l.region && l.region !== 'content' ? ` [${l.region}]` : ''} → ${l.href}`;
 
           return asText([
             `页面：${await where(page)}`,
-            `结构：${data.counts.sections} 个 section/article · ${data.counts.images} 张图 · ${data.counts.forms} 个表单`,
+            `结构（整页）：${data.counts.sections} 个 section/article · ${data.counts.images} 张图 · ${data.counts.forms} 个表单`,
+            `正文读的是 <${data.textScope}>${data.textScope === 'main' ? '（导航/页脚的文字不在里面，但它们的链接在下面）' : ''}`,
             data.headings.length ? `\n标题层级：\n${data.headings.join('\n')}` : null,
             `\n正文：\n${body || '(读不到文字 —— 可能整页是图或靠 JS 渲染，试 browser_navigate 带 waitUntil:"networkidle"，或直接截图看)'}`,
             inner.length ? `\n站内链接（${inner.length}）：\n${inner.slice(0, 30).map(fmt).join('\n')}` : null,
@@ -468,6 +501,8 @@ about why they were taken is landfill.`,
               lines.push('', `结构（⚠️ 启发式，当对照不当真相）：${sk.sectionCount} 节 · `
                 + `**${sk.shapeKinds} 种节的形状** · ${sk.interactivePoints} 个交互点`);
               lines.push('  拿它跟你正在做的那个站比 —— 形状种类差得多，就是"薄"的量化形态。');
+              lines.push('  （跨站比看数量级：各家标记方式不同，个位数差别别当结论。'
+                + '同一页改前改后比最准。）');
             }
           }
           if (r.data.css) lines.push('', `CSS：${r.data.css.length} 条命中规则已写进 json`);

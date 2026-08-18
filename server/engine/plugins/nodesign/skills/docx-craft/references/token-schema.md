@@ -224,11 +224,12 @@
 
 ```jsonc
 { "t": "p", "align": "center", "indent": { "firstLineChars": 0 } }   // ✅
-{ "t": "p", "para": { "align": "center" } }                          // ❌ 静默无效
+{ "t": "p", "para": { "align": "center" } }                          // ❌ 现在会报错
 ```
 
 块上可以直接写 `style.para` 的那 13 个键 + `sizePt`，用来给单独一段开小灶。
-写成 `"para": {...}` 不会报错，但**一点效果都没有**——这是最难发现的一类错。
+写成 `"para": {...}` **会被拒**（2026-08-18 起 content 和页眉页脚都过闭合校验）。
+在那之前它是"不报错也不生效"——最难发现的一类错，起手模板自己教错过一次。
 
 ### `{"t": "table"}` 表格
 
@@ -348,8 +349,9 @@
 |---|---|---|
 | `"para": { "border": {...} }` | `unknown key border` | 键是**复数** `borders` |
 | `"run": { "font": "宋体" }` | `no such font slot '宋体'` | `font` 填**槽名**；槽要先在 `fonts` 里注册 |
-| `"styles": { "X": { "numbering": ... } }` | `unknown key numbering` | `numbering` 是**顶层**键，风格里用的是 `para.list` |
-| 块上写 `"para": { "align": ... }` | **不报错，也不生效** | 平铺：`{ "t": "p", "align": ... }` |
+| `"styles": { "X": { "numbering": ... } }` | `unknown key numbering` | `numbering` 是**顶层**键（跟 `styles` 平级，不在 `styles` 里面），风格里用的是 `para.list` |
+| 块上写 `"para": { "align": ... }` | 报 `unknown key para` | 平铺：`{ "t": "p", "align": ... }` |
+| 页眉/页脚里写 `"para": {...}` | 报 `unknown key para` | 跟 content 同一套写法，键平铺在块上 |
 | `"lineRule": "auto"` | 被拒 | `multiple` / `exact` / `atLeast` |
 | `"color": "#CC0000"` | 颜色不对 | 不带 `#`：`"CC0000"` |
 | `"sizePt": "小四号"` | `unknown 字号` | `"小四"` |

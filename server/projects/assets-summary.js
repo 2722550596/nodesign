@@ -94,6 +94,20 @@ export async function readAssetsSummary(sessionRoot) {
         + '出处记在同目录的 .meta/<同名>.json 里。**先看有没有现成的，别重复去搜。**'
       : '';
 
+    // ⚠️ `paths` 会被 turn-compose **逐条**打进每个 turn 的 <system> 块。上面那句
+    // 「只报数量和头几个名字（几十个文件全列会把这条 system 撑爆）」只管到了
+    // refLine，**管不到 paths** —— 而 refs 是随每次 browser_capture（一站 5 件）
+    // 和每次参考图下载单调增长的。实测最差 2006 字节 / 约 600-1000 token **每 turn**，
+    // 而且因为 count 现在含 refs，以前根本不注入这块的项目也开始注入了。
+    // 顶层 assets 是用户上传的，数量有限但也给个上限兜底。
+    const REF_CAP = 12;
+    const TOP_CAP = 60;
+    const refPaths = refs.slice(0, REF_CAP);
+    const overflow = refs.length - refPaths.length;
+    if (overflow > 0) {
+      // 别只是截断了不说 —— 「静默截断」读起来就是"全都在这儿了"
+      refPaths.push(`（另有 ${overflow} 件在 assets/references/ 下，名字和出处见同目录 .meta/）`);
+    }
     return {
       count: files.length + refs.length,
       summary: [
@@ -101,7 +115,7 @@ export async function readAssetsSummary(sessionRoot) {
         refLine,
       ].filter(Boolean).join('\n'),
       hasBinaryDocs: binaryDocs.length > 0,
-      paths: [...allNames.map((n) => `assets/${n}`), ...refs],
+      paths: [...allNames.slice(0, TOP_CAP).map((n) => `assets/${n}`), ...refPaths],
     };
   } catch {
     return { count: 0, summary: '', hasBinaryDocs: false, paths: [] };

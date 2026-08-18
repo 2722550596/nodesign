@@ -253,8 +253,9 @@ router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], asyn
 
     let shot = null;
     let shotError = null;
+    let shotNote = null;   // 截图成功但通道退化（file:// 回退）时的提醒
     try {
-      const { buffer } = await renderRegionShot({
+      const { buffer, degraded } = await renderRegionShot({
         absPath,
         projectId: req.params.pid,
         workspaceRoot: sharedDir,
@@ -262,6 +263,8 @@ router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], asyn
         viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
       });
       shot = await saveRegionShot(sessionRoot, itemId, buffer);
+      // 没走成 http 的话这张图不能当"用户所见"用，得让 agent 知道
+      if (degraded) shotNote = degraded;
     } catch (err) {
       shotError = err?.message || String(err);
       console.warn('[region-comment] 截图失败，只带元素清单下单:', shotError);
@@ -278,6 +281,7 @@ router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], asyn
       elements,
       ...(shot ? { shot } : {}),
       ...(shotError ? { shotError } : {}),
+      ...(shotNote ? { shotNote } : {}),
       ts: new Date().toISOString(),
     };
 
