@@ -22,7 +22,7 @@ import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { boxUnion } from '../../lib/board-camera.js';
-import { emptyPresence, reducePresence, resolvePending, followTarget, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
+import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
 import { AmbientSpriteLayer, SpriteAskInput, useSpriteAmbient } from './SpriteSketchLayer.jsx';
 import { usePhantoms, claimPhantomSeat, phantomRects, PhantomCards } from './PhantomLayer.jsx';
@@ -33,7 +33,6 @@ import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
-import PresenceLayer, { rectFor as presenceRectFor } from './PresenceLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import LinkPopover from './LinkPopover.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
@@ -1869,8 +1868,8 @@ export default function BoardCanvas({
             );
           })()}
 
-          {/* 在场：并行子代理的小徽记（PresenceLayer.jsx，08-14 起只管子代理）*/}
-          <PresenceLayer table={presence} rectOf={rectOfId} />
+          {/* （子代理在场徽记 PresenceLayer 2026-08-18 拆除：子代理动态收进
+              聊天时间轴的 Task 抽屉行，画布只留主 agent 的铅笔精灵。）*/}
 
           {/* 铅笔精灵（唯一挂载，2026-08-14 五批）：有工作目标贴目标，没有就
               槽位（闲时/纯思考/无文件工具都在槽位上活着 —— 活跃真空修复）。

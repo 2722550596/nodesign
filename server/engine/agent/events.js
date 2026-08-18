@@ -25,7 +25,7 @@
  *   ── P0+ stage 1 新增（SDK 28+ 种 message 类型映射）──
  *   run.tool_progress          { blockId, toolName, elapsedSeconds }      工具执行中（>1s 才发）
  *   run.prompt_suggestion      { suggestion }                              每轮后预测下条 prompt
- *   run.task.started           { taskId, description, taskType }           subagent 启动
+ *   run.task.started           { taskId, description, subagentType, taskType }  subagent 启动（只发真子代理，bash/workflow 任务被收口）
  *   run.task.progress          { taskId, description, summary?, lastToolName? }  subagent 30s 摘要（agentProgressSummaries）
  *   run.task.updated           { taskId, patch }                           subagent 状态 patch
  *   run.task.notification      { taskId, status, summary }                 subagent 完成/失败/停止
@@ -240,8 +240,12 @@ export const Events = {
   promptSuggestion: (suggestion) => ({ type: 'run.prompt_suggestion', suggestion }),
   // toolUseId 关键 —— main agent 用 Task 工具调子代理时，SDK 推 task_*
   // events 都带 tool_use_id，前端用它把 task 状态绑到对应的 Task tool message
-  taskStarted: (taskId, description, taskType, prompt, toolUseId) => ({
-    type: 'run.task.started', taskId, description, taskType, prompt, toolUseId,
+  // ⚠️ 只发真子代理（agent-shared.js isSubagentTask 收口）：SDK 的统一任务
+  // 系统里后台 Bash / Workflow 也发 task_*，那些不进这条事件。
+  // subagentType = SDK task_started.subagent_type（explorer / vision-checker
+  // 这种真名）；taskType 是 'local_agent' 这类泛名，只作兜底展示。
+  taskStarted: (taskId, description, subagentType, taskType, prompt, toolUseId) => ({
+    type: 'run.task.started', taskId, description, subagentType, taskType, prompt, toolUseId,
   }),
   taskProgress: (taskId, description, summary, lastToolName, usage, toolUseId) => ({
     type: 'run.task.progress', taskId, description, summary, lastToolName, usage, toolUseId,

@@ -4,7 +4,7 @@ import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ContextMeter from './ContextMeter.jsx';
 import TodoPanel from './TodoPanel.jsx';
-import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI, CANVAS } from '../../lib/theme.js';
+import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI } from '../../lib/theme.js';
 
 /**
  * Chat Panel — 左栏整体壳
@@ -35,7 +35,6 @@ export default function ChatPanel({
   onStop,
   todos,
   sessionTitle,
-  subagents = {},             // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
   onNewChat,                 // 开新对话（原画布工具槽的"新任务"，本质是对话通道操作）
@@ -55,20 +54,13 @@ export default function ChatPanel({
   // agentProgress 还保留——后续如果想加进度气泡（hover Send 看 last tool）可用。
   void agentProgress;
 
-  // ── 子代理时间轴（2026-07-28）：一个事件流两个投影 ——
-  // 「对话」= 主线（无 parentToolUseId）；每个子代理一个 tab，看它自己的流。
-  // 消息按 parentToolUseId 拆分（server forwardSubagentText 透传，
-  // lib/chat-stream.js 折叠时已隔离不互吸）。
-  const [chatTab, setChatTab] = useState('main');
-  useEffect(() => { setChatTab('main'); }, [sessionId]);
-  useEffect(() => {
-    if (chatTab !== 'main' && !subagents[chatTab]) setChatTab('main');
-  }, [chatTab, subagents]);
+  // 主线只看无 parentToolUseId 的消息 —— 子代理的正文流仍带着
+  // parentToolUseId 进来（server forwardSubagentText 透传），这里滤掉。
+  // 子代理 tabs 2026-08-18 退役：动态收进对话时间轴的 Task 抽屉行
+  //（Message.jsx），不再开第二个投影。
   const shownMessages = useMemo(() => (
-    chatTab === 'main'
-      ? messages.filter(m => !m.parentToolUseId)
-      : messages.filter(m => m.parentToolUseId === chatTab)
-  ), [messages, chatTab]);
+    messages.filter(m => !m.parentToolUseId)
+  ), [messages]);
 
   // Header liveness dot：
   //   isStreaming + 距上次事件 < 2s → 绿色 pulse（agent 在产 output）
@@ -224,28 +216,6 @@ export default function ChatPanel({
         )}
       </div>
 
-      {/* 子代理时间轴 tabs：有子代理跑过才出现 */}
-      {Object.keys(subagents).length > 0 && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: GAP.xs, flexWrap: 'wrap',
-          padding: `${GAP.xs}px ${GAP.lg}px`,
-          borderBottom: `1px solid ${CHROME.border}`,
-          background: 'rgba(43,33,23,0.02)',
-        }}>
-          <button onClick={() => setChatTab('main')} style={timelineTab(chatTab === 'main')}>对话</button>
-          {Object.entries(subagents).map(([tid, sa]) => (
-            <button key={tid} onClick={() => setChatTab(tid)} style={timelineTab(chatTab === tid)} title={sa.description}>
-              <span style={{
-                width: 6, height: 6, borderRadius: RADIUS.round, flexShrink: 0,
-                background: sa.status === 'running' ? CANVAS.brass : sa.status === 'completed' ? '#4f8f5b' : '#b0554f',
-                animation: sa.status === 'running' ? 'pulse 1.5s ease-in-out infinite' : 'none',
-              }} />
-              {(sa.description || sa.taskType || '子代理').slice(0, 14)}
-            </button>
-          ))}
-        </div>
-      )}
-
       <TodoPanel todos={todos} />
       <MessageList
         onOpenSessionList={onOpenSessionList}
@@ -330,15 +300,3 @@ export default function ChatPanel({
   );
 }
 
-/** 子代理时间轴 tab 按钮（对话 / 各子代理）*/
-function timelineTab(active) {
-  return {
-    display: 'inline-flex', alignItems: 'center', gap: 5,
-    padding: `3px ${GAP.base}px`, borderRadius: RADIUS.pill, border: 0,
-    fontFamily: FONT_KAI, fontSize: FONT_SIZE.md, fontWeight: 500,
-    color: active ? '#F5F0E4' : CHROME.ink,
-    background: active ? CHROME.ink : 'rgba(43,33,23,0.06)',
-    cursor: 'pointer', transition: 'all 0.15s',
-    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 180,
-  };
-}

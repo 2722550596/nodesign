@@ -30,8 +30,9 @@ export const STAGE_EVENTS = new Set([
   'run.done', 'run.error', 'run.cancelled',
   // 铅笔精灵：服务端压好的手写短句 + 收场 recap
   'run.sprite_summary', 'run.recap',
-  // 子代理舞台便利贴：运行中出贴、完成翻结果（同时继续走聊天侧栏逻辑）
-  'run.task.started', 'run.task.progress', 'run.task.notification', 'run.subagent.stop',
+  // （run.task.* / run.subagent.stop 2026-08-18 移出名单：子代理便利贴与
+  //   在场徽记退役，画布不再消费它们 —— 聊天侧栏的 Task 抽屉行走
+  //   ProjectWorkspace 自己的 switch，不经这份名单。）
 ]);
 
 /** 聊天流折叠（lib/chat-stream.js reducer 接管，消费即止） */

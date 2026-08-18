@@ -1559,8 +1559,9 @@ function ToolMessage({
   }
 
   // Task/Agent 工具：时间轴抽屉（2026-07-30）。状态行只留一句话，30s 摘要流水 /
-  // 结果内容 / 入参全部收进抽屉 —— 聊天流不再被子代理的过程刷屏，画布上的
-  // 舞台便利贴负责"现在在干嘛"的实时可见性。
+  // 结果内容 / 入参全部收进抽屉 —— 聊天流不再被子代理的过程刷屏。
+  // 2026-08-18 起这是子代理动态的**唯一**入口（侧栏 tabs、舞台便利贴、
+  // 在场徽记同日退役）。
   if (isSubagentTool(toolName)) {
     // 真名优先走 toolInput.subagent_type（SDK task_started 的 taskType 可能是
     // 'local_agent' 这种泛名，真机 2026-07-30 确认）

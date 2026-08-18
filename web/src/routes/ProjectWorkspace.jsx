@@ -151,10 +151,7 @@ export default function ProjectWorkspace() {
   const stageRef = useRef(null);
   // 视口容器（画布铺满它、浮窗在它里面拖）。浮动工具栏的限位也用这一个。
   const stageAreaRef = useRef(null);
-  // 子代理时间轴：{ [toolUseId]: { description, taskType, status } }（ChatPanel tabs 消费）
-  const [subagents, setSubagents] = useState({});
   useEffect(() => {
-    setSubagents({});
     // 换会话大扫除（2026-08-14）：旧会话的舞台卡/在场精灵/手写行全收场 ——
     // 旧 run 的收场事件换会话后会被 stale guard 拦掉，不扫的话精灵冻在
     // "正在干活"里转圈。合成一枚 run.cancelled 走正常收场路（舞台卡清扫 +
@@ -967,25 +964,22 @@ export default function ProjectWorkspace() {
 
       case 'run.task.started':
         if (isStale) break;
-        // C28：把 task 元信息绑到 main agent 的 Task tool message
-        // tool_use_id 关联 → 用户能在 Task chip 上看到 agentType / description
+        // C28：把 task 元信息绑到 main agent 的 Task tool message ——
+        // Message.jsx 的时间轴抽屉行（BRIEF / 30s 摘要流水 / 结果）吃这些字段。
+        // 这是子代理动态在 UI 上的唯一入口（2026-08-18 拍板：侧栏 tabs、
+        // 舞台便利贴、在场徽记全退役，动态收进对话时间轴）。
         if (evt.toolUseId) {
           setMessages(prev => prev.map(m =>
             m.role === 'tool' && m.id === evt.toolUseId
               ? {
                   ...m,
                   taskId: evt.taskId,
-                  agentType: evt.taskType,
+                  agentType: evt.subagentType || evt.taskType,
                   taskDescription: evt.description,
                   taskStatus: 'running',
                 }
               : m,
           ));
-          // 子代理时间轴：注册 tab（forwardSubagentText 的流按 parentToolUseId 归到它名下）
-          setSubagents(prev => ({
-            ...prev,
-            [evt.toolUseId]: { description: evt.description, taskType: evt.taskType, status: 'running' },
-          }));
         }
         break;
 
@@ -1029,9 +1023,6 @@ export default function ProjectWorkspace() {
                 }
               : m,
           ));
-          setSubagents(prev => (prev[evt.toolUseId]
-            ? { ...prev, [evt.toolUseId]: { ...prev[evt.toolUseId], status: evt.status } }
-            : prev));
         }
         if (evt.status === 'failed') {
           showToast(`子代理失败：${evt.summary || ''}`, 'error');
@@ -2227,7 +2218,6 @@ export default function ProjectWorkspace() {
             onStop={currentRunId ? handleStop : null}
             todos={todos}
             sessionTitle={currentSessionTitle}
-            subagents={subagents}
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
             onNewChat={() => {

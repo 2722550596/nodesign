@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import MarkdownMath from '../ui/MarkdownMath.jsx';
-import { PencilLine, Terminal, X, Bot } from 'lucide-react';
-import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SANS, FONT_SIZE, TERM, CANVAS, alpha } from '../../lib/theme.js';
+import { PencilLine, Terminal, X } from 'lucide-react';
+import { COLOR, GAP, RADIUS, FONT_MONO, FONT_SIZE, TERM, CANVAS, alpha } from '../../lib/theme.js';
 import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, toolLabelOf } from '../../lib/stage.js';
 import { ZONE, STAGE_CARD_W, POP_IN } from '../../lib/board-geometry.js';
 import { sizeOf } from '../../lib/board-kinds.js';
@@ -24,7 +23,7 @@ import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
  *   StageBoardLayer 板内坐标系那一面（角标 + 贴物件卡），随桌面缩放
  *   StageDock       屏幕坐标系那一面（视口底部居中）
  *
- * 子代理时间轴与这里共享 lib/stage.js 的同一份事件翻译。
+ * 聊天时间轴与这里共享 lib/stage.js 的同一份事件翻译。
  */
 
 // ── 状态机 ──
@@ -48,9 +47,6 @@ export function useStageState({
   const [spriteLine, setSpriteLine] = useState(null);   // { round, text, refined }
   const [recap, setRecap] = useState(null);             // { text, at } —— 收场小结，闲时精灵写它
   const followedBlocksRef = useRef(new Set());   // 每张舞台卡只推一次镜头
-  // Task/Agent 工具入参里的 subagent_type（真名）。task_started 的 taskType 可能
-  // 是 'local_agent' 泛名，tool_use 快照和 task.started 到达顺序不定 → 两头接
-  const pendingAgentTypeRef = useRef(new Map());
   // 用 ref 转一手：直接进 handleStageEvent 的依赖会让 stageRef 每次重挂，
   // 重挂的缝里到达的事件会丢。
   const onRawEventRef = useRef(null);
@@ -59,9 +55,7 @@ export function useStageState({
   const removeStageCardLater = useCallback((blockId, ms) => {
     setTimeout(() => {
       setStageCards(prev => {
-        const c = prev[blockId];
-        // 子代理便利贴不自动收束：结果面留给用户看，手动 × 才蒸发
-        if (!c || c.kind === 'subagent') return prev;
+        if (!prev[blockId]) return prev;
         const next = { ...prev };
         delete next[blockId];
         return next;
@@ -78,7 +72,7 @@ export function useStageState({
     onRawEventRef.current?.(evt);
     switch (evt.type) {
       case 'run.sprite_summary': {
-        // 子代理的话不上精灵 —— 它们有自己的舞台便利贴
+        // 子代理的话不上精灵 —— 主精灵只替主 agent 说话
         if (evt.parentToolUseId || !evt.text) return;
         setSpriteLine(prev => {
           if (prev && prev.round != null && evt.round != null) {
@@ -123,19 +117,8 @@ export function useStageState({
         break;
       }
       case 'run.delta.tool_use': {
-        // 完整入参快照（工具执行前到达）
-        // 子代理真名：Task/Agent 是 SILENT 工具（下面 kind 为 null 直接 return），
-        // 但入参里的 subagent_type 是舞台便利贴标题的最好来源，先截下来
-        if ((evt.name === 'Task' || evt.name === 'Agent') && evt.blockId
-            && typeof evt.input?.subagent_type === 'string') {
-          pendingAgentTypeRef.current.set(evt.blockId, evt.input.subagent_type);
-          setStageCards(prev => {
-            const c = prev[evt.blockId];
-            if (!c || c.kind !== 'subagent') return prev;
-            return { ...prev, [evt.blockId]: { ...c, agentType: evt.input.subagent_type } };
-          });
-          return;
-        }
+        // 完整入参快照（工具执行前到达）。Task/Agent 是 SILENT 工具
+        //（kind 为 null 直接 return）—— 子代理动态在聊天时间轴的抽屉行里看。
         const kind = stageKindOf(evt.name);
         if (!kind || !evt.blockId) return;
         const input = evt.input || {};
@@ -180,10 +163,6 @@ export function useStageState({
         setStageCards(prev => {
           const c = prev[evt.blockId];
           if (!c) return prev;
-          // 子代理便利贴的生命周期由 run.task.* / run.subagent.stop 管——Task 工具
-          // 自己的 tool_result 不许动它（撞 key：blockId == toolUseId），否则
-          // removeStageCardLater 会在完成 1.6s 后把结果面收走
-          if (c.kind === 'subagent') return prev;
           const patch = { status: evt.ok ? 'ok' : 'fail', doneAt: Date.now() };
           if (typeof evt.output === 'string' && evt.output) {
             patch.output = evt.output.split('\n').slice(-8).join('\n').slice(-1200);
@@ -217,82 +196,23 @@ export function useStageState({
         }, 2600);
         break;
       }
-      // ── 子代理舞台便利贴（2026-07-30）──
-      // key = toolUseId（与 blockId 同命名空间：它就是主 agent 那次 Task 调用的
-      // tool_use_id）。运行中显示 30s 摘要，完成后翻成结果内容；不自动收束。
-      case 'run.task.started': {
-        if (!evt.toolUseId) return;
-        setStageCards(prev => ({
-          ...prev,
-          [evt.toolUseId]: {
-            blockId: evt.toolUseId, kind: 'subagent', status: 'running',
-            agentType: pendingAgentTypeRef.current.get(evt.toolUseId) || evt.taskType || 'agent',
-            description: evt.description || '',
-            summary: null, result: null, startedAt: Date.now(),
-          },
-        }));
-        break;
-      }
-      case 'run.task.progress': {
-        if (!evt.toolUseId) return;
-        setStageCards(prev => {
-          const c = prev[evt.toolUseId];
-          if (!c || c.kind !== 'subagent') return prev;
-          return { ...prev, [evt.toolUseId]: { ...c, summary: evt.summary || c.summary } };
-        });
-        break;
-      }
-      case 'run.task.notification': {
-        if (!evt.toolUseId) return;
-        setStageCards(prev => {
-          const c = prev[evt.toolUseId];
-          if (!c || c.kind !== 'subagent') return prev;
-          return {
-            ...prev,
-            [evt.toolUseId]: {
-              ...c,
-              status: evt.status === 'completed' ? 'ok' : 'fail',
-              summary: evt.summary || c.summary,
-              doneAt: Date.now(),
-            },
-          };
-        });
-        break;
-      }
-      case 'run.subagent.stop': {
-        // 结果面数据源：所有子代理都有 lastAssistantMessage（SubagentStop hook）
-        if (!evt.toolUseId) return;
-        setStageCards(prev => {
-          const c = prev[evt.toolUseId];
-          if (!c || c.kind !== 'subagent') return prev;
-          return {
-            ...prev,
-            [evt.toolUseId]: {
-              ...c,
-              result: evt.lastAssistantMessage || c.result,
-              // SubagentStop hook 带真名（explorer / vision-checker…），补正泛名
-              agentType: evt.agentType || c.agentType,
-            },
-          };
-        });
-        break;
-      }
+      // （子代理舞台便利贴 2026-07-30 上、2026-08-18 退役：run.task.* /
+      //   run.subagent.stop 不再进舞台层 —— 子代理动态收进聊天时间轴的
+      //   Task 抽屉行（Message.jsx），画布不再为它们出卡。）
       case 'run.done':
       case 'run.error':
       case 'run.cancelled': {
-        // 收场：残留 running/ok 卡淡出；失败卡留到自己的 10s 定时器收束；
-        // 子代理便利贴不清（结果面留给用户，手动 × 蒸发）
+        // 收场：残留 running/ok 卡淡出；失败卡留到自己的 10s 定时器收束
         setTimeout(() => {
           setStageCards(prev => {
             const next = {};
             for (const [k, c] of Object.entries(prev)) {
-              if (c.status === 'fail' || c.kind === 'subagent') next[k] = c;
+              if (c.status === 'fail') next[k] = c;
             }
             return next;
           });
         }, 900);
         followedBlocksRef.current.clear();
-        pendingAgentTypeRef.current.clear();
         // 手写行收场：工作精灵随 run 一起下场，行也一起清（闲时轮到 recap 上）
         setTimeout(() => setSpriteLine(null), 900);
         break;
@@ -366,7 +286,7 @@ export function splitStageCards({ stageCards, positioned, visibleIdSet, visibleZ
     if (c.kind === 'image') continue;   // 幻影层接管（PhantomLayer.jsx）
     // 代码直播 / 终端 = 精灵的输出框（2026-08-14 用户拍板）：不再贴目标物件
     // 或掉 dock，跟着精灵走、绕它找位（AmbientSpriteLayer 的 findFrameSpot）。
-    // 贴物件那条路留给"已更新"角标和子代理便利贴。
+    // 贴物件那条路留给"已更新"角标。
     if (c.kind === 'code' || c.kind === 'terminal') { spriteCards.push(c); continue; }
     if (c.kind === 'chip') { dockChips.push(c); continue; }
     if (c.kind === 'question') { dockPanels.push(c); continue; }
@@ -486,7 +406,7 @@ function StageCard({ card, obj, zoneRect, slot = 0, boardSize, scale = 1, onDism
  * 东西保持等宽墨底，这条是设计语言的底线，换身份不换物料。
  */
 export function StageCardBody({ card, scale = 1, onDismiss }) {
-  if (card.kind === 'subagent') return <SubagentStickyCard card={card} onDismiss={onDismiss} scale={scale} />;
+  void scale;   // 位移拖拽随子代理便利贴一起退役（2026-08-18），参数保留兼容调用方
   const running = card.status === 'running';
   const isTerm = card.kind === 'terminal';
   const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : alpha(CLAUDE_BRAND, 0.7);
@@ -566,93 +486,8 @@ function AutoScrollPre({ text, running, color, placeholder }) {
   );
 }
 
-/**
- * 舞台卡的位移拖拽（2026-07-31）：transform 偏移，不进任何持久层 —— 舞台卡
- * 是转瞬态，拖只是"别挡着我看"。scale = 桌面缩放（板内坐标系里 pointer 的
- * 屏幕像素要除掉它才是板内位移；dock 在屏幕坐标系，scale=1）。
- * 只从带 data-stage-drag 的把手（标题栏）起拖，正文可以照常滚动选字。
- */
-function useCardDrag(scale = 1) {
-  const [off, setOff] = useState({ x: 0, y: 0 });
-  const dragRef = useRef(null);
-  const offRef = useRef(off);
-  offRef.current = off;
-  const onPointerDown = (e) => {
-    if (e.button !== 0) return;
-    if (e.target.closest('button')) return;
-    if (!e.target.closest('[data-stage-drag]')) return;
-    e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: offRef.current.x, oy: offRef.current.y };
-  };
-  const onPointerMove = (e) => {
-    const d = dragRef.current;
-    if (!d) return;
-    const s = scale || 1;
-    setOff({ x: d.ox + (e.clientX - d.sx) / s, y: d.oy + (e.clientY - d.sy) / s });
-  };
-  const onPointerUp = () => { dragRef.current = null; };
-  return { off, handlers: { onPointerDown, onPointerMove, onPointerUp } };
-}
-
-/**
- * 子代理舞台便利贴：运行中 = 当前 30s 摘要直播；完成 = 翻成结果内容
- * （lastAssistantMessage，markdown）。不自动蒸发 —— 结果要留给用户读，
- * × 手动关。持久层由服务端 task-notes.js 负责（每个 Task 落
- * tasks/<任务>/notes/子任务.md 一面，桌面上是可拖真便签）；这张舞台贴
- * 抓标题栏也能拖（transform 位移，不落盘）。
- */
-function SubagentStickyCard({ card, onDismiss, scale = 1 }) {
-  const running = card.status === 'running';
-  const { off, handlers } = useCardDrag(scale);
-  return (
-    <div
-      data-stage="card" data-stage-kind="subagent" data-stage-status={card.status}
-      {...handlers}
-      style={{
-        borderRadius: RADIUS.xl, overflow: 'hidden',
-        border: `1.5px solid ${card.status === 'fail' ? '#b0554f' : alpha(CANVAS.brass, 0.55)}`,
-        background: CANVAS.note, boxShadow: '0 8px 24px rgba(60,48,20,0.22)',
-        animation: POP_IN,
-        transform: (off.x || off.y) ? `translate(${off.x}px, ${off.y}px)` : undefined,
-        touchAction: 'none',
-      }}
-    >
-      <div data-stage-drag style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.base}px`, borderBottom: `1px solid ${alpha(CANVAS.brass, 0.22)}`, cursor: 'grab', userSelect: 'none' }}>
-        <Bot size={11} color="#8a744d" />
-        <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: '#6d5c3d', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {card.agentType}{card.description ? ` · ${card.description}` : ''}
-        </span>
-        {running ? (
-          <span style={{ width: 10, height: 10, border: '1.5px solid rgba(138,116,77,0.35)', borderTopColor: '#8a744d', borderRadius: RADIUS.round, animation: 'ndSpin 800ms linear infinite', flexShrink: 0 }} />
-        ) : (
-          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: card.status === 'ok' ? '#4f8f5b' : '#b0554f', flexShrink: 0 }}>
-            {card.status === 'ok' ? '✓' : '✗'}
-          </span>
-        )}
-        <button onClick={onDismiss} title="关闭"
-          style={{ border: 0, background: 'transparent', color: '#8a744d', cursor: 'pointer', display: 'flex', padding: GAP.xxs }}>
-          <X size={10} />
-        </button>
-      </div>
-      <div style={{ padding: `${GAP.md}px ${GAP.lg}px`, maxHeight: 280, overflowY: 'auto' }}>
-        {running ? (
-          <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontStyle: 'italic', color: '#6d5c3d', lineHeight: 1.6 }}>
-            {card.summary || '子代理工作中…'}
-          </span>
-        ) : card.result ? (
-          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: '#4a3f2c', lineHeight: 1.65 }}>
-            <MarkdownMath>{card.result}</MarkdownMath>
-          </div>
-        ) : (
-          <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: '#6d5c3d' }}>
-            {card.summary || (card.status === 'ok' ? '已完成' : '失败了，细节看聊天侧栏')}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+// （SubagentStickyCard + useCardDrag 2026-08-18 拆除：子代理便利贴退役，
+//   动态收进聊天时间轴的 Task 抽屉行。拆干净不留空壳。）
 
 /** agent 提问直接在画布里答：复用聊天栏的 wizard 卡（同一个 /answer 端点，
  *  谁先答谁生效，另一张随 tool_result 变已答态）*/

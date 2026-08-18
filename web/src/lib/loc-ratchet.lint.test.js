@@ -60,9 +60,14 @@ const GRANDFATHERED = {
   'server/engine/mcp/tools/web-search.js': 548,
 };
 
+// 运行时用户数据（gitignored）：agent 替用户写的站点代码也会长出 .js 文件，
+// 撞进扫描就是误伤 —— 棘轮只管仓库里的源码（2026-08-18 真撞过一次）。
+const RUNTIME_DATA_DIRS = new Set(['projects-data', 'user-content']);
+
 function sourceFiles(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+    if (e.isDirectory() && RUNTIME_DATA_DIRS.has(e.name)) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) { sourceFiles(p, out); continue; }
     if (!/\.(js|jsx|mjs)$/.test(e.name)) continue;

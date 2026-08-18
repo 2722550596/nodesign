@@ -16,8 +16,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
-import { noteTaskStarted, noteTaskFinished } from './task-notes.js';
-import { recordTaskNotification } from './hooks/post-subagent-report.js';
+import { handleTaskMessage } from './task-events.js';
 import { listWorkspaceArtifacts } from '../../lib/artifact-target.js';
 import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
@@ -291,37 +290,12 @@ function handleSystemMessage(ctx, msg) {
       break;
 
     case 'task_started':
-      ctx.emit(Events.taskStarted(
-        msg.task_id, msg.description, msg.task_type, msg.prompt, msg.tool_use_id,
-      ));
-      // 持久层：任务落成 tasks/<任务>/notes/子任务.md 的一面（可拖真便签），
-      // 舞台贴只管直播。fire-and-forget，失败不影响 turn
-      noteTaskStarted(ctx, msg).catch(() => { /* 定位不到任务等，静默 */ });
-      break;
-
     case 'task_progress':
-      // agentProgressSummaries: true 时每 ~30s 一次："正在调整字号节奏" 之类
-      ctx.emit(Events.taskProgress(
-        msg.task_id, msg.description, msg.summary, msg.last_tool_name, msg.usage, msg.tool_use_id,
-      ));
-      break;
-
     case 'task_updated':
-      ctx.emit(Events.taskUpdated(msg.task_id, msg.patch, msg.tool_use_id));
-      break;
-
     case 'task_notification':
-      // 子代理收尾用量单独记账（进 metadata 可观测，不进主 token 列 —— 防止
-      // 与 result.usage 双重计数，详见 context.absorbSubagentUsage）
-      ctx.absorbSubagentUsage?.(msg.usage);
-      ctx.emit(Events.taskNotification(
-        msg.task_id, msg.status, msg.summary, msg.usage, msg.tool_use_id,
-      ));
-      // 报告丢失的兜底：把 output_file 记下来，PostToolUse(Agent) 那个 handler
-      // 在报告看起来是空的时候把转录路径递给主 agent（见 hooks/post-subagent-report.js）
-      recordTaskNotification(msg);
-      // 持久便签收尾：把「进行中」翻成终态 + 结果摘要
-      noteTaskFinished(ctx, msg).catch(() => { /* 静默 */ });
+      // SDK 统一任务消息族（后台 Bash / Workflow 也发 task_*）：收口翻译
+      // 住 task-events.js —— 只放真子代理进 run.task.*
+      handleTaskMessage(ctx, msg);
       break;
 
     case 'notification':
@@ -447,6 +421,7 @@ function toolInputStreams(ctx) {
   if (!ctx._toolInputStreams) ctx._toolInputStreams = new Map();
   return ctx._toolInputStreams;
 }
+
 
 function pumpToolInputStream(ctx, st, flush) {
   const now = Date.now();

@@ -1,5 +1,13 @@
 /**
- * 在场（presence）—— 把 agent 和每个子代理当成画布上的另一个「人」。
+ * 在场（presence）—— 把主 agent 当成画布上的另一个「人」。
+ *
+ * ## 2026-08-18 子代理退场
+ *
+ * 这里曾同时追踪每个子代理（run.task.* 上下场、file_changed 挪位置、
+ * PresenceLayer 画小徽记）。当日拍板全部退役：子代理的动态收进聊天时间轴
+ * 的 Task 抽屉行（Message.jsx），画布上只剩主 agent 的铅笔精灵。带
+ * parentToolUseId 的事件（子代理所为）一律忽略 —— 尤其不能算到主 agent
+ * 头上，算错了主精灵就会在子代理动的文件之间瞬移。
  *
  * ## 思路
  *
@@ -14,13 +22,12 @@
  *
  * ## 它解决的具体问题
  *
- * 1. 多个子代理并行时，用户只能在聊天侧栏的 tab 里翻，看不见"三个在同时动"。
- * 2. 「跟随」以前是跟着**事件**跑（哪个文件被写就飞过去），镜头会在几个子代理
- *    之间来回横跳。有了 presence 就能跟**某一个人**，稳定得多。
+ * 「跟随」以前是跟着**事件**跑（哪个文件被写就飞过去），镜头会在不同来源的
+ * 事件之间来回横跳。有了 presence 就能跟**人**（主 agent），稳定得多。
  *
  * ## 这里只做纯逻辑
  *
- * 从既有事件流（run.task.started / run.subagent.* / file_changed / run.done）
+ * 从既有事件流（run.start / file_changed / delta.tool_input / run.done）
  * 归约出一张在场表。不新增任何服务端事件 —— 信号本来就都有，缺的是把它们
  * 攒成"人"而不是"一串卡片"。
  */
@@ -38,7 +45,7 @@ export const PRESENCE_COLORS = [
   '#9E7B5A',   // 陶
 ];
 
-/** 主 agent 固定第一色，子代理按出场顺序取后面的 */
+/** 主 agent 固定第一色（子代理退场后只剩它在用，色表留着备多在场者回归） */
 export function colorFor(index) {
   return PRESENCE_COLORS[index % PRESENCE_COLORS.length];
 }
@@ -58,11 +65,11 @@ export function emptyPresence() {
  *
  * 只认这些信号，别的一律原样返回：
  * - `run.start`            主 agent 上场
- * - `run.task.started`     一个子代理上场（带 subagent_type 当名字）
- * - `run.task.notification`/`run.subagent.stop` 子代理下场
- * - `run.delta.tool_input` / `run.file_changed`  谁在动哪个文件 → 更新它的位置
- * - `run.tool_use`         正在做什么 → 更新它那句话
- * - `run.done` / `run.error` / `run.cancelled` 全体下场
+ * - `run.delta.tool_input` / `run.file_changed`  在动哪个文件 → 更新位置
+ * - `run.tool_use.started` / `run.tool_use_summary`  正在做什么 → 更新那句话
+ * - `run.done` / `run.error` / `run.cancelled` 下场
+ *
+ * 带 parentToolUseId 的事件（子代理所为）一律忽略（2026-08-18 子代理退场）。
  *
  * @param {object} table 当前在场表
  * @param {object} evt   事件
@@ -71,18 +78,17 @@ export function emptyPresence() {
  */
 export function reducePresence(table, evt, resolve) {
   if (!evt?.type) return table;
+  // 子代理的事件不进在场表：不能把它动的文件算到主 agent 头上（主精灵会
+  // 在子代理写的文件之间瞬移），也不再为它立条目（徽记 2026-08-18 退役）。
+  if (evt.parentToolUseId) return table;
   const t = evt.type;
-  const parent = evt.parentToolUseId || null;
-
-  // 谁发的这条事件：带 parentToolUseId 的是子代理，否则是主 agent
-  const who = parent ? `agent:${parent}` : MAIN_AGENT_ID;
+  const who = MAIN_AGENT_ID;
 
   /**
    * 主 agent 的"接管显形"（2026-08-14）：主 agent 的活动事件到了但表里没有它
    * —— 典型场景是**切进一个正在跑的会话**（run.start 早发过了，这个标签页没
    * 看见）。活动本身就是"在跑"的铁证，就地把主 agent 立起来，别把整轮事件
-   * 当无主拒收（那就是"换会话精灵丢状态"）。子代理不这么干 —— 没有
-   * task.started 就不知道名字和颜色，宁缺毋滥。
+   * 当无主拒收（那就是"换会话精灵丢状态"）。
    */
   const materializeMain = () => ({
     ...table,
@@ -109,31 +115,7 @@ export function reducePresence(table, evt, resolve) {
       };
     }
 
-    case 'run.task.started': {
-      const id = `agent:${evt.toolUseId || evt.blockId || evt.taskId}`;
-      if (!id || id === 'agent:undefined') return table;
-      const n = Object.keys(table).filter(k => k !== MAIN_AGENT_ID).length;
-      return {
-        ...table,
-        [id]: {
-          id, kind: 'sub',
-          name: evt.agentType || evt.taskType || '子代理',
-          color: colorFor(n + 1), active: true,
-          targetId: null, zoneId: null,
-          message: evt.summary || null, at: evt.at || null,
-        },
-      };
-    }
-
-    case 'run.task.notification':
-    case 'run.subagent.stop': {
-      const id = `agent:${evt.toolUseId || evt.blockId || evt.taskId}`;
-      if (!table[id]) return table;
-      // 下场不是删除：留一小会儿让用户看清"它刚在这儿做完了"
-      return { ...table, [id]: { ...table[id], active: false, message: null } };
-    }
-
-    // 谁在动哪个文件 → 更新它的位置。两个来源：
+    // 在动哪个文件 → 更新位置。两个来源：
     //   run.delta.tool_input  Edit/Write 入参正在流（filePath 是工作区相对路径，
     //                         路径闭合就发、只发一次）—— 精灵**开写就位**，不等
     //                         写完。只听 file_changed 的话，一个大文件写十几秒，
@@ -145,7 +127,6 @@ export function reducePresence(table, evt, resolve) {
     case 'run.file_changed': {
       let cur = table[who];
       if (!cur) {
-        if (who !== MAIN_AGENT_ID) return table;
         table = materializeMain();
         cur = table[MAIN_AGENT_ID];
       }
@@ -177,7 +158,6 @@ export function reducePresence(table, evt, resolve) {
     case 'run.tool_use_summary': {
       let cur = table[who];
       if (!cur) {
-        if (who !== MAIN_AGENT_ID) return table;
         table = materializeMain();
         cur = table[MAIN_AGENT_ID];
       }
@@ -189,7 +169,7 @@ export function reducePresence(table, evt, resolve) {
     case 'run.done':
     case 'run.error':
     case 'run.cancelled': {
-      // 整轮结束：全体下场（子代理的 stop 事件不保证都到齐）。
+      // 整轮结束：下场。
       // ⚠️ cancelled 曾不在案（2026-08-14 查实）：用户取消一轮之后精灵
       // 永远停在"正在干活"里转圈 —— 收场信号三种，一种都不能漏。
       let touched = false;
@@ -235,13 +215,26 @@ export function activePresences(table) {
 }
 
 /**
- * 镜头该跟谁。
- *
- * 规则：**主 agent 优先**，它不在场才跟第一个有目标的子代理。
- * 不做"跟最近动的那个" —— 那正是以前镜头在子代理之间横跳的原因。
+ * 镜头该跟谁。表里如今只有主 agent —— 有目标且在场才跟，
+ * 不做"跟最近动的那个"（那正是以前镜头横跳的原因）。
  */
 export function followTarget(table) {
   const act = activePresences(table).filter(p => p.targetId);
   if (!act.length) return null;
   return act.find(p => p.kind === 'main') || act[0];
+}
+
+/**
+ * 在场者的目标矩形解析链：物件本身 → 它住的文件夹 → 文件夹的顶层段
+ * （桌面只画根层）。主精灵（BoardCanvas 的工作态落点）走这一条，落点
+ * 永远一致。（原住 PresenceLayer.jsx；徽记层 2026-08-18 拆除后搬回这里。）
+ */
+export function rectFor(p, rectOf) {
+  const direct = rectOf(p.targetId);
+  if (direct) return direct;
+  if (!p.zoneId) return null;
+  const byZone = rectOf(p.zoneId);
+  if (byZone) return byZone;
+  const top = p.zoneId.includes('/') ? p.zoneId.split('/')[0] : null;
+  return top ? rectOf(top) : null;
 }
