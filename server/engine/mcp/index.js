@@ -36,6 +36,8 @@ import { makeWebSearchTool } from './tools/web-search.js';
 import { makeReadPageTool } from './tools/read-page.js';
 import { makeListPagesTool } from './tools/list-pages.js';
 import { makeQueryElementsTool } from './tools/query-elements.js';
+import { makeProfileScrollTool } from './tools/profile-scroll.js';
+import { makeExplainStyleTool } from './tools/explain-style.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
@@ -94,7 +96,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
   const tools = [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
-      makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }),
+      makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // screenshot_url — 外部 URL 截图（2026-07-29）。explorer 找视觉参考不再
       // 只能 WebFetch 文本转述；主 agent 也能直接看参考站。http/https only。
@@ -155,15 +157,24 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // ── Canvas 焕新 C1（2026-05-02）：完整 agent "感知 + 操作" 工具链 ──
       // 感知层：list_pages / query_elements / get_computed_styles —— playwright
       // headless 跑出来真实 render 后的元数据，agent 不再盲改
-      makeListPagesTool({ workspaceRoot, sessionId, ctx }),
-      makeQueryElementsTool({ workspaceRoot, sessionId, ctx }),
-      makeGetComputedStylesTool({ workspaceRoot, sessionId, ctx }),
+      makeListPagesTool({ workspaceRoot, projectId, sessionId, ctx }),
+      makeQueryElementsTool({ workspaceRoot, projectId, sessionId, ctx }),
+
+      // profile_scroll — 滚动性能量具（2026-08-18）。用户说"一顿一顿"时 agent
+      // 以前手里零工具，只能自己起 http server 手搓 rAF 采样。不进常驻工具表
+      // （deferred，用得上时自然搜到），schema 不白占每轮上下文。
+      makeProfileScrollTool({ workspaceRoot, projectId, sessionId }),
+
+      // explain_style — CSS 级联诊断（2026-08-18）。computed 只给结果不给原因，
+      // 而 agent 手里没有 devtools 的 Styles 面板。同样走 deferred。
+      makeExplainStyleTool({ workspaceRoot, projectId, sessionId }),
+      makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI
       makeNavigateToPageTool({ ctx }),
       makeHighlightTool({ ctx }),
       // 把 deck 摊到用户眼前（= 用户双击那张卡）：收起态→内嵌渲染，展开态→最大化窗
-      makePreviewDeckTool({ ctx, sessionId }),
+      makePreviewDeckTool({ ctx, sessionId, workspaceRoot }),
 
       // word 形态的构建道：token JSON（真相源）→ .docx（产物）。
       // agent 拿到的是一条命令不是一个构建系统 —— 写 JSON、调它、再 screenshot 看。

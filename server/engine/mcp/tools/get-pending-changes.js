@@ -88,6 +88,9 @@ Each item has:
 - aiContext: element role, page info, outerHTML, computed styles, siblings,
              plus targetContainerTag / alignmentHints for moves
 - diff (edit): { oldText, newText }
+- becameEmpty (edit): true means the user CLEARED that text. The element is still
+  in the source and still takes up vertical space — usually you should delete the
+  whole element, not just leave it empty. Ask if you are unsure.
 - text (comment): the comment body
 - linkedToEditId (comment, optional): when present, this comment is a follow-up
   instruction tied to another pending edit (e.g. "for that drag I just did, keep

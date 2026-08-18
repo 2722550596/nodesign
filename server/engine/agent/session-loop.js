@@ -56,7 +56,7 @@ import { PLAN_MODE_DENY, isReadonlyBashCommand } from './plan-mode-gate.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
-import { resolveSdkSpoofModel } from './model-context.js';
+import { resolveSdkSpoofModel, pickThinkingConfig } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
 import { summarizeReply, summarizeRecap, clampFirstClause } from '../../lib/quick-summary.js';
@@ -68,7 +68,6 @@ import {
   NODESIGN_PLAN_INSTRUCTIONS,
   DEFAULT_TOOL_ALLOWLIST,
   STREAMING_ENABLED,
-  pickThinkingConfig,
   handleSDKMessage,
   detectArtifact,
 } from './agent-shared.js';

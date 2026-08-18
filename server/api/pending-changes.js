@@ -91,6 +91,16 @@ router.get(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], asy
   } catch (err) { next(err); }
 });
 
+/**
+ * 这次编辑是不是"把内容清空了"。`<br>`、`&nbsp;`、空白都算空 ——
+ * contenteditable 清空后浏览器常留一个 `<br>` 占位。
+ */
+function isBecameEmpty(diff) {
+  if (!diff || typeof diff.newText !== 'string') return false;
+  if (typeof diff.oldText === 'string' && diff.oldText.replace(/<[^>]*>|&nbsp;|\s+/g, '') === '') return false;
+  return diff.newText.replace(/<br\s*\/?>|&nbsp;|<[^>]*>|\s+/gi, '') === '';
+}
+
 router.post(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], async (req, res, next) => {
   try {
     if (!guard(req, res)) return;
@@ -151,7 +161,16 @@ router.post(['/:pid/pending-changes', '/:pid/sessions/:sid/pending-changes'], as
       ...(typeof body.path === 'string' && body.path ? { path: body.path } : {}),
       ...(body.aiContext ? { aiContext: body.aiContext } : {}),
       ...(body.reactMount === true ? { reactMount: true } : {}),
-      ...(kind === 'edit' ? { diff: body.diff } : {}),
+      ...(kind === 'edit' ? {
+        diff: body.diff,
+        // 用户把一段文字**清空**了（2026-08-18）。源码里留下的是个空壳
+        // `<p class="foot-line"></p>` —— 它仍然有 margin/line-height，在页面上
+        // 撑出一道空隙，用户看到的是"字没了但地方还空着"。以前 agent 只能从
+        // `diff.newText === ''` 自己推断，而且第一次基本都漏，等用户下次截图
+        // 才发现（问题库 iss_msc46ion_ydr8：同一个坑一个会话踩两次）。
+        // 只打标记不自动删元素：用户也可能是清空重打，误删不可逆。
+        ...(isBecameEmpty(body.diff) ? { becameEmpty: true } : {}),
+      } : {}),
       ...(kind === 'comment' ? {
         text: body.text,
         ...(body.linkedToEditId ? { linkedToEditId: body.linkedToEditId } : {}),
@@ -237,6 +256,8 @@ router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], asyn
     try {
       const { buffer } = await renderRegionShot({
         absPath,
+        projectId: req.params.pid,
+        workspaceRoot: sharedDir,
         region: { x: region.x, y: region.y, w: region.w, h: region.h },
         viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
       });

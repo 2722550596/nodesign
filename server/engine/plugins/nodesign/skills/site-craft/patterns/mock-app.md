@@ -59,6 +59,9 @@ import { SEED } from './seed.js';
 // ⚠️ key 必须带站名前缀。预览时所有任务同源（都挂在 /api/projects/<pid>/artifact-file/
 // 下面），两个 mock 站用同一个 'posts' 会串数据；发布之后各自独立域名又不串了 ——
 // 「预览里坏、线上好」这种 bug 最难查，一开始就把前缀写死。
+// （2026-08-18 起 screenshot_canvas 也走同一条 http 通道，所以你自检时**看得见**
+//  这个串数据问题了；在那之前自检走 file://、origin 是字符串 "null"，
+//  你看到的和用户看到的根本不是一回事。）
 const NS = 'demo:蘑菇书店:';
 const read  = (k, fb) => { try { return JSON.parse(localStorage.getItem(NS + k)) ?? fb; } catch { return fb; } };
 const write = (k, v)  => localStorage.setItem(NS + k, JSON.stringify(v));

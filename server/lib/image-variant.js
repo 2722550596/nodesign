@@ -423,3 +423,30 @@ export async function sendImage(req, res, absPath, stat, opts) {
   res.setHeader('Content-Length', stat.size);
   return res.end(await fs.readFile(absPath));
 }
+
+/**
+ * 产物目录里落一份**兄弟 webp**（2026-08-18）。
+ *
+ * 跟这个模块本来的活刻意分开：派生层落的是 server 缓存、按 HTTP 显示路径发，
+ * **磁盘原图一个字节不改**；这个函数落的是产物目录里一个真实文件，因为站点
+ * 源码里要 `<img src="...webp">` 引得到它，发布/导出也要带出去。
+ *
+ * 为什么必须有：落盘一直是 PNG，而 PNG 是无损格式，对摄影级生成图是最差选择。
+ * 一个站引了 15 张生成图 = 33.7MB，转 webp q82 之后 1.1MB（3%），视觉看不出
+ * 差别，滚动掉帧从 63% 降到 9%。这个损失同时打在首屏、帧率和导出包体积上。
+ *
+ * 质量跟派生层同一个 q82（同一个常量，不另立第二个数字）。
+ * @returns {Promise<{rel: string, bytes: number}|null>} null = 编不出来（不致命）
+ */
+export async function writeWebpSibling(absPng, buf, relDir) {
+  if (!/\.png$/i.test(absPng)) return null;
+  const absWebp = absPng.replace(/\.png$/i, '.webp');
+  try {
+    const out = await sharp(buf).webp({ quality: FORMATS.webp.quality }).toBuffer();
+    await fs.writeFile(absWebp, out);
+    return { rel: `${relDir}/${path.basename(absWebp)}`, bytes: out.length };
+  } catch (err) {
+    console.warn('[image-variant] 兄弟 webp 没编出来（不影响主流程）:', err.message);
+    return null;
+  }
+}

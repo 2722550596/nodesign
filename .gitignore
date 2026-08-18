@@ -62,3 +62,9 @@ server/.venv-rembg/
 
 # 构建暂存区（deploy.sh 用；真正上线的是 web/dist）
 web/dist-build/
+
+# chromium 崩溃现场（08-16 那次 Page crashed 留的 4.5MB core dump）
+core
+
+# Agent worktree 隔离留下的临时工作树
+.claude/worktrees/

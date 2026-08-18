@@ -65,8 +65,10 @@ every time; a viewportOnly flag would remove the whole detour" is actionable.`,
         .describe('One line. bug/friction: what is wrong, concrete. idea: the improvement itself, not "improve X".'),
       detail: z.string().min(20).max(3000)
         .describe('What you were doing and what happened (bug/friction: include the workaround you used; idea: the real situation that made you want this).'),
-      expectation: z.string().min(10).max(1500)
-        .describe('bug: correct behaviour. friction: what would remove the detour. idea: what it would look like once built and what it unlocks.'),
+      // 选填（2026-08-18）：以前是必填，agent 不传就被 zod 打回 —— **信箱把上报挡在
+      // 门外**，库里有 4 次这样的失败。能提当然好，提不出来也别丢掉这条上报。
+      expectation: z.string().min(10).max(1500).optional()
+        .describe('If you can name it: bug → the correct behaviour; friction → what would remove the detour; idea → what it looks like once built and what it unlocks. Leave it out rather than padding it.'),
       toolName: z.string().max(80).optional()
         .describe('The tool involved, if it is about one (e.g. "mcp__nodesign__screenshot_canvas").'),
     },

@@ -42,11 +42,32 @@ function hhmm() {
 }
 
 /**
+ * 这条任务该不该落成便签（2026-08-18）。
+ *
+ * 便利贴那一层在 prelude 里的定义是「**和用户共享的白板**，一张贴讲一件事，
+ * 别当垃圾桶」，还要求 agent 克制、过时的要删。结果系统自己往里倒执行日志：
+ * 线上 71 张贴里 60 张是后台 Bash（`task_type: 'local_bash'`），而 SDK 对这类
+ * 任务 `summary` 跟 `description` 逐字节相同 —— 于是「结果」字段只是把标题
+ * 复读一遍，真正的产出（一段 JSON 报告）一个字都没进去。
+ *
+ * 对用户是噪音，对 agent 是删不掉也控制不了的写入，两头不讨好。所以：
+ *   - SDK 自己给了抑制信号 `skip_transcript` → 听它的
+ *   - 后台 Bash 一律不落贴（它不是"子任务"，是一条命令）
+ * 真子代理（vision-checker 之类，summary 是真报告）不受影响。
+ */
+function shouldNote(msg) {
+  if (msg?.skip_transcript === true) return false;
+  if (msg?.task_type === 'local_bash') return false;
+  return true;
+}
+
+/**
  * task_started → 追加一面。fire-and-forget（调用方 .catch），失败不影响 turn。
  * @param {import('./context.js').AgentContext} ctx
  * @param {{ task_id: string, description?: string, subagent_type?: string, task_type?: string }} msg
  */
 export async function noteTaskStarted(ctx, msg) {
+  if (!shouldNote(msg)) return;
   const root = ctx?.workspace?.root?.();
   if (!root || !msg?.task_id) return;
 
@@ -82,6 +103,7 @@ export async function noteTaskStarted(ctx, msg) {
  * @param {{ task_id: string, status?: string, summary?: string }} msg
  */
 export async function noteTaskFinished(ctx, msg) {
+  if (msg?.skip_transcript === true) return;
   const root = ctx?.workspace?.root?.();
   if (!root || !msg?.task_id) return;
 

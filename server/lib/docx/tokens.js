@@ -248,10 +248,10 @@ export const PRESETS = {
 };
 
 /** token 校验：字段闭合 —— 未知字段直接报错，防 schema 野蛮生长 */
-const STYLE_KEYS = new Set(['type', 'name', 'basedOn', 'next', 'link', 'qFormat', 'uiPriority', 'run', 'para', 'extraXml']);
-const RUN_KEYS = new Set(['font', 'sizePt', 'bold', 'italic', 'color', 'underline', 'strike', 'caps',
+export const STYLE_KEYS = new Set(['type', 'name', 'basedOn', 'next', 'link', 'qFormat', 'uiPriority', 'run', 'para', 'extraXml']);
+export const RUN_KEYS = new Set(['font', 'sizePt', 'bold', 'italic', 'color', 'underline', 'strike', 'caps',
   'smallCaps', 'vertAlign', 'em', 'kernPt', 'spacingTwip', 'highlight']);
-const PARA_KEYS = new Set(['align', 'outlineLevel', 'indent', 'spacing', 'keepNext', 'keepLines',
+export const PARA_KEYS = new Set(['align', 'outlineLevel', 'indent', 'spacing', 'keepNext', 'keepLines',
   'pageBreakBefore', 'widowControl', 'contextualSpacing', 'borders', 'shading', 'tabs', 'cjk']);
 
 /**

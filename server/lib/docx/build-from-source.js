@@ -20,7 +20,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PRESETS, validateTokens } from './tokens.js';
+import { PRESETS, validateTokens , PARA_KEYS, RUN_KEYS } from './tokens.js';
 import { buildDocx } from './build.js';
 
 /** 深合并：对象递归，其余（含数组）整体替换 —— 数组是有序整体，逐项合并只会得到怪东西 */
@@ -52,6 +52,55 @@ function stripNotes(v) {
     );
   }
   return v;
+}
+
+/**
+ * content 块的闭合校验（2026-08-18）。
+ *
+ * 以前只有 `styles` 那三层查键名，**块级完全不查** —— 于是块上写错的键会被
+ * 静默忽略。最贵的一次是起手模板自己教错：页脚写 `{"para": {align, indent}}`，
+ * 而 buildPara 只读平铺在块上的键，那份页脚的居中**从来没生效过**，而且不报错。
+ *
+ * 「写了没生效」比「写了报错」坏得多：报错你会改，不报错你会以为已经做到了。
+ */
+const P_BLOCK_KEYS = new Set(['t', 'style', 'text', 'runs', 'sizePt', 'list', ...PARA_KEYS]);
+const RUN_OBJ_KEYS = new Set(['text', 'br', 'fld', ...RUN_KEYS]);
+const TABLE_BLOCK_KEYS = new Set(['t', 'widthsTwip', 'rows']);
+
+function validateContent(content) {
+  const errs = [];
+  const hint = (k) => (k === 'para'
+    ? '：块级直接格式是**平铺**在块上的，没有 para 包层 —— 写 {"t":"p","align":"center"}，不是 {"para":{"align":"center"}}'
+    : (k === 'border' ? '：键名是复数 borders' : ''));
+
+  const checkPara = (b, where) => {
+    for (const k of Object.keys(b)) {
+      if (!P_BLOCK_KEYS.has(k)) errs.push(`${where}: unknown key ${k}${hint(k)}`);
+    }
+    for (const [i, r] of (b.runs ?? []).entries()) {
+      if (typeof r === 'string') continue;
+      if (!r || typeof r !== 'object') { errs.push(`${where}.runs[${i}]: 只能是字符串或对象`); continue; }
+      for (const k of Object.keys(r)) {
+        if (!RUN_OBJ_KEYS.has(k)) errs.push(`${where}.runs[${i}]: unknown key ${k}`);
+      }
+    }
+  };
+
+  for (const [i, b] of content.entries()) {
+    if (!b || typeof b !== 'object') continue;   // t 认不出那条由调用方报，别重复
+    if (b.t === 'p') checkPara(b, `content[${i}]`);
+    else if (b.t === 'table') {
+      for (const k of Object.keys(b)) {
+        if (!TABLE_BLOCK_KEYS.has(k)) errs.push(`content[${i}]: unknown key ${k}${hint(k)}`);
+      }
+      for (const [ri, row] of (b.rows ?? []).entries()) {
+        for (const [ci, cell] of (row ?? []).entries()) {
+          if (cell && typeof cell === 'object') checkPara(cell, `content[${i}].rows[${ri}][${ci}]`);
+        }
+      }
+    }
+  }
+  return errs;
 }
 
 /**
@@ -88,6 +137,10 @@ export function resolveSource(rawSrc) {
   }
   // 早点把块类型的错说清楚 —— 让它掉进 buildBody 里报 `unknown block: undefined`
   // 对 agent 是没有信息量的
+  const blockErrs = validateContent(content);
+  if (blockErrs.length) {
+    throw new DocxSourceError('content 里有认不出的字段', blockErrs.join('\n'));
+  }
   const bad = content.findIndex(b => !b || !['p', 'table', 'pageBreak'].includes(b.t));
   if (bad >= 0) {
     throw new DocxSourceError(

@@ -90,6 +90,7 @@ import {
 } from './hooks/post-guidance.js';
 import { makePostToolUseCanvasValidationHandler } from './hooks/canvas-validate.js';
 import { makePostToolUseFailureHandler } from './hooks/failure.js';
+import { makePostToolUseSubagentReportRecovery } from './hooks/post-subagent-report.js';
 
 /**
  * 工厂：根据当前 run 上下文 + workspace 路径生成 hooks 配置。
@@ -240,6 +241,14 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       {
         matcher: 'Edit|Write',
         hooks: [makePostToolUseEditWriteTrimHandler({ ctx })],
+      },
+      // 子代理报告丢失兜底（2026-08-18）：SDK 触 maxTurns 时返回的错误类型不带
+      // result 字段，最后那条消息（报告本身）整个消失。这个 handler 在报告看起来
+      // 是空的时候把转录 JSONL 的路径递给主 agent —— 从"整轮白烧"变成"多读一个
+      // 文件"。matcher 两个别名都写，理由同上面 PreToolUse 那处。
+      {
+        matcher: 'Task|Agent',
+        hooks: [makePostToolUseSubagentReportRecovery()],
       },
       // 写完一笔立刻让前端应用（2026-07-28）：写文件系工具成功即从入参直发
       // run.file_changed，deck iframe / 产物墙不再等 run.done 才刷新。

@@ -47,7 +47,7 @@ import { Events } from '../../agent/events.js';
 import { z } from 'zod';
 import sharp from 'sharp';
 import {
-  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor,
+  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor, writeWebpSibling,
 } from '../../../lib/image-variant.js';
 
 // Thumbnail 配置（env 可调）。**原图不动**——保留 Gemini 输出的全分辨率（通常
@@ -431,7 +431,7 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
       prompt: z
         .string()
         .min(4)
-        .max(2000)
+        .max(3500)
         .describe('Natural-language scene description. Describe, don\'t list keywords.'),
       aspectRatio: z
         .enum(ASPECT_RATIOS)
@@ -689,15 +689,9 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
       }
       const thumbAgentRelPath = thumb ? path.posix.join('assets', 'generated', '.thumbnails', thumbName) : null;
 
-      // 预热派生图：全尺寸 webp / 三档响应式宽度 / 各档 avif，全部排后台串行编。
-      //
-      // 为什么放在这里：这一刻用户正在等模型说下一句话，CPU 是闲的；而如果不预热，
-      // 第一个打开站点的人要在请求路径上等 12 张图各编一次。单核实测冷开一个
-      // 12 图站点 5.4s，预热之后 72ms。
-      // 不 await：编码是后台队列的事，生图工具不该被它拖住。
-      fs.stat(absOut)
-        .then(st => enqueueWarm(absOut, st, warmSpecsFor()))
-        .catch(() => { /* 预热失败不影响生图，下次请求现编 */ });
+      // 兄弟 webp（2026-08-18）：页面里引它，PNG 是母版留给用户下载和再编辑。
+      // 实现在 lib/image-variant.js（跟派生层同一个 q82，别再立第二个数字）。
+      const webp = await writeWebpSibling(absOut, imgBuf, 'assets/generated');
 
       // 语义 sidecar（2026-07-27 工作台）：.meta/<name>.json 记录物件来历，
       // /api/.../artifacts 清单合并给产物墙显示（prompt / 角色 / 来源 run）。
@@ -793,6 +787,11 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
           ? `(${aspectRatio}, codex-imagegen, ${(imgBuf.length / 1024).toFixed(1)} KB)`
           : `(${aspectRatio}, ${imageSize}, ${model}, ${(imgBuf.length / 1024).toFixed(1)} KB)`,
       ];
+      if (webp) {
+        captionParts.push(`— 页面里引 ${webp.rel}（${(webp.bytes / 1024).toFixed(0)} KB，`
+          + `比 PNG 母版小 ${Math.max(1, Math.round(imgBuf.length / Math.max(webp.bytes, 1)))}×）；`
+          + 'PNG 是母版，别往页面里引。');
+      }
       if (assetRole) captionParts.push(`role=${assetRole}`);
       if (resolvedRefs.length > 0) {
         captionParts.push(`with ${resolvedRefs.length} reference image${resolvedRefs.length > 1 ? 's' : ''}`);

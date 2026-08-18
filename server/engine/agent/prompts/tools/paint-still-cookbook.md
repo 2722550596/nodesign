@@ -104,6 +104,26 @@ full_moon` 一起上才稳）。按需挑，别堆。
 `cinematic_lighting` `night_sky`（用 `starry sky`）`chiaroscuro`（432 收录，等于没有）。
 要赛璐璐质感用 `anime_coloring` + `flat_color`；要背景丰富就直接把景物写出来。
 
+**「妆花 / 狼狈」这一组全是空的**（有 agent 连着三张图栽在这儿，用户反复说"她太干净了"）：
+`running_makeup` `smeared_eyeliner` `dried_tears` `ruined_makeup` `tear_stains`
+`heavy_makeup` `messy_makeup` `split_lip` 全部 0 收录。有货的是
+`tears`(29万) `crying_with_eyes_open`(5.4万) `eyeshadow` `mascara` `dirty_face`
+`smeared_lipstick`。
+
+**有正确写法但极易写错的**：`breast_grab` → `grabbing_another's_breast` ·
+`closed_legs` → `legs_together` · `crouching` → `squatting` ·
+`muted_color` → `muted_colors` · `cum_drip`/`dripping_cum`、`presenting`、
+`thigh_tattoo`、`platform_footwear`、`menhera`、`arms_held_back`、`disheveled_hair`、
+`shutter`、`soft_lighting`、`early_morning`、`wary`、`tired`、`resigned` 一律 0。
+
+⚠️ **正面词和负面词打架时正面赢。** 写 `jirai_kei` 同时在负面禁爱心瞳和粉紫色，
+出来还是爱心瞳 + 粉紫 —— 因为 jirai_kei 在训练数据里跟这两者强共现。风格词要拆成
+具体外观标签，别指望负面能压住风格词自带的东西。
+
+✅ **工具现在会自动体检**：`paint_still` 返回里会带一段"标签体检"，把 0 收录 /
+不存在 / 低收录的词列出来（danbooru 系三档才查，查不到就不说）。**看到就改，
+别按那批图判断方向** —— 那批图里那些词等于没写。它只提示不改写你的 prompt。
+
 **没把握的标签先查再用**（本机可直连，盒子上被墙）：
 ```
 curl -sS -g "https://danbooru.donmai.us/tags.json?search%5Bname_comma%5D=标签1,标签2&limit=50"
@@ -234,4 +254,6 @@ lora_strength: "0.9,0.7"
 - **任何一条失败即中止整批剩余**（后面大概率同因，不空烧）
 - `name` 只能是字母数字下划线连字符，1-40 字符，**中文名会被直接拒**
 - 视频关键帧一律 1344x768
-- **产物不 Read、不截图、不派 vision-checker** —— 质量判定归用户，只报路径
+- **产物可以看**（2026-08-18 解禁）：扫一眼挑掉技术性废图（重复人物、肢体崩坏、
+  整体色偏、全黑全白、文字水印）直接重滚；审美与风格方向仍归用户定。
+  别每张都 `detail:'high'`，默认档判崩坏够用

@@ -13,12 +13,15 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { Events } from '../../agent/events.js';
 import { setActiveDeck } from '../../../lib/artifact-target.js';
+import fs from 'node:fs/promises';
+import nodePath from 'node:path';
+import { taskManifest } from '../../../lib/kinds/index.js';
 
 /**
  * @param {object} deps
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makePreviewDeckTool({ ctx, sessionId }) {
+export function makePreviewDeckTool({ ctx, sessionId, workspaceRoot }) {
   return tool(
     'preview_deck',
     `Show a deck to the user on their workbench — the same thing that happens
@@ -49,14 +52,46 @@ see the render, this one is for **the user**.`,
         if (p.includes('..') || p.startsWith('/')) {
           return { content: [{ type: 'text', text: 'Invalid path (workspace-relative only).' }], isError: true };
         }
-        if (p) setActiveDeck(sessionId, p);   // 摊给用户看的那份就是"当前 deck"
+        // ⭐ 2026-08-18：先查这个文件在不在。
+        // 以前这里只挡 `..` 和绝对路径，然后无条件 emit + 回一句 "Opened …"。
+        // 传一个不存在的路径、或者传站点的子页时，用户桌面上打开的是**本会话的
+        // 空 canvas.html**，而 agent 拿到的是成功 —— 它没有任何办法察觉用户
+        // 正对着一块空白（问题库 iss_msr8oki7_z9su：「静默成功是最伤的部分」）。
+        let siteNote = null;
+        if (p) {
+          const abs = nodePath.join(workspaceRoot || '', p);
+          try {
+            await fs.access(abs);
+          } catch {
+            return {
+              content: [{ type: 'text', text:
+                `path not found: ${p} —— 先写出这个文件，或者用 list_pages 看清楚现有产物。`
+                + '（没有打开任何东西，用户桌面没变。）' }],
+              isError: true,
+            };
+          }
+          // 站点的子页：站点是整站一扇窗，打开的是站不是那一页 —— 如实说
+          try {
+            const manifest = await taskManifest(workspaceRoot);
+            const site = (manifest?.artifacts || []).find(a => a.kind === 'site' && !a.single
+              && (a.root ? p.startsWith(`${a.root}/`) : true));
+            if (site && p !== (site.entryRel || 'index.html')) {
+              siteNote = `注意：${p} 属于站点「${site.root || '工作区根'}」，`
+                + `站点是整站一扇窗，用户看到的是它的入口 ${site.entryRel || 'index.html'}，`
+                + '不是这一页。要让用户直接看到这页，在站内给它加一条真链接。';
+            }
+          } catch { /* manifest 读不出来不挡预览 */ }
+          setActiveDeck(sessionId, p);   // 摊给用户看的那份就是"当前 deck"
+        }
         ctx?.emit?.(Events.deckPreview(p));
         return {
           content: [{
             type: 'text',
-            text: p
-              ? `Opened ${p} on the user's workbench.`
-              : "Opened this session's deck on the user's workbench.",
+            text: [
+              p ? `Opened ${p} on the user's workbench.`
+                : "Opened this session's deck on the user's workbench.",
+              siteNote,
+            ].filter(Boolean).join('\n'),
           }],
         };
       } catch (err) {

@@ -6,7 +6,8 @@
  *   box（默认）  站主 5090 盒子（h3box.py video over SSH），模型常驻零冷启动。
  *   modal        Modal H100+sage 备用档，NODESIGN_FILM_BACKEND=modal 显式才走。
  * 配方恒定：Turbo 8 步 / 1344×768 / 单镜 ≤12.25s。批准制：admin+获批账号。
- * 视觉 QC 一律归用户：只回文本路径，不回 image block。
+ * 只回文本路径，不回 image block；agent 可以自己抽帧看（2026-08-18 解禁），
+ * 但"这条好不好"归用户判。
  */
 
 import os from 'node:os';
@@ -204,7 +205,11 @@ export async function rollFilm(
     }
 
     const head = `Batch done ${lines.length}/${shots.length} shots, seed=${seed}, via ${backend === 'modal' ? 'Modal H100+sage' : '5090 盒子 sage2'}`;
-    const tail = 'Do not open or inspect the files — hand the paths to the user for review.';
+    // 2026-08-18：解禁。mp4 塞不进视觉通道，要看就 ffmpeg 抽帧再看那几张图。
+    const tail = 'You may check these: pull two or three frames with ffmpeg and look at them '
+      + 'for technical breakage (colour cast, duplicated figures, broken limbs, mush, first '
+      + 'frame not matching the anchor) and re-roll those yourself; delete the temp frames after. '
+      + 'Do NOT judge whether a shot is good — hand the paths to the user for that.';
     if (failed.length) {
       return asText([head, ...lines, 'FAILED（批在此中断，未渲镜不再空烧）：', ...failed, tail].join('\n'), lines.length === 0);
     }
@@ -241,8 +246,11 @@ identical across shots; the whole batch shares ONE seed automatically. Keyframe
 anchors (first_frame/last_frame) accept paths like "assets/generated/kf1.png"
 (make them with paint_still or generate_image, ideally 1344x768).
 
-Clips land at assets/generated/<name>-*.mp4. DO NOT visually inspect results —
-no Read, no screenshot, no vision checker. QC is the user's job: report paths
+Clips land at assets/generated/<name>-*.mp4. To check one, pull a couple of
+frames with ffmpeg and look at those — catch colour cast, duplicated figures,
+broken limbs, mush, or a first frame that does not match its anchor, and re-roll
+those yourself (delete the temp frames after). Whether a shot is GOOD is the
+user's call, not yours: report paths
 and move on.`,
     {
       shots: z.array(z.object({

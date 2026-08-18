@@ -17,7 +17,8 @@
  * 明文允许 SaaS）或 krea2。08-11 前这里写着 noobai"商用可"，是错的。
  *
  * 配方 = 08-08/08-11 实测 + 官方模板。盒子不在线就明说，不静默降级。
- * 落盘/缩略图/事件照 generate-image.js；视觉 QC 一律归用户，只回文本路径。
+ * 落盘/缩略图/事件照 generate-image.js；只回文本路径（图不进返回值），
+ * 但 agent 可以自己去看那些文件挑废图（2026-08-18 解禁），审美判断仍归用户。
  */
 
 import os from 'node:os';
@@ -302,13 +303,33 @@ export async function paintStills(
       if (signal?.aborted) break;
     }
 
+    // ── 标签体检（2026-08-18）──
+    // danbooru 系模型的标签写错不报错、只静默失效，一个 agent 因此白烧过至少
+    // 五轮出图。fail-open：查不到就什么都不说。位置有讲究 —— 放在"看图挑废图"
+    // 那句**之前**，因为它说的是"这批图可能根本不该按它判断方向"。
+    let tagNote = null;
+    try {
+      const danbooruStills = stills.filter(s => ['noobai', 'noobai-eps', 'pony'].includes(s.model ?? 'noobai'));
+      if (danbooruStills.length) {
+        const { lintTags, formatTagLint } = await import('../../../lib/danbooru-tags.js');
+        tagNote = formatTagLint(await lintTags(
+          danbooruStills.flatMap(s => [s.prompt, s.negative].filter(Boolean)),
+        ));
+      }
+    } catch { /* 体检本身不能变成新的故障源 */ }
+
     const head = `Batch done ${lines.length}/${stills.length} stills`;
-    const tail = 'Do not open or inspect the images — hand the paths to the user for review.';
+    // 2026-08-18：以前这里写死"不许看"。现在改成教怎么看 —— 挑技术性废图是
+    // agent 该干的活，审美判断才是用户的。
+    const tail = 'You may look at these: scan for technical breakage (duplicated figures, '
+      + 'broken limbs, colour cast, all-black/white, stray watermark text) and just re-roll '
+      + 'those yourself. Do NOT judge taste or style direction — hand the paths to the user '
+      + 'for that. Default detail is enough to spot breakage; do not burn high-detail on every frame.';
     if (failed.length) {
-      return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, tail]
+      return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, tagNote, tail]
         .filter(Boolean).join('\n'), lines.length === 0);
     }
-    return asText([head, ...lines, tail].filter(Boolean).join('\n'));
+    return asText([head, ...lines, tagNote, tail].filter(Boolean).join('\n'));
   } catch (err) {
     return asText(`paint_still 失败：${err.message}`, true);
   }
@@ -363,9 +384,12 @@ Use for anime needs and video keyframes (1344x768 matches the video lane).
 Requires the box online — if unreachable, tell the user and fall back to
 generate_image.
 
-Outputs land at assets/generated/still-*.png. DO NOT visually inspect —
-no Read, no screenshot, no vision checker. QC is the user's job: reference
-files by path only.`,
+Outputs land at assets/generated/still-*.png. You MAY look at them to catch
+technical write-offs — duplicated figures, broken limbs, colour cast, all
+black/white, stray watermark text — and just re-roll those yourself. Taste and
+style direction stay the user's call: do not re-roll because you dislike it, and
+do not tell the user which one is better. Default detail is enough to spot
+breakage; do not burn high-detail on every frame.`,
     {
       stills: z.array(z.object({
         prompt: z.string().describe('danbooru/e621 tags (noobai/noobai-eps/pony) or natural English (anima/krea2)'),

@@ -63,9 +63,11 @@
     ] }
   ],
 
+  "_块级格式说明": "块上的直接格式**平铺**在块上（align / indent / spacing …），没有 para 包层——写成 \"para\": {…} 不报错但一点效果都没有。字段全集见 references/token-schema.md。",
+
   "_页眉页脚说明": "字符串 = 一行纯文字；块数组 = 完整控制。页码是域不是你手写的数字：{fld:'PAGE'}，写死 '1' 的页脚在第二页还是 1。",
   "footer": [
-    { "t": "p", "style": "Normal", "para": { "align": "center", "indent": { "firstLineChars": 0 } },
+    { "t": "p", "style": "Normal", "align": "center", "indent": { "firstLineChars": 0 },
       "runs": [ { "text": "— " }, { "fld": "PAGE" }, { "text": " —" } ] }
   ]
 }

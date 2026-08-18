@@ -87,3 +87,32 @@ export function resolveModelContextWindow(appModel) {
   if (/\[1m\]$/i.test(appModel))   return 1_000_000;
   return null;
 }
+
+/**
+ * 按 model id 选 thinking config（SDK 把 thinking 通道按模型分两路）。
+ *
+ * sdk.d.ts:1374-1385 + :5342-5368：
+ *   - { type: 'adaptive' } 仅 Opus 4.6+ 支持（Claude 自决何时/多少 thinking，是这些模型的 SDK 默认）
+ *   - { type: 'enabled', budgetTokens } 是 older-model 路径（Sonnet 4.5 / Sonnet 4 / Haiku 4.5 / 第三方）
+ *
+ * Kimi K2.6 走 Anthropic 协议但 capability 跟 Sonnet 4.5 同级 —— 视同 older
+ * model 走 enabled 路径。adaptive 在非 Opus 4.6+ 上等于不开 thinking
+ * （H3 实测：Kimi+adaptive → jsonl 0 thinking blocks），所以默认走 enabled。
+ *
+ * Future-proof 设计：
+ *   - claude-opus-4-[6789] 覆盖 4.6/4.7/4.8/4.9
+ *   - claude-opus-[5-9] 覆盖 5.x/6.x/7.x/8.x/9.x（默认假设 Opus 新一代仍走 adaptive）
+ *   - 新一代 Opus 改了行为时再扩 regex
+ */
+export function pickThinkingConfig(model) {
+  // adaptive 一族：Opus 4.6+ / Sonnet 5+ / Fable / Mythos。
+  // ⚠️ Sonnet 5 起 budgetTokens 已被 API 移除（enabled+budget 会 400），
+  // 不能再落到 enabled 分支 —— 2026-07-23 订阅模式切 sonnet-5 时修。
+  if (model && /^claude-(?:opus-(?:4-[6789]|[5-9])|sonnet-[5-9]|fable|mythos)/.test(model)) {
+    // display 必须显式 'summarized' —— Sonnet 5 / Opus 4.7+ 默认 'omitted'：
+    // thinking 照常发生（照常计费）但流出的 thinking 块是空文本 → 前端思考期
+    // 完全静默，用户以为后端死了（2026-07-23 "失联"问题的主因）。
+    return { type: 'adaptive', display: 'summarized' };
+  }
+  return { type: 'enabled', budgetTokens: 8192 };
+}
