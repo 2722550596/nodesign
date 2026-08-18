@@ -700,72 +700,8 @@ const SESSION_DECK_RE = /^deck:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 // 目录是空的。改成 workspace 主动 prepend 提示，把"是否需要看 assets" 这个
 // 决策从"agent 必须先做"翻译成"agent 看到提示自己判断"。
 
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']);
-const TEXT_DOC_EXT = new Set(['.md', '.txt', '.json']);
 // Office / PDF：二进制或 OOXML zip 包，Read 直接看是字节流，需 python 解
-const BINARY_DOC_EXT = new Set(['.pdf', '.pptx', '.ppt', '.docx', '.doc', '.xlsx', '.xls']);
 
-/**
- * @param {string} sessionRoot - sessions/<sid>/ 绝对路径
- * @returns {Promise<{ count: number, summary: string, hasBinaryDocs: boolean }>}
- *   count=0 时 summary 为空字符串，调用方据此判断是否注入提示。
- *   hasBinaryDocs=true 时调用方追加 python 处理提醒（Read 拿不到这些的内容）。
- */
-export async function readAssetsSummary(sessionRoot) {
-  try {
-    const assetsLink = path.join(sessionRoot, 'assets');
-    const stat = await fs.stat(assetsLink).catch(() => null);
-    if (!stat) return { count: 0, summary: '', hasBinaryDocs: false };
-
-    const entries = await fs.readdir(assetsLink, { withFileTypes: true }).catch(() => []);
-    const files = entries.filter((e) => !e.name.startsWith('.') && (e.isFile() || e.isSymbolicLink()));
-    if (files.length === 0) return { count: 0, summary: '', hasBinaryDocs: false };
-
-    const images = [];
-    const textDocs = [];
-    const binaryDocs = [];
-    const others = [];
-    for (const f of files) {
-      const ext = path.extname(f.name).toLowerCase();
-      if (IMAGE_EXT.has(ext)) images.push(f.name);
-      else if (TEXT_DOC_EXT.has(ext)) textDocs.push(f.name);
-      else if (BINARY_DOC_EXT.has(ext)) binaryDocs.push(f.name);
-      else others.push(f.name);
-    }
-
-    // 摘要：种类 + 头几个文件名（避免太长）
-    const parts = [];
-    if (images.length > 0) {
-      const sample = images.slice(0, 3).join('、');
-      parts.push(`${images.length} 张图（${sample}${images.length > 3 ? ` 等` : ''}）`);
-    }
-    if (textDocs.length > 0) {
-      const sample = textDocs.slice(0, 3).join('、');
-      parts.push(`${textDocs.length} 个文本文档（${sample}${textDocs.length > 3 ? ` 等` : ''}）`);
-    }
-    if (binaryDocs.length > 0) {
-      const sample = binaryDocs.slice(0, 3).join('、');
-      parts.push(`${binaryDocs.length} 个 PDF/Office 文档（${sample}${binaryDocs.length > 3 ? ` 等` : ''}）`);
-    }
-    if (others.length > 0) {
-      parts.push(`${others.length} 个其他文件`);
-    }
-
-    // 完整文件清单（按路径列）—— 让 agent 不用再 Glob/LS 探。assets/ 是 symlink
-    // → shared/assets/，SDK Glob 走 ripgrep 默认不跟 symlink，agent 调
-    // `Glob("assets/*")` 会拿 "No files found" 误判工作区为空（plan mode 还没 Bash
-    // 兜底）。把全名列在这条 system 里，agent 直接 Read assets/<name> 即可。
-    const allNames = [...images, ...textDocs, ...binaryDocs, ...others];
-    return {
-      count: files.length,
-      summary: `workspace 里已有 ${files.length} 个参考素材：${parts.join('、')}`,
-      hasBinaryDocs: binaryDocs.length > 0,
-      paths: allNames.map((n) => `assets/${n}`),
-    };
-  } catch {
-    return { count: 0, summary: '', hasBinaryDocs: false, paths: [] };
-  }
-}
 
 // ── 老结构清理（用户决策"删了"）──
 

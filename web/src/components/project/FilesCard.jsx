@@ -17,6 +17,10 @@ export default function FilesCard({ projectId }) {
   const showToast = useGlobalStore(s => s.showToast);
   const confirm = useGlobalStore(s => s.confirm);
   const [files, setFiles] = useState([]);
+  // 参考素材（2026-08-18）：`assets/references/**` —— web-search 下载的参考图 +
+  // browser_capture 从参照站带回来的截图/调色板/字体/结构。**刻意走这个抽屉不上
+  // 画布**（用户拍板）：每逛一站甩十几张卡到画布上是噪音。
+  const [refs, setRefs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef(null);
@@ -27,6 +31,7 @@ export default function FilesCard({ projectId }) {
     try {
       const result = await Assets.list(projectId);
       setFiles(result?.assets || []);
+      setRefs(result?.references || []);
     } catch (err) {
       console.warn('[FilesCard] list failed:', err.message);
     } finally {
@@ -149,6 +154,50 @@ export default function FilesCard({ projectId }) {
       {!loading && files.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.xs }}>
           {files.map(f => <FileRow key={f.name} file={f} onDelete={() => handleDelete(f.name)} />)}
+        </div>
+      )}
+
+      {!loading && refs.length > 0 && (
+        <div style={{ marginTop: GAP.md, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <div style={{
+            display: 'flex', alignItems: 'baseline', gap: GAP.xs, paddingBottom: 2,
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+          }}>
+            <span style={{ color: COLOR.text2 }}>参考素材</span>
+            <span>{refs.length} 件 · agent 逛站带回来的</span>
+          </div>
+          {refs.slice(0, 40).map(r => (
+            <a
+              key={r.rel}
+              href={Assets.artifactFileUrl(projectId, r.rel)}
+              target="_blank" rel="noreferrer"
+              title={r.source ? `来自 ${r.source}` : r.rel}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: GAP.xs,
+                padding: '2px 0', textDecoration: 'none', color: 'inherit',
+              }}
+            >
+              <span style={{
+                flex: 1, minWidth: 0, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+                color: COLOR.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>{r.name}</span>
+              {/* ⭐ 出处比文件名值钱：三天后一堆没来处的截图就是垃圾 */}
+              {r.lookingFor && (
+                <span style={{
+                  flexShrink: 0, maxWidth: 140, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+                  color: COLOR.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>{r.lookingFor}</span>
+              )}
+              <span style={{
+                flexShrink: 0, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+              }}>{formatSize(r.size)}</span>
+            </a>
+          ))}
+          {refs.length > 40 && (
+            <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
+              还有 {refs.length - 40} 件（都在 assets/references/ 下）
+            </span>
+          )}
         </div>
       )}
     </div>

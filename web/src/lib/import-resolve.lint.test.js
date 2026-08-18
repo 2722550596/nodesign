@@ -7,8 +7,13 @@
  * 因为没有一条测试 import 那个新文件。**pm2 restart 之后生产直接起不来**
  * （ERR_MODULE_NOT_FOUND），挂了约一分钟。
  *
+ * ⛔ **同一天又栽了一次，在下一层**：路径对了，但**导出名不存在** —— 拆模块时
+ * 把函数搬过去忘了加 `export`，`SyntaxError: does not provide an export named …`，
+ * 生产第二次起不来。所以这份东西现在查两件事：**路径存不存在** + **具名导入的
+ * 名字在目标模块里到底导没导出**。
+ *
  * 这是这个仓库「静默失效」病族的又一种形态，跟 no-undef.lint 是一对：
- * 那个查"名字有没有来处"，这个查"来处的路径是不是真的存在"。
+ * 那个查"名字有没有来处"，这个查"来处存不存在、以及它给不给这个名字"。
  *
  * 扫 `server/` 与 `web/src/` 全部 js/jsx 的**相对** import/export-from
  * （裸包名交给 npm 自己管），逐条落到文件系统上确认。
@@ -44,6 +49,44 @@ function* walk(dir) {
  * （`await fs.writeFile(..., \`import * as impl from './mock.js'\`)`）当成了真的
  * import 报上来。字符串和注释里的东西只有解析器分得清。
  */
+/** 这个模块导出了哪些名字（含 `export * from` 的转发，转发就当"可能有"放过）*/
+function exportedNames(code) {
+  const ast = parse(code, { sourceType: 'module', plugins: ['jsx', 'importMeta', 'topLevelAwait'], errorRecovery: true });
+  const names = new Set();
+  let hasStarReexport = false;
+  for (const node of ast.program.body) {
+    if (node.type === 'ExportAllDeclaration') { hasStarReexport = true; continue; }
+    if (node.type === 'ExportDefaultDeclaration') { names.add('default'); continue; }
+    if (node.type !== 'ExportNamedDeclaration') continue;
+    for (const sp of node.specifiers || []) names.add(sp.exported?.name ?? sp.exported?.value);
+    const d = node.declaration;
+    if (!d) continue;
+    if (d.id?.name) names.add(d.id.name);                       // function / class
+    for (const decl of d.declarations || []) {                    // const / let
+      if (decl.id?.name) names.add(decl.id.name);
+      for (const pr of decl.id?.properties || []) if (pr.value?.name) names.add(pr.value.name);
+    }
+  }
+  return { names, hasStarReexport };
+}
+
+/** 这个文件对相对模块做的**具名**导入：[{ spec, names: [...] }] */
+function namedImports(code) {
+  const ast = parse(code, { sourceType: 'module', plugins: ['jsx', 'importMeta', 'topLevelAwait'], errorRecovery: true });
+  const out = [];
+  for (const node of ast.program.body) {
+    if (node.type !== 'ImportDeclaration' && node.type !== 'ExportNamedDeclaration') continue;
+    const spec = node.source?.value;
+    if (typeof spec !== 'string' || !spec.startsWith('.')) continue;
+    const names = (node.specifiers || [])
+      .filter(sp => sp.type === 'ImportSpecifier' || sp.type === 'ExportSpecifier')
+      .map(sp => sp.imported?.name ?? sp.local?.name)
+      .filter(Boolean);
+    if (names.length) out.push({ spec, names });
+  }
+  return out;
+}
+
 function relativeSpecifiers(code) {
   const ast = parse(code, {
     sourceType: 'module',
@@ -92,6 +135,41 @@ describe('import 路径可解析', () => {
       }
     }
     expect(broken, `这些 import 指向不存在的文件（生产会 ERR_MODULE_NOT_FOUND 起不来）:\n${broken.join('\n')}`)
+      .toEqual([]);
+  });
+
+  it('⭐ 具名导入的名字在目标模块里真的导出了（路径对不代表名字对）', () => {
+    const missing = [];
+    const exportCache = new Map();
+    const resolve = (fromFile, spec) => {
+      const abs = path.resolve(path.dirname(fromFile), spec.replace(/\?.*$/, ''));
+      for (const c of [abs, `${abs}.js`, `${abs}.jsx`, path.join(abs, 'index.js'), path.join(abs, 'index.jsx')]) {
+        if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
+      }
+      return null;
+    };
+    for (const root of ROOTS) {
+      for (const file of walk(root)) {
+        let imports;
+        try { imports = namedImports(fs.readFileSync(file, 'utf8')); } catch { continue; }
+        for (const { spec, names } of imports) {
+          const target = resolve(file, spec);
+          if (!target) continue;                     // 路径问题上一条测试管
+          if (!exportCache.has(target)) {
+            try { exportCache.set(target, exportedNames(fs.readFileSync(target, 'utf8'))); }
+            catch { exportCache.set(target, { names: null, hasStarReexport: true }); }
+          }
+          const { names: has, hasStarReexport } = exportCache.get(target);
+          if (!has || hasStarReexport) continue;     // 有 `export *` 转发就放过（查不动）
+          for (const n of names) {
+            if (!has.has(n)) {
+              missing.push(`${path.relative(REPO, file)} 从 '${spec}' 导入 \`${n}\`，但那边没导出它`);
+            }
+          }
+        }
+      }
+    }
+    expect(missing, `这些具名导入的名字目标模块没导出（生产会 SyntaxError 起不来）:\n${missing.join('\n')}`)
       .toEqual([]);
   });
 });

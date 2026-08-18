@@ -27,6 +27,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import { downloadReferenceImages } from './helpers/reference-download.js';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 
@@ -263,89 +264,6 @@ class ProviderError extends Error {
   }
 }
 
-// ── reference image download ──
-
-const DL_TIMEOUT_MS = 10_000;
-const DL_MAX_BYTES = 5 * 1024 * 1024; // 5MB（Anthropic image content block 单图上限）
-const DL_MIN_BYTES = 5 * 1024;        // 5KB（< 这个多半是 logo / 损坏）
-
-const MIME_TO_EXT = {
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-  'image/gif': '.gif',
-};
-
-function shortHash(s) {
-  return crypto.createHash('sha256').update(s).digest('hex').slice(0, 10);
-}
-
-/**
- * 下载一张图到 <root>/assets/references/ref-<hash>-<role>.<ext>。
- * 已存在 → 直接返回（按 hash 去重）。
- *
- * @returns {Promise<{ relPath: string, absPath: string, sizeBytes: number, mimeType: string } | null>}
- *   失败/校验不通过 → null（caller 跳过这一张）
- */
-async function downloadOneImage(url, refsDir) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), DL_TIMEOUT_MS);
-  try {
-    const hash = shortHash(url);
-    const res = await fetch(url, { signal: controller.signal, redirect: 'follow' });
-    if (!res.ok) return null;
-    const mime = (res.headers.get('content-type') || '').toLowerCase().split(';')[0].trim();
-    const ext = MIME_TO_EXT[mime];
-    if (!ext) return null;
-
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < DL_MIN_BYTES || buf.length > DL_MAX_BYTES) return null;
-
-    const fileName = `ref-${hash}${ext}`;
-    const absPath = path.join(refsDir, fileName);
-    // 去重：同 url → 同 hash → 同文件名 → 已存在就跳写
-    let exists = false;
-    try { await fs.access(absPath); exists = true; } catch { /* not exists */ }
-    if (!exists) await fs.writeFile(absPath, buf);
-
-    return {
-      relPath: path.posix.join('assets', 'references', fileName),
-      absPath,
-      sizeBytes: buf.length,
-      mimeType: mime,
-      base64: buf.toString('base64'), // 直接传给 CallToolResult image block
-    };
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * 并发下载 top-N 图，filter 掉失败/超大/过小。
- *
- * @returns {Promise<Array<{url, description, title, relPath, absPath, sizeBytes, mimeType}>>}
- */
-async function downloadReferenceImages(images, { workspaceRoot, sharedRoot }) {
-  const baseRoot = sharedRoot || workspaceRoot;
-  if (!baseRoot) return [];
-  const refsDir = path.join(baseRoot, 'assets', 'references');
-  await fs.mkdir(refsDir, { recursive: true });
-
-  const settled = await Promise.allSettled(
-    images.map(async (img) => {
-      const dl = await downloadOneImage(img.url, refsDir);
-      if (!dl) return null;
-      return { ...img, ...dl };
-    }),
-  );
-  return settled
-    .filter(r => r.status === 'fulfilled' && r.value)
-    .map(r => r.value);
-}
-
 function formatMarkdown(query, provider, hits, { images = [] } = {}) {
   const lines = [`## Search results (${provider}, ${hits.length} hits)`, '', `> Query: ${query}`, ''];
   if (hits.length === 0) {
@@ -568,12 +486,20 @@ Suggested flow for image-led pages:
               isError: true,
             };
           }
+          // ⚠️ **下多少就报多少**（2026-08-18 修）。以前按 `count*2` 下载却只
+          // `slice(0, count)` 上报 —— 磁盘上留着一半 agent 不知道存在的文件，
+          // 而它们照样占空间、照样进导出包。多下的那批本来是为了容错（有些 URL
+          // 会 404），现在改成：**下够 count 张就停**，成功几张报几张。
           const dlCandidates = rawImages.slice(0, Math.max(count * 2, 5));
           const downloaded = await downloadReferenceImages(dlCandidates, {
-            workspaceRoot,
-            sharedRoot,
+            workspaceRoot, sharedRoot, stopAfter: count,
           });
-          downloadedImages = downloaded.slice(0, count);
+          downloadedImages = downloaded;
+          // 落盘了就发 file_changed —— generate_image 一直在发，这里漏了，
+          // 于是参考图落进工作区之后前端毫无感知（素材抽屉要刷新才看得见）
+          for (const img of downloadedImages) {
+            try { ctx?.emit?.({ type: 'run.file_changed', path: img.relPath, change: 'add' }); } catch { /* */ }
+          }
         }
 
         try {

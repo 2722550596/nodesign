@@ -16,6 +16,11 @@ export const DEFAULT_GITIGNORE = `node_modules/
 .nd/
 # generate_image 产物 — 通常很大且能从 spec.json 的 prompt 重生
 assets/generated/
+# 参考素材（web-search 下载的图 + browser_capture 从参照站带回来的）—— 同理：
+# 大、可再取、而且不是"你做出了什么"。⚠️ 2026-08-18 加这条时线上已有 8 个项目
+# 共 205 文件 / 76MB references 全被 track 进了 per-project git（.git 最大 95M）。
+# 这条只管新写入；存量要清得手动 git rm --cached（没做，列进欠账）。
+assets/references/
 # 画布布局 —— 属于"你怎么摆的"，不属于"你做出了什么"。
 # 进历史的坏处是具体的：每拖一次卡就弄脏工作区，而且 revertWorkspace
 # 会连着把画布布局一起回退（卡片弹回旧位置、清掉的死 id 复活）。

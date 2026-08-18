@@ -37,9 +37,9 @@ import {
   ensureProjectWorkspace,
   ensureSessionWorkspace,
   validateSessionId,
-  readAssetsSummary,
   getSessionMetaDir,
 } from '../projects/workspace.js';
+import { readAssetsSummary } from '../projects/assets-summary.js';
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {

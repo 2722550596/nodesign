@@ -35,7 +35,7 @@ const GRANDFATHERED = {
   // 08-15 隔离配置搬去 agent/isolation.js → 08-17 plan mode 工具闸搬去
   // agent/plan-mode-gate.js（纯策略，跟会话循环零耦合）：1184 → 1058
   'server/engine/agent/session-loop.js': 1058,
-  'server/projects/workspace.js': 1089,          // 起手模板迁去 workspace-templates.js 后
+  'server/projects/workspace.js': 1025,          // 起手模板迁去 workspace-templates.js 后
   'server/api/turn.js': 902,                     // 08-17 组装 user message 迁去 turn-compose.js 后
   'server/api/assets.js': 896,
   'server/api/exports/build-standalone.js': 980,
@@ -57,7 +57,7 @@ const GRANDFATHERED = {
   'server/lib/binary-fixup-proxy.js': 651,
   'server/engine/agent/agent-shared.js': 625,
   'server/projects/board-store.js': 640,
-  'server/engine/mcp/tools/web-search.js': 622,
+  'server/engine/mcp/tools/web-search.js': 548,
 };
 
 function sourceFiles(dir, out = []) {

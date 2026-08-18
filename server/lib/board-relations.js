@@ -18,8 +18,14 @@
 
 import { readBoard } from '../projects/board-store.js';
 import { BINDING_TYPES } from './binding-types.js';
+import { KINDS } from './kinds/index.js';
 
-const KIND_PREFIXES = ['deck:', 'site:'];
+// ⚠️ **从注册表派生，别手写**（2026-08-18 修）。这行原来写死 `['deck:','site:']`，
+// 于是 docx 上线之后 `docx:` 前缀的卡不在表里 —— **它们身上的关系线 agent 一条也
+// 看不见**（endpointMatchesRel 永远不匹配），而且错得很安静。
+// 这是「加形态时最容易漏的写死处」家族的第三处（前两处是前端 cardIdOf 和
+// BoardCanvas 的 type:'deck'，08-17 已修）。
+const KIND_PREFIXES = Object.keys(KINDS).map(id => `${id}:`);
 
 /** 端点 id → 给 agent 看的一小段描述 */
 export function describeEndpoint(end, board) {

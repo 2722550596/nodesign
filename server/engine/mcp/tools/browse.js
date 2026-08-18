@@ -31,6 +31,7 @@ import { withBrowser, peek, _limits } from '../../browse/registry.js';
 import { requestHelp } from '../../browse/handover.js';
 import { checkUrl } from '../../../lib/ssrf-guard.js';
 import { normalizeShot } from './screenshot.js';
+import { capture } from '../../browse/capture.js';
 
 const NAV_TIMEOUT = _limits.NAV_TIMEOUT_MS;
 const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
@@ -385,6 +386,96 @@ click will help; say that rather than making them try three times.`,
         ].join('\n'));
       } catch (err) {
         return asText(`browser_request_help 失败：${err.message}`, true);
+      }
+    },
+  );
+}
+
+export function makeBrowserCaptureTool({ projectId, workspaceRoot, sessionId, ctx }) {
+  return tool(
+    'browser_capture',
+    `Take something reusable off the page you are looking at and save it into the
+workspace, so it survives this conversation.
+
+The point is NOT just a screenshot. What is actually reusable from a reference
+site is usually the parts you can turn straight into code:
+
+- palette   the colours WITH their roles (page background, body text, link,
+            button) read off computed styles — the author's choices, not a
+            quantised bitmap full of nameless near-duplicates
+- fonts     family + the sizes/weights/line-heights actually in use (a family
+            name alone is not enough to copy a type system)
+- css       every rule that matched one element you name, in cascade order —
+            you can read it and re-derive the technique. Needs "selector".
+- skeleton  three counts: how many sections, how many DISTINCT section shapes,
+            how many interaction points. ⚠️ heuristic — use it as a comparison
+            against the site you are building, not as fact. This is the same
+            three numbers site-craft asks you to count when the user says a page
+            is boring; having them for a reference site turns "it feels thin"
+            into "theirs has 6 shapes, yours has 1".
+- screenshot the picture, for the things numbers cannot carry
+
+Everything lands in assets/references/web/ with a provenance sidecar (source
+URL, when, what you were looking for). It is there in the NEXT conversation too
+— that is the whole reason it goes to disk instead of just into your context.
+
+Write "lookingFor" honestly: in three days a folder of screenshots with no note
+about why they were taken is landfill.`,
+    {
+      kinds: z.array(z.enum(['screenshot', 'palette', 'fonts', 'css', 'skeleton'])).min(1)
+        .describe('What to take. Cheap ones (palette/fonts/skeleton) can all go in one call.'),
+      lookingFor: z.string().min(4).max(200)
+        .describe('Why you are taking this, in one line — e.g. "刊物式开场的版面节奏与配色".'),
+      name: z.string().max(48).optional()
+        .describe('Filename stem. Defaults to the host plus a timestamp.'),
+      selector: z.string().optional()
+        .describe('Required for "css"; also narrows "screenshot" to one component.'),
+    },
+    async ({ kinds, lookingFor, name, selector }) => {
+      try {
+        if (kinds.includes('css') && !selector) {
+          return asText('css 那一种要指一块：加上 selector（用 browser_read 先看页面上有什么）。', true);
+        }
+        return await withBrowser(projectId, async ({ page }) => {
+          const r = await capture({
+            page, workspaceRoot, kinds, name, lookingFor, selector,
+            ids: { sessionId, runId: ctx?.runId ?? null },
+            normalize: normalizeShot,
+          });
+          for (const f of r.files) {
+            try { ctx?.emit?.({ type: 'run.file_changed', path: f.rel, change: 'add' }); } catch { /* */ }
+          }
+          const lines = [`从 ${r.data.title || r.data.url} 采下来了：`];
+          for (const f of r.files) lines.push(`  ${f.rel}（${(f.bytes / 1024).toFixed(0)} KB，${f.kind}）`);
+          if (r.data.palette?.length) {
+            lines.push('', '调色板：' + r.data.palette.slice(0, 8)
+              .map(c => `${c.role}=${c.value}`).join('  '));
+          }
+          if (r.data.fonts?.length) {
+            lines.push('字体：' + r.data.fonts.map(f => `${f.role}=${f.family.split(',')[0]} ${f.size}/${f.weight}`).join('  ·  '));
+          }
+          if (r.data.skeleton) {
+            const sk = r.data.skeleton;
+            if (!sk.sectionCount) {
+              // 数不出来就说数不出来。报一个 0 会让 agent 以为"这站真的没有结构"
+              lines.push('', '结构：这一页量不出横带（可能整页是一张大图、或者内容靠 JS '
+                + '后填 —— 试 browser_navigate 带 waitUntil:"networkidle" 再采一次）。');
+            } else {
+              lines.push('', `结构（⚠️ 启发式，当对照不当真相）：${sk.sectionCount} 节 · `
+                + `**${sk.shapeKinds} 种节的形状** · ${sk.interactivePoints} 个交互点`);
+              lines.push('  拿它跟你正在做的那个站比 —— 形状种类差得多，就是"薄"的量化形态。');
+            }
+          }
+          if (r.data.css) lines.push('', `CSS：${r.data.css.length} 条命中规则已写进 json`);
+          if (r.failed?.length) {
+            lines.push('', `⚠️ 有 ${r.failed.length} 种没采到（其余的已经落盘了）：`,
+              ...r.failed.map(f => `  ${f}`));
+          }
+          lines.push('', '这些文件下个会话还在（assets/ 不随会话分桶）。');
+          return asText(lines.join('\n'));
+        });
+      } catch (err) {
+        return asText(`browser_capture 失败：${err.message}`, true);
       }
     },
   );

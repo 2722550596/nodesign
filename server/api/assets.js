@@ -23,6 +23,7 @@ import { moveEntry, MoveError } from '../projects/move-entry.js';
 import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
+import { listReferences } from '../lib/reference-assets.js';
 import { getProjectCover } from '../lib/cover.js';
 import { makeDocxPageHandler } from './assets/docx-page.js';
 import { mountNotesRoutes } from './assets/notes.js';
@@ -135,18 +136,19 @@ router.get('/:pid/assets', async (req, res, next) => {
     for (const e of entries) {
       if (!e.isFile()) continue;
       let stat;
-      try {
-        stat = await fs.stat(path.join(assetsDir, e.name));
-      } catch { continue; }   // 同上：单个文件读不到不该让整份列表失败
+      try { stat = await fs.stat(path.join(assetsDir, e.name)); } catch { continue; }
       assets.push({
-        path: `../../shared/assets/${e.name}`,
-        name: e.name,
-        size: stat.size,
-        mtime: stat.mtime.toISOString(),
+        path: `../../shared/assets/${e.name}`, name: e.name,
+        size: stat.size, mtime: stat.mtime.toISOString(),
       });
     }
     assets.sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
-    res.json({ assets });
+
+    // 参考素材单独一组，走抽屉不上画布。为什么它们此前完全看不见（以及为什么
+    // 修法是加扫描口不是改形态注册表）见 lib/reference-assets.js 文件头。
+    const references = await listReferences(assetsDir);
+
+    res.json({ assets, references });
   } catch (err) { next(err); }
 });
 

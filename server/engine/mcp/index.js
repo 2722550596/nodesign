@@ -40,7 +40,7 @@ import { makeProfileScrollTool } from './tools/profile-scroll.js';
 import { makeExplainStyleTool } from './tools/explain-style.js';
 import {
   makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool, makeBrowserScreenshotTool,
-  makeBrowserRequestHelpTool,
+  makeBrowserRequestHelpTool, makeBrowserCaptureTool,
 } from './tools/browse.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
@@ -184,6 +184,9 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       makeBrowserScreenshotTool({ projectId }),
       // 撞验证墙时举手叫人（阻塞等，默认 120 秒超时 —— 人可能就走了）
       makeBrowserRequestHelpTool({ projectId, ctx }),
+      // 采集：把可复用的东西（调色板/字体/CSS/结构骨架/截图）落进
+      // assets/references/web/ + 出处 sidecar —— 下个会话还在
+      makeBrowserCaptureTool({ projectId, workspaceRoot, sessionId, ctx }),
       makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI

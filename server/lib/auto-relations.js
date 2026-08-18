@@ -75,9 +75,13 @@ export async function reconcileAutoRefs(pid, workspaceRoot, tasks) {
   for (const t of tasks || []) {
     for (const a of t.artifacts || []) {
       // 产物身份（与 BoardCanvas 的物件 id 同一拼法）
-      const fromId = a.kind === 'deck'
-        ? `deck:${a.file}`
-        : `site:${a.single ? a.entryRel : (a.root || t.id)}`;
+      // ⚠️ 卡 id 按**形态**派生，别用「不是 deck 就是 site」的二分（2026-08-18 修）。
+      // docx 上线之后那个三元把 .docx 产物算成了 `site:` 前缀 —— id 对不上，
+      // 它的自动关系边落在一个不存在的端点上。规则跟前端 cardIdOf
+      // （web/src/lib/board-kinds.js）必须一致，两边岔开就是"同一件东西两份实现"。
+      const fromId = a.kind === 'site'
+        ? `site:${a.single ? a.entryRel : (a.root || t.id)}`
+        : `${a.kind || 'deck'}:${a.file}`;
       // 这件产物的 html 们（deck 一份；站点 = 各页，路径相对站根）
       const pages = a.kind === 'deck'
         ? [a.file]
