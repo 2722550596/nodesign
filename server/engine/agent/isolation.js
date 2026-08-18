@@ -86,8 +86,13 @@ export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRo
           npmCacheDir,
         ],
         denyWrite: ['/etc', '/usr', '/bin', '/sbin', '/private/etc'],
-        // 数据根整个盖住、再用 allowRead 给自己的工作区开天窗 —— 这样在沙盒里
-        // 连 `ls 数据根` 都只看得见自己那一个条目（08-15 实测）。
+        // 数据根整个盖住、再用 allowRead 给自己的工作区开天窗。
+        // ⚠️ 口径要准（08-18 上生产时实测纠正）：`ls 数据根` **看得见别的项目的
+        // 目录名**（沙盒里实测列出了另一个 pid），拦住的是**进去读**——
+        // `cat <别人的>/board.json` 与 `ls <别人的>/` 都空。
+        // 原注释写的"连 ls 数据根都只看得见自己那一个条目"过强，是错的；
+        // platform.js 那边的说法才对：「目录级 denyRead 拦得住 cat，拦不住 ls
+        // 看文件名 —— 文件名不是秘密，接受」。
         denyRead: [...platform.credentialBlacklist(), dataRoot],
         allowRead: [cwdRoot, npmCacheDir],
       },
