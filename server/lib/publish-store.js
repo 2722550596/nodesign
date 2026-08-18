@@ -94,10 +94,15 @@ export function removePublished(projectId, task) {
  * hash（pid+task 派生，稳定）才是唯一性的真来源；slug 只为了人在 CF 面板里认得出。
  * Pages 命名规则：小写字母数字连字符，不能头尾连字符。
  */
-export function cfProjectNameFor(projectId, task) {
-  const slug = String(task).toLowerCase()
+export function slugify(name, max = 32) {
+  return String(name ?? '').toLowerCase()
     .replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
-    .slice(0, 24);
+    .slice(0, max);
+}
+
+export function cfProjectNameFor(projectId, task) {
+  // 24 而不是 32：Pages 项目名整体还要塞得下 `nd-` 前缀和 6 位 hash
+  const slug = slugify(task, 24);
   const hash = crypto.createHash('sha1').update(`${projectId}/${task}`).digest('hex').slice(0, 6);
   return `nd-${slug ? `${slug}-` : ''}${hash}`;
 }

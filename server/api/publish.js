@@ -12,8 +12,7 @@
 
 import express from 'express';
 import { guardProject } from './_guard.js';
-import { getPublished } from '../lib/publish-store.js';
-import { publishSite, unpublishSite, validTaskName } from '../lib/site-publish.js';
+import { publishSite, unpublishSite, validTaskName, lookupPublished } from '../lib/site-publish.js';
 
 const router = express.Router();
 
@@ -22,23 +21,26 @@ const router = express.Router();
 // 所以路由双注册：无 :task 段 = 根站。
 const taskOf = (req) => (req.params.task ?? '.');
 
-router.get(['/:pid/publish', '/:pid/publish/:task'], (req, res) => {
+router.get(['/:pid/publish', '/:pid/publish/:task'], async (req, res) => {
   if (!guardProject(req, res)) return;
   const task = taskOf(req);
   if (!validTaskName(task)) return res.status(400).json({ error: 'invalid task' });
-  const site = getPublished(req.params.pid, task);
+  // lookupPublished 而不是 getPublished：key 已经收敛到站点根，但界面/老链接
+  // 传别名过来时也该认得出，否则会显示"未上线"→ 用户再点一次 → 造出第二个部署
+  const site = await lookupPublished(req.params.pid, task);
   res.json({ published: !!site, site });
 });
 
 router.post(['/:pid/publish', '/:pid/publish/:task'], async (req, res) => {
   if (!guardProject(req, res)) return;
   try {
-    const { site, warning } = await publishSite({
+    const { site, warning, certReady, root, files, entry } = await publishSite({
       projectId: req.params.pid, task: taskOf(req),
       root: typeof req.body?.root === 'string' ? req.body.root : undefined,
+      slug: typeof req.body?.slug === 'string' ? req.body.slug : undefined,
       user: req.user,
     });
-    res.json({ site, warning });
+    res.json({ site, warning, certReady, root, files, entry });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('[publish] deploy failed:', err.stderr || err.message);
