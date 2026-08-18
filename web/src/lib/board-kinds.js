@@ -141,6 +141,9 @@ export const KINDS = {
     primary: 'open',
     actions: ['add'],
     legacyBucket: 'art',
+    // 目录型实例判据（卡即文件夹）：单页（_drafts）是一个文件，其余站都是一棵树。
+    // 与服务端 kinds/site.js 的同名声明一对，调用点只问 isDirArtifact
+    directory: (o) => !o.single,
   },
 
 
@@ -157,6 +160,8 @@ export const KINDS = {
     primary: 'open',
     actions: ['add'],
     legacyBucket: 'doc',
+    // 目录型实例判据：word 文件夹带成员表；根层散放的单份 .docx 是单文件产物
+    directory: (o) => !!o.members,
   },
 
   /**
@@ -432,6 +437,15 @@ export function cardOf(o) {
 /** 真相在磁盘上吗（决定能否加入上下文 / 打开原始文件 / 按路径派生归属）。 */
 export function isFileBacked(o) {
   return kindOf(o).backing === 'file';
+}
+
+/**
+ * 目录型产物实例（卡即文件夹：目录站、word 文件夹）。判据由形态条目自己声明
+ *（`directory(o)`，与服务端 kinds/ 的同名声明成对），调用点别再写
+ * `type === 'docx' && o.members` 这种组合 —— 那是「一个事实多份算法」的病根。
+ */
+export function isDirArtifact(o) {
+  return !!kindOf(o).directory?.(o);
 }
 
 /** hover 工具条要哪几个按钮，顺序即渲染顺序。 */

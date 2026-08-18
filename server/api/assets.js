@@ -21,7 +21,7 @@ import {
 import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
 import { moveEntry, MoveError } from '../projects/move-entry.js';
 import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
-import { taskManifest, ENTRY_FILE, KIND_SITE, docxClaimedFiles } from '../lib/artifact-target.js';
+import { taskManifest, ENTRY_FILE, KIND_SITE, docxClaimedFiles, isDirArtifact } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { listReferences } from '../lib/reference-assets.js';
 import { resolveArtifactFile, isServablePath } from '../lib/artifact-file-path.js';
@@ -459,7 +459,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         for (const p of [a.root, a.srcRoot, a.file, a.entryRel]) {
           const seg = String(p || '').split('/')[0];
           if (seg && seg !== p) claimed.add(seg);       // 只有带下级路径的才算认领
-          else if (seg && a.kind !== 'deck') claimed.add(seg);
+          else if (seg && isDirArtifact(a)) claimed.add(seg);   // 顶层段整段认领：只有目录型产物有资格（判据问注册表）
         }
         // 根站（root='' srcRoot=''）：上面四个字段全切不出认领段，可它的 pages
         // 跨着子目录（'posts/chapter-1.html'）。那些子目录是站点内部结构，不是

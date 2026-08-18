@@ -9,6 +9,8 @@
  * 文字/涂鸦不在表里：它们的 w/h 是逐条存在 board.json 里的（本体即数据）。
  */
 
+import { KINDS } from './kinds/index.js';
+
 export const DECK_EMBED_W = 640;
 export const ARTIFACT_HEADER_H = 28;
 export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 400 };
@@ -22,6 +24,12 @@ export const KIND_SIZES = {
   note: { w: 200, h: 148 },
   file: { w: 224, h: 32 },
 };
+
+// 前缀表从注册表派生（「写死表家族」第 4 处，2026-08-18 收）：手写
+// `deck|site|docx` 的话加形态必漏，新形态的卡掉到 file 兜底（224×32 细条），
+// agent 摆位按错矩形算。⚠️ 新形态要同步给 ARTIFACT_PREVIEW_H 加一行
+//（两边都有 parity 测试钉着前端那份）。
+const KIND_PREFIX_RE = new RegExp(`^(${Object.keys(KINDS).join('|')}):`);
 
 const IMG_EXT = /\.(png|jpe?g|webp|gif|svg|avif)$/i;
 const VIDEO_EXT = /\.(mp4|webm|mov)$/i;
@@ -42,7 +50,7 @@ export function estimateSize(id, entry) {
   if (s === 'browse') {
     return { w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + ARTIFACT_PREVIEW_H.browse };
   }
-  const m = /^(deck|site|docx):/.exec(s);
+  const m = KIND_PREFIX_RE.exec(s);
   if (m) {
     const t = m[1];
     return { w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + ARTIFACT_PREVIEW_H[t] };

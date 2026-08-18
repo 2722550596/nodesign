@@ -13,7 +13,7 @@ import {
   EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf, passesFilter,
+  SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf, passesFilter, isDirArtifact,
 } from '../../lib/board-kinds.js';
 import { deriveBoardObjects } from '../../lib/board-objects.js';
 import BoardObject from './cards/BoardObject.jsx';
@@ -1394,7 +1394,7 @@ export default function BoardCanvas({
    */
   const artifactRoots = useMemo(() => (
     objects
-      .filter(o => o.type === 'site' || (o.type === 'docx' && o.members))   // word 文件夹也是目录型（判据 members 不是 root —— deck 卡也带 root）
+      .filter(o => isDirArtifact(o) || (o.type === 'site' && o.single))   // 单页站点不是目录，但留在覆盖表给 resolveObjectId 精确命中/伴生文件匹配
       .map(o => ({
         path: o.id.slice(o.id.indexOf(':') + 1),
         id: o.id,

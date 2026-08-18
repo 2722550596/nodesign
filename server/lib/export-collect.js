@@ -34,22 +34,14 @@ import { fileKindOfPath, fileKindDef } from './kinds/file-kinds.js';
 // 越界判据收在一处（原来这里有第二份实现，docx 页图路由抄它的形状时抄漏了 realpath）
 import { safeResolveRead as safeResolve } from './safe-path.js';
 
-/** 目录型产物（有自己的一棵树）。单页站点是例外，见 collectCard */
-const DIR_KINDS = new Set(['site']);
-/**
- * 单文件型的任务产物。
- * docx 在列是因为 .docx 本身是自包含的 zip（图片字体全在包里），收集它
- * **不需要**扫引用 —— 拿二进制去跑引用扫描器纯属浪费，还可能在压缩字节里
- * 撞出假路径。
- */
-const FILE_ARTIFACT_KINDS = new Set(['deck', 'docx']);
-
 /**
  * 卡 id → { kind, rel }。
  *
  * ⚠️ 前缀只认纯字母（`deck:` `site:`）—— 路径里本来就可能有冒号，判据必须跟
  * 前端 `stage.js` 的 `zoneOfObjectId` 和服务端 `board-store.mapId` 保持一致。
  * 没有合法前缀 = 文件卡，类型按路径推。
+ * 认哪些前缀问注册表（kindDef）—— 原来是两个手写 Set，加形态时这里必漏，
+ * 新形态的卡会被当成裸文件路径去解析（「写死表家族」第 5 处，2026-08-18 收）。
  *
  * ⚠️ 已知歧义：根层一个叫 `final:v2.png` 的文件，卡 id 就是裸路径，这里会把
  * `final` 当前缀剥掉。三处判据是**一致地**这样，改判据要三处一起改；collectCard
@@ -61,7 +53,7 @@ export function parseCardId(cardId) {
   if (c > 0 && /^[a-z]+$/.test(cardId.slice(0, c))) {
     const kind = cardId.slice(0, c);
     const rel = cardId.slice(c + 1).replace(/\\/g, '/');
-    if (DIR_KINDS.has(kind) || FILE_ARTIFACT_KINDS.has(kind)) return { kind, rel };
+    if (kindDef(kind)) return { kind, rel };
     return { kind: fileKindOfPath(rel), rel };
   }
   const rel = cardId.replace(/\\/g, '/');
@@ -133,9 +125,13 @@ export async function collectCard({ workspaceRoot, cardId }) {
   if (!stat) throw Object.assign(new Error(`产物不存在：${rel}`), { status: 404 });
 
   const files = [];
+  // 「这种形态有没有目录型」问注册表（kind 条目声明 directory）。整树打包只对
+  // browsable 的目录型成立（站点 = 一棵互相引用的树）；word 文件夹也是目录型，
+  // 但 .docx 成员各自自包含，卡级导出走下面挑主成员那条，不走树
+  const dirKind = !!kindDef(kind)?.directory;
   // 单页站点（`_drafts/试作.html` 这类）也是 site 卡，只是它是一个文件不是一棵树
-  const single = DIR_KINDS.has(kind) && stat.isFile();
-  const isTree = DIR_KINDS.has(kind) && stat.isDirectory();
+  const single = dirKind && can(kind, 'browsable') && stat.isFile();
+  const isTree = dirKind && can(kind, 'browsable') && stat.isDirectory();
 
   const deepWarn = [];
   if (isTree && !rel) {
@@ -201,8 +197,8 @@ export async function collectCard({ workspaceRoot, cardId }) {
   // 只有**标记语言**产物需要跟着引用扫下去。`browsable` 正好是这条线：能用浏览器
   // 打开 = 由 html/css 组成 = 有外部引用要带。docx 是自包含的 zip（图片字体都在
   // 包里），拿二进制去跑引用扫描器是白费力气，还可能在压缩字节里撞出假路径。
-  // 问能力不问形态名 —— 加第四种形态时这行不用动。
-  const scannable = (isTree || single || FILE_ARTIFACT_KINDS.has(kind)) && can(kind, 'browsable');
+  // 问注册表和能力，不问形态名 —— 加第四种形态时这行不用动。
+  const scannable = !!kindDef(kind) && can(kind, 'browsable');
   let refs = []; let unresolved = []; let candidates = [];
   if (scannable) {
     // ⭐**传递引用要跟着扫下去。** html 引 css、css 再引图 —— 只扫产物自身的话，

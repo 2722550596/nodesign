@@ -101,6 +101,9 @@ export default {
   injectFit: false,         // 整屏翻页脚本会把长页改造成翻页器；stripFitScripts 的启发式也会误删站点动画
   exportFormats: ['site', 'html', 'handoff'],
   referenceDoc: { file: 'site-reference', title: '站点技术参考' },
+  // 目录型实例判据（卡即文件夹）：单页（_drafts）是一个文件，其余站都是一棵树。
+  // 「这张卡是不是文件夹」全仓只问 isDirArtifact（kinds/index.js），别在调用点自判
+  directory: (a) => !a.single,
   discoverInstances,
 
   /** 任务根 / 声明的产物根 / 约定产物目录，任何一处有 index.html 都算站点 */

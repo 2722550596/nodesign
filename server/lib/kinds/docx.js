@@ -92,6 +92,10 @@ export default {
   // raw 排头：.docx 本身就是交付物，这跟 deck/site「导出是二次加工」不一样
   exportFormats: ['raw', 'pdf'],
 
+  // 目录型实例判据（卡即文件夹）：word 文件夹带成员表；根层散放的单份 .docx
+  // 是单文件产物。全仓只问 isDirArtifact（kinds/index.js），别在调用点自判
+  directory: (a) => !!a.members,
+
   /** 有 token 源、或者有现成 .docx（含用户上传的外来文档），都算 word 任务 */
   async detect(taskDir) {
     if (await exists(path.join(taskDir, SOURCE))) return true;

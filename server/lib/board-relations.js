@@ -27,6 +27,13 @@ import { KINDS } from './kinds/index.js';
 // BoardCanvas 的 type:'deck'，08-17 已修）。
 const KIND_PREFIXES = Object.keys(KINDS).map(id => `${id}:`);
 
+// 目录型形态的前缀（kind 条目声明了 directory 的那些）。2026-08-18 补修：
+// 下面 endpointMatchesRel 的收敛循环原来写死 `['site:']` —— 上面 KIND_PREFIXES
+// 修掉写死表的同一天，这半个同款病漏掉了：word 文件夹卡（docx:报告）身上的边，
+// agent 摸成员文件（报告/终稿v2.docx）时注不进 fileNeighborhood。
+const DIR_KIND_PREFIXES = Object.entries(KINDS)
+  .filter(([, def]) => def.directory).map(([id]) => `${id}:`);
+
 /** 端点 id → 给 agent 看的一小段描述 */
 export function describeEndpoint(end, board) {
   const obj = board?.objects?.[end];
@@ -94,11 +101,11 @@ export async function relationsDigest(pid, { limit = 12 } = {}) {
 export function endpointMatchesRel(end, rel) {
   if (end === rel) return true;
   for (const p of KIND_PREFIXES) if (end === p + rel) return true;
-  // 目录型产物的收敛（2026-08-14 根站病族普查补上的）：站点的边挂在
-  // **根卡**上，agent 摸的是里面的文件 —— 原来只做精确匹配，等于站点页的
+  // 目录型产物的收敛（2026-08-14 根站病族普查补上的）：站点/word 文件夹的边
+  // 挂在**根卡**上，agent 摸的是里面的文件 —— 原来只做精确匹配，等于站点页的
   // 一跳邻域从来注入不出来。按"住在这个根里"匹配；根站（root=空串）收根层
   // 散文件（.md 除外）—— 与前端 resolveObjectId 同一条规则，两边别岔开。
-  for (const p of ['site:']) {
+  for (const p of DIR_KIND_PREFIXES) {
     if (!end.startsWith(p)) continue;
     const root = end.slice(p.length);
     if (root === '') {

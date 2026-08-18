@@ -34,6 +34,12 @@ describe('endpointMatchesRel —— 端点命中', () => {
     expect(endpointMatchesRel('deck:稿件/主稿.html', '稿件/主稿.html')).toBe(true);
     expect(endpointMatchesRel('deck:稿件/主稿.html', '稿件/主稿.css')).toBe(false);
   });
+
+  it('word 文件夹也做目录收敛（08-18 补修：收敛前缀原来写死 site，成员的边注不进邻域）', () => {
+    expect(endpointMatchesRel('docx:报告', '报告/终稿v2.docx')).toBe(true);
+    expect(endpointMatchesRel('docx:报告', '报告/终稿v2.json')).toBe(true);
+    expect(endpointMatchesRel('docx:报告', '别处/文档.docx')).toBe(false);
+  });
 });
 
 describe('describeEndpoint —— 给 agent 看的端点描述', () => {

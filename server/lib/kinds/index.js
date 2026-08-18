@@ -169,9 +169,22 @@ export async function taskManifest(taskDir) {
 }
 
 /**
+ * 这份产物实例是不是**目录型**（卡即文件夹：站点的目录站、word 文件夹）。
+ *
+ * 判据由各形态自己声明（条目上的 `directory(a)`；没声明 = 这种形态没有目录型）。
+ * 收成一份之前，「这张卡是不是文件夹」全仓有四份互不相同的算法（这里的
+ * `!a.file`、前端的 type+members 组合、export-collect 的手写 Set、assets.js
+ * claimed 段的排除法）—— 一个事实多份算法，加形态时必然漏。
+ */
+export function isDirArtifact(a) {
+  return !!KINDS[a?.kind]?.directory?.(a);
+}
+
+/**
  * 路径 → 所属产物。specificity 从高到低：单文件产物（deck / 单页）精确命中 →
- * 目录站点按 root 前缀（长的优先）→ 根站（root='' 的站是整任务的兜底，源文件
- * 和构建产物都归它）。找不到返回 null（调用方自己兜底）。
+ * 目录型产物按 root 前缀（长的优先；word 文件夹的成员、token 源、散文件都在
+ * 这条上归位）→ 根站（root='' 的站是整任务的兜底，源文件和构建产物都归它）。
+ * 找不到返回 null（调用方自己兜底）。
  *
  * @param {object} manifest  taskManifest 的返回
  * @param {string} relInTask 相对任务根的路径
@@ -182,16 +195,11 @@ export function artifactOfPath(manifest, relInTask) {
   const files = manifest.artifacts.filter(a => a.file);
   const hit = files.find(a => a.file === rel);
   if (hit) return hit;
-  // word 文件夹的成员（多版本 .docx 和各自的 token 源）都归那一件产物 ——
-  // 不认的话，改 v2 的源会被寻址成「不属于任何产物的散文件」
-  const memberHit = manifest.artifacts.find(a =>
-    a.members?.some(m => m.file === rel || m.sourceFile === rel));
-  if (memberHit) return memberHit;
-  // 目录型产物（site 的目录站）。判据用「没有 file 字段」而不是写死 kind ——
-  // 注册表的意义就是别在寻址层再列一遍形态名。
   const dirs = manifest.artifacts
-    .filter(a => !a.file)
-    // 子目录站（srcRoot 非空）优先精确匹配，根站（srcRoot=''）最后兜底
+    // ⚠️ 别用 `!a.file` 当目录判据：word 文件夹的 file 合法地指着主成员
+    //（单文件消费方不用学 members），那样判会把它整个漏掉
+    .filter(isDirArtifact)
+    // 子目录（srcRoot 非空）优先精确匹配，根站（srcRoot=''）最后兜底
     .sort((a, b) => (b.srcRoot?.length || 0) - (a.srcRoot?.length || 0));
   for (const a of dirs) {
     if (!a.srcRoot) return a;   // 根站兜底整任务（源和构建产物都归它，root='dist' 也一样）

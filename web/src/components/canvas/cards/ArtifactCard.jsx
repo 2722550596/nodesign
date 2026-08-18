@@ -44,6 +44,39 @@ import LiveFrame from '../LiveFrame.jsx';
  *   2. 镜头拉太远就不挂（`scale < 0.35` 时预览什么都看不清，纯浪费）
  */
 
+/** 失败占位共用的那张"纸"（内容各家自定，见 ServedImagePreview） */
+const fallbackBox = (box) => ({
+  width: box.w, height: box.h, display: 'flex', alignItems: 'center', justifyContent: 'center',
+  background: PAPER.paper, color: COLOR.sub, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+  textAlign: 'center', padding: GAP.md, boxSizing: 'border-box', lineHeight: 1.7,
+});
+
+/**
+ * docx / browse 共用的预览：**服务端出的一张图** + 失败占位。
+ *
+ * deck / site 是 iframe 活页面那半（LiveFrame）；这半是"图 + 兜底"——
+ * 两张卡原来逐行抄同一段（lazy / onError / objectFit 全一样），只差 URL 和
+ * 占位内容。失败换占位而不是裂图：别把浏览器的错误图标端给用户。
+ */
+function ServedImagePreview({ src, box, initialFailed = false, fallback }) {
+  const [failed, setFailed] = useState(initialFailed);
+  if (failed) return fallback;
+  return (
+    <img
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      src={src}
+      style={{
+        width: box.w, height: box.h,
+        objectFit: 'cover', objectPosition: 'top center',
+        border: 0, display: 'block', background: '#fff',
+        pointerEvents: 'none',
+      }}
+    />
+  );
+}
+
 /** 三张脸：图标 / 一行小字 / 预览内容。骨架之外的差异**只有这三样**。 */
 export const ARTIFACT_FACES = {
   deck: {
@@ -117,44 +150,24 @@ export const ARTIFACT_FACES = {
       if (o.members?.length > 1) return `文档 · ${o.members.length} 份 · 窗里切换`;
       return o.sourceFile ? '文档 · 可改源重建' : '文档 · 外来文件';
     },
-    Preview: ({ o, projectId, fileVersions, box }) => {
-      // ⚠️ 必然会 404 的一种正常态：kinds/docx.js 在 agent 刚写完 token 源、
-      // 还没 build 的窗口期就报一份 pending 产物。没有 onError 的话，那几秒里
-      // 卡上是浏览器的**裂图标**（deck/site 没这问题只是因为 iframe 加载失败
-      // 长得像空白）。失败就换成一句话，别把浏览器的错误图标端给用户。
-      const [failed, setFailed] = useState(false);
-      const rel = o.deckFile;
-      if (failed) {
-        return (
-          <div style={{
-            width: box.w, height: box.h, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: PAPER.paper, color: COLOR.sub, fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
-            textAlign: 'center', padding: GAP.md, boxSizing: 'border-box', lineHeight: 1.7,
-          }}>
+    // ⚠️ 必然会 404 的一种正常态：kinds/docx.js 在 agent 刚写完 token 源、
+    // 还没 build 的窗口期就报一份 pending 产物 —— 那几秒里失败占位顶上
+    Preview: ({ o, projectId, fileVersions, box }) => (
+      <ServedImagePreview
+        box={box}
+        src={Assets.docxPageUrl(projectId, o.deckFile, 1, {
+          w: Math.round(box.w * 2),                     // 2x 出图，缩略图不糊
+          v: versionOfFile(fileVersions, o.deckFile),
+        })}
+        fallback={(
+          <div style={fallbackBox(box)}>
             还没构建出来
             <br />
             （改完 token 源要 build 一次）
           </div>
-        );
-      }
-      return (
-        <img
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-          src={Assets.docxPageUrl(projectId, rel, 1, {
-            w: Math.round(box.w * 2),                     // 2x 出图，缩略图不糊
-            v: versionOfFile(fileVersions, rel),
-          })}
-          style={{
-            width: box.w, height: box.h,
-            objectFit: 'cover', objectPosition: 'top center',
-            border: 0, display: 'block', background: '#fff',
-            pointerEvents: 'none',
-          }}
-        />
-      );
-    },
+        )}
+      />
+    ),
   },
 
   /**
@@ -183,40 +196,22 @@ export const ARTIFACT_FACES = {
       if (!o.url) return `采集${got}`;
       return `${o.live ? '在跑' : '已休息'} · ${o.host}${t ? ` · ${t}` : ''}${got}`;
     },
-    Preview: ({ o, projectId, box }) => {
-      const [failed, setFailed] = useState(!o.hasPreview);
-      if (failed) {
-        return (
-          <div style={{
-            width: box.w, height: box.h, display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center', gap: GAP.sm,
-            background: PAPER.paper, color: COLOR.sub, fontFamily: FONT_SANS,
-            fontSize: FONT_SIZE.xs, textAlign: 'center', padding: GAP.md,
-            boxSizing: 'border-box', lineHeight: 1.7,
-          }}>
+    Preview: ({ o, projectId, box }) => (
+      <ServedImagePreview
+        box={box}
+        initialFailed={!o.hasPreview}
+        // ⚠️ 地址里带上 `at`：预览是 no-store 的，但 React 不会因为同一个 src
+        // 重新拉 —— agent 翻了页、`at` 变了，这里才换图
+        src={Assets.browsePreviewUrl(projectId, o.at)}
+        fallback={(
+          <div style={{ ...fallbackBox(box), flexDirection: 'column', gap: GAP.sm }}>
             <Compass size={18} style={{ opacity: 0.4 }} />
             <span style={{ fontFamily: FONT_MONO, color: COLOR.text2 }}>{o.host}</span>
             <span>还没有画面 —— 双击进去看</span>
           </div>
-        );
-      }
-      return (
-        <img
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-          // ⚠️ 地址里带上 `at`：预览是 no-store 的，但 React 不会因为同一个 src
-          // 重新拉 —— agent 翻了页、`at` 变了，这里才换图
-          src={Assets.browsePreviewUrl(projectId, o.at)}
-          style={{
-            width: box.w, height: box.h,
-            objectFit: 'cover', objectPosition: 'top center',
-            border: 0, display: 'block', background: '#fff',
-            pointerEvents: 'none',
-          }}
-        />
-      );
-    },
+        )}
+      />
+    ),
   },
 
 };
