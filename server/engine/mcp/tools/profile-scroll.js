@@ -23,7 +23,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, requireBrowsable } from '../../../lib/artifact-target.js';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from './helpers/perception-page.js';
+import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
 
 const DEVICE_W = { desktop: 1440, tablet: 834, mobile: 390 };
 const DEVICE_H = { desktop: 900, tablet: 1112, mobile: 844 };
@@ -198,8 +198,7 @@ raw percentage to the user as if it were their experience.`,
 
       let browser;
       try {
-        const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+        browser = await launchPerceptionBrowser();
         const opened = await openArtifactPage(browser, {
           projectId, workspaceRoot, absPath: target.absPath, viewport,
         });

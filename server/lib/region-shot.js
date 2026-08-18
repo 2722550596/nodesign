@@ -12,7 +12,7 @@
  */
 
 import path from 'node:path';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from '../engine/mcp/tools/helpers/perception-page.js';
+import { openArtifactPage, launchPerceptionBrowser, degradedNote } from '../engine/mcp/tools/helpers/perception-page.js';
 import fs from 'node:fs/promises';
 
 /** 圈外多留这么多像素当上下文 */
@@ -40,10 +40,9 @@ function serialize(fn) {
  */
 export async function renderRegionShot({ absPath, region, viewport, projectId, workspaceRoot }) {
   return serialize(async () => {
-    const { chromium } = await import('playwright');
     let browser;
     try {
-      browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+      browser = await launchPerceptionBrowser();
       // 圈选截的是**用户圈的那一块**，所以更要跟用户看到的同源：file:// 下
       // fetch 回来的内容不会出现在图里，agent 会以为用户圈了一块空白。
       const opened = await openArtifactPage(browser, {

@@ -95,7 +95,10 @@ async function launchBrowseBrowser(projectId) {
     channel: 'chromium',            // ⭐ 不是默认的 headless_shell，见 chromeUa 的注释
     headless: true,
     proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: '' },
-    args: FIDELITY_LAUNCH_ARGS,
+    // ⭐ WebRTC 是代理**看不见**的那条路：它走 UDP，不经 HTTP 代理，能被用来
+    // 探内网存活（STUN 打内网地址）。看设计参考完全不需要 WebRTC，所以直接
+    // 掐掉非代理 UDP —— 这是 Chromium 官方给的那个开关，不是我们发明的。
+    args: [...FIDELITY_LAUNCH_ARGS, '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
     viewport: VIEWPORT,
     locale: 'zh-CN',                // 面向中文用户；顺带摆脱默认的 en-US@posix 那种怪指纹
     timezoneId: 'Asia/Shanghai',

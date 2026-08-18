@@ -36,7 +36,7 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
 import { can } from '../../../lib/kinds/index.js';
 import { screenshotDocx } from './screenshot-docx.js';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
+import { openArtifactPage, launchPerceptionBrowser, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -394,7 +394,7 @@ Do NOT use this tool when:
       try {
         // 动态 import：playwright 启动慢，模块顶部 import 会拖累其他工具
         const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+        browser = await launchPerceptionBrowser();
         // 位图缩放（2026-07-28 上下文瘦身）：布局仍按 deck 逻辑尺寸排（1920 宽），
         // 但光栅按 RASTER_SCALE 出图。vision token 按像素算（≈ w*h/750），
         // 1920×1080 一张 ≈1.85k tokens，0.6 倍后 ≈1.0k，排版检查完全够看。

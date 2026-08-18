@@ -55,7 +55,13 @@ export const PERCEPTION_ORIGIN = `http://127.0.0.1:${PORT}`;
 
 /**
  * 开一个「保真」chromium。凡是要把页面变成给人或给模型看的像素的地方都走这里 ——
- * 参数散在九个调用点上时，有三个是漏的（2026-08-18 逐处对账才发现）。
+ * 参数散在九个调用点上时，有三个是漏的（2026-08-18 逐处对账才发现，当天收敛完）。
+ *
+ * ⚠️ **有两处故意不走这里**，别顺手也"收敛"掉：
+ *   `screenshot-url.js` 和 `engine/browse/registry.js`。它们打的是**外部 URL**，
+ *   必须挂 `--proxy-server` 走出网闸（lib/browse-proxy.js）；而这个函数开的浏览器
+ *   专门打 `127.0.0.1:4001` 上我们自己的产物 —— 那正是出网闸要拦的地址。
+ *   两条通道的**安全前提相反**，共用一个 launch 只会让其中一条失守或不通。
  */
 export async function launchPerceptionBrowser() {
   const { chromium } = await import('playwright');

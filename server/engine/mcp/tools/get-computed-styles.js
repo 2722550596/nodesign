@@ -16,7 +16,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS, degradedNote } from './helpers/perception-page.js';
+import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
@@ -99,8 +99,7 @@ Returns up to 30 elements.`,
 
       let browser;
       try {
-        const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+        browser = await launchPerceptionBrowser();
         // 走 http（与用户预览同源），不再 file://；理由见 helpers/perception-page.js
         const opened = await openArtifactPage(browser, {
           projectId, workspaceRoot, absPath: canvasPath,

@@ -23,8 +23,9 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { taskManifest, can } from './kinds/index.js';
+import { resolveArtifactFile } from './artifact-file-path.js';
 import { resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
-import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from '../engine/mcp/tools/helpers/perception-page.js';
+import { openArtifactPage, launchPerceptionBrowser } from '../engine/mcp/tools/helpers/perception-page.js';
 
 const SITE_VIEWPORT = { width: 1440, height: 900 };
 const OUT_WIDTH = 800;          // 出图宽度（卡片最宽也就 ~400 CSS px，2x 足够）
@@ -89,7 +90,6 @@ export async function pickCoverArtifact(sharedDir) {
  *   缩略图，没有 agent 会被误导，宁可退化也别让首页卡片开天窗。
  */
 export async function renderCoverShot(cover, pctx = {}) {
-  const { chromium } = await import('playwright');
   const html = await fs.readFile(cover.absPath, 'utf8').catch(() => '');
   const viewport = cover.kind === 'deck'
     ? (() => { const d = resolveDeckSize(extractDeckAspect(html)); return { width: d.width, height: d.height }; })()
@@ -97,7 +97,7 @@ export async function renderCoverShot(cover, pctx = {}) {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+    browser = await launchPerceptionBrowser();
     const opened = await openArtifactPage(browser, {
       projectId: pctx.projectId, workspaceRoot: pctx.workspaceRoot,
       absPath: cover.absPath, viewport, deviceScaleFactor: 1, timeout: 20_000,
@@ -148,12 +148,15 @@ export async function renderCoverShot(cover, pctx = {}) {
  *   扁平化之前的 `tasks/<任务>/<入口>`，前两段剥掉就是现在的位置。
  */
 export async function resolveCoverTarget(sharedDir, relPath) {
-  const rel = String(relPath || '').replace(/\\/g, '/').replace(/^tasks\/[^/]+\//, '');
-  const parts = rel.split('/');
-  if (!parts.length || parts.includes('..') || parts.some(p => !p || p.startsWith('.'))) return null;
+  // ⛔ 这里原来无条件剥掉 `tasks/<名>/` 前缀（跟 artifact-file 路由犯过同一个错，
+  // 那是**第三份**同样的判据）。而橱窗存的 artifact_rel 恰恰就是那个形状 ——
+  // 线上两条橱窗条目实测：文件真的在 `shared/tasks/伊蕾娜手账研究站/index.html`，
+  // 剥完变成 `shared/index.html`（不存在）→ 返 null → 封面接口 204 → **橱窗无图**。
+  // 收敛到 lib/artifact-file-path.js 那一份：先看原路径在不在，在就别动它。
+  const resolved = await resolveArtifactFile(sharedDir, String(relPath || '').replace(/\\/g, '/'));
+  if (!resolved.ok) return null;
+  const { absPath, subPath: rel } = resolved;
   const taskDir = sharedDir;
-  const absPath = path.join(sharedDir, ...parts);
-  if (!absPath.startsWith(path.resolve(sharedDir) + path.sep)) return null;
   let fileMtime = 0;
   try {
     fileMtime = (await fs.stat(absPath)).mtimeMs;
