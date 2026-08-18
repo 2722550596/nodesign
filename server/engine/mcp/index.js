@@ -38,6 +38,9 @@ import { makeListPagesTool } from './tools/list-pages.js';
 import { makeQueryElementsTool } from './tools/query-elements.js';
 import { makeProfileScrollTool } from './tools/profile-scroll.js';
 import { makeExplainStyleTool } from './tools/explain-style.js';
+import {
+  makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool, makeBrowserScreenshotTool,
+} from './tools/browse.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
@@ -168,6 +171,16 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // explain_style — CSS 级联诊断（2026-08-18）。computed 只给结果不给原因，
       // 而 agent 手里没有 devtools 的 Styles 面板。同样走 deferred。
       makeExplainStyleTool({ workspaceRoot, projectId, sessionId }),
+
+      // ── 浏览通道（2026-08-18）：agent 真的会用浏览器 ──
+      // 常驻一个 chromium（按项目键、带持久 profile），所以能点链接、翻子页、
+      // 留住登录态。跟 screenshot_url 的分工：那个是一次性一张图，这组是有会话的逛。
+      // ⭐ 每个请求都过 lib/ssrf-guard.js 的出网闸（含跳转每一跳、iframe、子资源），
+      // 闸在工具实现体里，agent 关不掉。全部走 deferred（用得上时自然搜到）。
+      makeBrowserNavigateTool({ projectId }),
+      makeBrowserReadTool({ projectId }),
+      makeBrowserClickTool({ projectId }),
+      makeBrowserScreenshotTool({ projectId }),
       makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI
