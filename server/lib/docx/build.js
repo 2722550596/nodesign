@@ -15,6 +15,7 @@
 import { elem, textNode, serializeNode } from './xml.js';
 import { sortChildren } from './order.js';
 import { ptToHalf, ptToTwip, sizePt as toPt, PAGE_SIZES } from './units.js';
+import { buildNumberingXml, numIdsFor } from './numbering.js';
 
 const W = 'xmlns:w';
 const NS_W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -128,7 +129,13 @@ function paraProps(para, ctx = { sizePt: 12 }) {
   if (para.pageBreakBefore) kids.push(elem('w:pageBreakBefore'));
   if (para.widowControl != null) kids.push(flag('w:widowControl', para.widowControl));
   if (para.list) {
-    kids.push(elem('w:numPr', [], [val('w:ilvl', para.list.ilvl ?? 0), val('w:numId', para.list.numId)]));
+    // agent 按**名字**引用编号（`list: {name:'条款', ilvl:1}` 或简写 `list:'条款'`），
+    // numId 是 OOXML 的实现细节，这里现算。名字对不上是 token 校验的活，
+    // 到这儿只可能是内部不一致，宁可产一个显式错误也别产一个悬空 numId。
+    const spec = typeof para.list === 'string' ? { name: para.list } : para.list;
+    const numId = ctx.numIds?.get(spec.name);
+    if (numId == null) throw new Error(`para.list: 没有名为 '${spec.name}' 的编号定义`);
+    kids.push(elem('w:numPr', [], [val('w:ilvl', spec.ilvl ?? 0), val('w:numId', numId)]));
   }
   if (para.borders) {
     const sides = [];
@@ -211,7 +218,7 @@ export function buildStylesXml(tokens) {
     if (st.link) kids.push(val('w:link', st.link));
     if (st.uiPriority != null) kids.push(val('w:uiPriority', st.uiPriority));
     if (st.qFormat) kids.push(elem('w:qFormat'));
-    const pKids = paraProps(st.para, { sizePt: effectiveSizePt(tokens, id) });
+    const pKids = paraProps(st.para, { sizePt: effectiveSizePt(tokens, id), numIds: numIdsFor(tokens) });
     if (pKids.length) kids.push(sortChildren(elem('w:pPr', [], pKids)));
     const rPr = buildRPr(tokens, st.run, { forStyle: true });
     if (rPr) kids.push(rPr);
@@ -255,7 +262,7 @@ export function buildPara(tokens, block) {
   const propKids = [];
   if (block.style) propKids.push(val('w:pStyle', block.style));
   const firstRun = (block.runs ?? []).find((r) => typeof r === 'object' && r.sizePt != null);
-  const ctx = { sizePt: effectiveSizePt(tokens, block.style, block.sizePt ?? firstRun?.sizePt) };
+  const ctx = { sizePt: effectiveSizePt(tokens, block.style, block.sizePt ?? firstRun?.sizePt), numIds: numIdsFor(tokens) };
   propKids.push(...paraProps(block, ctx));   // 直接格式（block 上的 align/indent/... 覆盖）
   if (propKids.length) pKids.push(sortChildren(elem('w:pPr', [], propKids)));
   const runs = block.runs ?? (block.text != null ? [block.text] : []);
@@ -356,6 +363,7 @@ const T_STY = 'application/vnd.openxmlformats-officedocument.wordprocessingml.st
 const T_SET = 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml';
 const T_HDR = 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml';
 const T_FTR = 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml';
+const T_NUM = 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml';
 const R_BASE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
 export function buildSettingsXml(tokens) {
@@ -395,6 +403,15 @@ export async function buildDocx(tokens, content, opts = {}) {
   ];
   const rels = {};
   let nextId = 3;
+  // 自动编号（2026-08-18）：有定义才产这个 part。空的 numbering.xml 是合法的但
+  // 毫无意义，而 Word 对"声明了 rel 却没有 part"是硬报错，所以三处登记要么全有
+  // 要么全没有 —— 这就是为什么它们挤在一个 if 里而不是散在三处。
+  const numberingXml = buildNumberingXml(tokens.numbering);
+  if (numberingXml) {
+    docRels.push([`rId${nextId}`, `${R_BASE}/numbering`, 'numbering.xml']);
+    overrides.push(['/word/numbering.xml', T_NUM]);
+    nextId += 1;
+  }
   if (opts.header) {
     rels.header = `rId${nextId}`;
     docRels.push([`rId${nextId}`, `${R_BASE}/header`, 'header1.xml']);
@@ -413,6 +430,7 @@ export async function buildDocx(tokens, content, opts = {}) {
     ['rId1', `${R_BASE}/officeDocument`, 'word/document.xml'],
   ]));
   addEntry(zip, 'word/_rels/document.xml.rels', REL(docRels));
+  if (numberingXml) addEntry(zip, 'word/numbering.xml', numberingXml);
   addEntry(zip, 'word/styles.xml', buildStylesXml(tokens));
   addEntry(zip, 'word/settings.xml', buildSettingsXml(tokens));
   if (opts.header) addEntry(zip, 'word/header1.xml', buildHdrFtr(tokens, 'w:hdr', opts.header));

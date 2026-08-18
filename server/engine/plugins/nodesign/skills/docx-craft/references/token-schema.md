@@ -271,15 +271,74 @@
 
 ## 引擎当前做不到的（诚实边界）
 
-- **自动编号列表**（`1. 2. 3.` 那种真编号）：`numbering` 字段在 schema 注释里
-  出现过，但**引擎不生成 `numbering.xml`**，`para.list` 写上去会产出一个指向
-  空处的 numId。现在要做列表，用**带悬挂缩进的段落风格 + 手打编号**，并且
-  告诉用户这一版的编号是文本不是域
+- ~~自动编号~~ **已支持**（2026-08-18），见下面的 numbering 一节
 - **自动目录**：可以用 `fld` 插 TOC 域，但内容要用户在 Word 里按 F9 更新域
   才会生成；我们的渲染预览里它显示的是占位文案
 - **图片**：还没接
 - **编辑外来 .docx**：还没做。外来文档几乎不用命名样式（全是直排格式），
   重建 styles.xml 对它们不起作用
+
+---
+
+## tokens.numbering —— 自动编号
+
+```jsonc
+"numbering": {
+  "条款": "公文条款",        // 用内置梯队（推荐）
+  "要点": "圈码",
+  "自定义": { "levels": [    // 或者自己写
+    { "fmt": "ideographTraditional", "text": "%1、", "firstLine": 2, "suff": "nothing" }
+  ] }
+}
+```
+
+段落上引用（**按名字，不按数字** —— numId 是 OOXML 的实现细节，引擎替你算）：
+
+```jsonc
+{ "t": "p", "style": "Normal", "list": { "name": "条款", "ilvl": 0 }, "text": "总体要求" }
+{ "t": "p", "style": "Normal", "list": "要点", "text": "单层可以简写" }
+```
+
+⚠️ 引用一个没定义过的名字会**直接报错**（以前会产出一个指向空处的 numId，Word
+打开可能报文档损坏）。
+
+### 四个内置梯队
+
+| 名字 | 形状 | 缩进形态 |
+|---|---|---|
+| `公文条款` | 一、→（一）→ 1. →（1） | 首行缩进两字、文字紧跟编号、**折行顶格** |
+| `数字条款` | 1. → 1.1 → 1.1.1 | **悬挂缩进**，折行对齐到文字起点 |
+| `圈码` | ①②③ | 悬挂一字，编号后无间隔 |
+| `项目符号` | ●→○→▪ | 悬挂 |
+
+⭐ **两种缩进形态的差别决定折行去哪儿**，这不是审美问题：中文公文的层级标题
+折行要**回到左边距**（顶格），技术文档的 `1.1.1` 折行要**对齐到文字起点**（整块
+看起来是对齐的）。选错了整篇文档的观感就不对。
+
+### 自己写一级的全部键
+
+| 键 | 值 |
+|---|---|
+| `fmt` | 编号格式，见下表 |
+| `text` | 编号长什么样。`%N` 是第 N 级的当前值 —— `"%1、"` 出「一、」，`"%1.%2"` 出「1.1」。**非 bullet 的必须含 `%N`**，否则编号值根本不出现（引擎会拦） |
+| `indent` | 左缩进，单位**字**（不是磅不是英寸） |
+| `hanging` | 悬挂量，单位字 |
+| `firstLine` | 首行缩进，单位字。**跟 `hanging` 二选一** —— 给了它就是首行缩进形态 |
+| `indentTwip` / `hangingTwip` / `firstLineTwip` | 同上但直接给 twip（要精确控制时用） |
+| `start` | 起始值，默认 1 |
+| `align` | `left`（默认）/ `center` / `right` |
+| `suff` | 编号和文字之间放什么：`tab`（默认）/ `space` / `nothing`。⭐ **中文编号自带全角标点（一、/（一）/①），一律用 `nothing`** —— 默认的 tab 会跳到下一个制表位，「一、」后面会空出一大截 |
+
+### 支持的 fmt
+
+`decimal` 1 2 3 · `chineseCounting` 一 二 三 · `chineseCountingThousand` ·
+`ideographDigital` 一 二 三 · `ideographTraditional` 甲 乙 丙 ·
+`decimalEnclosedCircle` ①②③ · `decimalEnclosedParen` ⑴⑵⑶ ·
+`decimalEnclosedFullstop` ⒈⒉⒊ · `lowerLetter` / `upperLetter` /
+`lowerRoman` / `upperRoman` · `bullet` · `none`
+
+列外的写上去会被拒 —— ISO 29500 里有六十多个格式，全放开只会让人写出 Word
+显示不出来的东西。
 
 ---
 
@@ -289,7 +348,7 @@
 |---|---|---|
 | `"para": { "border": {...} }` | `unknown key border` | 键是**复数** `borders` |
 | `"run": { "font": "宋体" }` | `no such font slot '宋体'` | `font` 填**槽名**；槽要先在 `fonts` 里注册 |
-| `"styles": { "X": { "numbering": ... } }` | `unknown key numbering` | 引擎不支持自动编号，见上面的诚实边界 |
+| `"styles": { "X": { "numbering": ... } }` | `unknown key numbering` | `numbering` 是**顶层**键，风格里用的是 `para.list` |
 | 块上写 `"para": { "align": ... }` | **不报错，也不生效** | 平铺：`{ "t": "p", "align": ... }` |
 | `"lineRule": "auto"` | 被拒 | `multiple` / `exact` / `atLeast` |
 | `"color": "#CC0000"` | 颜色不对 | 不带 `#`：`"CC0000"` |

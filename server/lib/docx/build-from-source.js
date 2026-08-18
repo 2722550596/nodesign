@@ -67,8 +67,17 @@ const P_BLOCK_KEYS = new Set(['t', 'style', 'text', 'runs', 'sizePt', 'list', ..
 const RUN_OBJ_KEYS = new Set(['text', 'br', 'fld', ...RUN_KEYS]);
 const TABLE_BLOCK_KEYS = new Set(['t', 'widthsTwip', 'rows']);
 
-function validateContent(content) {
+function validateContent(content, numbering) {
   const errs = [];
+  const numNames = new Set(Object.keys(numbering ?? {}));
+  const checkList = (list, where) => {
+    if (!list) return;
+    const name = typeof list === 'string' ? list : list.name;
+    if (!name || !numNames.has(name)) {
+      errs.push(`${where}.list: 没有名为 '${name ?? '(未写 name)'}' 的编号定义`
+        + (numNames.size ? `，现有：${[...numNames].join(' / ')}` : '（tokens.numbering 是空的，先定义再引用）'));
+    }
+  };
   const hint = (k) => (k === 'para'
     ? '：块级直接格式是**平铺**在块上的，没有 para 包层 —— 写 {"t":"p","align":"center"}，不是 {"para":{"align":"center"}}'
     : (k === 'border' ? '：键名是复数 borders' : ''));
@@ -77,6 +86,7 @@ function validateContent(content) {
     for (const k of Object.keys(b)) {
       if (!P_BLOCK_KEYS.has(k)) errs.push(`${where}: unknown key ${k}${hint(k)}`);
     }
+    checkList(b.list, where);
     for (const [i, r] of (b.runs ?? []).entries()) {
       if (typeof r === 'string') continue;
       if (!r || typeof r !== 'object') { errs.push(`${where}.runs[${i}]: 只能是字符串或对象`); continue; }
@@ -111,6 +121,22 @@ export function resolveSource(rawSrc) {
     throw new DocxSourceError('源文件不是一个 JSON 对象');
   }
   const src = stripNotes(rawSrc);
+
+  // 顶层也要闭合（2026-08-18）。以前这里只读认识的几个键，**别的一律静默忽略**
+  // —— 这就是"写了没生效"那个病在最外面一层的版本。写这段注释时我自己刚踩到：
+  // 把 numbering 放在源文件顶层（它其实住在 tokens 里），如果没有这道闸，
+  // 那份编号定义会被安静地丢掉，然后 agent 对着一份没有编号的文档发愁。
+  const SRC_KEYS = new Set(['v', 'preset', 'tokens', 'content', 'header', 'footer']);
+  const strayTop = Object.keys(src).filter(k => !SRC_KEYS.has(k));
+  if (strayTop.length) {
+    throw new DocxSourceError(
+      `源文件顶层有认不出的键：${strayTop.join(', ')}`,
+      `顶层只有这几个：${[...SRC_KEYS].join(' / ')}。`
+      + '排版相关的字段（fonts / base / styles / numbering / page / lang）都住在 tokens 里面，'
+      + '不在顶层。字段全集见 references/token-schema.md。',
+    );
+  }
+
   let tokens;
   if (src.preset) {
     const make = PRESETS[src.preset];
@@ -137,7 +163,7 @@ export function resolveSource(rawSrc) {
   }
   // 早点把块类型的错说清楚 —— 让它掉进 buildBody 里报 `unknown block: undefined`
   // 对 agent 是没有信息量的
-  const blockErrs = validateContent(content);
+  const blockErrs = validateContent(content, tokens.numbering);
   if (blockErrs.length) {
     throw new DocxSourceError('content 里有认不出的字段', blockErrs.join('\n'));
   }

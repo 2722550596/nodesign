@@ -61,6 +61,7 @@
  */
 
 import { ZIHAO } from './units.js';
+import { validateNumbering } from './numbering.js';
 
 /** 词典条目一：办公标准（素颜 Word）——中文 Word 默认观感 */
 export function presetOffice() {
@@ -252,7 +253,7 @@ export const STYLE_KEYS = new Set(['type', 'name', 'basedOn', 'next', 'link', 'q
 export const RUN_KEYS = new Set(['font', 'sizePt', 'bold', 'italic', 'color', 'underline', 'strike', 'caps',
   'smallCaps', 'vertAlign', 'em', 'kernPt', 'spacingTwip', 'highlight']);
 export const PARA_KEYS = new Set(['align', 'outlineLevel', 'indent', 'spacing', 'keepNext', 'keepLines',
-  'pageBreakBefore', 'widowControl', 'contextualSpacing', 'borders', 'shading', 'tabs', 'cjk']);
+  'pageBreakBefore', 'widowControl', 'contextualSpacing', 'borders', 'shading', 'tabs', 'cjk', 'list']);
 
 /**
  * 行距规则的合法值。
@@ -296,5 +297,20 @@ export function validateTokens(tok) {
   }
   if (badSize(tok.base?.sizePt)) errs.push(`base.sizePt: unknown 字号 ${tok.base.sizePt}`);
   checkSpacing('base', tok.base?.spacing);
+  // 自动编号（2026-08-18）：定义本身的校验在 numbering.js，这里再钉一条**引用完整性**
+  // —— 引用一个不存在的编号名以前会产出悬空 numId（Word 打开可能直接报文档损坏），
+  // 这正是"闭合 schema 只查键名不查值"那类漏的延续。
+  errs.push(...validateNumbering(tok.numbering));
+  const numNames = new Set(Object.keys(tok.numbering ?? {}));
+  const checkList = (where, list) => {
+    if (!list) return;
+    const name = typeof list === 'string' ? list : list.name;
+    if (!name) errs.push(`${where}.list: 要写 { name: '编号名', ilvl?: N } 或直接写编号名`);
+    else if (!numNames.has(name)) {
+      errs.push(`${where}.list: 没有名为 '${name}' 的编号定义`
+        + (numNames.size ? `，现有：${[...numNames].join(' / ')}` : '（tokens.numbering 是空的）'));
+    }
+  };
+  for (const [id, st] of Object.entries(tok.styles ?? {})) checkList(`styles.${id}.para`, st.para?.list);
   return errs;
 }

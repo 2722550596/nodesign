@@ -11,6 +11,9 @@
 
   "_tokens说明": "在 preset 之上覆写。schema 是闭合的：写了没登记过的字段名会直接报错，因为「写了没生效」比「没写」更坏。",
   "tokens": {
+    "_numbering说明": "自动编号：起个名字挂一个内置梯队（公文条款 / 数字条款 / 圈码 / 项目符号），段落上写 list 引用它。⭐ 别手打 1. 2. —— 用户插一条就断号。梯队形状与自定义写法见 references/token-schema.md。",
+    "numbering": { "条款": "公文条款", "要点": "圈码" },
+
     "page": {
       "size": "A4",
       "_marginsTwip说明": "1 厘米 = 567 twip。这里是上下 2.54cm、左右 3.17cm（Word 默认）",
@@ -60,7 +63,11 @@
       { "text": "这几个字是粗的", "bold": true },
       { "text": "，这几个字换了楷体", "font": "标题" },
       { "text": "。中文不要用斜体，Word 的中文斜体是把字硬拉斜，很难看——强调改用加粗、换字体或着重号。" }
-    ] }
+    ] },
+    { "t": "p", "style": "Normal", "text": "自动编号长这样（改 list 的 name 换梯队）：" },
+    { "t": "p", "style": "Normal", "list": { "name": "条款", "ilvl": 0 }, "text": "第一层用的是「公文条款」梯队" },
+    { "t": "p", "style": "Normal", "list": { "name": "条款", "ilvl": 1 }, "text": "第二层会自己变成（一）（二）" },
+    { "t": "p", "style": "Normal", "list": "要点", "text": "单层梯队可以直接写名字" }
   ],
 
   "_块级格式说明": "块上的直接格式**平铺**在块上（align / indent / spacing …），没有 para 包层——写成 \"para\": {…} 不报错但一点效果都没有。字段全集见 references/token-schema.md。",
