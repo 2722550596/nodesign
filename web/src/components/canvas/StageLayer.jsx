@@ -172,7 +172,7 @@ export function useStageState({
       case 'run.deck_preview': {
         // preview_deck 工具：agent 把 deck 摊到用户眼前（= 用户双击那张卡）
         const oid = evt.path ? resolveObjectId(evt.path, artifactRoots) : null;
-        if (oid) onPreviewRequest?.(oid);
+        if (oid) onPreviewRequest?.(oid, evt.path);   // 带路径：整站卡 id 丢掉了页信息
         break;
       }
       case 'run.delta.tool_result': {

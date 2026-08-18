@@ -76,9 +76,16 @@ see the render, this one is for **the user**.`,
             const site = (manifest?.artifacts || []).find(a => a.kind === 'site' && !a.single
               && (a.root ? p.startsWith(`${a.root}/`) : true));
             if (site && p !== (site.entryRel || 'index.html')) {
-              siteNote = `注意：${p} 属于站点「${site.root || '工作区根'}」，`
-                + `站点是整站一扇窗，用户看到的是它的入口 ${site.entryRel || 'index.html'}，`
-                + '不是这一页。要让用户直接看到这页，在站内给它加一条真链接。';
+              // 2026-08-18 起子页**真的**开在那一页上（前端 entry 一路传到 SiteWindow）。
+              // 但只有在产物清单认得这一页时才成立 —— 不在清单里（比如刚写出来还没
+              // 重拉）就还是退回入口，所以这句话要如实分两种说。
+              const known = (site.pages || []).includes(
+                site.root ? p.slice(site.root.length + 1) : p);
+              siteNote = known
+                ? `打开的是站点「${site.root || '工作区根'}」并停在 ${p} 这一页（整站一扇窗，用户可以在窗里翻别的页）。`
+                : `注意：${p} 还不在这个站的页面清单里（产物列表下次重拉才认它），`
+                  + `所以用户看到的是入口 ${site.entryRel || 'index.html'}。`
+                  + '站内给它加一条真链接，或者等一轮再试。';
             }
           } catch { /* manifest 读不出来不挡预览 */ }
           setActiveDeck(sessionId, p);   // 摊给用户看的那份就是"当前 deck"

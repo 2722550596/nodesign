@@ -20,6 +20,30 @@ const EXT_MIME = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.zip': 'application/zip',
 };
 
+/**
+ * preview_deck 点名的路径 → 站内页（2026-08-18）。
+ *
+ * `pages` 是**站点相对**的（`index.html` / `journal/换季自救.html`），而
+ * preview_deck 给的是**工作区相对**的（`chenxi-beauty/journal/换季自救.html`），
+ * 所以要剥掉站点根那一段。
+ *
+ * ⚠️ 必须校验它真在 pages 里。开一个不存在的页 = 把服务端刚修掉的"静默成功"
+ * 搬到前端来 —— 用户看到空白，agent 那边照样以为成了。
+ * @returns {string|null} null = 不是站内页，按整站入口开
+ */
+export function sitePageFrom(o, previewPath) {
+  if (!previewPath || typeof previewPath !== 'string') return null;
+  const p = previewPath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const root = o.root || '';
+  // root 非空才走真分支（空串=根站走 `: p`，不会拼出前导斜杠）；带 `/` 是刻意的 ——
+  // 不带的话 `chenxi-beautyXX/a.html` 会被当成 `chenxi-beauty` 的页。
+  const rel = root
+    ? (p === root || p.startsWith(`${root}/`) ? p.slice(root.length + 1) : null)   // path-compose-ok
+    : p;
+  if (!rel || !/\.html?$/i.test(rel)) return null;
+  return (Array.isArray(o.pages) ? o.pages : []).includes(rel) ? rel : null;
+}
+
 export function useBoardOpen({
   projectId, onAddToContext, onFocusDeck,
   setLayout, dirtyRef, scheduleSave, reload,
@@ -76,13 +100,16 @@ export function useBoardOpen({
     } catch (err) { console.warn('[board] delete note failed:', err.message); }
   };
 
-  const focusDeck = (o) => {
+  const focusDeck = (o, previewPath) => {
     if (o.type === 'site') {
       // 站点：开的是"整站"，不是某一个文件 —— 当前看哪一页是窗口内部状态。
       // 试作卡开同一扇窗，但 entry 指向 _drafts/ 里那一份。
+      // 子页直开：agent `preview_deck tasks/站/某页.html` 时开在那一页上，
+      // 不是每次都回首页（SiteWindow 的 entry 变了就会重置当前页，窗本体不用改）
+      const sub = sitePageFrom(o, previewPath);
       onFocusDeck?.({
         kind: 'site', task: o.task, base: o.base || o.task,
-        entry: o.entry || 'index.html', title: o.title, pages: o.pages, exports: o.exports,
+        entry: sub || o.entry || 'index.html', title: o.title, pages: o.pages, exports: o.exports,
         // 构建型（产物根≠源目录）：编辑窗要提示"改的是产物，agent 会同步回源"
         built: !!(o.root && o.root !== o.srcRoot),
       });
@@ -122,7 +149,7 @@ export function useBoardOpen({
     // ⚠️ 这里曾经是两段式（先展开成画布上的内嵌渲染，再双击一次才开窗）。
     // 展开态 2026-08-13 退役 —— "在画布上并排看两份 deck"这件事本来就该由窗
     // 来做，而一个会自己变大两倍半的卡片是所有落点逻辑的噪声源。
-    open: focusDeck,
+    open: focusDeck,   // (o, previewPath?) —— 第二参数只有 preview_deck 那条路会传
     // 手写文字：双击改内容（原来是 null —— 写下的字永远改不了）
     editText: openTextEditor,
     // 编排.yaml：图形设置页

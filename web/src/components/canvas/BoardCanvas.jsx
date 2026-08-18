@@ -43,6 +43,7 @@ import { useDragEdgePan } from './useDragEdgePan.js';
 import { BOARD_KEYFRAMES } from './board-keyframes.js';
 import { useBoardAuthoring } from './useBoardAuthoring.js';
 import { useBoardOpen } from './useBoardOpen.js';
+import { usePreviewRequest } from './usePreviewRequest.js';
 import { buildBoardToolGroups } from './board-tool-groups.js';
 import { useMarquee } from './useMarquee.js';
 import { useZoneGestures } from './useZoneGestures.js';
@@ -238,7 +239,6 @@ export default function BoardCanvas({
   const positionedRef = useRef([]);
   const objectsRef = useRef([]);
   const primaryOpenRef = useRef(null);  // "双击打开"的引用（preview_deck 工具复用）
-  const pendingPreviewRef = useRef(null);  // preview 目标还没上墙 → 等它出现
   const [addedPaths, setAddedPaths] = useState(() => new Set());
   const [detail, setDetail] = useState(null);       // 图片详情
   const [viewer, setViewer] = useState(null);       // { title, content, note? } markdown 阅读；note = 可编辑的任务便利贴
@@ -1372,26 +1372,10 @@ export default function BoardCanvas({
     ensureZoneForTarget(objectId);
   }, [ensureZoneForTarget]);
 
-  // preview_deck 工具：等价于用户双击那张卡。
-  // **不挑层**：窗是浮在桌面之上的，被预览的东西住在哪个文件夹里都能直接开。
-  const handlePreviewRequest = useCallback((objectId) => {
-    const o = positionedRef.current.find(it => it.id === objectId)
-      || objectsRef.current.find(it => it.id === objectId);
-    if (!o) { pendingPreviewRef.current = objectId; return; }  // 刚写出来的 deck 等产物重拉
-    primaryOpenRef.current?.(o);
-    followToObject?.(objectId);
-  }, [followToObject]);
-
-  // 挂起的 preview：目标物件一上墙就补开
-  useEffect(() => {
-    const want = pendingPreviewRef.current;
-    if (!want) return;
-    const o = positioned.find(it => it.id === want);
-    if (!o) return;
-    pendingPreviewRef.current = null;
-    primaryOpenRef.current?.(o);
-    followToObject?.(want);
-  }, [positioned, followToObject]);
+  // preview_deck 的落点（挂起/补开/带路径）已拆进 usePreviewRequest.js
+  const handlePreviewRequest = usePreviewRequest({
+    positionedRef, objectsRef, positioned, primaryOpenRef, followToObject,
+  });
 
   // ── 舞台层（StageLayer.jsx 自治）：事件状态机 + 跟随触发 + deck 自动展开触发 ──
   /**
