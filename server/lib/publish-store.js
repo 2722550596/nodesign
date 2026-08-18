@@ -63,6 +63,13 @@ export function listPublished() {
   return db.prepare('SELECT * FROM published_sites ORDER BY last_published_at DESC').all().map(rowToSite);
 }
 
+/** 浏览工具撞上死掉的 share 域名时，用它查"本项目现在真正的线上地址" */
+export function listPublishedByProject(projectId) {
+  return db.prepare(
+    'SELECT * FROM published_sites WHERE project_id = ? ORDER BY last_published_at DESC',
+  ).all(projectId).map(rowToSite);
+}
+
 export function getByCustomDomain(host) {
   return rowToSite(db.prepare('SELECT * FROM published_sites WHERE custom_domain = ?').get(host));
 }

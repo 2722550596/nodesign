@@ -140,8 +140,16 @@ export async function openArtifactPage(browser, {
   //   ① 没有 CSS 宽约束的图按**固有尺寸**排版，派生图尺寸不同 → 版面跟访客不一样；
   //   ② `profile_scroll` 的"图片总字节"少报了几十倍，而它的头号建议就是按体积开药。
   // 每个请求都带一个头最省：query 要改写 HTML（那就不叫 raw 了）。
-  contextOpts.extraHTTPHeaders = { ...(contextOpts.extraHTTPHeaders || {}), 'X-ND-Raw': '1' };
+  //
+  // ⚠️ 但**不能用 context 级 extraHTTPHeaders**（第一版就是，agent 上报逮到）：
+  // 那会把这个自定义头带给页面请求的**所有主机**，而任何自定义头都会把跨域字体
+  // 请求从「简单请求」升级成要 CORS 预检 —— fonts.gstatic.com 不认这个头，预检
+  // 挂掉，Google Fonts 整站全灭，感知截图里字体全部回退。头只对感知源有意义
+  //（assets.js 读它决定给不给原图），所以用 route 只加在同源请求上。
   const context = await browser.newContext(contextOpts);
+  await context.route(`${PERCEPTION_ORIGIN}/**`, (route) => route.continue({
+    headers: { ...route.request().headers(), 'X-ND-Raw': '1' },
+  }));
 
   let url = null;
   let note = null;

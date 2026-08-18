@@ -114,8 +114,7 @@ function collectorSource() {
     }
 
     // ── 字体：字族 + 实际用到的字重/字号（光有字族没法照做）──
-    const fontOf = (sel, label) => {
-      const el = document.querySelector(sel);
+    const fontOfEl = (el, label) => {
       const s = cs(el);
       if (!s) return null;
       return {
@@ -127,9 +126,42 @@ function collectorSource() {
         letterSpacing: s.letterSpacing,
       };
     };
+    const fontOf = (sel, label) => fontOfEl(document.querySelector(sel), label);
+
+    // ⚠️ 「正文」不能拿**第一个 `<p>`**（agent 上报逮到：真站上首个 `<p>` 常是
+    // 顶部公告条/导航里的一句话，字号字族都不是正文的，量出来整份报告跟着错）。
+    // 改成找**最大的可见叶子文字块**：字多、够宽、且没有块级孩子替它装内容。
+    // 附 selector + 文字样本 —— 量具的读数要能核对出处，不然错了没人看得见。
+    const pickParagraph = () => {
+      let best = null; let bestScore = 0;
+      for (const el of document.querySelectorAll('p, li, dd, blockquote')) {
+        if (el.querySelector('p, div, ul, ol, table, blockquote, pre, h1, h2, h3')) continue;
+        const r = el.getBoundingClientRect();
+        const s = cs(el);
+        if (!s || s.display === 'none' || s.visibility === 'hidden' || r.width < 120) continue;
+        const text = (el.textContent || '').trim();
+        if (text.length < 40) continue;
+        // 长度封顶：一段 5000 字的法律条款不该只因为长就赢过真正的正文版式
+        const score = Math.min(text.length, 600) * Math.min(r.width, window.innerWidth);
+        if (score > bestScore) { bestScore = score; best = el; }
+      }
+      return best || document.querySelector('p');
+    };
+    const selectorOf = (el) => {
+      const tag = el.tagName.toLowerCase();
+      if (el.id) return `${tag}#${el.id}`;
+      const cls = [...el.classList].slice(0, 2).join('.');
+      return cls ? `${tag}.${cls}` : tag;
+    };
+    const pEl = pickParagraph();
+    const pFont = fontOfEl(pEl, 'paragraph');
+    if (pFont) {
+      pFont.selector = selectorOf(pEl);
+      pFont.sample = (pEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    }
     const fonts = [
       fontOf('body', 'body'), fontOf('h1', 'h1'), fontOf('h2', 'h2'),
-      fontOf('p', 'paragraph'), fontOf('code, pre', 'mono'),
+      pFont, fontOf('code, pre', 'mono'),
     ].filter(Boolean);
 
     // ── 结构骨架（⚠️ 启发式）──

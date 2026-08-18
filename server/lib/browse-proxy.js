@@ -76,9 +76,12 @@ async function resolveAllowed(host, portNum) {
       new Promise((_, rej) => setTimeout(() => rej(new Error('dns timeout')), RESOLVE_TIMEOUT_MS)),
     ]);
   } catch (err) {
-    return { deny: `cannot resolve ${bare}: ${err.message}` };
+    // ⚠️ kind:'dns' 是给 denyBody 分文案用的：解析失败**不是策略拦截**。
+    // 第一版对 NXDOMAIN 也甩「内网与本机地址是硬边界」，agent 上报时据此
+    // 推理出一整套"代理有两个解析器"的错误理论 —— 错误提示比没提示更贵。
+    return { deny: `cannot resolve ${bare}: ${err.message}`, kind: 'dns' };
   }
-  if (!addrs.length) return { deny: `${bare} resolved to nothing` };
+  if (!addrs.length) return { deny: `${bare} resolved to nothing`, kind: 'dns' };
   // **任一**地址落在禁止段就整个拒 —— 多 A 记录里混一条内网是标准起手式，
   // "挑一个能用的"等于自己开门
   for (const a of addrs) {
@@ -88,8 +91,14 @@ async function resolveAllowed(host, portNum) {
   return { ip: addrs[0].address, family: addrs[0].family };
 }
 
-const denyBody = (reason) => {
-  const body = `拒绝出网：${reason}\n\n内网与本机地址是硬边界，不是可配置项。`;
+// 按拒因分文案：DNS 解析失败要说清"这个域名现在指不到任何地方"，
+// 策略拦截才配那句硬边界 —— 两种拒混着说，agent 会朝错误的方向排障。
+const denyTail = (kind) => (kind === 'dns'
+  ? '这是域名解析失败（域名可能不存在、拼错或已下线），不是出网策略拦截。'
+  : '内网与本机地址是硬边界，不是可配置项。');
+
+const denyBody = (reason, kind) => {
+  const body = `拒绝出网：${reason}\n\n${denyTail(kind)}`;
   return `HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\n`
     + `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`;
 };
@@ -111,7 +120,7 @@ export async function startBrowseProxy() {
     if (verdict.deny) {
       note(`${u.hostname}:${p}`, verdict.deny);
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-      return res.end(`拒绝出网：${verdict.deny}`);
+      return res.end(`拒绝出网：${verdict.deny}\n\n${denyTail(verdict.kind)}`);
     }
     // 连**验过的那个 IP**，Host 头保留原主机名（虚拟主机才认得出）
     const upstream = http.request({
@@ -138,7 +147,7 @@ export async function startBrowseProxy() {
     const verdict = await resolveAllowed(rawHost || '', p);
     if (verdict.deny) {
       note(`${rawHost}:${p}`, verdict.deny);
-      socket.write(denyBody(verdict.deny));
+      socket.write(denyBody(verdict.deny, verdict.kind));
       return socket.destroy();
     }
     const up = net.connect({ host: verdict.ip, port: p }, () => {

@@ -23,6 +23,22 @@ describe('凭据黑名单', () => {
   it('.env.example 不拦（示例没秘密，挡着反而碍事）', () => {
     expect(list.some(p => p.endsWith('.env.example'))).toBe(false);
   });
+  it('⛔ 清单里不许有任何通配条目 —— 中段 * 会被沙盒递归展开进每条 Bash 的 argv，'
+    + '2026-08-18 `<数据根>/*/.browser` 那条把生产 Bash 弄死了 3 小时（E2BIG）', () => {
+    expect(list.filter(p => /[*?[\]]/.test(p))).toEqual([]);
+  });
+  it('逃生舱里塞进通配条目也会被拒收（丢弃并告警，不进清单）', () => {
+    const old = process.env.NODESIGN_DENY_READ_EXTRA;
+    process.env.NODESIGN_DENY_READ_EXTRA = '/tmp/x/*/.cache:/tmp/ok';
+    try {
+      const l = platform.credentialBlacklist();
+      expect(l).toContain('/tmp/ok');
+      expect(l.some(p => p.includes('*'))).toBe(false);
+    } finally {
+      if (old === undefined) delete process.env.NODESIGN_DENY_READ_EXTRA;
+      else process.env.NODESIGN_DENY_READ_EXTRA = old;
+    }
+  });
   it('NODESIGN_DENY_READ_EXTRA 是逃生舱：不改代码也能加拦截目标', () => {
     const old = process.env.NODESIGN_DENY_READ_EXTRA;
     process.env.NODESIGN_DENY_READ_EXTRA = '/a/b : /c/d';

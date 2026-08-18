@@ -322,9 +322,11 @@ export async function checkUrl(raw, { timeoutMs = 4000 } = {}) {
       new Promise((_, rej) => setTimeout(() => rej(new Error('dns timeout')), timeoutMs)),
     ]);
   } catch (err) {
-    return { ok: false, reason: `cannot resolve ${host}: ${err.message}` };
+    // kind:'dns' 给上层分文案用：解析失败不是策略拦截，别让调用方把这两种拒
+    // 混着说（agent 上报时曾据「硬边界」措辞推出一整套错误的排障理论）
+    return { ok: false, reason: `cannot resolve ${host}: ${err.message}`, kind: 'dns' };
   }
-  if (!addrs.length) return { ok: false, reason: `${host} resolved to nothing` };
+  if (!addrs.length) return { ok: false, reason: `${host} resolved to nothing`, kind: 'dns' };
 
   // ⭐ **任一**地址落在禁止段就整个拒。多 A 记录里混一条 127.0.0.1 是标准的
   // DNS-rebinding 起手式，"挑一个能用的"等于自己把门打开。

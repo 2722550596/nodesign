@@ -20,13 +20,20 @@
 
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'fs';
+import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// 默认放在 server/db/nodesign.db，跟 .env.example 的 DB_PATH 默认值对齐
-const DEFAULT_DB_PATH = resolve(__dirname, '../../db/nodesign.db');
+// 默认放在 server/db/nodesign.db，跟 .env.example 的 DB_PATH 默认值对齐。
+// ⛔ 但测试进程绝不许摸到这个默认值：vitest.server.config.js 里虽然配了测试库，
+// **裸跑** `npx vitest run xxx.test.js`（不带 -c）根本不读那份配置 —— 08-17/08-18
+// 两次就是这么把脏数据写进生产问题库的。config 层的兜底只护"跑对了命令"的人，
+// 治本要在库自己身上：认出 VITEST 环境（vitest 恒设这个 env）就落到 tmp。
+const DEFAULT_DB_PATH = process.env.VITEST
+  ? join(tmpdir(), 'nodesign-vitest-bare.db')
+  : resolve(__dirname, '../../db/nodesign.db');
 const DB_PATH = process.env.DB_PATH ? resolve(process.env.DB_PATH) : DEFAULT_DB_PATH;
 
 // 自动 mkdir 父目录（干净部署首次启动不 ENOENT）

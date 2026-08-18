@@ -130,60 +130,66 @@ const DIAG_MAX_ENTRIES = 15;
 const DIAG_MAX_TEXT = 300;
 
 export function attachPageDiagnostics(page) {
-  const consoleEntries = [];   // { type, text }
-  const failedRequests = [];   // { method, url, detail }
-  const seenConsole = new Map();  // text → count（同文重复只记一条 + 计数）
+  // ⭐ 聚合按（归一化原因 × 主机）分组，不逐条罗列（agent 上报逮到：一页 30 张
+  // 字体请求失败会把 caption 撑成 30 行同一句话，真正独特的那条错误被淹没）。
+  // 归一化 = 把消息里的 URL 收成主机名：同一家 CDN 挂 30 个文件是**一个**故障。
+  const hostOf = (u) => { try { return new URL(u).hostname; } catch { return u; } };
+  const normText = (t) => t.replace(/https?:\/\/[^\s"')]+/g, (u) => `${hostOf(u)}/…`);
+
+  const consoleEntries = [];      // { type, text, count }，text 是该组第一条原文
+  const seenConsole = new Map();  // 归一化文本 → entry
+  const noteConsole = (type, rawText) => {
+    const text = String(rawText || '').slice(0, DIAG_MAX_TEXT);
+    const key = `${type}|${normText(text)}`;
+    const prev = seenConsole.get(key);
+    if (prev) { prev.count += 1; return; }
+    const entry = { type, text, count: 1 };
+    seenConsole.set(key, entry);
+    if (consoleEntries.length < DIAG_MAX_ENTRIES) consoleEntries.push(entry);
+  };
+
+  const failedGroups = new Map();  // `${host}|${detail}` → { method, url, detail, host, count }
+  const noteFailed = (method, url, detail) => {
+    const key = `${hostOf(url)}|${detail}`;
+    const prev = failedGroups.get(key);
+    if (prev) { prev.count += 1; return; }
+    if (failedGroups.size >= DIAG_MAX_ENTRIES) return;
+    failedGroups.set(key, { method, url: url.slice(0, DIAG_MAX_TEXT), detail, host: hostOf(url), count: 1 });
+  };
 
   page.on('console', (msg) => {
     const type = msg.type();
     if (type !== 'error' && type !== 'warning') return;
-    const text = String(msg.text() || '').slice(0, DIAG_MAX_TEXT);
-    const prev = seenConsole.get(text);
-    if (prev) { prev.count += 1; return; }
-    const entry = { type, text, count: 1 };
-    seenConsole.set(text, entry);
-    if (consoleEntries.length < DIAG_MAX_ENTRIES) consoleEntries.push(entry);
+    noteConsole(type, msg.text());
   });
-  page.on('pageerror', (err) => {
-    const text = String(err?.message || err).slice(0, DIAG_MAX_TEXT);
-    if (consoleEntries.length < DIAG_MAX_ENTRIES) {
-      consoleEntries.push({ type: 'pageerror', text, count: 1 });
-    }
-  });
-  page.on('requestfailed', (req) => {
-    if (failedRequests.length >= DIAG_MAX_ENTRIES) return;
-    failedRequests.push({
-      method: req.method(),
-      url: req.url().slice(0, DIAG_MAX_TEXT),
-      detail: req.failure()?.errorText || 'failed',
-    });
-  });
+  page.on('pageerror', (err) => noteConsole('pageerror', err?.message || err));
+  page.on('requestfailed', (req) => noteFailed(req.method(), req.url(), req.failure()?.errorText || 'failed'));
   page.on('response', (res) => {
-    if (res.status() < 400 || failedRequests.length >= DIAG_MAX_ENTRIES) return;
-    failedRequests.push({
-      method: res.request().method(),
-      url: res.url().slice(0, DIAG_MAX_TEXT),
-      detail: `HTTP ${res.status()}`,
-    });
+    if (res.status() < 400) return;
+    noteFailed(res.request().method(), res.url(), `HTTP ${res.status()}`);
   });
 
   return {
     /** 汇成 caption 附加段。干净时给正向确认（"不知道有没有挂"跟"确认没挂"是两回事）。 */
     summary() {
-      if (!consoleEntries.length && !failedRequests.length) {
+      const failed = [...failedGroups.values()];
+      if (!consoleEntries.length && !failed.length) {
         return 'console clean, all requests OK';
       }
       const lines = [];
       if (consoleEntries.length) {
-        lines.push(`console (${consoleEntries.length}):`);
+        const total = consoleEntries.reduce((n, e) => n + e.count, 0);
+        lines.push(`console (${total}${total > consoleEntries.length ? ` in ${consoleEntries.length} groups` : ''}):`);
         for (const e of consoleEntries) {
-          lines.push(`  [${e.type}] ${e.text}${e.count > 1 ? ` (×${e.count})` : ''}`);
+          lines.push(`  [${e.type}] ${e.text}${e.count > 1 ? ` (×${e.count} similar)` : ''}`);
         }
       }
-      if (failedRequests.length) {
-        lines.push(`failed requests (${failedRequests.length}):`);
-        for (const f of failedRequests) {
-          lines.push(`  ${f.method} ${f.url} — ${f.detail}`);
+      if (failed.length) {
+        const total = failed.reduce((n, f) => n + f.count, 0);
+        lines.push(`failed requests (${total}${total > failed.length ? ` in ${failed.length} groups` : ''}):`);
+        for (const f of failed) {
+          // 每组给一条样本 URL；同主机同原因的其余只报数
+          lines.push(`  ${f.method} ${f.url} — ${f.detail}${f.count > 1 ? ` (×${f.count} from ${f.host})` : ''}`);
         }
       }
       return lines.join('\n');

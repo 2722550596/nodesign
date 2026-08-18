@@ -20,6 +20,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './screenshot.js';
 import { checkUrl, attachSsrfGuard } from '../../../lib/ssrf-guard.js';
+import { denyText } from './browse.js';
 import { startBrowseProxy } from '../../../lib/browse-proxy.js';
 
 const RASTER_SCALE = 0.6;
@@ -59,7 +60,7 @@ function validateUrl(raw) {
  * @param {object} deps
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeScreenshotUrlTool({ ctx } = {}) {
+export function makeScreenshotUrlTool({ projectId, ctx } = {}) {
   return tool(
     'screenshot_url',
     `Take a screenshot of any external web page (http/https) and return it as an
@@ -104,7 +105,9 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
       // 拦跳转与子资源。
       const pre = await checkUrl(check.url.href);
       if (!pre.ok) {
-        return { content: [{ type: 'text', text: `refusing to screenshot: ${pre.reason}` }], isError: true };
+        // 拒因分种类说（DNS 死域名 ≠ 策略拦截；文案与线上地址提示同 browse 工具）
+        const tail = denyText(pre, projectId, check.url.href).join('\n');
+        return { content: [{ type: 'text', text: `refusing to screenshot: ${pre.reason}\n${tail}` }], isError: true };
       }
 
       const vp = DEVICE_VIEWPORTS[device || 'desktop'];

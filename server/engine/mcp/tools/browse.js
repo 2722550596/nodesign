@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { withBrowser, peek, hold, _limits } from '../../browse/registry.js';
 import { requestHelp } from '../../browse/handover.js';
 import { checkUrl } from '../../../lib/ssrf-guard.js';
+import { listPublishedByProject } from '../../../lib/publish-store.js';
 import { normalizeShot } from './screenshot.js';
 import { capture } from '../../browse/capture.js';
 import { collectPage, formatPage } from '../../browse/page-digest.js';
@@ -37,6 +38,34 @@ import { recordVisit, saveFrame } from '../../browse/state.js';
 
 const NAV_TIMEOUT = _limits.NAV_TIMEOUT_MS;
 const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
+
+/**
+ * 网络闸的拒因要按种类说话：DNS 解析失败 ≠ 策略拦截。第一版对 NXDOMAIN 也甩
+ * 「内网与本机地址是硬边界」，agent 据此推出「代理有两个解析器」的错误理论 ——
+ * 真因只是访问了一个已下线的旧发布域名。所以：
+ *  ① dns 一档说清"域名指不到任何地方"；
+ *  ② 撞的是本站发布域（slug 迁移后老域名成批死掉）就顺手把项目**现在**的
+ *    线上地址查出来给它 —— 别让它拿着一个死地址继续猜。
+ */
+export function denyText(pre, projectId, url) {
+  const lines = [];
+  if (pre.kind === 'dns') {
+    lines.push('这是域名解析失败（域名可能不存在、拼错或已下线），不是出网策略拦截。');
+    try {
+      const domain = process.env.NODESIGN_PUBLISH_DOMAIN;
+      const host = new URL(url).hostname.toLowerCase();
+      if (domain && (host === domain || host.endsWith(`.${domain}`))) {
+        const sites = projectId ? listPublishedByProject(projectId) : [];
+        lines.push(sites.length
+          ? `这个地址不是本项目当前的线上地址。本项目现在的线上地址：${sites.map(s => s.url).join('、')}`
+          : '这个域名形如本站的发布域，但本项目当前没有任何已发布的站点记录。');
+      }
+    } catch { /* 提示查不出来就只说 DNS 那一句，别把拒因本身弄丢 */ }
+  } else {
+    lines.push('内网与本机地址是硬边界（不是可配置项）。');
+  }
+  return lines;
+}
 
 /** 被闸拦掉的东西要如实报，但别把一页的几十个第三方追踪器全倒出来 */
 function blockedNote(guard, since) {
@@ -108,7 +137,8 @@ The user has a browser card on their desktop and can watch, or take over.`,
           if (!pre.ok) {
             return asText([
               `没打开，也没离开当前页面 —— 网络闸拒了这个地址：${pre.reason}`,
-              '内网与本机地址是硬边界（不是可配置项）。你还在：' + await where(page),
+              ...denyText(pre, projectId, url),
+              '你还在：' + await where(page),
             ].join('\n'), true);
           }
 

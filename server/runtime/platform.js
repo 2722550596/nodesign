@@ -130,17 +130,32 @@ function credentialBlacklist() {
     '/etc/shadow',
     '/etc/passwd',
     '/etc/sudoers',
-    // 浏览器 profile（2026-08-18）：`<数据根>/<项目>/.browser/` 里是 cookie jar，
-    // 装着用户在第三方站点的**真实登录态**（agent 逛站时人接手登录留下的）。
-    // ⚠️ 主要防线其实是 pre-workspace-scope-guard（它按"在数据根里、不在本工作区里"
-    // 判，Read/Grep/Glob 实测都 deny）；这一条是纵深 + 写明意图。
-    // ⛔ 两条都管不到 **Bash** —— 生产 NODESIGN_SANDBOX 没开，Bash 读得到磁盘上
-    // 任何东西（包括 .env）。那是全局既有条件，要治得开沙盒（用户拍板项）。
-    path.join(PROJECTS_DATA_ROOT_FOR_DENY, '*', '.browser'),
+    // ⛔ 这份清单里**禁止出现中段通配模式**（形如 `<数据根>/*/.browser`）。
+    //
+    // 2026-08-18 生产事故：那条 .browser 通配把整个生产的 Bash 弄死了 3 小时。
+    // 机制（sandbox-runtime 的 sandbox-manager / expandGlobPattern）：
+    //   - 尾部 `/**` 会被剥掉，目录整棵 = 1 条 bwrap 挂载，便宜；
+    //   - 但**中段的 `*`** 触发展开：拿静态前缀当 baseDir，`readdirSync`
+    //     **递归走完整棵树**，匹配的每个文件每个目录各成一条 deny 路径拼进
+    //     每条 Bash 命令的 argv。chromium 缓存边逛边涨 → 4000+ 条 ≈ 600KB
+    //     → 超过内核单 arg 上限（MAX_ARG_STRLEN 128KB）→ 所有命令 E2BIG。
+    //     开沙盒当天验收是过的 —— 用户逛了 20 分钟站，缓存长过判据线才炸。
+    //
+    // `.browser`（cookie jar，装着用户在第三方站的真实登录态）现在由两层盖住：
+    //   - Bash：`dataRoot` 整个在 denyRead（isolation.js），1 条路径，不展开；
+    //   - Read/Grep/Glob：pre-workspace-scope-guard 按「在数据根里、不在本
+    //     工作区里」判，实测 deny；钩子若静默死，init 契约自检会杀会话兜底。
     // 逃生舱：同机上还有别的东西要拦时不用改代码（冒号分隔绝对路径）。
     // exp 用它拦生产的数据根 —— 两个实例同用户同机器，否则互相读得到。
     ...(process.env.NODESIGN_DENY_READ_EXTRA || '').split(':').map(s => s.trim()).filter(Boolean),
-  ];
+  ].filter((p) => {
+    // 上面那条禁令的代码形态：带通配的条目直接丢弃并吼出来，宁可少拦一条
+    // 也不能再把整个 Bash 弄死。尾部 /** 不会出现在这份清单里（protectedPathRules
+    // 才负责加），所以这里见到任何 glob 字符都算违规。
+    if (!/[*?[\]]/.test(p)) return true;
+    console.error(`[platform] credentialBlacklist 拒收通配条目（会被沙盒递归展开撑爆 argv，2026-08-18 事故）：${p}`);
+    return false;
+  });
 }
 
 /**

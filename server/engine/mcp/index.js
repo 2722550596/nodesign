@@ -118,7 +118,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // screenshot_url — 外部 URL 截图（2026-07-29）。explorer 找视觉参考不再
       // 只能 WebFetch 文本转述；主 agent 也能直接看参考站。http/https only。
-      makeScreenshotUrlTool({ ctx }),
+      makeScreenshotUrlTool({ projectId, ctx }),
 
       // deliver_files — agent 挑好的产物直接进用户浏览器下载列表（emit run.download_ready）
       makeDeliverFilesTool({ workspaceRoot, projectId, sessionId, ctx }),
