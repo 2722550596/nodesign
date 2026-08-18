@@ -14,6 +14,7 @@
  */
 
 import { WebSocketServer } from 'ws';
+import { createBrowseWS } from './browse-channel.js';
 import { URL } from 'url';
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { validateProjectId, getProject } from '../projects/store.js';
@@ -102,6 +103,8 @@ function unrefSession(sid) {
 }
 
 export function setupWS(httpServer) {
+  // 浏览器画面/输入的专用通道（2026-08-18），独立 WebSocketServer
+  const browseWS = createBrowseWS();
   // perMessageDeflate：弱网下 hydrate chunk + ring-buffer replay 帧成本是 raw size
   // 量级（>2MB session 一次首屏 hydrate 估 250KB+ raw）。permessage-deflate 让
   // JSON 文本压到 5-10x。threshold 1KB 跳过小帧（控制帧无收益反增 CPU）。
@@ -125,6 +128,16 @@ export function setupWS(httpServer) {
       url = new URL(req.url || '/', 'http://x');
     } catch {
       return socket.destroy();
+    }
+
+    // ⚠️ 浏览器画面通道的分支**必须排在下面那个 404 之前** —— 那句 404 是兜底，
+    // 不匹配 `/ws/projects/:pid` 的路径会被它直接毙掉。
+    // 为什么另开一条而不是复用这条：这条是纯下行 + EventBus 广播 + 2000 条重放
+    // 缓冲，高频画面帧灌进去会冲爆重放缓冲、混进 hydrate 回放，而且 JSON+base64
+    // 帧会被 perMessageDeflate 白压一遍。详见 ws/browse-channel.js 文件头。
+    {
+      const bm = browseWS.matches(url.pathname);
+      if (bm) return browseWS.accept(req, socket, head, bm);
     }
 
     const m = url.pathname.match(/^\/ws\/projects\/([^/]+)$/);

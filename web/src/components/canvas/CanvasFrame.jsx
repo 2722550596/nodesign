@@ -10,6 +10,7 @@ import FloatingToolbar from '../ui/FloatingToolbar.jsx';
 const DeckWindow = lazy(() => import('./DeckWindow.jsx'));
 const SiteWindow = lazy(() => import('./SiteWindow.jsx'));
 const DocxWindow = lazy(() => import('./DocxWindow.jsx'));
+const BrowserWindow = lazy(() => import('./BrowserWindow.jsx'));
 
 /**
  * CanvasFrame — 中栏总壳（2026-07-28 桌面化重构）
@@ -36,6 +37,8 @@ export default function CanvasFrame({
   onRemoveCandidate,
   onRenameCandidate,
   project, deckSpec, projectId, sessionId, decisionsReloadKey,
+  // 浏览器窗（2026-08-18）：会话级临时活物，由事件驱动开关，不是产物
+  browseWin, onCloseBrowse,
   comments = [],
   /** 画布上每件东西攒了几条待发标注（卡片角标用） */
   boardNoteCounts = {},
@@ -193,7 +196,7 @@ export default function CanvasFrame({
   }, []);
 
   // 有窗开着 = 屏幕被一件产物占满，外层据此收掉顶栏的浮现
-  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!docxSrc;
+  const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!docxSrc || !!browseWin;
   useEffect(() => { onWindowOpenChange?.(!!windowOpen); }, [windowOpen, onWindowOpenChange]);
 
   return (
@@ -320,6 +323,18 @@ export default function CanvasFrame({
               onExport={(fmt) => onExport?.(fmt, docxSrc.cardId)}
               version={fileVersions?.[docxSrc.file]}
               onClose={() => setDocxSrc(null)}
+              onToolbarGroups={reportWinGroups}
+            />
+          </Suspense>
+        )}
+
+        {browseWin && (
+          <Suspense fallback={null}>
+            <BrowserWindow
+              projectId={projectId}
+              url={browseWin.url}
+              help={browseWin.help}
+              onClose={onCloseBrowse}
               onToolbarGroups={reportWinGroups}
             />
           </Suspense>

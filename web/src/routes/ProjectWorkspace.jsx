@@ -36,6 +36,7 @@ import { newId } from '../lib/helpers.js';
 import { findElementByAnchor } from '../lib/html-utils.js';
 import { serializeForAI } from '../lib/element-semantics.js';
 import { Canvas, Turn, Assets, Exports, Sessions, PendingChanges } from '../lib/api.js';
+import { scrollToPage, pulseHighlight } from '../lib/canvas-iframe-ops.js';
 import { exportFromMenu } from '../components/canvas/card-export.js';
 import { openProjectWS } from '../lib/ws-client.js';
 import { sessionMessagesToDisplay } from '../lib/session-to-messages.js';
@@ -121,6 +122,9 @@ export default function ProjectWorkspace() {
   const [wsStatus, setWsStatus] = useState('connecting');     // 'connecting' | 'open' | 'reconnecting' | 'closed'
   const [lastEventAt, setLastEventAt] = useState(Date.now()); // 给 ChatPanel header dot 判断"在动 vs 静默"
   const [selectedAnchor, setSelectedAnchor] = useState(null);
+  // 浏览器窗（2026-08-18）：会话级临时活物，不是产物 —— 不进 kinds 注册表、
+  // 不进 board.json。null = 没开；{url, help} = 开着（help 非空时窗上亮 banner）
+  const [browseWin, setBrowseWin] = useState(null);
   const [iframeDoc, setIframeDoc] = useState(null);
   // 刷新粒度（2026-07-28 重做）：
   //   fileVersions —— 按文件记版本，谁被改了只有谁的 iframe 换 ?v=
@@ -1139,41 +1143,25 @@ export default function ProjectWorkspace() {
         break;
       }
 
-      case 'run.canvas_navigate': {
-        if (isStale) break;
-        // C6: agent 调 navigate_to_page → 前端 scrollIntoView 该 section
-        try {
-          const iframeEl = document.querySelector('iframe');
-          const target = iframeEl?.contentDocument?.querySelector(`section[data-page="${evt.page}"]`);
-          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        } catch { /* cross-origin / iframe missing */ }
+      // C6: agent 的 navigate_to_page / highlight。实现在 lib/canvas-iframe-ops.js
+      // （DOM 操作不该住在路由组件里）
+      case 'run.canvas_navigate':
+        if (!isStale) scrollToPage(evt.page);
         break;
-      }
 
-      case 'run.canvas_highlight': {
-        if (isStale) break;
-        // C6: agent 调 highlight → pulse outline 短暂高亮匹配元素
-        try {
-          const iframeEl = document.querySelector('iframe');
-          const target = iframeEl?.contentDocument?.querySelector(evt.selector);
-          if (target) {
-            const origOutline = target.style.outline;
-            const origOffset = target.style.outlineOffset;
-            const origTransition = target.style.transition;
-            target.style.transition = 'outline 0.2s ease, outline-offset 0.2s ease';
-            target.style.outline = '3px solid rgba(255, 196, 0, 0.85)';
-            target.style.outlineOffset = '4px';
-            setTimeout(() => {
-              try {
-                target.style.outline = origOutline;
-                target.style.outlineOffset = origOffset;
-                target.style.transition = origTransition;
-              } catch { /* element might be gone */ }
-            }, evt.durationMs || 1500);
-          }
-        } catch { /* */ }
+      case 'run.canvas_highlight':
+        if (!isStale) pulseHighlight(evt.selector, evt.durationMs);
         break;
-      }
+
+      // 浏览器（2026-08-18）：agent 开始浏览 / 举手求助 —— 低频信号走这条 WS，
+      // 像素和输入走专用通道 /ws/projects/:pid/browser
+      case 'run.browser_opened':
+        if (!isStale) setBrowseWin({ url: evt.url || null, help: null });
+        break;
+
+      case 'run.browser_help':
+        if (!isStale) setBrowseWin({ url: evt.url || null, help: evt.reason || '需要你帮个手' });
+        break;
 
       case 'run.stop_reflection':
         // C6 Stop hook（占位，stage 1 不消费）
@@ -2108,6 +2096,8 @@ export default function ProjectWorkspace() {
             projectId={id}
             sessionId={currentSessionId}
             decisionsReloadKey={decisionsReloadKey}
+            browseWin={browseWin}
+            onCloseBrowse={() => setBrowseWin(null)}
             // 产物窗只吃**元素标注**：画布标注的锚点是一件东西不是一个元素，
             // 混进去会让窗里的「评论 (N)」多算，也会让标记层拿着 {board:…}
             // 去 querySelector（anchor.path 那一支正好是选择器串，`鉴赏页` 这种

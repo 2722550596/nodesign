@@ -40,6 +40,7 @@ import { makeProfileScrollTool } from './tools/profile-scroll.js';
 import { makeExplainStyleTool } from './tools/explain-style.js';
 import {
   makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool, makeBrowserScreenshotTool,
+  makeBrowserRequestHelpTool,
 } from './tools/browse.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
@@ -177,10 +178,12 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 留住登录态。跟 screenshot_url 的分工：那个是一次性一张图，这组是有会话的逛。
       // ⭐ 每个请求都过 lib/ssrf-guard.js 的出网闸（含跳转每一跳、iframe、子资源），
       // 闸在工具实现体里，agent 关不掉。全部走 deferred（用得上时自然搜到）。
-      makeBrowserNavigateTool({ projectId }),
+      makeBrowserNavigateTool({ projectId, ctx }),
       makeBrowserReadTool({ projectId }),
       makeBrowserClickTool({ projectId }),
       makeBrowserScreenshotTool({ projectId }),
+      // 撞验证墙时举手叫人（阻塞等，默认 120 秒超时 —— 人可能就走了）
+      makeBrowserRequestHelpTool({ projectId, ctx }),
       makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI

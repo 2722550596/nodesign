@@ -39,6 +39,7 @@ const GLOBALS = new Set([
   'URL', 'URLSearchParams', 'Blob', 'File', 'FileReader', 'FormData',
   'AbortController', 'AbortSignal', 'EventSource', 'WebSocket', 'MessageChannel',
   'ResizeObserver', 'IntersectionObserver', 'MutationObserver', 'PerformanceObserver',
+  'createImageBitmap', 'ImageBitmap', 'OffscreenCanvas',   // 画布/位图（BrowserWindow 的帧渲染用）
   'Image', 'Audio', 'Option', 'DOMParser', 'XMLHttpRequest', 'CustomEvent', 'Event',
   'Node', 'Element', 'HTMLElement', 'SVGElement', 'CanvasRenderingContext2D', 'Path2D',
   'getComputedStyle', 'matchMedia', 'scrollTo', 'alert', 'confirm', 'prompt', 'open',

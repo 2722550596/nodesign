@@ -132,6 +132,9 @@ export async function closeFor(projectId, why = 'explicit') {
   if (!entry) return false;
   live.delete(projectId);
   clearTimeout(entry.idleTimer);
+  // 先让画面流那一层知道（它要通知正在看的人，并且停掉编码），再关浏览器 ——
+  // 反过来的话 CDP 会话已经死了，stopScreencast 只会抛一堆没意义的错
+  try { (await import('./screencast.js')).forget(projectId); } catch { /* */ }
   try { await entry.context.close(); } catch { /* 已经死了就算了 */ }
   console.log(`[browse] closed ${projectId} (${why})`);
   return true;
@@ -190,6 +193,16 @@ export async function withBrowser(projectId, fn) {
 //      生命周期判 —— 后者跟"浏览器还有没有人要用"其实不是一回事。
 // 与其造一个用不上的导出摆在这儿（这个仓库有过"全仓无人写入的字段假装第一优先级"
 // 那种账），不如写清为什么没有。
+
+/**
+ * 拿到某项目**已经在跑**的浏览器（不懒启动）。
+ * 给 WS 画面通道用：用户开窗时如果 agent 还没开始浏览，就该显示"还没开始"，
+ * 而不是替 agent 起一个浏览器（那会让 1 vCPU 上的常驻名额被看客占掉）。
+ */
+export function peek(projectId) {
+  const e = live.get(projectId);
+  return e ? { page: e.page, context: e.context, guard: e.guard } : null;
+}
 
 /** 给体检/日志用 */
 export function status() {

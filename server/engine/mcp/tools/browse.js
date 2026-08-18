@@ -27,7 +27,8 @@
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { withBrowser, _limits } from '../../browse/registry.js';
+import { withBrowser, peek, _limits } from '../../browse/registry.js';
+import { requestHelp } from '../../browse/handover.js';
 import { checkUrl } from '../../../lib/ssrf-guard.js';
 import { normalizeShot } from './screenshot.js';
 
@@ -49,7 +50,7 @@ async function where(page) {
   return `${title || '(无标题)'} — ${url}`;
 }
 
-export function makeBrowserNavigateTool({ projectId }) {
+export function makeBrowserNavigateTool({ projectId, ctx }) {
   return tool(
     'browser_navigate',
     `Open a URL in this project's persistent browser and report what loaded.
@@ -132,6 +133,9 @@ and reopens on the next call — the profile survives, so you stay logged in.`,
               gate,
             ].filter(Boolean).join('\n'), true);
           }
+          // 让用户看得见 agent 在逛什么：低频信号走现有 EventBus，前端开/更新那扇窗。
+          // 像素不走这里（那是 /ws/projects/:pid/browser 的活）。
+          try { ctx?.emit?.({ type: 'run.browser_opened', url: page.url(), ts: new Date().toISOString() }); } catch { /* */ }
           return asText([
             `已打开${status ? `（HTTP ${status}）` : ''}：${await where(page)}`,
             gate,
@@ -333,6 +337,54 @@ selector for one component you want to look at closely.`,
         });
       } catch (err) {
         return asText(`browser_screenshot 失败：${err.message}`, true);
+      }
+    },
+  );
+}
+
+export function makeBrowserRequestHelpTool({ projectId, ctx }) {
+  return tool(
+    'browser_request_help',
+    `Ask the user to take over the browser for a moment, then wait for them.
+
+Use it when you are stuck on something only a human can clear: a "prove you are
+human" check, a login, an age gate, a consent dialog you cannot find the button
+for. **Do not use it for slow pages or ordinary errors** — retry or move on.
+
+What happens: the browser window opens on the user's canvas with your reason
+shown on it, they click "我来接手", do the thing, then click "好了继续". You get
+back control plus the page they left you on. If nobody answers within two
+minutes you get told that, and it is then your call — usually: tell the user
+plainly that this site cannot be reached from here and pick another reference.
+
+Be honest with the user in your reason. Some walls score the server's IP and no
+click will help; say that rather than making them try three times.`,
+    {
+      reason: z.string().min(4).max(300)
+        .describe('What you need them to do, in one sentence, in the user\'s language. E.g. "这个站要过一个人机验证，帮我点一下就好".'),
+    },
+    async ({ reason }) => {
+      try {
+        const live = peek(projectId);
+        if (!live) return asText('现在没有在跑的浏览器 —— 先 browser_navigate 打开一个页面再求助。', true);
+        // 让前端把窗开起来 / 顶到前台 + 亮 banner（低频信号走现有 EventBus）
+        ctx?.emit?.({ type: 'run.browser_help', reason, url: live.page.url(), ts: new Date().toISOString() });
+        const r = await requestHelp(projectId, reason);
+        if (!r.released) {
+          return asText([
+            `等了 ${Math.round(r.waitedMs / 1000)} 秒没人接手。`,
+            '别在这站上继续耗 —— 跟用户说清楚"这个站从这台机器过不去"，换一个参考站。',
+            '（有些墙看的是服务器 IP 的信誉，人点多少次都一样。）',
+          ].join('\n'));
+        }
+        const nowAt = await withBrowser(projectId, async ({ page }) => where(page));
+        return asText([
+          `用户接手完了（等了 ${Math.round(r.waitedMs / 1000)} 秒）。`,
+          `现在的页面：${nowAt}`,
+          '⚠️ 页面被人动过，你之前对它的判断可能都不成立了 —— 先 browser_read 或者截一张图重新对齐，再继续。',
+        ].join('\n'));
+      } catch (err) {
+        return asText(`browser_request_help 失败：${err.message}`, true);
       }
     },
   );
