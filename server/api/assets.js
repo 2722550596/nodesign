@@ -24,6 +24,7 @@ import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
 import { listReferences } from '../lib/reference-assets.js';
+import { resolveArtifactFile, isServablePath } from '../lib/artifact-file-path.js';
 import { getProjectCover } from '../lib/cover.js';
 import { makeDocxPageHandler } from './assets/docx-page.js';
 import { mountNotesRoutes } from './assets/notes.js';
@@ -300,6 +301,10 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         }
         if (!e.isFile()) continue;
         if (e.name.startsWith('.')) continue;
+        // 兄弟 webp 不单独上墙（否则每张生成图都是重影，两张卡还指同一份 sidecar）。
+        // 留 PNG：母版是产物，webp 是显示副本。见 lib/image-variant.js
+        if (/\.webp$/i.test(e.name)
+            && entries.some(x => x.isFile() && x.name === e.name.replace(/\.webp$/i, '.png'))) continue;
         // 基础设施不上墙（board.json 是画布自己的布局档、*.template.* 是起手模板）
         if (isReservedFile(e.name)) continue;
         const ext = path.extname(e.name).toLowerCase();
@@ -771,33 +776,11 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     if (!guardProject(req, res)) return;
 
-    const raw = req.params.subPath;
-    let subPath = Array.isArray(raw) ? raw.join('/') : (raw || '');
-    if (!subPath) return res.status(400).json({ error: 'file path required' });
-    // 兼容旧形态：`tasks/<任务>/x` 是扁平化之前的路径，浏览器缓存里、旧
-    // board.json 里、用户收藏的链接里都还有。剥掉前两段就是现在的位置。
-    subPath = subPath.replace(/^tasks\/[^/]+\//, '');
-
-    // 可服务根 = 整个项目工作区（产物就住在这儿），但**挡掉基础设施**：
-    // .claude/（含 settings.json 和整份 SDK 转录）、.nd/（会话私档）、.git/。
-    // 扁平化之前这三样都在可服务根之外，是目录结构在替我们把门；现在它们跟
-    // 产物同级，必须显式拦 —— 否则 `artifact-file/.claude/settings.json`
-    // 是一个能公开读到配置的 URL。
-    const sharedRoot = path.resolve(getSharedDir(req.params.pid));
-    const absPath = path.resolve(sharedRoot, subPath);
-    if (absPath !== sharedRoot && !absPath.startsWith(sharedRoot + path.sep)) {
-      return res.status(403).json({ error: 'path escapes workspace' });
-    }
-    // 点开头的一律拒**是错的**：缩略图就住在 `assets/generated/.thumbnails/`，
-    // 一刀切下去产物墙上所有生成图的缩略图全 403（实测一个项目 110 条报错，
-    // 图能显示只是因为兜底会回原图现编一张，代价是每次都重编）。
-    // 所以按名字判：这几个是**已知安全**的内部目录，其余点开头的照拒
-    // （白名单而不是黑名单 —— 将来冒出个 `.env` 不该因为没人想到就漏出去）。
-    const DOT_OK = new Set(['.thumbnails', '.meta']);
-    const rel = path.relative(sharedRoot, absPath).split(path.sep);
-    if (rel.some(seg => seg.startsWith('.') && !DOT_OK.has(seg))) {
-      return res.status(403).json({ error: 'not a servable path' });
-    }
+    // 路径判据（`tasks/` 兼容、越界、点目录白名单）抽在 lib/artifact-file-path.js ——
+    // 那是安全判据，住在路由里没法单测，而且它有一条错在那儿修了（见文件头）
+    const resolved = await resolveArtifactFile(getSharedDir(req.params.pid), req.params.subPath);
+    if (!resolved.ok) return res.status(resolved.status).json({ error: resolved.error });
+    const { sharedRoot, absPath, subPath } = resolved;
 
     let stat;
     let servePath = absPath;
@@ -815,10 +798,9 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
       const fwd = forwardPath(req.params.pid, subPath);
       if (fwd !== subPath) {
         const absFwd = path.resolve(sharedRoot, fwd);
-        const relFwd = path.relative(sharedRoot, absFwd).split(path.sep);
-        const safe = (absFwd === sharedRoot || absFwd.startsWith(sharedRoot + path.sep))
-          && !relFwd.some(seg => seg.startsWith('.') && !DOT_OK.has(seg));
-        if (safe) {
+        // 判据跟主路径**同一份**（lib/artifact-file-path.js）—— 这儿原来自己抄了一遍
+        // 越界检查和 DOT_OK 白名单，抄第二遍就是等着哪天改一处漏一处
+        if (isServablePath(sharedRoot, absFwd)) {
           try { stat = await fs.stat(absFwd); servePath = absFwd; } catch { /* ② 继续走缩略图兜底 */ }
         }
       }
@@ -845,6 +827,12 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     // 站点在编辑中要看到最新的那一份：html/css/js 一律 no-store —— no-cache 不够，
     // CF 会对这些扩展名边缘缓存 + 把浏览器 TTL 改写成 4 小时（见路由入口注释）。
     // 图片按 URL 有没有版本标记决定能缓多久（见 imageCacheControl）。
+    // `?nd=raw` = 原样发，不走显示改写层（srcset/sizes/lazy 注入 + 派生图）。
+    // 感知通道带它 —— 为什么必须带见 mcp/tools/helpers/perception-page.js 的
+    // artifactFileUrl 注释（注入的 sizes 会把横向溢出藏起来，而发布出去的站点没有
+    // 这层注入，agent 的眼睛该看交付物）。用户预览照旧走改写层。
+    const rawRequested = req.query?.nd === 'raw';
+
     const editable = ext === '.html' || ext === '.htm' || ext === '.css' || ext === '.js';
     res.setHeader('Cache-Control', editable ? 'no-store' : imageCacheControl(req));
 
@@ -853,7 +841,7 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
     // 三张生图就是 5MB 起。显示一律发派生图（原图只留给导出）后降 ~90%。
     // 尺寸由 ?w= 决定（srcset 注入产生），不传就是原尺寸：站点按真实设备宽取景，
     // 服务端自作主张缩会让桌面糊。
-    if (IMAGE_EXTS.has(ext)) {
+    if (IMAGE_EXTS.has(ext) && !rawRequested) {
       return sendImage(req, res, servePath, stat, {
         fallbackMime: ARTIFACT_MIME[ext] || 'application/octet-stream',
         maxDim: servedOriginalForThumb ? THUMBNAIL_MAX_DIM : null,
@@ -871,7 +859,7 @@ router.get('/:pid/artifact-file/*subPath', async (req, res, next) => {
 
     // 站点页面：注入 srcset 让浏览器按视口挑尺寸。只加属性不动 DOM 结构，
     // 理由见 lib/html-srcset.js（<picture> 会改盒模型，站点布局是 agent 写的）。
-    if (ext === '.html' || ext === '.htm') {
+    if ((ext === '.html' || ext === '.htm') && !rawRequested) {
       let html = await fs.readFile(servePath, 'utf8');
       try {
         html = await injectSrcset(html, path.dirname(servePath), sharedRoot);

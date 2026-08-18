@@ -86,15 +86,64 @@ function unwrapV6(ip) {
   return null;
 }
 
-/** 本机所有网卡上的地址（含公网 IP）。启动时枚举一次就够 —— 网卡不会中途变。 */
+/**
+ * 本机的地址集合。
+ *
+ * ⛔ **只枚举网卡是不够的**（2026-08-18 审查攻出来的）：云上是 1:1 NAT，
+ * 实例的**公网 IP 根本不在任何网卡上**。实测这台机器网卡只有
+ * `127.0.0.1 / ::1 / 10.128.0.12 / fe80::…`，而它的公网 IP 是 35.209.189.19 ——
+ * `blockReason` 对它返回 null（放行），发夹 `curl https://<公网IP>:8443/` 真的 200。
+ * 也就是说「本机自有 IP 也要禁」那条判据在原来的实现下**形同没有**，
+ * 而给它写的那条单元测试是同义反复（枚举 ownAddresses 再断言它们被禁，
+ * 结构上不可能失败）。
+ *
+ * 所以三个来源并起来：
+ *   ① 网卡（拿到 loopback 和内网地址）
+ *   ② 云元数据里的外部 IP（**我们自己进程去读**，不是让浏览器去读 —— 那个地址
+ *      对浏览器是禁的）。取不到就算了，别的环境没这个端点。
+ *   ③ `ND_PUBLIC_IP` 环境变量兜底（自建机器、多 IP、或者元数据端点关掉的情况）
+ *
+ * ⚠️ ② 是**异步**的，所以 `primeOwnAddresses()` 要在启动时调一次；没调也不会崩，
+ * 只是少了那一条（同步路径永远拿得到 ① 和 ③）。
+ */
 let ownCache = null;
-export function ownAddresses() {
-  if (ownCache) return ownCache;
-  ownCache = new Set();
+function baseOwn() {
+  const set = new Set();
   for (const list of Object.values(os.networkInterfaces())) {
-    for (const a of list || []) ownCache.add(String(a.address).toLowerCase().replace(/%.*$/, ''));
+    for (const a of list || []) set.add(String(a.address).toLowerCase().replace(/%.*$/, ''));
   }
+  for (const extra of String(process.env.ND_PUBLIC_IP || '').split(',')) {
+    const v = extra.trim().toLowerCase();
+    if (v) set.add(v);
+  }
+  return set;
+}
+export function ownAddresses() {
+  if (!ownCache) ownCache = baseOwn();
   return ownCache;
+}
+
+/**
+ * 把云元数据里的外部 IP 也加进来。启动时调一次（失败静默 —— 不是所有环境都有）。
+ * @returns {Promise<string|null>} 加进来的那个 IP
+ */
+export async function primeOwnAddresses({ timeoutMs = 1500 } = {}) {
+  const set = ownAddresses();
+  const url = 'http://169.254.169.254/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip';
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    const res = await fetch(url, { headers: { 'Metadata-Flavor': 'Google' }, signal: ac.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const ip = (await res.text()).trim().toLowerCase();
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+      set.add(ip);
+      console.log(`[ssrf-guard] 本机公网 IP ${ip} 已加入禁止集（云 NAT 下它不在任何网卡上）`);
+      return ip;
+    }
+  } catch { /* 没这个端点 / 超时：正常 */ }
+  return null;
 }
 
 /**
@@ -214,7 +263,7 @@ export async function checkUrl(raw, { timeoutMs = 4000 } = {}) {
  * @param {(ev: {url: string, reason: string, stage: string}) => void} [onBlocked]
  * @returns {Promise<{ blocked: Array, armPage: (page) => Promise<void> }>}
  */
-export async function attachSsrfGuard(context, onBlocked) {
+export async function attachSsrfGuard(context, onBlocked, { proxied = false } = {}) {
   const blocked = [];
   const armed = new WeakSet();
   const note = (url, reason, stage) => {
@@ -247,14 +296,21 @@ export async function attachSsrfGuard(context, onBlocked) {
       }
     });
 
-    cdp.on('Network.responseReceived', (ev) => {
-      const ip = ev?.response?.remoteIPAddress;
-      if (!ip) return;
-      const why = blockReason(ip);
-      if (!why) return;
-      note(ev.response.url, `connected to ${why}`, 'connected');
-      page.close().catch(() => {});   // 已经连上了，能做的只有立刻掐掉
-    });
+    // 第二道只在**没有代理**的通道上有意义。
+    // ⚠️ 真跑抓到的：挂了 browse-proxy 之后每个响应的 `remoteIPAddress` 都是代理
+    // 自己（127.0.0.1），于是这道兜底把**每个页面**都掐掉了。而它本来防的是
+    // 「请求阶段判过之后 DNS 被翻掉」—— 代理会自己解析并**连那个验过的 IP**（pin），
+    // 重绑定在那条路上结构性不可能，所以这道检查在代理下是纯冗余。
+    if (!proxied) {
+      cdp.on('Network.responseReceived', (ev) => {
+        const ip = ev?.response?.remoteIPAddress;
+        if (!ip) return;
+        const why = blockReason(ip);
+        if (!why) return;
+        note(ev.response.url, `connected to ${why}`, 'connected');
+        page.close().catch(() => {});   // 已经连上了，能做的只有立刻掐掉
+      });
+    }
 
     await cdp.send('Network.enable');
     await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });

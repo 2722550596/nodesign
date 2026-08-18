@@ -13,19 +13,24 @@
  *
  * ## 1 vCPU 上的账（⚠️ 实测纠正过一次归因）
  *
- * 拿一个持续 rAF 动画的页面分相量过：
+ * ⚠️ **这一节我写错过一次，纠正如下。**
  *
- *   动画页 + **没人订阅**      → chromium 树 85.6% 单核
- *   动画页 + 有人订阅（本文件的参数）→ 86.6%
- *   退订之后（页面照旧在动）    → 84.8%
+ * 第一版量的是「动画页 + 没人订阅 85.6% / 有人订阅 86.6%」，据此写了「贵的是页面
+ * 自己在动，画面流几乎免费」。两处都错：
+ *   - 基线**本来就吃满核了**（只剩 ~14pp 余量），推流的成本被天花板挡住
+ *   - 用的是 `ps` 的 `pcpu`，那是进程**生命周期平均值**，量不出增量
  *
- * ⭐ **贵的是页面自己在动，不是画面流。** 在 nth=5 / q45 / maxWidth 1024 下推流只加
- * 约 1 个百分点（实测 6.5 fps、32 KB/s、平均帧 4.9 KB）。所以下面第 3 条的
- * 「活跃流 ≤1」**不是真正的保护** —— 真正的约束是「一个会永久动画的参考站只要
- * 开着就吃掉大半个核」，兜住它的是 registry 那边的 **5 分钟空闲回收**。
- * 留着 MAX_ACTIVE=1 是因为它便宜且无害，但别指望它省 CPU。
- * （待考虑但没做：没人看时用 `Emulation.setVirtualTimePolicy` 把页面冻住 ——
- *  能省下那 85%，代价是有些页面 resume 之后会坏，需要真跑一批站才敢上。）
+ * 改用 `/proc` 的 utime+stime 差分 + 稳态等待，在**有余量**的页面上量两次：
+ *
+ *   小元素每 100ms 变一次：基线 1.3% → 订阅中 7.6% → 退订 1.8%（漂移 0.5pp）
+ *       → 净成本 **+6.0pp @ 2.0 fps**
+ *   小元素 rAF 每帧变：    基线 4.0% → 订阅中 43.5% → 退订 4.1%（漂移 0.2pp）
+ *       → 净成本 **+39.4pp @ 12.2 fps**
+ *
+ * 两点独立，每 fps 约 **3.1pp 单核**。所以：**满帧推流要吃掉约 40% 单核**，
+ * `MAX_ACTIVE = 1` 恰恰是唯一能把这个核还回来的刹车 —— 不是"便宜无害的装饰"。
+ * （待考虑没做：没人看时用 `Emulation.setVirtualTimePolicy` 把页面本身冻住，
+ *  能再省下页面动画那部分，但有些页面 resume 会坏，要真跑一批站才敢上。）
  *
  * 三道刹车：
  * 1. **帧率硬压**：`everyNthFrame=5`（60fps 动画 → ~12fps）、`quality=45`、`maxWidth=1024`
@@ -40,8 +45,8 @@
 const CAST = { format: 'jpeg', quality: 45, maxWidth: 1024, maxHeight: 700, everyNthFrame: 5 };
 /** socket 里积压超过这个就不再 ack（= 让 chromium 停发） */
 const BACKPRESSURE_BYTES = 256 * 1024;
-/** 全局同时只允许一路活跃画面流。⚠️ 实测它省的 CPU 很少（见文件头），留着是因为
- * 便宜无害 + 界面上"同时看两路"本来也没意义，不是因为它是 CPU 的主要保护。 */
+/** 全局同时只允许一路活跃画面流。**这是 CPU 的主要保护**：满帧推流约 40% 单核
+ * （见文件头的实测），这台机器只有一个核。 */
 const MAX_ACTIVE = 1;
 
 /** projectId → { page, cdp, subs:Set<ws>, meta } */
@@ -57,12 +62,28 @@ function activeCount() {
  * 让某个 socket 订阅某项目的画面。
  * @returns {Promise<{ok:true}|{ok:false, reason:string}>}
  */
+let subscribing = false;   // 绕过二的锁，见下
+
 export async function subscribe(projectId, ws, page) {
   let cast = casts.get(projectId);
-  if (!cast) {
-    if (activeCount() >= MAX_ACTIVE) {
-      return { ok: false, reason: `同时只能看一路浏览器画面（这台机器 1 个 CPU 核，满帧动画页要吃掉 2/3 个核）。先关掉另一扇浏览器窗。` };
+  // ⛔ **上限检查要在"这一路要不要开始编码"上判，不是在"有没有这个条目"上判**
+  // （审查攻出来的两个绕过）：
+  //   ① 退订只清 subs、**不删 casts 里的条目**，于是"再订一次"会走进 `cast` 已存在
+  //      那一支，整个跳过上限检查 —— 两路同时推流。
+  //   ② 检查之后紧跟着 await（建 CDP 会话），两个并发 subscribe 都能过。
+  const willStartCasting = !cast || !cast.casting;
+  if (willStartCasting) {
+    if (subscribing) {
+      return { ok: false, reason: '另一路画面正在建立，稍等一下再打开这扇窗。' };
     }
+    if (activeCount() >= MAX_ACTIVE) {
+      return { ok: false, reason: '同时只能看一路浏览器画面 —— 这台机器只有 1 个 CPU 核，'
+        + '满帧推流要吃掉约 40% 个核（实测）。先关掉另一扇浏览器窗。' };
+    }
+    subscribing = true;
+  }
+  try {
+  if (!cast) {
     const cdp = await page.context().newCDPSession(page);
     cast = { projectId, page, cdp, subs: new Set(), meta: null, casting: false };
     casts.set(projectId, cast);
@@ -94,8 +115,21 @@ export async function subscribe(projectId, ws, page) {
   if (!cast.casting) {
     await cast.cdp.send('Page.startScreencast', CAST);
     cast.casting = true;
+    // ⭐ 立刻补一帧。screencast 是 damage-driven —— 静止页面订阅之后可能**一帧都不发**，
+    // 用户看到的是一扇全白的窗，而它其实是"连上了但页面没动"。
+    // 这条是审查锐化出来的：接手功能在静止页面上由构造决定会失败（窗白着没法点）。
+    try {
+      const shot = await cast.cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: CAST.quality });
+      const buf = Buffer.from(shot.data, 'base64');
+      for (const sock of cast.subs) {
+        if (sock.readyState === 1) sock.send(buf, { binary: true, compress: false });
+      }
+    } catch { /* 补不上就等页面自己动 */ }
   }
   return { ok: true };
+  } finally {
+    if (willStartCasting) subscribing = false;
+  }
 }
 
 /** 退订。最后一个人走了就停止编码。 */
@@ -108,6 +142,10 @@ export async function unsubscribe(projectId, ws) {
     await cast.cdp.send('Page.stopScreencast').catch(() => {});
     cast.casting = false;
   }
+  // 条目留着也没用（下次订阅要重新 startScreencast），而留着正好造出上面那个
+  // "跳过上限检查"的绕过。删掉 —— `activeCount()` 数的是"有订阅者的路"，
+  // 但少一个空壳条目也少一处可以钻的缝。
+  casts.delete(projectId);
 }
 
 /** 浏览器被关掉时（空闲回收 / LRU 淘汰）把这一路彻底忘掉 */

@@ -21,7 +21,9 @@ import { WebSocketServer } from 'ws';
 import { requestUser } from '../auth/session.js';
 import { userOwnsProject } from '../api/_guard.js';
 import { getProject, validateProjectId } from '../projects/store.js';
-import { peek } from '../engine/browse/registry.js';
+import { peek, _limits } from '../engine/browse/registry.js';
+
+const { VIEWPORT } = _limits;
 import { subscribe, unsubscribe, frameMeta } from '../engine/browse/screencast.js';
 import { releaseHelp } from '../engine/browse/handover.js';
 
@@ -32,9 +34,12 @@ async function dispatchInput(page, projectId, msg) {
   const cdp = await page.context().newCDPSession(page);
   const meta = frameMeta(projectId);
   // 前端发的是 0..1 的比例（它比谁都清楚自己那块 canvas 多大），服务端换算成
-  // 页面像素 —— 这样缩放、DPR、窗口大小变化都不用两边对齐
-  const w = meta?.deviceWidth || 1024;
-  const h = meta?.deviceHeight || 700;
+  // **页面 CSS 像素** —— CDP 的 Input 坐标系是页面视口，不是 screencast 那张图。
+  // ⚠️ 兜底值原来写的是 CAST 的 maxWidth/maxHeight（1024×700），那是**图**的上限、
+  // 不是页面的尺寸 —— meta 还没到手时点击会全部偏掉（审查实测点中错元素）。
+  // 兜底要用真实视口（registry 的 VIEWPORT）。
+  const w = meta?.deviceWidth || VIEWPORT.width;
+  const h = meta?.deviceHeight || VIEWPORT.height;
   const x = Math.round((msg.rx ?? 0) * w);
   const y = Math.round((msg.ry ?? 0) * h);
 
@@ -64,8 +69,20 @@ async function dispatchInput(page, projectId, msg) {
     }
     const key = msg.key;
     if (!key) return;
-    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, windowsVirtualKeyCode: msg.code || 0 });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key, windowsVirtualKeyCode: msg.code || 0 });
+    // ⚠️ **必须给 windowsVirtualKeyCode**。原来是 `msg.code || 0`，而前端不发 code ——
+    // 恒等于 0 的话回车、退格、Tab 全部没反应（审查实测：登录表单提交不了、
+    // 删不掉字），而人接手最常要做的就是这几个键。
+    const VK = {
+      Enter: 13, Backspace: 8, Tab: 9, Escape: 27, Delete: 46,
+      ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40,
+      Home: 36, End: 35, PageUp: 33, PageDown: 34, ' ': 32,
+    };
+    const vk = msg.code || VK[key] || 0;
+    const common = { key, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, code: key };
+    await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...common });
+    // 回车/Tab 这些在很多表单上要 char 事件才触发默认行为
+    if (key === 'Enter') await cdp.send('Input.dispatchKeyEvent', { type: 'char', text: '\r', ...common });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...common });
   }
 }
 

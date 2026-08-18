@@ -17,6 +17,9 @@
  */
 
 import { attachSsrfGuard } from '../ssrf-guard.js';
+import { withBrowser, closeFor } from '../../engine/browse/registry.js';
+import { blockedCount, blockedSince } from '../browse-proxy.js';
+import { primeOwnAddresses } from '../ssrf-guard.js';
 
 // 公网跳板：本机起的跳板第一跳就会被闸拦掉，测不到第二跳。
 const HOP = (to) => `https://nghttp2.org/httpbin/redirect-to?url=${encodeURIComponent(to)}`;
@@ -75,5 +78,68 @@ for (const [name, url, shouldBlock] of CASES) {
 }
 
 await browser.close();
+
+// ── 第二组：**代理层**的闸（2026-08-18 第二遍）──
+//
+// 上面那组打的是 CDP 那道。审查攻出来四条它根本看不见的路（WebSocket 握手、
+// `<link rel=prefetch>`、sendBeacon、还没装上闸的弹窗），以及一条判据在云上不成立
+// （1:1 NAT 下本机公网 IP 不在任何网卡上）。闸因此挪到了代理层。
+// 这一组走**真实的浏览通道**（带 --proxy-server 的常驻浏览器）。
+console.log('\n── 代理层闸（走真实浏览通道）──');
+const myIp = await primeOwnAddresses();
+console.log(`   本机公网 IP: ${myIp || '(取不到，跳过那一格)'}`);
+const PID = process.env.ND_LAB_PID || 'proj_msxlv88m_lfde';
+const n0 = blockedCount();
+try {
+  const R = await withBrowser(PID, async ({ page }) => {
+    const out = {};
+    // ⚠️ 顺序有讲究：**先落到公网页**再试被拦的那些。反过来的话被拦的导航会留下
+    // 一张 chrome 错误页，紧接着的 goto 被它打断 —— 那是探针的竞态，不是产品的问题
+    // （第一版矩阵就因此报了一条假失败）。产品里 browser_navigate 有预检 + 退回原处。
+    try { const r = await page.goto('https://example.com/', { timeout: 25000, waitUntil: 'domcontentloaded' }); out['反向·公网正事'] = r.status() === 200; }
+    catch { out['反向·公网正事'] = false; }
+    try { await page.goto('http://169.254.169.254/', { timeout: 8000 }); out['顶层导航内网'] = false; }
+    catch { out['顶层导航内网'] = true; }
+    // 再回公网页，后面的页内攻击才有个正常的落脚点
+    await page.goto('https://example.com/', { timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
+    if (!page.isClosed()) {
+      Object.assign(out, await page.evaluate(async (ip) => ({
+        'fetch 元数据': await fetch('http://169.254.169.254/x').then(() => false).catch(() => true),
+        'WebSocket 打本机': await new Promise((res) => {
+          try { const w = new WebSocket('ws://127.0.0.1:4001/ws/projects/x/browser');
+            w.onopen = () => res(false); w.onerror = () => res(true); setTimeout(() => res(true), 3000);
+          } catch { res(true); } }),
+        'link rel=prefetch': await new Promise((res) => {
+          const l = document.createElement('link'); l.rel = 'prefetch';
+          l.href = 'http://127.0.0.1:4001/api/health';
+          l.onerror = () => res(true); l.onload = () => res(false);
+          document.head.appendChild(l); setTimeout(() => res(true), 2000); }),
+        'img 打内网 LAN': await new Promise((res) => { const i = new Image();
+          i.onload = () => res(false); i.onerror = () => res(true);
+          i.src = 'http://10.128.0.12:4001/api/health'; setTimeout(() => res(true), 2500); }),
+        '打自己的公网 IP': ip ? await fetch(`https://${ip}:8443/`).then(() => false).catch(() => true) : true,
+      }), myIp));
+      const [popup] = await Promise.all([
+        page.waitForEvent('popup', { timeout: 4000 }).catch(() => null),
+        page.evaluate(() => { try { window.open('http://169.254.169.254/popup', '_blank'); } catch {} }),
+      ]);
+      await page.waitForTimeout(1200);
+      out['未装闸弹窗'] = !popup || popup.isClosed();
+    }
+    return out;
+  });
+  for (const [k, ok] of Object.entries(R)) {
+    console.log(`${ok ? '✅' : '⛔'} ${k}`);
+    ok ? pass++ : fail++;
+  }
+  const nb = blockedSince(n0);
+  console.log(`   代理记账 ${nb.length} 条`);
+} catch (err) {
+  console.log('⛔ 代理层那组没跑起来:', err.message);
+  fail++;
+} finally {
+  await closeFor(PID, 'lab done').catch(() => {});
+}
+
 console.log(`\n${pass} 过 / ${fail} 败`);
 process.exit(fail ? 1 : 0);

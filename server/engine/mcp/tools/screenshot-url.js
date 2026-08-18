@@ -19,6 +19,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './screenshot.js';
+import { checkUrl, attachSsrfGuard } from '../../../lib/ssrf-guard.js';
 
 const RASTER_SCALE = 0.6;
 const DEVICE_VIEWPORTS = {
@@ -44,6 +45,8 @@ function validateUrl(raw) {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     return { ok: false, message: `only http/https URLs are allowed (got ${u.protocol})` };
   }
+  // ⚠️ 这里**只做词法预筛**。真判据是 checkUrl（解析 DNS 按 IP 判）+ 页面上挂的
+  // CDP 闸（拦跳转与子资源）。留着这道是因为它便宜、能在解析之前挡掉最常见的字面量。
   const host = u.hostname.toLowerCase();
   if (PRIVATE_HOST_RE.test(host) || host.endsWith('.local')) {
     return { ok: false, message: `refusing to screenshot private/internal address: ${host}` };
@@ -93,6 +96,15 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
       if (!check.ok) {
         return { content: [{ type: 'text', text: check.message }], isError: true };
       }
+      // ⛔ 2026-08-18 补：上面那道 `validateUrl` 是**纯词法**的 —— 挡得住
+      // `127.0.0.1` 这种字面量，挡不住一个 DNS 解析到内网的公网域名，也不管 302。
+      // 新闸（lib/ssrf-guard.js）本来就是来替换它的，但上线那天**忘了接这个工具**，
+      // 于是它自己一直是个活着的 SSRF 洞。现在：按解析出的 IP 判 + 页面上挂 CDP 闸
+      // 拦跳转与子资源。
+      const pre = await checkUrl(check.url.href);
+      if (!pre.ok) {
+        return { content: [{ type: 'text', text: `refusing to screenshot: ${pre.reason}` }], isError: true };
+      }
 
       const vp = DEVICE_VIEWPORTS[device || 'desktop'];
       let browser;
@@ -100,7 +112,10 @@ anyway after 12s and the caption says so. Only http/https and public hosts.`,
         const { chromium } = await import('playwright');
         browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
-        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale, colorScheme: 'light' });
+        const ctx = await browser.newContext({ viewport: vp, deviceScaleFactor: rasterScale, colorScheme: 'light' });
+        const guard = await attachSsrfGuard(ctx);
+        const page = await ctx.newPage();
+        await guard.armPage(page);   // ⭐ 必须 await 完才导航（竞态是攻出来的）
         const diag = attachPageDiagnostics(page);
 
         let gotoNote = null;

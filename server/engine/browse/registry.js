@@ -37,6 +37,7 @@ import { mutex } from 'async-mutex-lite';
 import { getProjectWorkspace } from '../../projects/workspace.js';
 import { FIDELITY_LAUNCH_ARGS } from '../mcp/tools/helpers/perception-page.js';
 import { attachSsrfGuard } from '../../lib/ssrf-guard.js';
+import { startBrowseProxy } from '../../lib/browse-proxy.js';
 
 /** 常驻上限（内存）。1 vCPU 上活跃画面流另有 ≤1 的上限，见 screencast 那一层。 */
 const MAX_RESIDENT = Number(process.env.ND_BROWSE_MAX || 2);
@@ -76,9 +77,17 @@ async function launchBrowseBrowser(projectId) {
   // （核过），profile 跟着走，不用额外写清理。
   const userDataDir = path.join(getProjectWorkspace(projectId), '.browser', 'default');
 
+  // ⭐ 出网闸在**代理层**（2026-08-18 第二遍）：`--proxy-server` 之后 chromium 的
+  // 每一次连接都从这儿走 —— 包括 CDP 的 Fetch 阶段看不见的那些（WebSocket 握手、
+  // `<link rel=prefetch>`、sendBeacon、还没装上闸的弹窗）。理由与实测见
+  // lib/browse-proxy.js 文件头。CDP 那道闸保留当纵深，不再是唯一一道。
+  // ⚠️ `bypass: ''` 是必须的：默认会放过 loopback，那正好是我们最要拦的。
+  const { port: proxyPort } = await startBrowseProxy();
+
   const context = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chromium',            // ⭐ 不是默认的 headless_shell，见 chromeUa 的注释
     headless: true,
+    proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: '' },
     args: FIDELITY_LAUNCH_ARGS,
     viewport: VIEWPORT,
     locale: 'zh-CN',                // 面向中文用户；顺带摆脱默认的 en-US@posix 那种怪指纹
@@ -86,7 +95,9 @@ async function launchBrowseBrowser(projectId) {
     acceptDownloads: false,         // 下载不是这条线要的，而且是一条额外的写盘面
   });
 
-  const guard = await attachSsrfGuard(context);
+  // proxied: true —— 第二道（连上后看对端 IP）在代理下是纯冗余，而且会把每个页面
+  // 都误杀（代理自己就是 127.0.0.1）。第一道（Fetch 阶段）保留当纵深。
+  const guard = await attachSsrfGuard(context, undefined, { proxied: true });
   // 持久 context 自带一个空白页；没有就造一个
   const page = context.pages()[0] || await context.newPage();
   await guard.armPage(page);        // ⭐ 必须 await 完才允许导航（竞态是攻出来的）

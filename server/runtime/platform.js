@@ -107,6 +107,10 @@ const skipWebFetchPreflight = true;
  * 之前最该补的一条。目录条目按目录整个拦（实测：目录级 denyRead 拦得住 `cat`
  * 目录里的文件，拦不住 `ls` 看文件名 —— 文件名不是秘密，接受）。
  */
+/** 数据根（给 credentialBlacklist 用；跟 protectedPathRules 收到的那个同源） */
+const PROJECTS_DATA_ROOT_FOR_DENY = process.env.PROJECTS_DATA_ROOT
+  || path.join(repoRoot, 'server', 'projects-data');
+
 function credentialBlacklist() {
   const home = os.homedir();
   return [
@@ -126,6 +130,13 @@ function credentialBlacklist() {
     '/etc/shadow',
     '/etc/passwd',
     '/etc/sudoers',
+    // 浏览器 profile（2026-08-18）：`<数据根>/<项目>/.browser/` 里是 cookie jar，
+    // 装着用户在第三方站点的**真实登录态**（agent 逛站时人接手登录留下的）。
+    // ⚠️ 主要防线其实是 pre-workspace-scope-guard（它按"在数据根里、不在本工作区里"
+    // 判，Read/Grep/Glob 实测都 deny）；这一条是纵深 + 写明意图。
+    // ⛔ 两条都管不到 **Bash** —— 生产 NODESIGN_SANDBOX 没开，Bash 读得到磁盘上
+    // 任何东西（包括 .env）。那是全局既有条件，要治得开沙盒（用户拍板项）。
+    path.join(PROJECTS_DATA_ROOT_FOR_DENY, '*', '.browser'),
     // 逃生舱：同机上还有别的东西要拦时不用改代码（冒号分隔绝对路径）。
     // exp 用它拦生产的数据根 —— 两个实例同用户同机器，否则互相读得到。
     ...(process.env.NODESIGN_DENY_READ_EXTRA || '').split(':').map(s => s.trim()).filter(Boolean),

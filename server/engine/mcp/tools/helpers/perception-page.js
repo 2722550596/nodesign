@@ -65,9 +65,25 @@ export async function launchPerceptionBrowser() {
  * 工作区相对路径 → 用户预览用的同一个 URL。
  * 逐段 encodeURIComponent —— 任务名和文件名大量是中文，整体编码会把 `/` 也吃掉。
  */
-export function artifactFileUrl(projectId, relPath) {
+export function artifactFileUrl(projectId, relPath, { raw = true } = {}) {
   const sub = String(relPath || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
-  return `${PERCEPTION_ORIGIN}/api/projects/${projectId}/artifact-file/${sub}`;
+  // ⭐ `?nd=raw` —— 不走显示改写层，拿原始 HTML + 原图。
+  //
+  // artifact-file 平时是**显示通道**：给 html 注 srcset/sizes/loading=lazy、给图发
+  // 降尺寸的 webp/avif 派生图。对用户预览这些都对（省 90% 流量）。但 agent 的眼睛
+  // 走同一条路由之后，它看到的就不是**交付物**了 —— 发布出去的站点是原始 HTML
+  // （site-publish 拷原文，没有这层注入）。
+  //
+  // ⛔ 实测差别（2026-08-18 审查攻出来的）：一张 1800px 宽、没有 CSS 宽约束的图，
+  // 注入 `sizes="100vw"` 之后在 agent 眼里渲染成 1440px、`overflow:false`；
+  // 而访客那边是 1800px、`overflow:true` —— **显示改写层把横向溢出藏起来了**，
+  // 而「忘写 max-width:100%」正是最常见的那类真 bug。顺带图也不是原图
+  // （naturalWidth 1440 vs 1800），逐像素/锐度类判断跟着失真。
+  //
+  // ⚠️ 代价：感知页加载原图更慢更吃 CPU（1 vCPU 上是真代价）。取舍是**眼睛的
+  // 正确性优先于自检速度** —— 一个看错的自检比一个慢的自检坏得多。
+  // （http 同源那半边不受影响：fetch/localStorage/SW 照旧跟用户预览一致，实测过。）
+  return `${PERCEPTION_ORIGIN}/api/projects/${projectId}/artifact-file/${sub}${raw ? '?nd=raw' : ''}`;
 }
 
 /**

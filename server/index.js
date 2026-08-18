@@ -17,6 +17,7 @@ import express from 'express';
 import cors from 'cors';
 
 import { setupWS } from './ws/index.js';
+import { primeOwnAddresses } from './lib/ssrf-guard.js';
 import { stopProxy } from './lib/binary-fixup-proxy.js';
 import { startRembgService, stopRembgService } from './services/rembg-launcher.js';
 import projectsRouter from './api/projects.js';
@@ -119,6 +120,8 @@ const httpServer = http.createServer(app);
 setupWS(httpServer);
 
 httpServer.listen(PORT, () => {
+  // 出网闸要知道本机的公网 IP —— 云上 1:1 NAT 下它不在任何网卡上（见 ssrf-guard）
+  primeOwnAddresses().catch(() => {});
   console.log(`[server] listening on :${PORT}`);
   console.log(`[server] health: http://localhost:${PORT}/api/health`);
 });
