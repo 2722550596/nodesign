@@ -16,6 +16,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import { safeResolveRead } from './safe-path.js';
 
 const DOT_OK = new Set(['.thumbnails', '.meta']);
 
@@ -59,9 +60,18 @@ export async function resolveArtifactFile(sharedRootRaw, rawSub) {
     if (!existsAsIs) subPath = subPath.replace(/^tasks\/[^/]+\//, '');
   }
 
-  const absPath = path.resolve(sharedRoot, subPath);
-  if (absPath !== sharedRoot && !absPath.startsWith(sharedRoot + path.sep)) {
-    return { ok: false, status: 403, error: 'path escapes workspace' };
+  // ⛔ **纯词法的 `path.resolve` 挡不住软链**。真攻过（2026-08-18）：在工作区里
+  // `ln -s /path/to/.env x.html`，`GET artifact-file/x.html` 回 **200 且字节数与
+  // .env 一字不差**。而这条路由今天更热了（感知通道走它、常驻浏览器的 cookie jar
+  // 也住在工作区里），并且**它跑在 server 主进程、沙盒管不着**。
+  //
+  // 仓库里早就有正确实现 `safe-path.js` 的 `safeResolveRead`（realpath 复核，
+  // ENOENT 不算越界）。照那条教训：**去掉第二份判据而不是添第三份**
+  // （[[feedback-copied-guard-shape]]：抄守卫要抄正确性不是形状 —— 08-17 同一天
+  // 栽两次，第二次就是抄了调用形状没抄 realpath 复核）。
+  const absPath = await safeResolveRead(sharedRoot, subPath);
+  if (!absPath) {
+    return { ok: false, status: 403, error: 'path escapes workspace (symlinks are resolved before the check)' };
   }
   if (!isServablePath(sharedRoot, absPath)) {
     return { ok: false, status: 403, error: 'not a servable path' };

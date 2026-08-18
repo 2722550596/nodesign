@@ -7,6 +7,7 @@
  */
 import { promises as fs } from 'fs';
 import path from 'path';
+import { safeResolveRead } from '../lib/safe-path.js';
 import { isExtractable } from '../lib/doc-extract.js';
 
 /** 直接 image input 阈值：> 1MB 走 path 让 agent Read，< 1MB inline base64 */
@@ -166,14 +167,23 @@ async function tryInlineImageAttachment(attachment, sessionRoot) {
   const mime = attachment.mime;
   if (!mime || !IMAGE_MEDIA_TYPES.has(mime)) return null;
 
-  // attachment.path 是相对 sessionRoot 的（assets API 返 '../../shared/assets/...'）
-  // 解析成绝对路径，并校验解析后仍在 project workspace 内（防 path traversal）
-  let absPath;
-  try {
-    absPath = path.resolve(sessionRoot, attachment.path);
-  } catch {
-    return null;
-  }
+  // ⛔ 上面这段注释原来写着"并校验解析后仍在 project workspace 内（防 path traversal）"
+  // —— **代码里根本没有这个校验**。真攻过（2026-08-18）：
+  //   path: '../../<别人的 pid>/shared/.../x.png' → 别的用户的图被 base64 塞进
+  //   我这轮的 context（多租户隔离直接破）；
+  //   path: '../../../../.env'                   → 服务端 .env 原文进 context
+  //   （解出来第一行就是 "# === Nodesign 服务端环境变量 ==="）。
+  // 判据用仓库里已有的那一份 safeResolveRead（realpath 复核，软链也拦）。
+  //
+  // ⚠️ 顺带修一个**静默坏了很久**的东西：assets API 至今返回
+  // `../../shared/assets/<name>`，那是扁平化之前 `sessions/<sid>/` 时代的相对路径。
+  // 扁平化后 sessionRoot 就是 `<pid>/shared`，它解析到 `projects-data/shared/...`
+  // （不存在）→ stat 失败 → **静默不内联**，agent 只拿到一行文字而不是图。
+  // 实测：`../../shared/assets/x.png` MISSING、`assets/x.png` INLINED。
+  // 在这儿把老前缀剥掉（跟 artifact-file 那条 `tasks/` 兼容同一个思路）。
+  const relRaw = String(attachment.path || '').replace(/^(?:\.\.\/)+shared\//, '');
+  const absPath = await safeResolveRead(sessionRoot, relRaw);
+  if (!absPath) return null;
 
   let stat;
   try {
