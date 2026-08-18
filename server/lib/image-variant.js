@@ -444,6 +444,13 @@ export async function writeWebpSibling(absPng, buf, relDir) {
   try {
     const out = await sharp(buf).webp({ quality: FORMATS.webp.quality }).toBuffer();
     await fs.writeFile(absWebp, out);
+    // ⭐ 顺带预热派生档。这两件事是一件事的两半：兄弟 webp 是**真文件**（给 agent
+    // 在页面里引），预热填的是显示通道按 `?w=` 现编的那层缓存。两条产线以前各写
+    // 一遍，08-18 生图那边被顺手换掉一半 → 12 图站点冷开从 72ms 退回 5.4 秒，
+    // 而 paint_still 那边没变，于是分叉。收在一处就不会只改一半。
+    fs.stat(absPng)
+      .then(st => enqueueWarm(absPng, st, warmSpecsFor()))
+      .catch(() => { /* 预热是尽力而为，失败下次请求现编 */ });
     return { rel: `${relDir}/${path.basename(absWebp)}`, bytes: out.length };
   } catch (err) {
     console.warn('[image-variant] 兄弟 webp 没编出来（不影响主流程）:', err.message);

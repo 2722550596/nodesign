@@ -39,6 +39,7 @@
 
 import os from 'node:os';
 import dns from 'node:dns/promises';
+import net from 'node:net';
 
 /** IPv4 段（CIDR），含各类保留段 —— 不只私网，元数据和 CGNAT 也在里面 */
 const V4_BLOCKS = [
@@ -73,15 +74,74 @@ function v4Blocked(ip) {
   return false;
 }
 
-/** IPv4-mapped / NAT64 要**拆开按 v4 判**，否则 `::ffff:127.0.0.1` 直接绕过 */
+/**
+ * IPv6 字面量 → 16 字节。**认不出就返 null，调用方要 fail closed。**
+ *
+ * ⚠️ 为什么不再靠字符串前缀 + 几个正则：那套只认它见过的写法。审查实测三种写法
+ * 从第二道闸下直接走过去：
+ *   `0:0:0:0:0:0:0:1`（::1 的展开形）、`::7f00:1`（IPv4-compatible 的十六进制形）、
+ *   `0177.0.0.1`（八进制的 127.0.0.1）。
+ * 第一道闸（checkUrl）因为走 WHATWG URL 规范化不受影响，但第二道闸拿的是
+ * CDP 的 `remoteIPAddress`，判据自己得会规范化。**先规范化再判，别列写法。**
+ */
+function v6Bytes(ip) {
+  if (!net.isIPv6(ip)) return null;
+  let head = ip, tail = '';
+  const dbl = ip.indexOf('::');
+  if (dbl !== -1) { head = ip.slice(0, dbl); tail = ip.slice(dbl + 2); }
+  const toGroups = (part) => {
+    if (!part) return [];
+    const gs = part.split(':');
+    const out = [];
+    for (const g of gs) {
+      if (g.includes('.')) {                 // 尾部内嵌的点分四段
+        const o = g.split('.').map(Number);
+        if (o.length !== 4 || o.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+        out.push((o[0] << 8) | o[1], (o[2] << 8) | o[3]);
+      } else {
+        if (!/^[0-9a-f]{1,4}$/i.test(g)) return null;
+        out.push(parseInt(g, 16));
+      }
+    }
+    return out;
+  };
+  const h = toGroups(head), t = toGroups(tail);
+  if (h === null || t === null) return null;
+  const fill = 8 - h.length - t.length;
+  if (dbl === -1 ? fill !== 0 : fill < 0) return null;
+  const groups = [...h, ...new Array(dbl === -1 ? 0 : fill).fill(0), ...t];
+  if (groups.length !== 8) return null;
+  const b = [];
+  for (const g of groups) b.push((g >> 8) & 255, g & 255);
+  return b;
+}
+
+/** 严格十进制点分四段（不接受前导零/十六进制/少于四段 —— 那些交给 fail closed） */
+function strictV4(ip) {
+  const p = ip.split('.');
+  if (p.length !== 4) return null;
+  for (const o of p) {
+    if (!/^(0|[1-9]\d{0,2})$/.test(o) || Number(o) > 255) return null;
+  }
+  return ip;
+}
+
+/** IPv4-mapped / NAT64 / IPv4-compatible 要**拆开按 v4 判**，否则直接绕过 */
 function unwrapV6(ip) {
-  const m = ip.match(/^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/i);
-  if (m) return m[1];
-  // ::ffff:7f00:1 这种十六进制写法
-  const h = ip.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
-  if (h) {
-    const a = parseInt(h[1], 16), b = parseInt(h[2], 16);
-    return `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
+  const b = v6Bytes(ip);
+  if (!b) {
+    // NAT64 的 well-known 前缀写法（64:ff9b::a.b.c.d 已被 v6Bytes 覆盖，
+    // 这里只兜住 net.isIPv6 认不出的怪写法 → 交给调用方 fail closed）
+    return null;
+  }
+  const zeros12 = b.slice(0, 12).every(x => x === 0);
+  const mapped = b.slice(0, 10).every(x => x === 0) && b[10] === 0xff && b[11] === 0xff;
+  // 64:ff9b::/96 是 NAT64
+  const nat64 = b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b
+    && b.slice(4, 12).every(x => x === 0);
+  // ⭐ zeros12 覆盖 `::a.b.c.d` 和 `::7f00:1`（IPv4-compatible，废弃但可路由到 v4）
+  if (mapped || nat64 || (zeros12 && !(b[12] === 0 && b[13] === 0 && b[14] === 0 && b[15] <= 1))) {
+    return `${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
   }
   return null;
 }
@@ -106,9 +166,18 @@ function unwrapV6(ip) {
  * ⚠️ ② 是**异步**的，所以 `primeOwnAddresses()` 要在启动时调一次；没调也不会崩，
  * 只是少了那一条（同步路径永远拿得到 ① 和 ③）。
  */
+/**
+ * 网卡枚举**不能永久 memo**：DHCP 续租换地址、加一张网卡、docker0 起来都会变，
+ * 而这个进程一跑几周（`enp0s0` 的 `valid_lft` 是几万秒）。缓存久了就是
+ * "闸按一份过期的地图判"。30 秒足够摊掉每个子资源都枚举一次的开销。
+ * ⚠️ `primed` 单独存：云 NAT 的公网 IP 不在任何网卡上，重新枚举会把它冲掉。
+ */
+const OWN_TTL_MS = 30_000;
 let ownCache = null;
+let ownCacheAt = 0;
+const primed = new Set();
 function baseOwn() {
-  const set = new Set();
+  const set = new Set(primed);
   for (const list of Object.values(os.networkInterfaces())) {
     for (const a of list || []) set.add(String(a.address).toLowerCase().replace(/%.*$/, ''));
   }
@@ -119,7 +188,10 @@ function baseOwn() {
   return set;
 }
 export function ownAddresses() {
-  if (!ownCache) ownCache = baseOwn();
+  if (!ownCache || Date.now() - ownCacheAt > OWN_TTL_MS) {
+    ownCache = baseOwn();
+    ownCacheAt = Date.now();
+  }
   return ownCache;
 }
 
@@ -138,6 +210,7 @@ export async function primeOwnAddresses({ timeoutMs = 1500 } = {}) {
     if (!res.ok) return null;
     const ip = (await res.text()).trim().toLowerCase();
     if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+      primed.add(ip);   // 存进不会被重新枚举冲掉的那一份
       set.add(ip);
       console.log(`[ssrf-guard] 本机公网 IP ${ip} 已加入禁止集（云 NAT 下它不在任何网卡上）`);
       return ip;
@@ -157,8 +230,12 @@ export function blockReason(rawIp) {
   if (ownAddresses().has(ip)) {
     return `${ip} is this machine's own address (our API listens on *:PORT — reaching it via any local NIC is the same as reaching localhost)`;
   }
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-    return v4Blocked(ip) ? `${ip} is a private/reserved IPv4 address` : null;
+  if (ip.includes('.') && !ip.includes(':')) {
+    // ⭐ **严格十进制才放过判定**。`0177.0.0.1` 是八进制的 127.0.0.1，
+    // 老的 `\d+\.\d+\.\d+\.\d+` 正则会把它当合法四段、按 `177` 去算 → 放行。
+    const v4 = strictV4(ip);
+    if (!v4) return `${rawIp} is not a canonical IPv4 address (leading zeros / hex forms are refused rather than guessed)`;
+    return v4Blocked(v4) ? `${ip} is a private/reserved IPv4 address` : null;
   }
   if (ip.includes(':')) {
     const v4 = unwrapV6(ip);
@@ -166,12 +243,22 @@ export function blockReason(rawIp) {
       if (ownAddresses().has(v4)) return `${ip} maps to this machine's own address`;
       return v4Blocked(v4) ? `${ip} maps to private IPv4 ${v4}` : null;
     }
-    const bare = ip.replace(/:/g, '') === '' ? '::' : ip;
-    for (const pre of V6_PREFIXES) {
-      if (pre === '::' ? bare === '::' : bare.startsWith(pre)) {
-        return `${ip} is a private/reserved IPv6 address`;
-      }
+    // 规范化成 8 组再判，别拿字面量比前缀 —— `0:0:0:0:0:0:0:1` 就是 `::1`
+    const b = v6Bytes(ip);
+    if (!b) return `${rawIp} is not a canonical IPv6 address`;
+    const canon = [];
+    for (let i = 0; i < 16; i += 2) canon.push(((b[i] << 8) | b[i + 1]).toString(16));
+    const loopback = b.slice(0, 15).every(x => x === 0) && b[15] === 1;
+    const unspecified = b.every(x => x === 0);
+    if (loopback || unspecified) return `${ip} is the IPv6 loopback/unspecified address`;
+    if (ownAddresses().has(canon.join(':').replace(/(^|:)(0:)+/, '::').replace(/::+/, '::'))) {
+      return `${ip} is this machine's own address`;
     }
+    const first = b[0];
+    // fc00::/7 唯一本地、fe80::/10 链路本地、ff00::/8 组播
+    if ((first & 0xfe) === 0xfc) return `${ip} is a unique-local IPv6 address (fc00::/7)`;
+    if (first === 0xfe && (b[1] & 0xc0) === 0x80) return `${ip} is a link-local IPv6 address (fe80::/10)`;
+    if (first === 0xff) return `${ip} is an IPv6 multicast address`;
     return null;
   }
   return `${rawIp} is not an IP address`;   // 调用方该先解析

@@ -37,7 +37,13 @@ export function guardProject(req, res) {
 
 /** 归属判断（不发响应）—— WS upgrade 等非 express 场景用 */
 export function userOwnsProject(user, project) {
-  return !!(project && user && (user.role === 'admin' || project.ownerId === user.id));
+  if (!project || !user) return false;
+  if (user.role === 'admin') return true;
+  // ⚠️ `project.ownerId === user.id` 在**两边都 undefined** 时是 true。今天不可达
+  // （每行都有 owner，bootstrapAuth 每次启动回填 NULL），但离"通配放行"只差一个
+  // 缺列或一个改了形状的调用方。归属判断上宁可写死。
+  return typeof user.id === 'string' && user.id !== ''
+    && typeof project.ownerId === 'string' && project.ownerId === user.id;
 }
 
 /**

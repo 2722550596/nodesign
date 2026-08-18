@@ -190,6 +190,14 @@ router.delete('/:pid', async (req, res, next) => {
     const project = guardProject(req, res);
     if (!project) return;
 
+    // 常驻浏览器要先关：它的 profile 就在这个工作区里（`.browser/`），不关的话
+    // chromium 攥着一个已被 rm 的 user-data-dir，而只有 2 个的常驻名额被一个
+    // 已删项目占着，直到 5 分钟空闲计时器到点。（动态 import：别把 playwright
+    // 那一层拖进这个路由文件的启动图。）
+    try {
+      const { closeFor } = await import('../engine/browse/registry.js');
+      await closeFor(req.params.pid, 'project deleted');
+    } catch { /* 没起过浏览器不该挡住删项目 */ }
     // 级联：先清 workspace 文件，再删 DB row（DB row 删了找不到，先文件后 DB 顺序保险）
     try { await removeProjectWorkspace(req.params.pid); } catch (err) {
       console.warn(`[projects] removeWorkspace failed for ${req.params.pid}:`, err.message);

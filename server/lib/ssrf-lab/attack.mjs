@@ -70,9 +70,15 @@ for (const [name, url, shouldBlock] of CASES) {
   await page.evaluate((u) => {
     const f = document.createElement('iframe'); f.src = u; document.body.appendChild(f);
   }, HOP('http://169.254.169.254/computeMetadata/v1/'));
-  await page.waitForTimeout(6000);
-  const got = blocked.some(x => x.url.includes('169.254'));
-  console.log(`${got ? '✅' : '⛔'} ⭐ 跨源 iframe（OOPIF）的跳转目标`);
+  // ⚠️ 别用固定 6 秒等：这一格排在 9 个跳板请求之后，公网跳板慢一点就读成
+  // "闸没拦住"——**安全实验里的假警报会训练人忽略警报**。改成轮询到出结果为止。
+  let got = false;
+  for (let i = 0; i < 30 && !got; i += 1) {
+    await page.waitForTimeout(500);
+    got = blocked.some(x => x.url.includes('169.254'));
+  }
+  console.log(`${got ? '✅' : '⛔'} ⭐ 跨源 iframe（OOPIF）的跳转目标`
+    + (got ? '' : '（等满 15 秒没见到拦记录 —— 先确认跳板站是不是在限速，别急着当漏洞）'));
   got ? pass++ : fail++;
   await ctx.close();
 }

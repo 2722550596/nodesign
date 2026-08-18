@@ -161,7 +161,7 @@
 | `spacingTwip` | 字符间距（twip，可负） |
 | `highlight` | 荧光笔色名，如 `"yellow"` |
 
-### style.para —— 段落级（13 个键）
+### style.para —— 段落级（14 个键）
 
 | 键 | 值 |
 |---|---|
@@ -178,6 +178,7 @@
 | `shading` | `"RRGGBB"` 底纹 |
 | `tabs` | `[{pos: twip, val: "left"/"center"/"right"/"decimal", leader: "dot"}]` |
 | `cjk` | 覆盖 `base.cjk` 的同名开关 |
+| `list` | `"梯队名"` 或 `{name, level}` —— 挂自动编号，梯队在 `tokens.numbering` 里定义（见下） |
 
 **缩进用 `Chars` 后缀那一组更稳**：`firstLineChars: 200` = 首行缩进 **2 个字**，
 字号变了缩进跟着变；写 `firstLineTwip: 480` 则是写死的物理长度，改字号就错位。
@@ -266,7 +267,8 @@
 ]
 ```
 
-⚠️ 页眉页脚里**不要放表格**，会构建失败。
+⚠️ 页眉页脚里**不要放表格**。它不会报错 —— 每个块都走 `buildPara`，表格块会
+变成一个**空段落**（又是一次「写了没生效」）。要横向排布就用制表位或多个 run。
 
 ---
 
@@ -360,6 +362,6 @@
 
 ## 改完怎么验
 
-`build_docx` 成功 ≠ 排版对。**必须 `screenshot` 看一眼渲出来的页图**——
+`build_docx` 成功 ≠ 排版对。**必须 `screenshot_canvas` 看一眼渲出来的页图**——
 它是服务端用 LibreOffice 真渲的。两条已知失真：中文是替身字体（判版式可以、
 判具体字形不行），TOC 域显示占位文案（PAGE 域是正常求值的，页脚看到几就是几）。

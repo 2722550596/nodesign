@@ -188,8 +188,13 @@ export async function getArtifactCover(pid, sharedDir, relPath) {
 }
 
 async function renderOrRead(pid, cover, sharedDir) {
+  // ⚠️ key 里要带**渲染方式的版本**。08-18 感知层从 file:// 改走 http（同源，
+  // fetch/localStorage 才活），但缓存 key 只认 relPath|mtime|宽度 —— 于是改动
+  // 之前渲的封面（file:// 版，页面里 fetch 回来的内容一片空白）会一直供着，
+  // 直到 HTML 自己被改动。渲染管线换了就该换一代 key。
+  const RENDER_GEN = 'http-v1';
   const etag = crypto.createHash('sha1')
-    .update(`${cover.relPath}|${cover.mtimeMs}|${OUT_WIDTH}`)
+    .update(`${cover.relPath}|${cover.mtimeMs}|${OUT_WIDTH}|${RENDER_GEN}`)
     .digest('hex');
   const file = path.join(CACHE_DIR, pid, `${etag}.webp`);
 

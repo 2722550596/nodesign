@@ -168,4 +168,3 @@ export function frameMeta(projectId) {
   return casts.get(projectId)?.meta ?? null;
 }
 
-export const _cast = { CAST, BACKPRESSURE_BYTES, MAX_ACTIVE };

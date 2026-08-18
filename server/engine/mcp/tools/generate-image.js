@@ -47,7 +47,7 @@ import { Events } from '../../agent/events.js';
 import { z } from 'zod';
 import sharp from 'sharp';
 import {
-  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor, writeWebpSibling,
+  THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, writeWebpSibling,   // 预热由 writeWebpSibling 顺带做
 } from '../../../lib/image-variant.js';
 
 // Thumbnail 配置（env 可调）。**原图不动**——保留 Gemini 输出的全分辨率（通常
@@ -690,7 +690,7 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
       const thumbAgentRelPath = thumb ? path.posix.join('assets', 'generated', '.thumbnails', thumbName) : null;
 
       // 兄弟 webp（2026-08-18）：页面里引它，PNG 是母版留给用户下载和再编辑。
-      // 实现在 lib/image-variant.js（跟派生层同一个 q82，别再立第二个数字）。
+      // 实现在 image-variant.js（跟派生层同一个 q82），它**顺带预热派生档**。
       const webp = await writeWebpSibling(absOut, imgBuf, 'assets/generated');
 
       // 语义 sidecar（2026-07-27 工作台）：.meta/<name>.json 记录物件来历，

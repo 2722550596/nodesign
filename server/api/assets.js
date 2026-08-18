@@ -195,6 +195,13 @@ const ARTIFACT_MIME = {
   '.mp3': 'audio/mpeg', '.zip': 'application/zip',
   '.html': 'text/html; charset=utf-8', '.md': 'text/markdown; charset=utf-8',
   '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json',
+  // ⚠️ `.mjs` 缺了会当 application/octet-stream 发，浏览器**拒绝当模块加载**
+  // （而 screenshot 那边承诺"动态 import 跟用户看到的一致"，原来只对 .js 成立）。
+  // 字体缺 mime 不致命但会走错缓存/解码路径；.wasm 缺了 instantiateStreaming 直接失败。
+  '.mjs': 'text/javascript', '.wasm': 'application/wasm',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf',
+  '.txt': 'text/plain; charset=utf-8', '.ico': 'image/x-icon',
+  '.xml': 'application/xml', '.csv': 'text/csv; charset=utf-8',
 };
 // 「什么算图片 / 视频」的真相源在 lib/kinds/file-kinds.js（2026-08-17 从这里挪过去）——
 // 导出按卡类型收产物时也要问同一个问题，抄两份会分叉成「画布认、导出不认」。

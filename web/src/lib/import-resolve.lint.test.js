@@ -78,9 +78,14 @@ function namedImports(code) {
     if (node.type !== 'ImportDeclaration' && node.type !== 'ExportNamedDeclaration') continue;
     const spec = node.source?.value;
     if (typeof spec !== 'string' || !spec.startsWith('.')) continue;
+    // ⚠️ 默认导入也要查。`import x from './y.js'` 而 y 没有 default export
+    // 同样是**启动即崩**那一类（`does not provide an export named 'default'`），
+    // 而原来这条 filter 把 ImportDefaultSpecifier 整个跳过了 —— 今天两次线上
+    // 中断有一次正是"名字不在那个模块里"，只是碰巧是具名的那种。
     const names = (node.specifiers || [])
-      .filter(sp => sp.type === 'ImportSpecifier' || sp.type === 'ExportSpecifier')
-      .map(sp => sp.imported?.name ?? sp.local?.name)
+      .filter(sp => sp.type === 'ImportSpecifier' || sp.type === 'ExportSpecifier'
+        || sp.type === 'ImportDefaultSpecifier')
+      .map(sp => (sp.type === 'ImportDefaultSpecifier' ? 'default' : (sp.imported?.name ?? sp.local?.name)))
       .filter(Boolean);
     if (names.length) out.push({ spec, names });
   }

@@ -39,8 +39,15 @@ import { FIDELITY_LAUNCH_ARGS } from '../mcp/tools/helpers/perception-page.js';
 import { attachSsrfGuard } from '../../lib/ssrf-guard.js';
 import { startBrowseProxy } from '../../lib/browse-proxy.js';
 
-/** 常驻上限（内存）。1 vCPU 上活跃画面流另有 ≤1 的上限，见 screencast 那一层。 */
-const MAX_RESIDENT = Number(process.env.ND_BROWSE_MAX || 2);
+/**
+ * 常驻上限（内存）。1 vCPU 上活跃画面流另有 ≤1 的上限，见 screencast 那一层。
+ *
+ * ⚠️ 写法要 NaN-safe：`Number('yes')` 是 NaN，而 `live.size >= NaN` **恒为 false**
+ * → 上限静默消失，chromium 无限起。这台机器 1 核 8G **无 swap**，尖峰直接进
+ * 内核 OOM killer。（隔壁 IDLE_MS 用的 `|| 默认` 写法本来就是 NaN-safe 的。）
+ */
+const MAX_RESIDENT = Number(process.env.ND_BROWSE_MAX) > 0
+  ? Math.floor(Number(process.env.ND_BROWSE_MAX)) : 2;
 /** 空闲多久回收。仿 h3box 的 ControlPersist=600 与 WS grace 的思路。 */
 const IDLE_MS = Number(process.env.ND_BROWSE_IDLE_MS || 0) || 5 * 60 * 1000;
 const NAV_TIMEOUT_MS = 30_000;

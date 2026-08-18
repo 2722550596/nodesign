@@ -52,13 +52,20 @@ function hhmm() {
  *
  * 对用户是噪音，对 agent 是删不掉也控制不了的写入，两头不讨好。所以：
  *   - SDK 自己给了抑制信号 `skip_transcript` → 听它的
- *   - 后台 Bash 一律不落贴（它不是"子任务"，是一条命令）
- * 真子代理（vision-checker 之类，summary 是真报告）不受影响。
+ *   - **只有真子代理才落贴**（原来是拉黑 `local_bash` 一种）
+ *
+ * ⚠️ 从黑名单改白名单的理由：这条判据的原则是「一张贴讲一件事，别当垃圾桶」，
+ * 而黑名单只挡住了当时看见的那一种。SDK 的 `task_type` 至少还有 `local_workflow`
+ * （sdk.d.ts 里有它的专属字段 `workflow_name`），照旧会落贴 —— 同一个病换个
+ * 名字回来。白名单让"新出现一种任务类型"的默认行为变成不落贴，宁可少一张。
+ * 认不出类型时看 `subagent_type`：真子代理一定带它。
  */
 function shouldNote(msg) {
   if (msg?.skip_transcript === true) return false;
-  if (msg?.task_type === 'local_bash') return false;
-  return true;
+  const t = msg?.task_type;
+  if (t === 'subagent') return true;
+  if (typeof t === 'string' && t) return false;      // 别的已知类型（local_bash / local_workflow / …）
+  return typeof msg?.subagent_type === 'string' && !!msg.subagent_type;
 }
 
 /**

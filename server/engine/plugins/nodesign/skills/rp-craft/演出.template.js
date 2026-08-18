@@ -13,8 +13,13 @@
  *   滚动锚定 · 摘要折叠提示 · 隐私声明 · 探针模式
  *
  * ⚠️ **必须用 classic script 引**：`<script src="演出.js"></script>`，
- * **不能写 type="module"** —— agent 自检截图走 `file://` 打开页面，ES module
- * 在 file: 下被当跨源拦掉（origin 是 null），整页脚本会一起死。
+ * **不能写 type="module"**。
+ *
+ * 理由更新（2026-08-18）：原来的理由是"agent 自检走 file://，module 在 file: 下
+ * 被当跨源拦掉"—— 感知层今天改走 http 了，这个理由**已经不成立**。规则本身仍然
+ * 保留，因为它保护的是另一个真场景：**用户把演出页导出成 zip、在本地双击打开**，
+ * 那才是 file://，module 在那里照样整页死。
+ * （规则对但理由死了的注释，比没有注释更危险 —— 下一个人会按死理由去推翻规则。）
  *
  * ## 怎么用
  *
@@ -50,7 +55,8 @@
   /**
    * 从页面 URL 认出项目和演出文件夹。
    * 线上是 `/api/projects/<pid>/artifact-file/<dir>/index.html`；
-   * file:// 打开时认不出来 —— 那是探针模式，不是坏了。
+   * file:// 打开时认不出来（导出的 zip 在本地双击就是这种）—— 那是探针模式，
+   * 不是坏了。
    */
   function 自省() {
     var m = location.pathname.match(/^\/api\/projects\/([^/]+)\/artifact-file\/(.+)$/);

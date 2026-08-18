@@ -48,7 +48,7 @@ preset 给完整 token 表。自造词作废（"科技感文档"不是版式名�
 工作方式**只有这一种**：
 
 ```
-写/改 文档.json  →  build_docx  →  screenshot 看  →  改 JSON  →  再 build
+写/改 文档.json  →  build_docx  →  screenshot_canvas 看  →  改 JSON  →  再 build
 ```
 
 ⛔ **永远不要直接改 .docx**。它是构建产物，下一次 build 会把你的手改无声抹掉。
@@ -106,7 +106,7 @@ preset 给完整 token 表。自造词作废（"科技感文档"不是版式名�
 
 ## 五、渲染验收：做完必须看
 
-`screenshot` 对 .docx 会渲成页图（LibreOffice → PDF → PNG），带 `pages` 参数
+`screenshot_canvas` 对 .docx 会渲成页图（LibreOffice → PDF → PNG），带 `pages` 参数
 （`"3"` / `"2-5"` / `"all"`），默认前两页、一次最多六页。
 
 ⚠️ **构建没报错不等于排版对了。** docx 没有 DOM，没有 `query_elements` 可查 ——
@@ -129,8 +129,8 @@ preset 给完整 token 表。自造词作废（"科技感文档"不是版式名�
 
 ```
 build_docx        →  过不了就按报错改 JSON，别猜
-screenshot        →  看版式
-（多页文档）screenshot pages:"N-M"  →  看分页处有没有孤行、标题掉在页底
+screenshot_canvas →  看版式
+（多页文档）screenshot_canvas pages:"N-M"  →  看分页处有没有孤行、标题掉在页底
 交付前            →  提醒用户在真 Word 里开一遍
 ```
 

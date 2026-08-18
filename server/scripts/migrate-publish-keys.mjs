@@ -63,7 +63,9 @@ for (const r of rows) {
   }
 
   console.log(`${APPLY ? '搬' : '将搬'} ${r.project_id}: task "${r.task}" → "${to}"`
-    + `（cf_project=${r.cf_project} 域名=${r.custom_domain} 均不变）`);
+    // custom_domain 列是 08-02 当天 ALTER 加的；从没迁过的库上它可能不存在，
+    // 直接打就是一句 `域名=undefined`（读起来像"域名丢了"）
+    + `（cf_project=${r.cf_project} 域名=${r.custom_domain ?? '(这个库还没有 custom_domain 列)'} 均不变）`);
   if (APPLY) db.prepare('UPDATE published_sites SET task=? WHERE id=?').run(to, r.id);
   moved++;
 }
