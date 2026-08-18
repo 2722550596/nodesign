@@ -2,7 +2,7 @@
  * mcp/tools/query-elements.js — query_elements MCP tool
  *
  * 用 CSS selector 在 canvas.html 里 querySelectorAll，返回每个元素的
- * { anchor, tag, text, bbox, dataAttrs } —— anchor schema 跟前端
+ * { anchor, tag, text, bbox, layoutBox, dataAttrs } —— anchor schema 跟前端
  * lib/html-utils.js 的 serializeAnchor 一致，agent 可以直接拿这个 anchor
  * 喂回前端做精确选中（未来）或继续 query。
  *
@@ -17,6 +17,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
@@ -28,7 +29,7 @@ const MAX_RESULTS = 50;
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeQueryElementsTool({ workspaceRoot, sessionId, ctx: _ctx }) {
+export function makeQueryElementsTool({ workspaceRoot, projectId, sessionId, ctx: _ctx }) {
   return tool(
     'query_elements',
     `Query elements in canvas.html via CSS selector. Returns a list of
@@ -44,7 +45,16 @@ Use when:
 - Before bulk-editing, get the current state list first
 - Verifying that a class / data-attr is applied where you expect
 
-Returns up to 50 matches; further results truncated with a hint.`,
+Returns up to 50 matches; further results truncated with a hint.
+
+**bbox vs layoutBox** — bbox comes from getBoundingClientRect and INCLUDES CSS
+transforms; layoutBox (offsetTop/Left/Width/Height) is the layout box without
+them. Measure spacing with layoutBox, measure where-it-visually-sits with bbox.
+An element carrying an entry animation reports "transformed: true" — on those,
+bbox is offset by the animation and will give you impossible numbers.
+⚠️ **Plain CSS selectors only.** Playwright syntax (":has-text(...)", ">>",
+"nth=0") is NOT supported here and fails with a parser error. Use ASCII quotes,
+never HTML entities ("&quot;" reaches the selector literally and breaks it).`,
     {
       selector: z
         .string()
@@ -90,9 +100,14 @@ Returns up to 50 matches; further results truncated with a hint.`,
       let browser;
       try {
         const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage({ viewport: { width: dims.width, height: dims.height } });
-        await page.goto(`file://${canvasPath}`, { waitUntil: 'networkidle', timeout: 15000 });
+        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+        // 走 http（与用户预览同源），不再 file://；理由见 helpers/perception-page.js
+        const opened = await openArtifactPage(browser, {
+          projectId, workspaceRoot, absPath: canvasPath,
+          viewport: { width: dims.width, height: dims.height },
+        });
+        const page = opened.page;
+        await opened.goto();
 
         const result = await page.evaluate(({ sel, max }) => {
           const els = Array.from(document.querySelectorAll(sel));
@@ -123,6 +138,13 @@ Returns up to 50 matches; further results truncated with a hint.`,
             for (const a of Array.from(el.attributes)) {
               if (a.name.startsWith('data-')) dataAttrs[a.name] = a.value;
             }
+            // layoutBox / transformed（2026-08-18）：bbox 走 getBoundingClientRect，
+            // **CSS transform 算在里面**。带入场动画的页面（这平台上绝大多数页面）
+            // 元素静止态常挂着 translateY(26px)，量间距会得出物理上不可能的结果 ——
+            // 有个 agent 因此差点断言"最后一节和页脚重叠了"，靠 25≈26 这个巧合才
+            // 反应过来。offset* 是布局盒，不含 transform，两个都给就不会误判。
+            const cs = getComputedStyle(el);
+            const transformed = cs.transform !== 'none' && cs.transform !== '';
             return {
               anchor: {
                 dataId,
@@ -133,6 +155,8 @@ Returns up to 50 matches; further results truncated with a hint.`,
               tag: el.tagName.toLowerCase(),
               text: text.slice(0, 200),
               bbox: { x: r.x, y: r.y, w: r.width, h: r.height },
+              layoutBox: { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight },
+              ...(transformed ? { transformed: true } : {}),
               dataAttrs,
             };
           });

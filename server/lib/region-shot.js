@@ -12,6 +12,7 @@
  */
 
 import path from 'node:path';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from '../engine/mcp/tools/helpers/perception-page.js';
 import fs from 'node:fs/promises';
 
 /** 圈外多留这么多像素当上下文 */
@@ -33,17 +34,24 @@ function serialize(fn) {
  * @param {string} p.absPath   产物页面的绝对路径
  * @param {{x,y,w,h}} p.region 页面坐标（CSS px，含滚动量）
  * @param {{width,height}} p.viewport 用户当时的取景宽高
+ * @param {string} [p.projectId]      有它就走 http（与用户预览同源）
+ * @param {string} [p.workspaceRoot]  同上，两个都给才走 http
  * @returns {Promise<{ buffer: Buffer, clip: {x,y,width,height} }>}
  */
-export async function renderRegionShot({ absPath, region, viewport }) {
+export async function renderRegionShot({ absPath, region, viewport, projectId, workspaceRoot }) {
   return serialize(async () => {
     const { chromium } = await import('playwright');
     let browser;
     try {
-      browser = await chromium.launch({ headless: true });
-      const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1 });
-      const page = await ctx.newPage();
-      await page.goto('file://' + absPath, { waitUntil: 'networkidle', timeout: 20_000 });
+      browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+      // 圈选截的是**用户圈的那一块**，所以更要跟用户看到的同源：file:// 下
+      // fetch 回来的内容不会出现在图里，agent 会以为用户圈了一块空白。
+      const opened = await openArtifactPage(browser, {
+        projectId, workspaceRoot, absPath, viewport, deviceScaleFactor: 1, timeout: 20_000,
+      });
+      const ctx = opened.context;
+      const page = opened.page;
+      await opened.goto();
       // 字体加载完再截（CJK 子集是 lazy 的，不显式 load 会截到 fallback 字形）
       await page.evaluate(async () => {
         document.body.offsetHeight;

@@ -12,6 +12,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import {
   resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, taskManifest, requireBrowsable,
@@ -22,7 +23,7 @@ import {
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-export function makeListPagesTool({ workspaceRoot, sessionId, ctx: _ctx }) {
+export function makeListPagesTool({ workspaceRoot, projectId, sessionId, ctx: _ctx }) {
   return tool(
     'list_pages',
     `List the pages of the current artifact.
@@ -72,9 +73,14 @@ Lighter than read_page (which returns full outerHTML of one page).`,
       let browser;
       try {
         const { chromium } = await import('playwright');
-        browser = await chromium.launch({ headless: true });
-        const page = await browser.newPage({ viewport: { width: dims.width, height: dims.height } });
-        await page.goto(`file://${canvasPath}`, { waitUntil: 'networkidle', timeout: 15000 });
+        browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+        // 走 http（与用户预览同源），不再 file://；理由见 helpers/perception-page.js
+        const opened = await openArtifactPage(browser, {
+          projectId, workspaceRoot, absPath: canvasPath,
+          viewport: { width: dims.width, height: dims.height },
+        });
+        const page = opened.page;
+        await opened.goto();
 
         const pages = await page.$$eval('section[data-page]', (sections) => {
           return sections.map((s, i) => {

@@ -22,8 +22,9 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
-import { taskManifest } from './kinds/index.js';
+import { taskManifest, can } from './kinds/index.js';
 import { resolveDeckSize, extractDeckAspect } from '../shared/deck.js';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from '../engine/mcp/tools/helpers/perception-page.js';
 
 const SITE_VIEWPORT = { width: 1440, height: 900 };
 const OUT_WIDTH = 800;          // 出图宽度（卡片最宽也就 ~400 CSS px，2x 足够）
@@ -55,6 +56,11 @@ export async function pickCoverArtifact(sharedDir) {
   dated.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
   for (const { art } of dated) {
+    // ⚠️ 2026-08-18：docx 进来之后这里会挑到一个 .docx 当封面，chromium 打开它
+    // 只会触发 "Download is starting"，封面整个渲不出来（生产日志实锤）。
+    // 加形态时最容易漏的就是这种「默认所有产物都能用浏览器打开」的假设 ——
+    // 按能力位问，别按形态名问。
+    if (!can(art.kind, 'browsable')) continue;
     const taskDir = sharedDir;
     const absPath = path.join(taskDir, art.entryRel);
     let fileMtime = 0;
@@ -77,8 +83,12 @@ export async function pickCoverArtifact(sharedDir) {
  * 真正跑一次 chromium，返回 JPEG buffer。
  * 导出是为了能单独对某个产物验证取景（缓存/选片逻辑之外的那一半）。
  * @param {{ absPath: string, kind: 'deck'|'site' }} cover
+ * @param {{ projectId?: string, workspaceRoot?: string }} [pctx]
+ *   给了就走 http（与用户预览同源）—— 用 fetch 装内容的站点在 file:// 下
+ *   封面会是一张空白页。⚠️ 这里**允许静默退回 file://**：封面是给用户看的
+ *   缩略图，没有 agent 会被误导，宁可退化也别让首页卡片开天窗。
  */
-export async function renderCoverShot(cover) {
+export async function renderCoverShot(cover, pctx = {}) {
   const { chromium } = await import('playwright');
   const html = await fs.readFile(cover.absPath, 'utf8').catch(() => '');
   const viewport = cover.kind === 'deck'
@@ -87,10 +97,20 @@ export async function renderCoverShot(cover) {
 
   let browser;
   try {
-    browser = await chromium.launch({ headless: true });
-    const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1 });
-    const page = await ctx.newPage();
-    await page.goto('file://' + cover.absPath, { waitUntil: 'networkidle', timeout: 20_000 });
+    browser = await chromium.launch({ headless: true, args: FIDELITY_LAUNCH_ARGS });
+    const opened = await openArtifactPage(browser, {
+      projectId: pctx.projectId, workspaceRoot: pctx.workspaceRoot,
+      absPath: cover.absPath, viewport, deviceScaleFactor: 1, timeout: 20_000,
+    });
+    const ctx = opened.context;
+    const page = opened.page;
+    try {
+      await opened.goto();
+    } catch (err) {
+      if (!opened.viaHttp) throw err;
+      console.warn('[cover] http 加载失败，退回 file://:', err.message);
+      await page.goto('file://' + cover.absPath, { waitUntil: 'networkidle', timeout: 20_000 });
+    }
     // 字体加载完再截（同导出管线的口径：CJK 子集是 lazy 的，不显式 load 会截到 fallback）
     await page.evaluate(async () => {
       document.body.offsetHeight;
@@ -157,17 +177,17 @@ export async function resolveCoverTarget(sharedDir, relPath) {
 export async function getProjectCover(pid, sharedDir) {
   const cover = await pickCoverArtifact(sharedDir);
   if (!cover) return null;
-  return renderOrRead(pid, cover);
+  return renderOrRead(pid, cover, sharedDir);
 }
 
 /** 指定产物的封面（橱窗卡片） */
 export async function getArtifactCover(pid, sharedDir, relPath) {
   const cover = await resolveCoverTarget(sharedDir, relPath);
   if (!cover) return null;
-  return renderOrRead(pid, cover);
+  return renderOrRead(pid, cover, sharedDir);
 }
 
-async function renderOrRead(pid, cover) {
+async function renderOrRead(pid, cover, sharedDir) {
   const etag = crypto.createHash('sha1')
     .update(`${cover.relPath}|${cover.mtimeMs}|${OUT_WIDTH}`)
     .digest('hex');
@@ -180,7 +200,7 @@ async function renderOrRead(pid, cover) {
   const buffer = await serialize(async () => {
     // 排队期间可能已经被前一个同 key 的请求截好了，再看一眼再动手
     try { return await fs.readFile(file); } catch { /* */ }
-    const buf = await renderCoverShot(cover);
+    const buf = await renderCoverShot(cover, { projectId: pid, workspaceRoot: sharedDir });
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, buf);
     return buf;

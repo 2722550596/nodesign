@@ -36,6 +36,7 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
 import { can } from '../../../lib/kinds/index.js';
 import { screenshotDocx } from './screenshot-docx.js';
+import { openArtifactPage, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -54,10 +55,9 @@ const API_MAX_PIXELS = 1_150_000;
 // 还原样出红——computed style 不动、paint 被变换、高饱和色豁免，指纹指向
 // Chromium 的强制暗色（Auto Dark）。事后无法稳定复现，但这一类"渲染层替页面
 // 做主"的来源可以确定性关掉，launch 参数全局带上：
-export const FIDELITY_LAUNCH_ARGS = [
-  '--disable-features=WebContentsForceDark',  // 自动暗色：paint 层反转，页面自己测不到
-  '--force-color-profile=srgb',               // 色彩配置固定 srgb，排除 ICC 差异
-];
+// 定义已挪进 helpers/perception-page.js（三个感知工具当时是裸奔的，收成一份）；
+// 这里原样再导出，screenshot-url.js 等老调用方不用改。
+export { FIDELITY_LAUNCH_ARGS };
 
 /**
  * 渲染保真探针：主图截完后，往页面塞一块已知色 (#f5f0e4) 的 16px 方块单截，
@@ -236,7 +236,7 @@ export async function runBeforeShot(page, beforeShot) {
 /** 站点断点档位（跟前端 web/src/lib/board-geometry.js 的 SITE_VIEWPORTS 对齐）*/
 const SITE_DEVICE_W = { desktop: 1440, tablet: 834, mobile: 390 };
 
-export function makeScreenshotCanvasTool({ workspaceRoot, sessionId, ctx }) {
+export function makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx }) {
   return tool(
     'screenshot_canvas',
     `Take a screenshot of the current canvas.html in this workspace and return it
@@ -301,7 +301,7 @@ Do NOT use this tool when:
       selector: z
         .string()
         .optional()
-        .describe('If given, capture only the first element matching this CSS selector (overrides fullPage)'),
+        .describe('If given, capture only the first element matching this CSS selector (overrides fullPage). Plain CSS only — no playwright syntax (:has-text, >>, nth=), ASCII quotes not HTML entities (&quot; breaks the parse)'),
       detail: z
         .enum(['normal', 'high'])
         .optional()
@@ -320,6 +320,17 @@ Do NOT use this tool when:
         .string()
         .optional()
         .describe("Run before capture: 'scrollToBottom' scrolls through the page and back (fires all scroll-linked animations — ScrollTrigger / IntersectionObserver reveals), or pass a JS snippet evaluated in page context (await supported, 5s timeout). Errors don't block the shot, they're reported in the caption."),
+      scrollTo: z
+        .union([z.number(), z.string()])
+        .optional()
+        .describe("Scroll the REAL viewport here, then capture one viewport-sized frame. Accepts a pixel number, a percentage string ('50%', '100%'), or a CSS selector to scroll into view. Use this — not fullPage — to check anything scroll-driven: reveal animations, scroll-snap landing points, parallax offsets, sticky headers. fullPage cannot show these because it expands the viewport to the whole document instead of scrolling (innerHeight never changes, so scroll handlers never fire the way they do for the user). Implies fullPage=false."),
+      settleMs: z
+        .number()
+        .int()
+        .min(0)
+        .max(3000)
+        .optional()
+        .describe('Extra wait after scrolling before the shot (default 350ms) — long CSS transitions may need more.'),
       pages: z
         .string()
         .optional()
@@ -329,7 +340,7 @@ Do NOT use this tool when:
         .optional()
         .describe(CANVAS_PATH_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, beforeShot, pages, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, beforeShot, pages, scrollTo, settleMs, path: relPath }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -376,7 +387,8 @@ Do NOT use this tool when:
       // 多 turn 直到 autoCompact。agent 不显式传就走 viewport 单屏（cheapest），
       // 真要 deck-wide overview 显式 fullPage:true 或派 vision-checker。
       // 站点相反：默认整页 —— 网页本来就是长的，只截首屏等于没看过下面那些。
-      const fp = fullPage !== undefined ? fullPage === true : isSite;
+      // scrollTo 与 fullPage 互斥：前者的语义就是"真的滚，按视口抓"
+      const fp = scrollTo != null ? false : (fullPage !== undefined ? fullPage === true : isSite);
 
       let browser;
       try {
@@ -388,25 +400,65 @@ Do NOT use this tool when:
         // 1920×1080 一张 ≈1.85k tokens，0.6 倍后 ≈1.0k，排版检查完全够看。
         // 要读小字（版权行 / 数据标签）显式传 detail:'high' 走 1.0。
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
-        // colorScheme 显式钉死 light：默认值虽同，但这里是"截图必须可复现"的契约
-        const page = await browser.newPage({ viewport: vp, deviceScaleFactor: rasterScale, colorScheme: 'light' });
+        // ⭐ 走 http（跟用户预览同一条 artifact-file 通道、同源），不再 file://。
+        // 理由与退化情形见 helpers/perception-page.js —— file:// 下 fetch/XHR 死、
+        // localStorage 全任务共用 "null" 桶，自检看到的不是用户看到的东西。
+        // colorScheme 钉死 light 由 helper 统一负责（"截图必须可复现"的契约）。
+        const opened = await openArtifactPage(browser, {
+          projectId, workspaceRoot, absPath: canvasPath,
+          viewport: vp, deviceScaleFactor: rasterScale,
+        });
+        const page = opened.page;
         const diag = attachPageDiagnostics(page);
 
-        // 用 file:// scheme 加载 canvas.html
         // waitUntil: 'networkidle' 等所有外部 fetch（CDN 字体 / 图片）完成。
         // networkidle 超时不再整个失败 —— 慢 CDN / 长轮询页面照样截，超时记进诊断。
-        let gotoNote = null;
+        let gotoNote = opened.note;
         try {
-          await page.goto(`file://${canvasPath}`, {
-            waitUntil: 'networkidle',
-            timeout: 15000,
-          });
+          await opened.goto();
         } catch (err) {
           if (!/Timeout/i.test(String(err?.message))) throw err;
-          gotoNote = 'networkidle not reached in 15s (slow/looping network activity) — captured anyway';
+          gotoNote = [gotoNote, 'networkidle not reached in 15s (slow/looping network activity) — captured anyway']
+            .filter(Boolean).join(' | ');
         }
 
         const beforeShotNote = await runBeforeShot(page, beforeShot);
+
+        // ── scrollTo：真滚视口（2026-08-18）──
+        //
+        // fullPage 走的是 captureBeyondViewport：视口被撑成整页高，`innerHeight`
+        // 从头到尾不变。所以页面里一切"按滚动位置判断"的逻辑（IntersectionObserver
+        // reveal、scroll-snap、视差、sticky）在 fullPage 下的行为跟用户看到的不是
+        // 一回事 —— 有 agent 因此反复改页面代码去迁就截图环境，而那些代码在真实
+        // 浏览器里从第一版起就是对的。这条路是"真的滚，然后按视口抓一帧"。
+        let scrollNote = null;
+        if (scrollTo != null) {
+          try {
+            const landed = await page.evaluate(async (spec) => {
+              const doc = document.documentElement;
+              const maxY = Math.max(0, doc.scrollHeight - window.innerHeight);
+              let y = null;
+              if (typeof spec === 'number') y = spec;
+              else if (/^-?[\d.]+%$/.test(spec)) y = maxY * (parseFloat(spec) / 100);
+              else {
+                const el = document.querySelector(spec);
+                if (!el) return { error: `scrollTo selector matched nothing: ${spec}` };
+                y = el.getBoundingClientRect().top + window.scrollY;
+              }
+              window.scrollTo({ top: Math.max(0, Math.min(y, maxY)), behavior: 'instant' });
+              await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+              return { y: window.scrollY, maxY, innerHeight: window.innerHeight };
+            }, scrollTo);
+            if (landed?.error) scrollNote = landed.error;
+            else {
+              await page.waitForTimeout(settleMs ?? 350);
+              scrollNote = `scrolled to y=${Math.round(landed.y)} of ${Math.round(landed.maxY)}`
+                + ` (viewport ${landed.innerHeight}px tall, real scroll — reveal/snap/parallax behave as they do for the user)`;
+            }
+          } catch (err) {
+            scrollNote = `scrollTo failed: ${err.message}`;
+          }
+        }
 
         // selector / pageIndex 优先，命中则截元素 bbox（locator.screenshot），
         // 都不给走 fullPage / viewport。新范式所有 section 默认平铺可见
@@ -448,15 +500,54 @@ Do NOT use this tool when:
           });
         } catch { /* emit fail-safe */ }
 
+        // ── fullPage 的 fixed/sticky 诊断（2026-08-18）──
+        // fullPage 下视口被撑成整页高，于是 position:fixed 的元素被画在"展开视口"
+        // 的对应位置：一个静止时藏在视口下方的转场帘幕（translateY(100%)）会出现
+        // 在页面中段，看上去就是一大块盖住内容的色块；sticky 页头会横穿版面。
+        // 两个 agent 都把它当成真的布局 bug 去查了 computed style。一行字的事。
+        let fixedNote = null;
+        if (fp) {
+          try {
+            const found = await page.evaluate(() => {
+              const out = [];
+              for (const el of document.querySelectorAll('*')) {
+                const pos = getComputedStyle(el).position;
+                if (pos !== 'fixed' && pos !== 'sticky') continue;
+                const r = el.getBoundingClientRect();
+                if (r.width < 4 || r.height < 4) continue;
+                const id = el.id ? `#${el.id}` : (el.className && typeof el.className === 'string'
+                  ? `.${el.className.trim().split(/\s+/)[0]}` : el.tagName.toLowerCase());
+                out.push(`${id}(${pos})`);
+                if (out.length >= 6) break;
+              }
+              return out;
+            });
+            if (found.length) {
+              fixedNote = `⚠ ${found.length} fixed/sticky element(s) on this page (${found.join(', ')}).`
+                + ' In a fullPage shot they are painted at their position within the EXPANDED viewport,'
+                + ' not where the user sees them — a full-screen overlay parked below the fold will appear'
+                + ' mid-page and look like it covers the content. Do not debug layout from that;'
+                + ' use scrollTo to see their real position.';
+            }
+          } catch { /* 诊断挂了不挡截图 */ }
+        }
+
         const paintNote = await detectPaintTransform(page);
         const shot = await normalizeShot(buf);
 
         const captionParts = [
           `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode})`,
         ];
+        // 加载通道写进 caption：agent 不用再靠"把 location.protocol 写进 DOM 再截一张"
+        // 去反推自己被什么方式打开了（问题库 iss_msxk2oci_0v0v 就是这么查了四轮）
+        if (opened.viaHttp) {
+          captionParts.push('Loaded over http, same origin as the user preview — fetch/XHR, localStorage and dynamic imports behave exactly as they do for the user.');
+        }
         if (shot.note) captionParts.push(shot.note);
         if (gotoNote) captionParts.push(gotoNote);
+        if (scrollNote) captionParts.push(scrollNote);
         if (beforeShotNote) captionParts.push(beforeShotNote);
+        if (fixedNote) captionParts.push(fixedNote);
         if (paintNote) captionParts.push(paintNote);
         captionParts.push(diag.summary());
 

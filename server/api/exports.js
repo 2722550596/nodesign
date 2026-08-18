@@ -24,6 +24,7 @@
  */
 
 import express from 'express';
+import { launchPerceptionBrowser } from '../engine/mcp/tools/helpers/perception-page.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import JSZip from 'jszip';
@@ -385,10 +386,9 @@ router.get(['/:pid/exports/pdf', '/:pid/sessions/:sid/exports/pdf'], async (req,
     if (can(target.kind, 'renderable')) return await docxToPdfResponse(res, target);
     const file = target.absPath;
 
-    const { chromium } = await import('playwright');
     let browser;
     try {
-      browser = await chromium.launch({ headless: true });
+      browser = await launchPerceptionBrowser();
     } catch (err) {
       return res.status(500).json({
         error: 'playwright chromium not installed — run `npx playwright install chromium`',
@@ -493,12 +493,11 @@ router.get(['/:pid/exports/pptx', '/:pid/sessions/:sid/exports/pptx'], async (re
     if (rejectFormat(res, target, 'pptx', 'PPTX')) return;
     const file = target.absPath;
 
-    const { chromium } = await import('playwright');
     const PptxGenJS = (await import('pptxgenjs')).default;
 
     let browser;
     try {
-      browser = await chromium.launch({ headless: true });
+      browser = await launchPerceptionBrowser();
     } catch (err) {
       return res.status(500).json({
         error: 'playwright chromium not installed — run `npx playwright install chromium`',
