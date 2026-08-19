@@ -36,203 +36,12 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
 import { can } from '../../../lib/kinds/index.js';
 import { screenshotDocx } from './screenshot-docx.js';
-import { openArtifactPage, launchPerceptionBrowser, FIDELITY_LAUNCH_ARGS } from './helpers/perception-page.js';
+import { openArtifactPage, launchPerceptionBrowser } from './helpers/perception-page.js';
+import { normalizeShot, detectPaintTransform, attachPageDiagnostics, runWaitFor, runBeforeShot } from './helpers/shot-pipeline.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
 
-// ── 出图归一化（2026-07-29）──
-// 背景：fullPage 截长站点页时 PNG 会超 API 的图片上限（尺寸 8000px / 字节 5MB），
-// 整个工具调用直接报错。而且 API 侧本来就会把长边 >1568 或总像素 >~1.15MP 的图
-// 缩到这个规格再喂给模型 —— 本地先缩到同规格，模型看到的画面一个像素不差，
-// 但传输体积小一个量级、永远不会触发上限报错。编码统一 webp（API 支持，比 PNG 小得多）。
-const API_LONG_EDGE = 1568;
-const API_MAX_PIXELS = 1_150_000;
-
-// ── 渲染层保真（2026-08-07）──
-// 2026-08-05 事故：一次 screenshot_canvas 的位图整体呈暗色反转（深棕底米白字），
-// 同一 page 里 beforeShot 读的 getComputedStyle 却全程浅色真值，内联 #ff0000
-// 还原样出红——computed style 不动、paint 被变换、高饱和色豁免，指纹指向
-// Chromium 的强制暗色（Auto Dark）。事后无法稳定复现，但这一类"渲染层替页面
-// 做主"的来源可以确定性关掉，launch 参数全局带上：
-// 定义已挪进 helpers/perception-page.js（三个感知工具当时是裸奔的，收成一份）；
-// 这里原样再导出，screenshot-url.js 等老调用方不用改。
-export { FIDELITY_LAUNCH_ARGS };
-
-/**
- * 渲染保真探针：主图截完后，往页面塞一块已知色 (#f5f0e4) 的 16px 方块单截，
- * 看栅格出来的像素还认不认账。位图和 computed style 是两条独立感知通道——
- * 渲染层若在做颜色变换，页面内任何 JS 读数都测不到，只有这种"已知输入对
- * 已知输出"的探针测得到。亮度掉一半才报警（抗锯齿/有损压缩的小偏差不算）。
- * 2026-08-05 那次事故 agent 连烧 8 张截图排查自己的 CSS 才怀疑到管线头上——
- * 这个警告就是把那 8 张图省下来的。
- */
-export async function detectPaintTransform(page) {
-  try {
-    await page.evaluate(() => {
-      const d = document.createElement('div');
-      d.id = '__nd_paint_probe__';
-      d.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:16px;'
-        + 'background:#f5f0e4;z-index:2147483647;pointer-events:none';
-      document.documentElement.appendChild(d);
-    });
-    const buf = await page.locator('#__nd_paint_probe__').screenshot({ type: 'png' });
-    await page.evaluate(() => document.getElementById('__nd_paint_probe__')?.remove());
-    const { default: sharp } = await import('sharp');
-    const stats = await sharp(buf).stats();
-    const [r, g, b] = stats.channels.map((c) => c.mean);
-    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;   // #f5f0e4 本色 ≈ 239
-    if (lum < 128) {
-      return '⚠ paint-layer color transform detected: a #f5f0e4 probe rasterized to '
-        + `rgb(${r | 0},${g | 0},${b | 0}). This bitmap does NOT faithfully show the page's own colors, `
-        + 'and computed styles will keep reporting the authored values — the mismatch is in the '
-        + 'rasterizer, not your CSS. Do not debug colors from this shot; report via report_issue '
-        + 'and ask the user to eyeball the page in their own browser.';
-    }
-    return null;
-  } catch {
-    return null;   // 探针挂了不挡截图
-  }
-}
-
-/** PNG buffer → { data, mimeType, note }。失败时原样回退 PNG（宁可大也别丢图）。 */
-export async function normalizeShot(buf) {
-  try {
-    const { default: sharp } = await import('sharp');
-    const meta = await sharp(buf).metadata();
-    const w = meta.width || 0;
-    const h = meta.height || 0;
-    if (!w || !h) return { data: buf.toString('base64'), mimeType: 'image/png', note: null };
-    const scale = Math.min(1, API_LONG_EDGE / Math.max(w, h), Math.sqrt(API_MAX_PIXELS / (w * h)));
-    const tw = Math.max(1, Math.round(w * scale));
-    const th = Math.max(1, Math.round(h * scale));
-    let img = sharp(buf);
-    if (scale < 1) img = img.resize(tw, th);
-    const out = await img.webp({ quality: 82 }).toBuffer();
-    let note = scale < 1
-      ? `image normalized ${w}x${h} -> ${tw}x${th} webp ${(out.length / 1024).toFixed(0)}KB (matches what the vision API would downscale to anyway)`
-      : null;
-    // 极端长图：整体缩完细节所剩无几，提示换姿势而不是硬看
-    if (scale < 0.35 && Math.max(w, h) / Math.min(w, h) > 4) {
-      note += ' — long page squeezed hard; details are unreadable at this scale. Prefer sectioned shots (viewport + beforeShot scroll) or pageIndex/device over fullPage.';
-    }
-    return { data: out.toString('base64'), mimeType: 'image/webp', note };
-  } catch (err) {
-    return { data: buf.toString('base64'), mimeType: 'image/png', note: `image normalize skipped: ${err?.message || err}` };
-  }
-}
-
-// ── 页面诊断收集（2026-07-29）──
-// 背景：agent 塞了 GSAP/Lenis CDN 却不知道有没有加载成功——截图上看不出来。
-// 挂 4 个 playwright listener，截图 caption 里回传 console 错误 + 加载失败资源。
-// 上限/截断防止一个疯狂报错的页面把 caption 撑爆。
-const DIAG_MAX_ENTRIES = 15;
-const DIAG_MAX_TEXT = 300;
-
-export function attachPageDiagnostics(page) {
-  // ⭐ 聚合按（归一化原因 × 主机）分组，不逐条罗列（agent 上报逮到：一页 30 张
-  // 字体请求失败会把 caption 撑成 30 行同一句话，真正独特的那条错误被淹没）。
-  // 归一化 = 把消息里的 URL 收成主机名：同一家 CDN 挂 30 个文件是**一个**故障。
-  const hostOf = (u) => { try { return new URL(u).hostname; } catch { return u; } };
-  const normText = (t) => t.replace(/https?:\/\/[^\s"')]+/g, (u) => `${hostOf(u)}/…`);
-
-  const consoleEntries = [];      // { type, text, count }，text 是该组第一条原文
-  const seenConsole = new Map();  // 归一化文本 → entry
-  const noteConsole = (type, rawText) => {
-    const text = String(rawText || '').slice(0, DIAG_MAX_TEXT);
-    const key = `${type}|${normText(text)}`;
-    const prev = seenConsole.get(key);
-    if (prev) { prev.count += 1; return; }
-    const entry = { type, text, count: 1 };
-    seenConsole.set(key, entry);
-    if (consoleEntries.length < DIAG_MAX_ENTRIES) consoleEntries.push(entry);
-  };
-
-  const failedGroups = new Map();  // `${host}|${detail}` → { method, url, detail, host, count }
-  const noteFailed = (method, url, detail) => {
-    const key = `${hostOf(url)}|${detail}`;
-    const prev = failedGroups.get(key);
-    if (prev) { prev.count += 1; return; }
-    if (failedGroups.size >= DIAG_MAX_ENTRIES) return;
-    failedGroups.set(key, { method, url: url.slice(0, DIAG_MAX_TEXT), detail, host: hostOf(url), count: 1 });
-  };
-
-  page.on('console', (msg) => {
-    const type = msg.type();
-    if (type !== 'error' && type !== 'warning') return;
-    noteConsole(type, msg.text());
-  });
-  page.on('pageerror', (err) => noteConsole('pageerror', err?.message || err));
-  page.on('requestfailed', (req) => noteFailed(req.method(), req.url(), req.failure()?.errorText || 'failed'));
-  page.on('response', (res) => {
-    if (res.status() < 400) return;
-    noteFailed(res.request().method(), res.url(), `HTTP ${res.status()}`);
-  });
-
-  return {
-    /** 汇成 caption 附加段。干净时给正向确认（"不知道有没有挂"跟"确认没挂"是两回事）。 */
-    summary() {
-      const failed = [...failedGroups.values()];
-      if (!consoleEntries.length && !failed.length) {
-        return 'console clean, all requests OK';
-      }
-      const lines = [];
-      if (consoleEntries.length) {
-        const total = consoleEntries.reduce((n, e) => n + e.count, 0);
-        lines.push(`console (${total}${total > consoleEntries.length ? ` in ${consoleEntries.length} groups` : ''}):`);
-        for (const e of consoleEntries) {
-          lines.push(`  [${e.type}] ${e.text}${e.count > 1 ? ` (×${e.count} similar)` : ''}`);
-        }
-      }
-      if (failed.length) {
-        const total = failed.reduce((n, f) => n + f.count, 0);
-        lines.push(`failed requests (${total}${total > failed.length ? ` in ${failed.length} groups` : ''}):`);
-        for (const f of failed) {
-          // 每组给一条样本 URL；同主机同原因的其余只报数
-          lines.push(`  ${f.method} ${f.url} — ${f.detail}${f.count > 1 ? ` (×${f.count} from ${f.host})` : ''}`);
-        }
-      }
-      return lines.join('\n');
-    },
-  };
-}
-
-/**
- * beforeShot 执行（2026-07-29）：截图环境不滚动 → ScrollTrigger/IO 入场动画永远
- * 不触发 → agent 为"能被截图"反过来阉割设计。给截图前跑一段交互的能力。
- *  - 'scrollToBottom'：分步滚到底再回顶（所有 scroll-linked 动画都触发过一遍）
- *  - 其他字符串：当 JS 片段在页面上下文执行（支持 await），5s 超时兜底
- */
-export async function runBeforeShot(page, beforeShot) {
-  if (!beforeShot) return null;
-  try {
-    if (beforeShot === 'scrollToBottom') {
-      await page.evaluate(async () => {
-        const doc = document.scrollingElement || document.documentElement;
-        const step = Math.max(200, window.innerHeight * 0.8);
-        for (let y = 0; y <= doc.scrollHeight; y += step) {
-          window.scrollTo(0, y);
-          await new Promise((r) => setTimeout(r, 120));
-        }
-        window.scrollTo(0, doc.scrollHeight);
-        await new Promise((r) => setTimeout(r, 250));
-        window.scrollTo(0, 0);
-      });
-      // 回顶后给 reveal/settle 动画一点时间
-      await page.waitForTimeout(400);
-    } else {
-      await Promise.race([
-        page.evaluate(`(async () => { ${beforeShot} })()`),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('beforeShot timeout (5s)')), 5000)),
-      ]);
-      await page.waitForTimeout(200);
-    }
-    return null;
-  } catch (err) {
-    // beforeShot 挂了不挡截图 —— 把错误带回 caption 让 agent 知道
-    return `beforeShot error: ${err?.message || err}`;
-  }
-}
 
 /**
  * @param {object} deps
@@ -283,6 +92,13 @@ page and back to top first — every scroll trigger fires, then the shot is take
 Or pass a JS snippet (async/await OK) to click/hover/setup any state before capture.
 Do NOT delete entrance animations just to make screenshots work — use beforeShot.
 
+Slow-booting pages (3D scenes, heavy asset loads): pass waitFor:"window.__yourReadyFlag"
+to poll until the app is ready (own 15s budget), keep beforeShot for the setup itself
+(10s budget). The caption reports how long each phase took.
+
+Console output: the caption carries warnings/errors by default; pass console:'all'
+to also read your own console.log output from the page (grouped, capped).
+
 Use this tool when:
 - You finished writing or editing canvas.html and want to verify it looks right
 - The user asks "what does it look like" or "show me the result"
@@ -307,7 +123,7 @@ Do NOT use this tool when:
       selector: z
         .string()
         .optional()
-        .describe('If given, capture only the first element matching this CSS selector (overrides fullPage). Plain CSS only — no playwright syntax (:has-text, >>, nth=), ASCII quotes not HTML entities (&quot; breaks the parse)'),
+        .describe('If given, capture only the first element matching this CSS selector (overrides fullPage). Works on continuously-animating elements too (WebGL canvas etc.) — the capture crops the element box, it does not wait for the element to stop repainting. Plain CSS only — no playwright syntax (:has-text, >>, nth=), ASCII quotes not HTML entities (&quot; breaks the parse)'),
       detail: z
         .enum(['normal', 'high'])
         .optional()
@@ -322,10 +138,14 @@ Do NOT use this tool when:
         .enum(['desktop', 'tablet', 'mobile'])
         .optional()
         .describe('SITE ONLY. Render at a real device width to check responsive behaviour: desktop=1440, tablet=834, mobile=390. Ignored for decks.'),
+      waitFor: z
+        .string()
+        .optional()
+        .describe("JS expression polled every 100ms until truthy BEFORE beforeShot runs (own 15s budget). Use for slow-booting pages: waitFor:\"window.__game\" waits for the app to be ready, then beforeShot only does the setup. Timeout doesn't block the shot — the caption tells you the condition never became truthy."),
       beforeShot: z
         .string()
         .optional()
-        .describe("Run before capture: 'scrollToBottom' scrolls through the page and back (fires all scroll-linked animations — ScrollTrigger / IntersectionObserver reveals), or pass a JS snippet evaluated in page context (await supported, 5s timeout). Errors don't block the shot, they're reported in the caption."),
+        .describe("Run before capture: 'scrollToBottom' scrolls through the page and back (fires all scroll-linked animations — ScrollTrigger / IntersectionObserver reveals), or pass a JS snippet evaluated in page context (await supported, 10s timeout). Don't burn this budget waiting for boot — pair with waitFor. Errors don't block the shot, they're reported in the caption."),
       scrollTo: z
         .union([z.number(), z.string()])
         .optional()
@@ -334,9 +154,13 @@ Do NOT use this tool when:
         .number()
         .int()
         .min(0)
-        .max(3000)
+        .max(10000)
         .optional()
         .describe('Extra wait after scrolling before the shot (default 350ms) — long CSS transitions may need more.'),
+      console: z
+        .enum(['warn', 'all'])
+        .optional()
+        .describe("Console capture level for the caption. Default 'warn' returns only warnings/errors (the count of filtered log lines is reported). Pass 'all' to also get console.log/info/debug output — the only way to read your own debug logging from the page."),
       pages: z
         .string()
         .optional()
@@ -346,7 +170,7 @@ Do NOT use this tool when:
         .optional()
         .describe(CANVAS_PATH_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, beforeShot, pages, scrollTo, settleMs, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, path: relPath }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -415,7 +239,7 @@ Do NOT use this tool when:
           viewport: vp, deviceScaleFactor: rasterScale,
         });
         const page = opened.page;
-        const diag = attachPageDiagnostics(page);
+        const diag = attachPageDiagnostics(page, { console: consoleLevel });
 
         // waitUntil: 'networkidle' 等所有外部 fetch（CDN 字体 / 图片）完成。
         // networkidle 超时不再整个失败 —— 慢 CDN / 长轮询页面照样截，超时记进诊断。
@@ -428,7 +252,21 @@ Do NOT use this tool when:
             .filter(Boolean).join(' | ');
         }
 
-        const beforeShotNote = await runBeforeShot(page, beforeShot);
+        // 三段各自计时（waitFor / beforeShot / settle），caption 报用时 ——
+        // agent 之前分不清 5 秒预算被哪一段吃掉，只能碰运气重截
+        const timing = [];
+        let waitForNote = null;
+        if (waitFor) {
+          const t0 = Date.now();
+          waitForNote = await runWaitFor(page, waitFor);
+          timing.push(`waitFor ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+        }
+        let beforeShotNote = null;
+        if (beforeShot) {
+          const t0 = Date.now();
+          beforeShotNote = await runBeforeShot(page, beforeShot);
+          timing.push(`beforeShot ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+        }
 
         // ── scrollTo：真滚视口（2026-08-18）──
         //
@@ -476,9 +314,24 @@ Do NOT use this tool when:
           || (pageIndex ? `section[data-page="${pageIndex}"]` : null);
 
         if (targetSelector) {
-          const locator = page.locator(targetSelector).first();
-          const count = await locator.count();
-          if (count === 0) {
+          // 不走 locator.screenshot：它的 "waiting for element to be stable" 对
+          // requestAnimationFrame 持续重绘的元素（WebGL canvas / 无限动画）永远
+          // 等不到，白烧 20 秒后必失败（iss_msz24x5h_er8l）。改成读元素的文档
+          // 坐标 → fullPage 截图 clip 裁剪：clip 在 fullPage 下是文档坐标、可截
+          // 视口外（本机 playwright 探针验证过），既不用滚动也没有 stability 等待。
+          const rect = await page.evaluate((sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return { error: 'none' };
+            const r = el.getBoundingClientRect();
+            const doc = document.documentElement;
+            return {
+              x: r.left + window.scrollX, y: r.top + window.scrollY,
+              width: r.width, height: r.height,
+              docW: Math.max(doc.scrollWidth, doc.clientWidth),
+              docH: Math.max(doc.scrollHeight, doc.clientHeight),
+            };
+          }, targetSelector);
+          if (rect.error) {
             return {
               content: [{
                 type: 'text',
@@ -487,7 +340,24 @@ Do NOT use this tool when:
               isError: true,
             };
           }
-          buf = await locator.screenshot({ type: 'png' });
+          if (rect.width < 1 || rect.height < 1) {
+            return {
+              content: [{
+                type: 'text',
+                text: `Selector matched an element with zero size (${rect.width}x${rect.height}): ${targetSelector}`
+                  + ' — it is display:none / collapsed, nothing to capture.',
+              }],
+              isError: true,
+            };
+          }
+          // clip 超出文档边界 playwright 直接报错 —— 夹回文档内
+          const clip = {
+            x: Math.max(0, rect.x),
+            y: Math.max(0, rect.y),
+          };
+          clip.width = Math.max(1, Math.min(rect.width, rect.docW - clip.x));
+          clip.height = Math.max(1, Math.min(rect.height, rect.docH - clip.y));
+          buf = await page.screenshot({ fullPage: true, clip, type: 'png' });
           captureMode = `selector="${targetSelector}"`;
         } else {
           buf = await page.screenshot({ fullPage: fp, type: 'png' });
@@ -552,7 +422,9 @@ Do NOT use this tool when:
         if (shot.note) captionParts.push(shot.note);
         if (gotoNote) captionParts.push(gotoNote);
         if (scrollNote) captionParts.push(scrollNote);
+        if (waitForNote) captionParts.push(waitForNote);
         if (beforeShotNote) captionParts.push(beforeShotNote);
+        if (timing.length) captionParts.push(`timing: ${timing.join(' · ')}`);
         if (fixedNote) captionParts.push(fixedNote);
         if (paintNote) captionParts.push(paintNote);
         captionParts.push(diag.summary());

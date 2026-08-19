@@ -31,7 +31,7 @@ import { withBrowser, peek, hold, _limits } from '../../browse/registry.js';
 import { requestHelp } from '../../browse/handover.js';
 import { checkUrl } from '../../../lib/ssrf-guard.js';
 import { listPublishedByProject } from '../../../lib/publish-store.js';
-import { normalizeShot } from './screenshot.js';
+import { normalizeShot } from './helpers/shot-pipeline.js';
 import { capture } from '../../browse/capture.js';
 import { collectPage, formatPage } from '../../browse/page-digest.js';
 import { recordVisit, saveFrame } from '../../browse/state.js';

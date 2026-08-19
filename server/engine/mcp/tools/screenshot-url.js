@@ -18,7 +18,7 @@
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './screenshot.js';
+import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './helpers/shot-pipeline.js';
 import { checkUrl, attachSsrfGuard } from '../../../lib/ssrf-guard.js';
 import { denyText } from './browse.js';
 import { startBrowseProxy } from '../../../lib/browse-proxy.js';
