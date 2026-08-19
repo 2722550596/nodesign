@@ -22,3 +22,11 @@
 
 留 open 未动 6 条：iss_msyoej2o_6ftd（外站 page.goto 超时，外因未修）、exit 144 ×3、
 exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（生图一致性模式，idea 通道等拍板）。
+
+## 2026-08-19 word 批（简历会话三案，修复 commit 99935bd / 33c899d）
+
+| id | 判决 | 理由 |
+|---|---|---|
+| iss_msztu13y_teyi | closed | build_docx 超链接已进引擎：run 上 `link` 键（https/mailto/tel），引擎发 rId（避开已占号段）、写 External 关系、包 w:hyperlink，同 URL 复用；视觉默认不动。LO 真渲验收：PDF 里 URI 注解在。上报里的两个坑（前缀吞并/rId 撞号）都在引擎层规避 |
+| iss_mszttj2n_gqti | closed | indent 的 firstLine*/hanging* 互斥拦截（indentConflict，styles 与块级同一份判据）+ token-schema.md 写明互斥与反例、常见错法对照补行 |
+| iss_msztugx3_hn1e | closed | 附件提示重写为真验过的系统工具（pdftotext/pdftoppm/pdfimages/soffice/unzip），并明说四个 python 包没装且装不上；office 三件套按上报建议核过 —— 全都没装，系统性失准属实 |
