@@ -158,8 +158,10 @@ async function handleRequest(req, res, bodyBuf) {
     return;
   }
 
-  const key = process.env[wire.upstream.keyEnv];
-  if (!key) {
+  // authStyle 'none' = 无鉴权上游（本地 llama-server 走环回隧道），不需要钥匙
+  const needKey = wire.upstream.authStyle !== 'none';
+  const key = needKey ? process.env[wire.upstream.keyEnv] : null;
+  if (needKey && !key) {
     res.writeHead(502, { 'Content-Type': 'text/plain' });
     res.end(`model-ingress: 上游钥匙未配置（env ${wire.upstream.keyEnv} 为空）`);
     return;
@@ -187,7 +189,7 @@ async function handleRequest(req, res, bodyBuf) {
   delete headers['x-api-key'];
   delete headers['authorization'];
   if (wire.upstream.authStyle === 'bearer') headers['authorization'] = `Bearer ${key}`;
-  else headers['x-api-key'] = key;
+  else if (needKey) headers['x-api-key'] = key;
   headers['content-length'] = String(outBody.length);
 
   const proxyReq = (useHttps ? https : http).request({

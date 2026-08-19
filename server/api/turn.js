@@ -50,6 +50,7 @@ import {
   providePlanApprovalDecision,
 } from '../engine/runs/active-runs.js';
 import { applySessionModel } from '../engine/agent/session-model.js';
+import { SELECTABLE_MODELS } from '../engine/agent/model-context.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
@@ -285,6 +286,13 @@ router.post('/:pid/turn', async (req, res, next) => {
     const requestedModel = typeof req.body?.model === 'string' && req.body.model.trim()
       ? req.body.model.trim() : null;
     if (requestedModel) {
+      // 与 PUT /sessions/:sid/model 同一道闸（2026-08-19 评审抓的洞）：这条路
+      // 以前不校验，等于绕过 picker 白名单的后门 —— model-ingress 上线后表里
+      // 有带真钥匙的 API 模型（gemini），裸 POST 就能替会话选中它烧上游的钱。
+      // 未来给 admin/获批用户开 API 模型时，闸门在这两处一起放，别只放一处。
+      if (!SELECTABLE_MODELS.some((m) => m.id === requestedModel)) {
+        return res.status(400).json({ error: `unknown model: ${requestedModel}`, code: 'UNKNOWN_MODEL' });
+      }
       await applySessionModel(sid, getSessionMetaDir(project.id, sid), requestedModel, 'turn');
     }
 

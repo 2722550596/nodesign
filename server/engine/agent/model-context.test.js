@@ -75,6 +75,15 @@ describe('路由', () => {
     expect(resolveWireModel('claude-sonnet-5')).toBe(null);
     expect(resolveWireModel(undefined)).toBe(null);
   });
+
+  it('本地 Qwen 行：无鉴权上游、alias=opus-5、count_tokens 由上游真答', () => {
+    const w = resolveWireModel('claude-opus-5');
+    expect(w?.appModel).toBe('qwen3.8-27b');
+    expect(w?.upstream.authStyle).toBe('none');
+    expect(w?.upstream.keyEnv).toBe(null);
+    expect(w?.upstream.countTokens).toBe(true);
+    expect(resolveModelRoute('qwen3.8-27b').fastModel).toBe('qwen3.8-27b');
+  });
 });
 
 describe('repriceUsageDeltas', () => {
@@ -111,6 +120,14 @@ describe('repriceUsageDeltas', () => {
     const out = repriceUsageDeltas({ 'claude-opus-4-7': { ...gUsage } }, 'kimi-k2.6');
     expect(Object.keys(out)).toEqual(['kimi-k2.6']);
     expect(out['kimi-k2.6'].costUsd).toBeCloseTo(0.345, 4);
+  });
+
+  it('本地 Qwen：零价表让 costUsd 归 0（不然按 opus-5 alias 虚价记账）', () => {
+    const out = repriceUsageDeltas({
+      'claude-opus-5': { inputTokens: 100_000, outputTokens: 5_000, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 3.21 },
+    }, 'qwen3.8-27b');
+    expect(Object.keys(out)).toEqual(['qwen3.8-27b']);
+    expect(out['qwen3.8-27b'].costUsd).toBe(0);
   });
 
   it('API 会话里不在表里的 key（helper 走 fast 兜底）归到 fastModel、按 fast 价记', () => {

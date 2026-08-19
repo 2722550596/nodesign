@@ -53,6 +53,18 @@ export const UPSTREAMS = Object.freeze({
     authStyle: 'x-api-key',
     countTokens: true,
   }),
+  // 本地盒子（featurize 租的 5090 跑 llama-server，SSH 隧道 -L 到本机）。
+  // llama.cpp 2025-11-28 起原生带 /v1/messages（含 count_tokens、SSE、tool_use、
+  // vision；工具调用要 --jinja）—— 不需要任何协议转换层。authStyle 'none'：
+  // llama-server 无鉴权，隧道只绑环回。箱子不开机时请求 ECONNREFUSED → 502，
+  // fail-loud 语义正确。
+  qwenLocal: Object.freeze({
+    label: '本地 llama-server（SSH 隧道）',
+    baseUrl: process.env.NODESIGN_UPSTREAM_QWEN_LOCAL_URL || 'http://127.0.0.1:8080',
+    keyEnv: null,
+    authStyle: 'none',
+    countTokens: true,
+  }),
 });
 
 /**
@@ -104,6 +116,23 @@ const MODELS = Object.freeze([
       thinking: 'enabled8k',       // adaptive 在 Kimi 上 = 0 thinking blocks（H3 实测）
       liftImages: true,
       prices: null,                // Moonshot 现价没核实过 —— 接真流量前先填
+    },
+  },
+  // 本地 Qwen（HauhauCS/Qwen3.8-27B-Uncensored-…-Aggressive-MTP-GGUF，底座官方
+  // Qwen3.8-27B，有视觉）。⚠️ window 必须跟箱子 llama-server 的 -c 一致：alias
+  // 是 200k 名，SDK 在 ~180k 才触发 auto-compact，箱子 -c 低于 180k 的话长会话
+  // 会先撞上游 400 —— 起服务按 -c 196608 + KV q8_0 来（32G 卡 Q5_K_P 装得下）。
+  // thinking 'enabled8k' 是暂定：llama.cpp /v1/messages 对 thinking 参数的映射
+  // 没真跑核实过，Qwen3.8 默认 xhigh 有想太多的毛病，箱子开机后第一件事验这个。
+  {
+    id: 'qwen3.8-27b', window: 196_608,
+    api: {
+      upstream: 'qwenLocal', wireModel: 'qwen3.8-27b',
+      sdkAlias: 'claude-opus-5',
+      fastModel: 'qwen3.8-27b',
+      thinking: 'enabled8k',
+      liftImages: true,    // 它有视觉；即便上游吃 tool_result 图，提升到顶层也无害
+      prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },   // 本地盒子按租金付费，token 记 0（不然按 opus-5 虚价记账）
     },
   },
   {
