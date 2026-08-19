@@ -64,6 +64,15 @@ export const UPSTREAMS = Object.freeze({
     keyEnv: null,
     authStyle: 'none',
     countTokens: true,
+    // ⚠️ llama.cpp 的图片解码走 stb_image，**它不认 webp**。而本站 turn-compose 的
+    // 白名单是放 webp 进来的（封面和截图链路正是产 webp）。解不开时 mtmd 会顺序
+    // 兜底 image → audio → video，最后那条要 ffprobe，盒上没装，于是上游返回的是
+    // 一句看不出真因的 400「Failed to load image or audio file」——
+    // 08-19 生产真撞过两次，日志里翻到 mtmd_helper 才定位到。
+    //
+    // 声明成"这个上游真解得开什么"，入口负责把不在表里的转码过去（见
+    // model-ingress.normalizeImages）。不填 = 什么都能吃，中转站那两个上游维持原样。
+    imageFormats: Object.freeze(['image/png', 'image/jpeg']),
   }),
 });
 

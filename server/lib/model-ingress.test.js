@@ -6,7 +6,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { transformForUpstream, liftImagesFromToolResult, estimateInputTokens } from './model-ingress.js';
-import { resolveWireModel } from '../engine/agent/model-context.js';
+import { resolveWireModel, UPSTREAMS } from '../engine/agent/model-context.js';
+import sharp from 'sharp';
 
 const IMG = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } };
 
@@ -103,5 +104,76 @@ describe('estimateInputTokens', () => {
     const cyclic = {};
     cyclic.self = cyclic;
     expect(estimateInputTokens({ tools: [{ name: 'x', input_schema: cyclic }] })).toBe(50000);
+  });
+});
+
+/**
+ * 图片归一（2026-08-19）：生产真撞过 —— llama.cpp 走 stb_image 解不开 webp，
+ * 上游返回一句看不出真因的 400。断言用**真图字节**（sharp 现造），不用假 base64：
+ * 这条路的全部逻辑都在 sharp 的 metadata 上分流，喂假数据等于什么都没测。
+ */
+describe('图片归一：按上游声明的 imageFormats 转码', () => {
+  const mk = async (fmt, w = 64, h = 64, alpha = false) => {
+    const base = sharp({
+      create: { width: w, height: h, channels: alpha ? 4 : 3,
+        background: alpha ? { r: 200, g: 30, b: 30, alpha: 0.5 } : { r: 200, g: 30, b: 30 } },
+    });
+    const buf = await (fmt === 'webp' ? base.webp() : fmt === 'png' ? base.png() : base.jpeg()).toBuffer();
+    return { type: 'image', source: { type: 'base64', media_type: `image/${fmt}`, data: buf.toString('base64') } };
+  };
+  const msgs = (block) => [{ role: 'user', content: [block] }];
+  const wireFor = (upstream) => ({ wireModel: 'qwen3.8-27b', upstream });
+
+  it('webp → qwenLocal 会被转码（真因就在这：stb_image 不认 webp）', async () => {
+    const parsed = { model: 'x', messages: msgs(await mk('webp')) };
+    await transformForUpstream(parsed, wireFor(UPSTREAMS.qwenLocal));
+    const out = parsed.messages[0].content[0].source;
+    expect(out.media_type).toBe('image/jpeg');                       // 无 alpha → jpeg
+    const meta = await sharp(Buffer.from(out.data, 'base64')).metadata();
+    expect(meta.format).toBe('jpeg');                                 // 真的是 jpeg 字节，不只是改了标签
+    expect(meta.width).toBe(64);                                      // 没顺手缩掉
+  });
+
+  it('带 alpha 的 webp 转 png（保住透明），小图不 resize', async () => {
+    const parsed = { model: 'x', messages: msgs(await mk('webp', 64, 64, true)) };
+    await transformForUpstream(parsed, wireFor(UPSTREAMS.qwenLocal));
+    const out = parsed.messages[0].content[0].source;
+    expect(out.media_type).toBe('image/png');
+    expect((await sharp(Buffer.from(out.data, 'base64')).metadata()).hasAlpha).toBe(true);
+  });
+
+  it('png / jpeg 本来就在白名单里 → 一个字节都不动', async () => {
+    for (const fmt of ['png', 'jpeg']) {
+      const block = await mk(fmt);
+      const before = block.source.data;
+      const parsed = { model: 'qwen3.8-27b', messages: msgs(block) };
+      const mutated = await transformForUpstream(parsed, wireFor(UPSTREAMS.qwenLocal));
+      expect(parsed.messages[0].content[0].source.data, `${fmt} 被动了`).toBe(before);
+      expect(mutated).toBe(false);
+    }
+  });
+
+  it('⚠️ 没声明 imageFormats 的上游（中转站）维持原样 —— webp 照旧透传', async () => {
+    const block = await mk('webp');
+    const before = block.source.data;
+    const parsed = { model: 'x', messages: msgs(block) };
+    await transformForUpstream(parsed, wireFor(UPSTREAMS.lament));
+    expect(parsed.messages[0].content[0].source.media_type).toBe('image/webp');
+    expect(parsed.messages[0].content[0].source.data).toBe(before);
+  });
+
+  it('tool_result 内嵌的图同样被转码（llama.cpp 那条路 liftImages 是关的，图就留在里面）', async () => {
+    const parsed = { model: 'x', messages: [{ role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 't1', content: [await mk('webp')] },
+    ] }] };
+    await transformForUpstream(parsed, wireFor(UPSTREAMS.qwenLocal));
+    expect(parsed.messages[0].content[0].content[0].source.media_type).toBe('image/jpeg');
+  });
+
+  it('gif 不进这条路（重 encode 会丢帧），原样透传', async () => {
+    const block = { type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'R0lGOD' } };
+    const parsed = { model: 'x', messages: msgs(block) };
+    await transformForUpstream(parsed, wireFor(UPSTREAMS.qwenLocal));
+    expect(parsed.messages[0].content[0].source.media_type).toBe('image/gif');
   });
 });

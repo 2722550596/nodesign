@@ -265,9 +265,11 @@ export async function transformForUpstream(parsed, wire) {
     if (liftImagesFromToolResult(parsed.messages)) mutated = true;
   }
 
-  // 长边超限的图下采样（所有 API 上游统一做，安全无害）
+  // 图片归一：长边超限下采样（所有上游统一做，安全无害）+ 把上游解不开的格式
+  // 转码过去（只有声明了 imageFormats 的上游才做，见 model-context 那张表）
   if (Array.isArray(parsed.messages)) {
-    if (await downsampleOversizedImages(parsed.messages, VISION_MAX_DIM)) mutated = true;
+    const allowed = wire.upstream?.imageFormats || null;
+    if (await normalizeImages(parsed.messages, VISION_MAX_DIM, allowed)) mutated = true;
   }
 
   return mutated;
@@ -302,25 +304,30 @@ export function liftImagesFromToolResult(messages) {
 }
 
 /**
- * 长边超限下采样：扫所有 image block（user msg 顶层 + tool_result 内嵌），
- * 长边 > maxDim 的 base64 image 用 sharp 重 encode。
+ * 图片归一：扫所有 image block（user msg 顶层 + tool_result 内嵌），按需下采样
+ * 和/或转码。两件事共用一次遍历也共用一条 sharp 管线 —— 拆成两个函数就是把这段
+ * 嵌套遍历抄第二份，而它已经是"顶层 + tool_result 内嵌"两层的形状了。
+ *
  * fail-soft：单张图 sharp 抛错 → warn 后保留原图透传，不阻断整 turn。
+ *
+ * @param {number} maxDim 长边上限，超了才 resize
+ * @param {string[]|null} allowed 上游解得开的 media_type 白名单；null = 不限
  */
-async function downsampleOversizedImages(messages, maxDim) {
+async function normalizeImages(messages, maxDim, allowed) {
   let mutated = false;
   for (const msg of messages) {
     if (!Array.isArray(msg?.content)) continue;
     for (let i = 0; i < msg.content.length; i++) {
       const block = msg.content[i];
       if (block?.type === 'image') {
-        const replaced = await maybeResizeImageBlock(block, maxDim);
+        const replaced = await maybeNormalizeImageBlock(block, maxDim, allowed);
         if (replaced) { msg.content[i] = replaced; mutated = true; }
       }
       if (block?.type === 'tool_result' && Array.isArray(block.content)) {
         for (let j = 0; j < block.content.length; j++) {
           const inner = block.content[j];
           if (inner?.type === 'image') {
-            const replaced = await maybeResizeImageBlock(inner, maxDim);
+            const replaced = await maybeNormalizeImageBlock(inner, maxDim, allowed);
             if (replaced) { block.content[j] = replaced; mutated = true; }
           }
         }
@@ -330,42 +337,73 @@ async function downsampleOversizedImages(messages, maxDim) {
   return mutated;
 }
 
+const IMAGE_WRITERS = {
+  'image/png': (p) => p.png({ compressionLevel: 9 }),
+  'image/jpeg': (p) => p.jpeg({ quality: 90, mozjpeg: true }),
+  'image/webp': (p) => p.webp({ quality: 85 }),
+};
+
 /**
- * 单图 resize 判定：仅 base64、png/jpeg/webp（gif 跳过防动图丢帧）、长边超限才动。
- * 有 alpha 则 flatten 白底（部分 vision 网关对 RGBA 不友好）。
+ * 单图归一。两个触发条件，满足任一才动（都不满足返 null 原样透传）：
+ *   - 长边超过 maxDim  → 下采样
+ *   - media_type 不在上游的 imageFormats 里 → 转码
+ *
+ * 转码目标按有没有 alpha 分：有 alpha 走 png（保住透明），没有走 jpeg（照片和
+ * 渲染图转 png 会胖好几倍，本地盒子这条链路还要过 SSH 隧道）。**只在 allowed
+ * 里挑**，上游声明什么就往什么转。
+ *
+ * gif 不在 IMAGE_WRITERS 的键里，所以动图永远不进这条路（重 encode 会丢帧）——
+ * 代价是 gif 遇到解不开它的上游仍旧失败，那个另说，别在这儿悄悄压成一张静图。
  */
-async function maybeResizeImageBlock(block, maxDim) {
+async function maybeNormalizeImageBlock(block, maxDim, allowed) {
   const src = block?.source;
   if (!src || src.type !== 'base64' || !src.data) return null;
-  const writers = {
-    'image/png': (p) => p.png({ compressionLevel: 9 }),
-    'image/jpeg': (p) => p.jpeg({ quality: 85, mozjpeg: true }),
-    'image/webp': (p) => p.webp({ quality: 85 }),
-  };
-  const writer = writers[src.media_type];
-  if (!writer) return null;
+  if (!IMAGE_WRITERS[src.media_type]) return null;
+
+  const needsTranscode = Array.isArray(allowed) && !allowed.includes(src.media_type);
 
   try {
     const inputBuf = Buffer.from(src.data, 'base64');
     const meta = await sharp(inputBuf).metadata();
     const w = meta.width || 0;
     const h = meta.height || 0;
-    if (Math.max(w, h) <= maxDim) return null;
+    const needsResize = Math.max(w, h) > maxDim;
+    if (!needsResize && !needsTranscode) return null;
 
-    let pipeline = sharp(inputBuf).resize({
-      width: w >= h ? maxDim : null,
-      height: h > w ? maxDim : null,
-      fit: 'inside',
-      withoutEnlargement: true,
-    });
-    if (meta.hasAlpha) pipeline = pipeline.flatten({ background: '#ffffff' });
-    const outBuf = await writer(pipeline).toBuffer();
+    // 转码时目标格式从 allowed 里挑；不转码就还用原格式
+    let outType = src.media_type;
+    if (needsTranscode) {
+      const prefer = meta.hasAlpha ? ['image/png', 'image/jpeg'] : ['image/jpeg', 'image/png'];
+      outType = prefer.find((t) => allowed.includes(t) && IMAGE_WRITERS[t])
+        || allowed.find((t) => IMAGE_WRITERS[t]);
+      if (!outType) {
+        console.warn(`[model-ingress] 上游 imageFormats 里没有能写的格式，原样透传 ${src.media_type}`);
+        return null;
+      }
+    }
+
+    let pipeline = sharp(inputBuf);
+    if (needsResize) {
+      pipeline = pipeline.resize({
+        width: w >= h ? maxDim : null,
+        height: h > w ? maxDim : null,
+        fit: 'inside',
+        withoutEnlargement: true,
+      });
+    }
+    // 两种情况去 alpha：① 落到 jpeg（它没有 alpha 通道，不 flatten 出来是黑底）；
+    // ② 走了 resize —— 这条是原有行为，理由是"部分 vision 网关对 RGBA 不友好"，
+    // 别因为加转码顺手把它改掉（中转站那两个上游一直吃的是 flatten 过的图）。
+    if (meta.hasAlpha && (needsResize || outType === 'image/jpeg')) {
+      pipeline = pipeline.flatten({ background: '#ffffff' });
+    }
+    const outBuf = await IMAGE_WRITERS[outType](pipeline).toBuffer();
     return {
       ...block,
-      source: { type: 'base64', media_type: src.media_type, data: outBuf.toString('base64') },
+      source: { type: 'base64', media_type: outType, data: outBuf.toString('base64') },
     };
   } catch (err) {
-    console.warn(`[model-ingress] image resize failed (passthrough): ${err?.message || err}`);
+    console.warn(`[model-ingress] image normalize failed (passthrough): ${err?.message || err}`);
     return null;
   }
 }
