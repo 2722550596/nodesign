@@ -31,6 +31,13 @@ const CACHE_DIR = path.join(process.cwd(), 'server', '.cache', 'docx-pages');
 /** 缓存的渲染精度。缩略图从这份缩，不另跑 LibreOffice */
 const CACHE_DPI = 120;
 
+/**
+ * 渲染管线的"代"。字体替身表换代（2026-08-19 雅黑→MiSans、仿宋→朱雀仿宋）时
+ * 旧缓存的画面已经不是现在会渲出来的样子，但 key 只认 mtime —— 不换代的话
+ * 旧页图会一直供到文档下次被改（cover.js 的 RENDER_GEN 同一课）。
+ */
+const RENDER_GEN = 'fonts-v2';
+
 /** 总并发闸。先宽松，真撞上再收 */
 const MAX_CONCURRENT = 3;
 
@@ -50,7 +57,7 @@ const inflight = new Map();
 
 function keyOf(absPath, stat) {
   return crypto.createHash('sha1')
-    .update(`${absPath}|${stat.mtimeMs}|${stat.size}|${CACHE_DPI}`)
+    .update(`${absPath}|${stat.mtimeMs}|${stat.size}|${CACHE_DPI}|${RENDER_GEN}`)
     .digest('hex');
 }
 

@@ -202,7 +202,9 @@ async function renderOrRead(pid, cover, sharedDir) {
   // fetch/localStorage 才活），但缓存 key 只认 relPath|mtime|宽度 —— 于是改动
   // 之前渲的封面（file:// 版，页面里 fetch 回来的内容一片空白）会一直供着，
   // 直到 HTML 自己被改动。渲染管线换了就该换一代 key。
-  const RENDER_GEN = 'http-v1';
+  // v2（2026-08-19）：docx 字体替身换代（雅黑→MiSans、仿宋→朱雀仿宋），
+  // 封面里渲着 docx 页图的那批要跟着重截
+  const RENDER_GEN = 'http-v2';
   const etag = crypto.createHash('sha1')
     .update(`${cover.relPath}|${cover.mtimeMs}|${OUT_WIDTH}|${RENDER_GEN}`)
     .digest('hex');
