@@ -38,6 +38,7 @@ import { can } from '../../../lib/kinds/index.js';
 import { screenshotDocx } from './screenshot-docx.js';
 import { openArtifactPage, launchPerceptionBrowser } from './helpers/perception-page.js';
 import { normalizeShot, detectPaintTransform, attachPageDiagnostics, runWaitFor, runBeforeShot } from './helpers/shot-pipeline.js';
+import { recordMotion, pickNearestFrames, composeSheet, encodeWebm, motionCaptionLines } from './helpers/motion-lab.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -98,6 +99,22 @@ to poll until the app is ready (own 15s budget), keep beforeShot for the setup i
 
 Console output: the caption carries warnings/errors by default; pass console:'all'
 to also read your own console.log output from the page (grouped, capped).
+
+FILMSTRIP — the eye for ANIMATION. A single still cannot show easing, overshoot,
+hard cuts between tweens, or "the whole move played off-screen". Pass
+frames:[0,120,240,400,700] (ms offsets) + trigger:"window.game.reload()" (JS that
+starts the move) and you get ONE contact sheet: the same viewport at each of those
+moments, timestamped. One image = one motion curve — judge attack, overshoot,
+settle and cuts directly. click:"#start" performs a REAL trusted click instead
+(needed for pointer lock / AudioContext / anything gated on a user gesture);
+combine both if the move needs click-then-call. The caption also reports frame
+health (fps / p95 / worst frame — catches per-frame decay bugs and jank) and an
+audio event log (every media.play() / bufferSource.start() with its timestamp —
+you cannot hear, but you CAN see when sound was attempted). Pass saveVideo:true
+to also encode the full recording as a .webm under exports/motion/ — you cannot
+watch it, but deliver_files hands it to the user for final judgement.
+For NUMERIC motion data (exact positions/rotations per frame, overshoot %, settle
+time, hard-cut detection) use the trace_motion tool instead — ToolSearch it.
 
 Use this tool when:
 - You finished writing or editing canvas.html and want to verify it looks right
@@ -161,6 +178,24 @@ Do NOT use this tool when:
         .enum(['warn', 'all'])
         .optional()
         .describe("Console capture level for the caption. Default 'warn' returns only warnings/errors (the count of filtered log lines is reported). Pass 'all' to also get console.log/info/debug output — the only way to read your own debug logging from the page."),
+      frames: z
+        .array(z.number().min(0).max(15000))
+        .min(1)
+        .max(10)
+        .optional()
+        .describe('FILMSTRIP mode: capture the viewport at these millisecond offsets (t=0 is the moment click/trigger fires) and return ONE timestamped contact sheet. 2-10 offsets; place them where the motion lives (dense during the move, one late frame to confirm settle). Include 0 to see the starting pose. With selector/pageIndex the cells are cropped to that element (it must be inside the viewport).'),
+      trigger: z
+        .string()
+        .optional()
+        .describe('FILMSTRIP: JS snippet that STARTS the motion, evaluated in page context at t=0 (await OK). E.g. "window.game.startReload()" or dispatching a keydown. Runs after waitFor/beforeShot. Omit to record whatever is already animating.'),
+      click: z
+        .string()
+        .optional()
+        .describe('FILMSTRIP: CSS selector to REAL-click at t=0 (trusted user gesture — required for pointer lock, AudioContext, autoplay). Fires before trigger if both are given.'),
+      saveVideo: z
+        .boolean()
+        .optional()
+        .describe('FILMSTRIP: also encode the full recording as .webm under exports/motion/ (real timing preserved, jank and all). You cannot watch it — use deliver_files to hand it to the user.'),
       pages: z
         .string()
         .optional()
@@ -170,7 +205,7 @@ Do NOT use this tool when:
         .optional()
         .describe(CANVAS_PATH_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, frames, trigger, click, saveVideo, path: relPath }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -302,6 +337,100 @@ Do NOT use this tool when:
           } catch (err) {
             scrollNote = `scrollTo failed: ${err.message}`;
           }
+        }
+
+        // ── 胶片条（2026-08-19，iss_mszv782a_toab）──
+        // 动画的好坏在时间轴上，静帧看不见缓动/过冲/硬切。CDP screencast 录一段
+        // （渲染进程每次重绘推一帧、帧带 epoch 时间戳 —— page.screenshot 连拍一张
+        // 100~300ms，压不进 120ms 帧距），按请求时刻取最近帧，拼一张 contact sheet。
+        if (frames && frames.length) {
+          const wanted = [...frames].sort((a, b) => a - b);
+          const durationMs = Math.max(300, Math.round(Math.max(...wanted)));
+
+          // selector / pageIndex → 每格裁到该元素（视口坐标；录制不滚动，元素得在视口里）
+          let crop = null;
+          let cropNote = null;
+          const cropSelector = selector || (pageIndex ? `section[data-page="${pageIndex}"]` : null);
+          if (cropSelector) {
+            const r = await page.evaluate((sel) => {
+              const el = document.querySelector(sel);
+              if (!el) return { error: 'none' };
+              const b = el.getBoundingClientRect();
+              return { x: b.left, y: b.top, w: b.width, h: b.height, vw: window.innerWidth, vh: window.innerHeight };
+            }, cropSelector);
+            if (r.error) {
+              return { content: [{ type: 'text', text: `Selector matched no elements: ${cropSelector}` }], isError: true };
+            }
+            const ix = Math.max(0, r.x); const iy = Math.max(0, r.y);
+            const iw = Math.min(r.x + r.w, r.vw) - ix; const ih = Math.min(r.y + r.h, r.vh) - iy;
+            if (iw > 8 && ih > 8) crop = { x: ix, y: iy, w: iw, h: ih };
+            else {
+              cropNote = `selector "${cropSelector}" lies outside the viewport — filmstrip records the viewport only, `
+                + 'cells show the full viewport (use scrollTo to bring it in first)';
+            }
+          }
+
+          const rec = await recordMotion(page, {
+            durationMs, trigger, click,
+            shotMaxW: Math.max(320, Math.round(vp.width * rasterScale)),
+            shotMaxH: Math.max(240, Math.round(vp.height * rasterScale)),
+          });
+          if (rec.shots.length === 0) {
+            return {
+              content: [{
+                type: 'text',
+                text: [
+                  'Filmstrip failed: the screencast captured zero frames — the page never painted during the window.',
+                  rec.clickNote, rec.triggerNote, diag.summary(),
+                ].filter(Boolean).join('\n'),
+              }],
+              isError: true,
+            };
+          }
+
+          const picked = pickNearestFrames(rec.shots, wanted);
+          const sheet = await composeSheet(picked, { crop, cropRefW: vp.width });
+
+          let videoNote = null;
+          if (saveVideo) {
+            try {
+              const base = path.basename(canvasPath, path.extname(canvasPath));
+              const rel = `exports/motion/${base}-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.webm`;
+              const { bytes } = await encodeWebm(rec.shots, path.join(workspaceRoot, rel));
+              videoNote = `video saved: ${rel} (${(bytes / 1024).toFixed(0)}KB, real frame timing — jank preserved) — deliver_files to hand it to the user`;
+            } catch (err) {
+              videoNote = `video encode failed: ${err?.message || err}`;
+            }
+          }
+
+          try {
+            ctx?.emit?.({ type: 'run.screenshot_taken', sizeBytes: sheet.buf.length, viewport: vp, mode: `filmstrip x${wanted.length}` });
+          } catch { /* emit fail-safe */ }
+
+          const shot = await normalizeShot(sheet.buf);
+          const cells = picked
+            .map((p, i) => (p ? `#${i + 1} t=${Math.round(p.want)}ms→${Math.round(p.actual)}ms` : `#${i + 1} (no frame)`))
+            .join('  ');
+          const cap = [
+            `Filmstrip of ${target.relPath} — ${wanted.length} cells, ${sheet.layout.cols}x${sheet.layout.rows} grid, `
+              + `viewport ${vp.width}x${vp.height} (t=0 = the moment click/trigger fired; labels show requested vs captured time)`,
+            cells,
+            ...(cropNote ? [cropNote] : []),
+            ...motionCaptionLines(rec),
+            ...(videoNote ? [videoNote] : []),
+            ...(gotoNote ? [gotoNote] : []),
+            ...(waitForNote ? [waitForNote] : []),
+            ...(beforeShotNote ? [beforeShotNote] : []),
+            ...(scrollNote ? [scrollNote] : []),
+            ...(shot.note ? [shot.note] : []),
+            diag.summary(),
+          ];
+          return {
+            content: [
+              { type: 'text', text: cap.join('\n') },
+              { type: 'image', data: shot.data, mimeType: shot.mimeType },
+            ],
+          };
         }
 
         // selector / pageIndex 优先，命中则截元素 bbox（locator.screenshot），

@@ -231,7 +231,9 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 
 常驻可直接调：`screenshot_canvas`（`pageIndex` / `detail`；caption 回传 console 错误和
 加载失败的资源，"console clean" 才代表 CDN 库真加载成功；滚动触发的入场动画传
-`beforeShot: 'scrollToBottom'` 先滚一遍再截，别为了截图砍动效）· `screenshot_url`
+`beforeShot: 'scrollToBottom'` 先滚一遍再截，别为了截图砍动效；**做动画/演出别盲调**：
+`frames: [0,120,240,...]` + `trigger` 出一张按时刻拼好的胶片条，缓动/过冲/硬切一张图
+看完，数值级判断再上 `trace_motion`，`saveVideo: true` 出 webm 给用户过目）· `screenshot_url`
 （外部 URL 截图，找视觉参考用眼睛看）· `list_pages` · `read_page` ·
 `query_elements` · `get_computed_styles` · `navigate_to_page` · `highlight` ·
 `preview_deck` · `record_decision` · `get_pending_changes` / `clear_pending_changes`

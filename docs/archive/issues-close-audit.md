@@ -30,3 +30,9 @@ exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（�
 | iss_msztu13y_teyi | closed | build_docx 超链接已进引擎：run 上 `link` 键（https/mailto/tel），引擎发 rId（避开已占号段）、写 External 关系、包 w:hyperlink，同 URL 复用；视觉默认不动。LO 真渲验收：PDF 里 URI 注解在。上报里的两个坑（前缀吞并/rId 撞号）都在引擎层规避 |
 | iss_mszttj2n_gqti | closed | indent 的 firstLine*/hanging* 互斥拦截（indentConflict，styles 与块级同一份判据）+ token-schema.md 写明互斥与反例、常见错法对照补行 |
 | iss_msztugx3_hn1e | closed | 附件提示重写为真验过的系统工具（pdftotext/pdftoppm/pdfimages/soffice/unzip），并明说四个 python 包没装且装不上；office 三件套按上报建议核过 —— 全都没装，系统性失准属实 |
+
+## 2026-08-19 时间维度感知批（动画盲调案，修复 commit 见 git log 当日）
+
+| id | 判决 | 理由 |
+|---|---|---|
+| iss_mszv782a_toab | closed | 上报要的胶片条照单做了并往前推了一步。screenshot_canvas 新增 frames+trigger+click：CDP screencast 录制（帧带真时间戳，取帧语义=last-≤-want，即"该时刻屏幕真正显示的帧"）→ 拼一张带时刻标注的 contact sheet；caption 附带帧健康（fps/p95/最长帧，覆盖上报第 3 类"按帧衰减/卡顿"）与音频事件表（play()/bufferSource.start() 时刻——听不见但看得见"何时试图出声"）；saveVideo:true 出真时序 webm 落 exports/motion/ 给用户过目。另开 trace_motion 工具（deferred）：逐 rAF 采样任意 JS 表达式，量出过冲%/稳定时刻/单帧硬切并出曲线图——上报里"位姿写到镜头背后/绕错轴/tween 硬切"三类从赌静帧变成量出来。验收：纯函数 14 测 + _motion-lab-check.mjs 29 项全绿（对照组=已知过冲 9.7%/已知 800ms 瞬移/已知 130ms 忙等/已知 300ms play()，量出 10.0%/826ms/136ms/309ms） |

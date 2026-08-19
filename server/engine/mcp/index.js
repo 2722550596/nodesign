@@ -39,6 +39,7 @@ import { makeListPagesTool } from './tools/list-pages.js';
 import { makeQueryElementsTool } from './tools/query-elements.js';
 import { makeProfileScrollTool } from './tools/profile-scroll.js';
 import { makeExplainStyleTool } from './tools/explain-style.js';
+import { makeTraceMotionTool } from './tools/trace-motion.js';
 import {
   makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool, makeBrowserScreenshotTool,
   makeBrowserRequestHelpTool, makeBrowserCaptureTool,
@@ -187,6 +188,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // explain_style — CSS 级联诊断（2026-08-18）。computed 只给结果不给原因，
       // 而 agent 手里没有 devtools 的 Styles 面板。同样走 deferred。
       makeExplainStyleTool({ workspaceRoot, projectId, sessionId }),
+
+      // trace_motion — 动画数值示波器（2026-08-19，iss_mszv782a_toab）。缓动/过冲/
+      // 硬切从"看静帧猜"变成逐帧采样量出来。deferred：名字自解释，且常驻的
+      // screenshot_canvas 描述里点了名（胶片条管看、这个管量）。
+      makeTraceMotionTool({ workspaceRoot, projectId, sessionId }),
 
       // ── 浏览通道（2026-08-18）：agent 真的会用浏览器 ──
       // 常驻一个 chromium（按项目键、带持久 profile），所以能点链接、翻子页、
