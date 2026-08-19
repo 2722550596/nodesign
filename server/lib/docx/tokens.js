@@ -89,7 +89,7 @@ export function presetOffice() {
       Title: {
         type: 'paragraph', name: 'Title', basedOn: 'Normal', next: 'Normal', qFormat: true,
         run: { font: 'heading', sizePt: '二号', bold: true },
-        para: { align: 'center', indent: { firstLineChars: 0 }, spacing: { beforePt: 12, afterPt: 18 }, outlineLevel: 0 },
+        para: { align: 'center', indent: { firstLineChars: 0 }, spacing: { beforePt: 12, afterPt: 18 }, keepNext: true, outlineLevel: 0 },
       },
       Heading1: {
         type: 'paragraph', name: 'heading 1', basedOn: 'Normal', next: 'Normal', qFormat: true,
@@ -158,19 +158,19 @@ export function presetGongwen() {
         // 标题前后各空一行（28pt）。用 pt 不用 beforeLines：lab/02 已证 LO 对
         // 字符/行单位的兼容不可信，*Lines 同族，公文版式是硬指标不赌。
         run: { font: 'biaosong', sizePt: '二号' },
-        para: { align: 'center', indent: { firstLineChars: 0 }, spacing: { beforePt: 28, afterPt: 28 }, outlineLevel: 0 },
+        para: { align: 'center', indent: { firstLineChars: 0 }, spacing: { beforePt: 28, afterPt: 28 }, keepNext: true, outlineLevel: 0 },
       },
       GwH1: {   // 一、 黑体
         type: 'paragraph', name: '公文一级', basedOn: 'Normal', next: 'Normal', qFormat: true,
-        run: { font: 'hei' }, para: { outlineLevel: 0 },
+        run: { font: 'hei' }, para: { keepNext: true, outlineLevel: 0 },
       },
       GwH2: {   // （一） 楷体
         type: 'paragraph', name: '公文二级', basedOn: 'Normal', next: 'Normal', qFormat: true,
-        run: { font: 'kai' }, para: { outlineLevel: 1 },
+        run: { font: 'kai' }, para: { keepNext: true, outlineLevel: 1 },
       },
       GwH3: {   // 1. 仿宋加粗
         type: 'paragraph', name: '公文三级', basedOn: 'Normal', next: 'Normal', qFormat: true,
-        run: { bold: true }, para: { outlineLevel: 2 },
+        run: { bold: true }, para: { keepNext: true, outlineLevel: 2 },
       },
       Chaosong: {
         type: 'paragraph', name: '抄送', basedOn: 'Normal',
@@ -209,7 +209,7 @@ export function presetAcademic() {
       Title: {
         type: 'paragraph', name: 'Title', basedOn: 'Normal', next: 'Normal', qFormat: true,
         run: { font: 'heading', sizePt: '三号', bold: true },
-        para: { align: 'center', indent: { firstLineChars: 0 }, spacing: { beforePt: 17, afterPt: 17 }, outlineLevel: 0 },
+        para: { align: 'center', indent: { firstLineChars: 0 }, spacing: { beforePt: 17, afterPt: 17 }, keepNext: true, outlineLevel: 0 },
       },
       Abstract: {
         type: 'paragraph', name: '摘要', basedOn: 'Normal',

@@ -22,6 +22,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PRESETS, validateTokens, indentConflict, PARA_KEYS, RUN_KEYS } from './tokens.js';
 import { buildDocx } from './build.js';
+import { lintDocxSource } from './text-lint.js';
 
 /** 深合并：对象递归，其余（含数组）整体替换 —— 数组是有序整体，逐项合并只会得到怪东西 */
 function merge(base, over) {
@@ -244,11 +245,16 @@ export async function buildFromSource(sourceAbsPath, outAbsPath) {
   const { tokens, content, opts } = resolveSource(src);
   const buf = await buildDocx(tokens, content, opts);
   await fs.writeFile(outAbsPath, buf);
+  // 构建成功后跑字符/版式体检（text-lint.js）—— 报不挡建：这些是符号惯例与
+  // 一致性问题，闭合 schema 和渲染目视都照不到的那一层
+  let lint = { errors: [], notes: [] };
+  try { lint = lintDocxSource({ tokens, content, opts }); } catch { /* 体检自己不许成为故障源 */ }
   return {
     outPath: outAbsPath,
     bytes: buf.length,
     blocks: content.length,
     styles: Object.keys(tokens.styles ?? {}).length,
     preset: src.preset ?? null,
+    lint,
   };
 }

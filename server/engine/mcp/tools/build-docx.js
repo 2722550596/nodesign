@@ -16,6 +16,7 @@ import path from 'node:path';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { buildFromSource, DocxSourceError } from '../../../lib/docx/build-from-source.js';
+import { formatLint } from '../../../lib/docx/text-lint.js';
 import { setActiveArtifact } from '../../../lib/artifact-target.js';
 import { safeResolveRead, safeResolveWrite } from '../../../lib/safe-path.js';
 import { Events } from '../../agent/events.js';
@@ -86,7 +87,9 @@ whether it looks right.`,
             text: `${outRel} 已构建 · ${(r.bytes / 1024).toFixed(1)}KB · ${r.blocks} 个块 · ${r.styles} 个样式`
               + `${r.preset ? ` · 起点「${r.preset}」` : ''}\n`
               + '现在 screenshot 看一眼。构建没报错**不等于**排版对了 —— '
-              + '缩进、行距、层级、分页这些只有渲染出来才看得见。',
+              + '缩进、行距、层级、分页这些只有渲染出来才看得见。'
+              // 字符/版式体检：符号惯例与全文一致性，schema 和渲染都照不到的那层
+              + (r.lint ? formatLint(r.lint) : ''),
           }],
         };
       } catch (e) {
