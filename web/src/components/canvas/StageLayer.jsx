@@ -41,11 +41,12 @@ export function useStageState({
   const [stageCards, setStageCards] = useState({});
   const [stageBadges, setStageBadges] = useState({});
   // 铅笔精灵的手写行（2026-08-14 日记本批）：服务端把回复压成短句推过来
-  // （run.sprite_summary：首句底稿先到，haiku 精修后到覆盖 ——"显影"）。
-  // 曾经这里是 voice（正文流全文尾巴、SpriteVoiceBubble 直播），同日退役：
-  // 画布上要的是一行手写旁白，不是聊天记录的镜像。
-  const [spriteLine, setSpriteLine] = useState(null);   // { round, text, refined }
-  const [recap, setRecap] = useState(null);             // { text, at } —— 收场小结，闲时精灵写它
+  // （run.sprite_summary）。曾经这里是 voice（正文流全文尾巴、SpriteVoiceBubble
+  // 直播），同日退役：画布上要的是一行手写旁白，不是聊天记录的镜像。
+  // ⚠️ 2026-08-19 前一个 round 会来两发（底稿 + haiku 精修覆盖，refined 标志
+  // 谁压得过谁），那发 haiku 写死走订阅已整条拆除 —— 现在一发就是终稿，
+  // 既不用 refined 也不用防"旧回合的精修迟到"。同批退役的还有 run.recap。
+  const [spriteLine, setSpriteLine] = useState(null);   // { text }
   const followedBlocksRef = useRef(new Set());   // 每张舞台卡只推一次镜头
   // 用 ref 转一手：直接进 handleStageEvent 的依赖会让 stageRef 每次重挂，
   // 重挂的缝里到达的事件会丢。
@@ -74,17 +75,7 @@ export function useStageState({
       case 'run.sprite_summary': {
         // 子代理的话不上精灵 —— 主精灵只替主 agent 说话
         if (evt.parentToolUseId || !evt.text) return;
-        setSpriteLine(prev => {
-          if (prev && prev.round != null && evt.round != null) {
-            if (evt.round < prev.round) return prev;               // 旧回合的迟到精修，不要
-            if (evt.round === prev.round && prev.refined && !evt.refined) return prev;
-          }
-          return { round: evt.round ?? null, text: evt.text, refined: !!evt.refined };
-        });
-        break;
-      }
-      case 'run.recap': {
-        if (evt.text) setRecap({ text: evt.text, at: Date.now() });
+        setSpriteLine({ text: evt.text });
         break;
       }
       case 'run.tool_use.started': {
@@ -213,7 +204,7 @@ export function useStageState({
           });
         }, 900);
         followedBlocksRef.current.clear();
-        // 手写行收场：工作精灵随 run 一起下场，行也一起清（闲时轮到 recap 上）
+        // 手写行收场：工作精灵随 run 一起下场，行也一起清（闲时轮到问候语上）
         setTimeout(() => setSpriteLine(null), 900);
         break;
       }
@@ -236,7 +227,7 @@ export function useStageState({
     });
   }, []);
 
-  return { stageCards, stageBadges, spriteLine, recap, dismissStageCard };
+  return { stageCards, stageBadges, spriteLine, dismissStageCard };
 }
 
 // （2026-08-14 当日拆除：SpriteVoiceBubble —— 正文流直播泡只活了半天，被

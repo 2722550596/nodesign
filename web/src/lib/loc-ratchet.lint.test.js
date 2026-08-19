@@ -36,7 +36,11 @@ const GRANDFATHERED = {
   // agent/plan-mode-gate.js（纯策略，跟会话循环零耦合）：1184 → 1058
   'server/engine/agent/session-loop.js': 1058,
   'server/projects/workspace.js': 1025,          // 起手模板迁去 workspace-templates.js 后
-  'server/api/turn.js': 902,                     // 08-17 组装 user message 迁去 turn-compose.js 后
+  // 08-17 组装 user message 迁去 turn-compose.js → 08-19 plan mode 那族端点
+  // （permission-mode / plan-request decide / plan-approve / plan-reject）迁去
+  // api/turn-plan.js：910 → 669。它们操作的是已经在跑的 run，跟本文件"收消息
+  // 起会话"的主职责无关
+  'server/api/turn.js': 669,
   'server/api/assets.js': 896,
   'server/api/exports/build-standalone.js': 980,
   // web/src/routes/Home.jsx 08-17 拆完出表（710 → 497，QuickEntry 迁去
@@ -54,7 +58,10 @@ const GRANDFATHERED = {
   'server/lib/plugin-validator.js': 721,
   // web/src/components/AuthGate.jsx 08-17 拆完出表（684 → 210）：材质词汇迁去
   // login-wall/wall-css.js，一套构图一个文件迁去 login-wall/scenes/ —— 走 600 通用上限
-  'server/engine/agent/agent-shared.js': 625,
+  // server/engine/agent/agent-shared.js 08-19 拆完出表（600 → 551）：系统提示词的
+  // 加载与渲染迁去 agent/system-prompts.js —— 走 600 通用上限
+  // web/src/lib/api.js 08-19 顶到 600：导出族（收 blob 那一批 + 文件名头解析）
+  // 迁去 lib/api-exports.js（520），仍走通用上限，没进表
   'server/projects/board-store.js': 640,
   'server/engine/mcp/tools/web-search.js': 548,
 };

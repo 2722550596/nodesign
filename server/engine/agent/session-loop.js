@@ -56,16 +56,14 @@ import { PLAN_MODE_DENY, isReadonlyBashCommand } from './plan-mode-gate.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
-import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute } from './model-context.js';
+import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensoredModel } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { getOrStartIngress, registerIngressSession, unregisterIngressSession } from '../../lib/model-ingress.js';
-import { summarizeReply, summarizeRecap, clampFirstClause } from '../../lib/quick-summary.js';
+import { clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
+import { renderPrelude, NODESIGN_PLAN_INSTRUCTIONS } from './system-prompts.js';
 import {
-  NODESIGN_PRELUDE,
-  renderPrelude,
-  NODESIGN_PLAN_INSTRUCTIONS,
   DEFAULT_TOOL_ALLOWLIST,
   STREAMING_ENABLED,
   handleSDKMessage,
@@ -372,10 +370,17 @@ export async function runSession({
       type: 'preset',
       preset: 'claude_code',
       // 成人段随项目 owner 的外审档联动（agent-shared.renderPrelude）；
-      // 找不到 owner 时落 loose 默认，绝不落 off
+      // 找不到 owner 时落 loose 默认，绝不落 off。
+      //
+      // uncensored 走模型表的标记位（model-context.isUncensoredModel），不在这里
+      // 判模型名 —— 那是模型属性，写在这儿就是给那张表开第二个真相源。为 true 的
+      // 行拿到的是精简版底线：本地无审查权重跑在自己盒子上、gate 'localGen' 只对
+      // 获批账号开、产物不外发，完整那节的前提（对外开放平台）根本不成立。
       append: (() => {
         const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
-        return renderPrelude(owner ? levelFor(owner) : 'loose');
+        return renderPrelude(owner ? levelFor(owner) : 'loose', {
+          uncensored: isUncensoredModel(model),
+        });
       })(),
     },
     plugins: installed.plugins,
@@ -710,16 +715,10 @@ export async function runSession({
       setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
       sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
-      // recap（2026-08-14 日记本批）：闲时精灵写在画布上的"刚才干了什么/挂着
-      // 什么"。fire-and-forget、失败无声 —— 绝不影响收场。发在 run.done 之后：
-      // 前端 stale guard 只拦"另一个 run 正在跑"的旧事件，闲时照单全收。
-      summarizeRecap({
-        finalText: info?.finalText || '',
-        toolCount: sharedCtx.counters.toolCalls,
-        durationMs: sharedCtx.counters.durationMs || (Date.now() - sharedCtx.startedAt),
-      })
-        .then((line) => { if (line) sharedCtx.emit(Events.recap(line)); })
-        .catch(() => { /* 装饰性小结 */ });
+      // （2026-08-19 拆除：收场 recap —— 闲时精灵那句"刚才干了什么"。它唯一的
+      //   产出方式是起一发写死 claude-haiku-4-5 的一次性会话，不跟随会话模型，
+      //   本地/API 会话照样烧订阅额度且不进记账。闲时精灵改回写问候语，那是
+      //   recap 缺席时本来就走的分支。理由全文见 lib/quick-summary.js 文件头。）
       // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
       // 正名一次（只一次，用户改过名就不动）。失败不影响 turn。
       autoNameProjectFromSession(projectId, sessionId)
@@ -860,10 +859,12 @@ export async function runSession({
     stream = query({ prompt: inputQueue, options: sdkOptions });
     attachSessionQuery(sessionId, stream);
 
-    // 铅笔精灵的手写短句（2026-08-14 日记本批）：assistant 文本一到先写首句
-    // 底稿（refined:false，零成本零延迟），haiku 精修到货再覆盖（refined:true，
-    // "墨水显影"）。子代理的话不上精灵 —— 它们有自己的舞台便利贴。
-    // 全程 fire-and-forget：精灵写不出俏皮话不能影响 run。
+    // 铅笔精灵的手写短句（2026-08-14 日记本批）：assistant 文本一到就把第一
+    // 小句压成一行推上画布，纯本地整形、零成本零延迟、同步出结果。
+    // 子代理的话不上精灵 —— 它们有自己的舞台便利贴。
+    // （2026-08-19 拆除后半段：原来这里还起一发 haiku 精修、到货再补一发
+    //   refined:true 覆盖底稿。那发写死走订阅不跟随会话模型 —— 见
+    //   lib/quick-summary.js 文件头。现在一 round 只有这一发。）
     let lastSummarySrc = '';
     const maybeSpriteSummary = (message) => {
       if (message.parent_tool_use_id) return;
@@ -872,14 +873,8 @@ export async function runSession({
         .map(b => b.text).join('\n').trim();
       if (!text || text === lastSummarySrc) return;
       lastSummarySrc = text;
-      const round = sharedCtx.counters.turns;
-      const draft = clampFirstClause(text);
-      if (draft) sharedCtx.emit(Events.spriteSummary(round, draft, false));
-      summarizeReply(text)
-        .then((line) => {
-          if (line && line !== draft) sharedCtx.emit(Events.spriteSummary(round, line, true));
-        })
-        .catch(() => { /* 装饰性小结，坏了无声 */ });
+      const line = clampFirstClause(text);
+      if (line) sharedCtx.emit(Events.spriteSummary(sharedCtx.counters.turns, line));
     };
 
     // emitContextUsage：fire-and-forget per assistant message

@@ -228,7 +228,7 @@ export default function BoardCanvas({
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [hoveredBinding, setHoveredBinding] = useState(null);
   // 在场表。（08-14 上午曾在这儿做过"主精灵 localStorage 常驻"，当天下午
-  // 被日记本范式取代：闲时精灵改为跟随用户镜头写问候/recap，不再钉在上次
+  // 被日记本范式取代：闲时精灵改为跟随用户镜头写问候语，不再钉在上次
   // 工作的物件上 —— 存位置的那套连带拆除，别留空壳。）
   const [presence, setPresence] = useState(emptyPresence);
   /** 精灵输入行（对话通道）：{x,y} 世界坐标，null = 收起 */
@@ -1456,7 +1456,7 @@ export default function BoardCanvas({
     setPresence(prev => resolvePending(prev, presenceResolve));
   }, [artifactRoots, presenceResolve]);
 
-  const { stageCards, stageBadges, spriteLine, recap, dismissStageCard } = useStageState({
+  const { stageCards, stageBadges, spriteLine, dismissStageCard } = useStageState({
     stageRef, artifactRoots, followToObject,
     onStageTarget: handleStageTarget, onPreviewRequest: handlePreviewRequest,
     onRawEvent: handlePresenceEvent,
@@ -1472,7 +1472,7 @@ export default function BoardCanvas({
   //
   // 精灵此刻说什么（台词池与挑法都在 SpriteSketchLayer.jsx）
   const { mainActive, workText, ambientText } = useSpriteAmbient({
-    projectId, presence, stageCards, spriteLine, recap,
+    presence, stageCards, spriteLine,
   });
 
   // 舞台卡分流（StageLayer.jsx）：锚得到可见物件贴物件，锚不到落 dock。

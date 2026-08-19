@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Check, Loader2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import { Sessions } from '../../lib/api.js';
+import { Sessions, Me } from '../../lib/api.js';
 import { FALLBACK_MODELS } from '../../lib/models.js';
 import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
 
@@ -21,8 +21,11 @@ import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
  *   - **还没有会话**（首页快速开始 / 项目 Hub）：没有可写的对象，仍用
  *     localStorage 偏好，随第一条消息的 body.model 带过去建会话。
  *
- * 可选清单也来自服务端（model-context.js 的 SELECTABLE_MODELS）—— 前端硬编码
- * model id 写错一个字，spoofing 和真实容量两张表都查不到，两处都只会静默降级。
+ * 可选清单**两种处境都问服务端**（model-context.js 的 `selectableModelsFor`）——
+ * 前端硬编码 model id 写错一个字，spoofing 和真实容量两张表都查不到，两处都只会
+ * 静默降级。2026-08-19 补上没会话那半条（`GET /api/me/models`）：在那之前没会话时
+ * 直接吃 `FALLBACK_MODELS` 常量，**带闸门的模型（本地 Qwen）在首页永远不出现**，
+ * 会话里能选、首页选不了。硬编码那份从此只是接口也挂了时的最后一道兜底。
  *
  * ## 「默认」那一档 2026-08-17 撤了
  *
@@ -88,13 +91,19 @@ export default function ModelPicker({
     return () => { window.removeEventListener('mousedown', onClick); window.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  // 会话变了就重新问一次服务端。切走时清掉，免得把上一场的模型显示成这一场的
+  /**
+   * 会话变了就重新问一次服务端。切走时先清掉，免得把上一场的模型显示成这一场的。
+   *
+   * 没有会话时问 `/api/me/models` —— 只拿清单，**不带 model 字段**：那种处境下
+   * 选中值由本地偏好决定（下面 `effective` 的 `hasSession` 分支靠的就是这一点，
+   * 这里回一个 model 反而会让按钮显示服务端的默认而不是用户选过的那个）。
+   */
   useEffect(() => {
-    if (!hasSession) { setRemote(null); return undefined; }
     let alive = true;
-    Sessions.model(projectId, sessionId)
-      .then((r) => { if (alive) setRemote(r); })
-      .catch(() => { /* 拿不到就退回本地偏好显示 */ });
+    setRemote(null);
+    const p = hasSession ? Sessions.model(projectId, sessionId) : Me.models();
+    p.then((r) => { if (alive) setRemote(r); })
+      .catch(() => { /* 拿不到就退回硬编码兜底清单 + 本地偏好显示 */ });
     return () => { alive = false; };
   }, [hasSession, projectId, sessionId]);
 

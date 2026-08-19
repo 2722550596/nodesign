@@ -234,8 +234,9 @@ export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 340, act
     <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: size + 10 + maxWidth, pointerEvents: 'none' }}>
       <style>{KEYFRAMES}</style>
       <SketchMark size={size} active={active} onClick={onMarkClick} />
-      {/* quiet = 用户正往输入行里写字：精灵的话让位（recap 一长会盖住输入行，
-          而且"它闭嘴听你说"本来就是对的礼节） */}
+      {/* quiet = 用户正往输入行里写字：精灵的话让位（病例是当年 recap 长文
+          盖住输入行；recap 已退役，但闲时问候一样会挡，而且"它闭嘴听你说"
+          本来就是对的礼节） */}
       {!quiet && (
         <div style={{ paddingTop: Math.round(size * 0.04) }}>
           <Handwriting key={text} text={text} maxWidth={maxWidth} />
@@ -464,7 +465,7 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
         <SpriteSketch
           drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
           // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
-          // 从**当前落点**算 —— recap 长文遮挡输入行的病由 quiet 让位治）
+          // 从**当前落点**算 —— 长文遮挡输入行的病由 quiet 让位治）
           onMarkClick={onAsk ? () => onAsk({ x: box.x + 54, y: box.y + 50 }) : undefined}
         />
       </div>
@@ -495,7 +496,7 @@ export const TOOL_PHRASES = ['cooking…', '正在制作', '落笔中', '搭着�
 /** 没工具没文本（在想）：安静一点的几句 */
 export const THINK_PHRASES = ['琢磨着…', 'thinking…', '在打腹稿'];
 
-/** 闲时问候（没有 recap 可写的时候）。按钟点挑一池，进场时定一句不轮换。 */
+/** 闲时问候（08-19 recap 退役后，闲时写的就只有它）。按钟点挑一池，进场定一句不轮换。 */
 export function pickGreeting(now = new Date()) {
   const h = now.getHours();
   const pool = h < 6 ? ['夜深了，我陪你画完这张', 'late night, soft pencils']
@@ -509,20 +510,23 @@ export function pickGreeting(now = new Date()) {
  * 精灵此刻该说什么（2026-08-17 从 BoardCanvas 搬来 —— 行数棘轮；而且台词的
  * 挑选逻辑本来就该跟上面那三个文案池住在一起，分居两个文件必然只改一边）。
  *
- * 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端 haiku
- * 压的）→ 写它；都没有 = 在想 → 思考旁白轮播。轮播节拍 4.2s —— 每换一句就是
+ * 工作态文案三级：工具在跑 → 轮播旁白（cooking…）；有手写短句（服务端把回复
+ * 首句压的）→ 写它；都没有 = 在想 → 思考旁白轮播。轮播节拍 4.2s —— 每换一句就是
  * 一次重写动画，太快会像抽搐。
  *
  * ⚠️ 轮播计时挂在**活跃**上不是"工具在跑"上：纯思考阶段也要有话说 —— 只挂
  * toolsBusy 的话 thinking 台词永远停在第一句（用户报的活跃真空之一）。
  *
- * 闲时写 recap（"刚才干了什么"），刷新也还记得（localStorage per-project）；
- * 没有 recap 就写问候语，进场定一句不轮换 —— 闲时的字是"留在纸上的"，
- * 不是跑马灯。
+ * 闲时写问候语，进场定一句不轮换 —— 闲时的字是"留在纸上的"，不是跑马灯。
+ * （2026-08-19 拆除：闲时原本优先写收场 recap"刚才干了什么"，还用
+ *  localStorage per-project 记着让刷新也不忘。recap 唯一的产出方式是一发写死
+ *  走订阅、不跟随会话模型的 haiku，那条线路整条拆了，这半边跟着走 —— 留着
+ *  就是一个永远读不到新值、只会把上个月的旧句子挂在画布上的壳。
+ *  ⚠️ 老用户浏览器里遗留的 `nd:recap:<projectId>` 键从此没人读，不清也不影响。）
  *
  * @returns {{ mainActive: boolean, workText: string, ambientText: string }}
  */
-export function useSpriteAmbient({ projectId, presence, stageCards, spriteLine, recap }) {
+export function useSpriteAmbient({ presence, stageCards, spriteLine }) {
   const mainActive = !!presence[MAIN_AGENT_ID]?.active;
   const toolsBusy = useMemo(() => Object.values(stageCards).some(c =>
     c.status === 'running' && c.kind !== 'subagent' && c.kind !== 'question'), [stageCards]);
@@ -538,16 +542,7 @@ export function useSpriteAmbient({ projectId, presence, stageCards, spriteLine, 
     ? TOOL_PHRASES[phraseTick % TOOL_PHRASES.length]
     : (spriteLine?.text || THINK_PHRASES[phraseTick % THINK_PHRASES.length]);
 
-  const [storedRecap, setStoredRecap] = useState(() => {
-    try { return localStorage.getItem(`nd:recap:${projectId}`) || ''; } catch { return ''; }
-  });
-  useEffect(() => {
-    if (!recap?.text) return;
-    setStoredRecap(recap.text);
-    try { localStorage.setItem(`nd:recap:${projectId}`, recap.text); } catch { /* 记不住就算了 */ }
-  }, [recap, projectId]);
-
   const greeting = useMemo(() => pickGreeting(), []);
 
-  return { mainActive, workText, ambientText: storedRecap ? `※ ${storedRecap}` : greeting };
+  return { mainActive, workText, ambientText: greeting };
 }

@@ -132,6 +132,16 @@ const MODELS = Object.freeze([
     // 它本来就跑在同一台本地盒子上，语义天然一致。盒子没开时它会 fail-loud 502，
     // 所以绝不能对没批准的账号露出来。
     select: { label: 'Qwen3.8 27B（本地）', desc: '本地盒子 · 无审查 · 盒子没开时不可用', gate: 'localGen' },
+    // 无审查权重跑在自己租的盒子上（不出网、零成本、只对获批账号开）。这条路上
+    // prelude 的整节「底线」不注入 —— 站主 08-19 拍板，理由是那节是**平台对外
+    // 开放**才需要的产物政策（产物能一键挂到站主域名下），而这台盒子上跑的是
+    // 个人写作/角色扮演，那节只会让模型对正常输入畏手畏脚。
+    //
+    // 标记位住在表里而不是写成 `if (model === 'qwen3.8-27b')`：它是**模型属性**，
+    // 跟 gate / prices 同级。散在 session-loop 里就是给这张表开第二个真相源，
+    // 这个仓库为「同一件东西有多个实例」付过最贵的学费。以后再接一个无审查模型
+    // 只加这一个字段，一行逻辑都不用动。
+    uncensored: true,
     api: {
       upstream: 'qwenLocal', wireModel: 'qwen3.8-27b',
       sdkAlias: 'claude-opus-5[1m]',
@@ -215,6 +225,18 @@ export const SELECTABLE_MODELS = Object.freeze(
 export function selectableModelsFor(user) {
   const approved = user?.role === 'admin' || !!user?.allowLocalGen;
   return SELECTABLE_MODELS.filter((m) => !m.gate || (m.gate === 'localGen' && approved));
+}
+
+/**
+ * 这个模型是不是跑在无审查权重上（表里的 `uncensored` 位）。
+ *
+ * 唯一消费方是 prelude 渲染：为 true 的行不注入「底线」那一节（见
+ * agent-shared.renderPrelude）。查表，未知名字一律 false —— 拼错一个字
+ * 只该退回**更严**的那一档，绝不能因为查不到就当成无审查。
+ */
+export function isUncensoredModel(appModel) {
+  if (!appModel) return false;
+  return BY_ID.get(appModel)?.uncensored === true;
 }
 
 /** 决定 sdkOptions.model 喂什么。API 行给 alias；订阅/未知原样返回（让 SDK 自己 fallback） */

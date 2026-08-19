@@ -28,8 +28,10 @@ export const STAGE_EVENTS = new Set([
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_input',
   'run.delta.tool_result', 'run.file_changed', 'run.deck_preview',
   'run.done', 'run.error', 'run.cancelled',
-  // 铅笔精灵：服务端压好的手写短句 + 收场 recap
-  'run.sprite_summary', 'run.recap',
+  // 铅笔精灵：服务端压好的手写短句
+  //（run.recap 2026-08-19 移出名单：收场 recap 随那条 haiku 小结线路一起退役，
+  //  服务端不再 emit —— 名单里留着就是"等一个永远不来的事件"的空壳）
+  'run.sprite_summary',
   // （run.task.* / run.subagent.stop 2026-08-18 移出名单：子代理便利贴与
   //   在场徽记退役，画布不再消费它们 —— 聊天侧栏的 Task 抽屉行走
   //   ProjectWorkspace 自己的 switch，不经这份名单。）

@@ -1,4 +1,4 @@
-// 精灵短句的底稿整形（2026-08-15）：haiku 到货前那几秒画布上写的就是它
+// 精灵短句的整形（2026-08-15）：haiku 精修那条腿 08-19 拆掉后，画布上写的只剩它
 import { describe, it, expect } from 'vitest';
 import { clampFirstClause, sanitizeLine } from './quick-summary.js';
 

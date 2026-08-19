@@ -181,12 +181,12 @@ export const Events = {
   roundStart: (round) => ({ type: 'run.round.start', round }),
   roundEnd: (round, stopReason, usage) => ({ type: 'run.round.end', round, stopReason, usage }),
   deltaText: (round, text) => ({ type: 'run.delta.text', round, text }),
-  // 铅笔精灵的手写短句（2026-08-14 日记本批）：回合内回复的压缩旁白。
-  // 同一 round 可能来两发：先首句兜底（refined:false），haiku 到货再来
-  // 一发精修（refined:true）—— 前端拿后到的覆盖，"墨水显影"。
-  spriteSummary: (round, text, refined) => ({ type: 'run.sprite_summary', round, text, refined: !!refined }),
-  // 收场 recap：这一轮做了什么/挂着什么。精灵闲时写在画布上（离开回来那一眼）
-  recap: (text) => ({ type: 'run.recap', text }),
+  // 铅笔精灵的手写短句（2026-08-14 日记本批）：回合内回复的压缩旁白，
+  // 本地整形、一条 assistant 消息一发。⚠️ 2026-08-19 前这里同一 round 会来
+  // 两发（首句底稿 refined:false + haiku 精修 refined:true，前端后到覆盖）——
+  // 那发 haiku 写死走订阅、不跟随会话模型，整条线路已拆，`refined` 随之取消。
+  // 收场 recap（run.recap）是同一条 haiku 通道的另一个出口，同批退役。
+  spriteSummary: (round, text) => ({ type: 'run.sprite_summary', round, text }),
   // SDK helper 生成的一句话工具批摘要（Claude Code 侧栏那种折叠标题）
   toolUseSummary: (summary, blockIds) => ({ type: 'run.tool_use_summary', summary, blockIds }),
   deltaThinking: (round, text) => ({ type: 'run.delta.thinking', round, text }),

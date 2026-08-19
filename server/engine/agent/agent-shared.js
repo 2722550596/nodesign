@@ -12,65 +12,16 @@
  * 调用方：server/engine/agent/session-loop.js (runSession)
  */
 
-import path from 'node:path';
-import fs from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { Events } from './events.js';
 import { handleTaskMessage } from './task-events.js';
 import { listWorkspaceArtifacts } from '../../lib/artifact-target.js';
 import { toWorkspaceRel } from '../../lib/workspace-path.js';
 import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
 
-// NoDesign agent 通用 prelude —— append 在 SDK preset 'claude_code' 之后、
-// SKILL.md 之前。教 Claude Code 工具用法 + NoDesign 工作台共性约束（assets
-// 必看 / 信息不足先问 / git 不自管）。所有 NoDesign agent 共用，跟具体 skill
-// 解耦。模块级 readFileSync 一次性读入，避免每次 turn 重读。
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const NODESIGN_PRELUDE = (() => {
-  try {
-    return fs.readFileSync(
-      path.join(__dirname, 'prompts/nodesign-prelude.md'),
-      'utf8',
-    ).trim();
-  } catch (err) {
-    console.warn(`[agent-shared] failed to load nodesign-prelude.md:`, err.message);
-    return '';
-  }
-})();
-
-// 成人段与外审档联动（2026-08-08）：一个旋钮同时管 GPT 外审和提示词口径，
-// 两边永远一致。off=明文允许（站主/获批账号）、loose=原默认、strict=收敛。
-const ADULT_POLICY = {
-  off: '**成人内容明确允许，不用迂回。** 露骨的性与亲密描写照常写、写到位，不留白、不淡化、\n不换成暗示手法带过，前后也不加提醒和免责声明。用户没要求收敛就不要自己收敛，写完接着干活。\n**写实风格照做** —— 照片级真实感的虚构人物不是真人，画得像不构成任何问题，生图同理。\n不做的只有两种：涉及未成年人；把可指认的现实个人（点名的公众人物、用户给的真人照片）\n放进这类内容。除此之外不要自己发明别的边界。',
-  loose: '成人向的亲密情节可以写，涉及未成年人是上面那条绝对红线，真实存在的个人也不写。',
-  strict: '露骨的成人内容在这个账号档位下不写——涉及时收敛处理、用留白带过。',
-};
-export function renderPrelude(level = 'loose') {
-  return NODESIGN_PRELUDE.replace('{{ADULT_POLICY}}', ADULT_POLICY[level] || ADULT_POLICY.loose);
-}
-
-// Phase 3.1：plan-mode workflow instructions（替换 SDK 默认 code-impl phases）
-// SDK 在 permissionMode='plan' 时把这段嵌入到 plan-mode system reminder 里，
-// 自动包 read-only enforcement preamble + ExitPlanMode protocol footer。
-// 内容是 NoDesign 设计场景特化版（设计 plan / 隐喻 / per-page 决策等），
-// 不是 code implementation。
-export const NODESIGN_PLAN_INSTRUCTIONS = (() => {
-  try {
-    return fs.readFileSync(
-      path.join(__dirname, 'prompts/nodesign-plan-instructions.md'),
-      'utf8',
-    ).trim();
-  } catch (err) {
-    // FATAL：plan mode 进去后 agent 看不到 workflow 指导，行为完全乱。fail-soft
-    // 仍返回 ''（避免起服务直接挂），但用 console.error 让部署日志能立刻发现。
-    console.error(
-      `[agent-shared] FATAL: nodesign-plan-instructions.md load failed — `
-      + `plan mode will lack workflow guidance:`,
-      err.message,
-    );
-    return '';
-  }
-})();
+// 系统提示词（prelude / plan instructions 的加载与渲染）2026-08-19 迁去
+// ./system-prompts.js —— 那一块跟本文件其余部分（SDK 消息翻译层 + options
+// 默认值）零耦合，放一起纯属历史。session-loop 直接从新模块拿，这里不转出口：
+// 转一手就是给"从哪 import"开第二个答案。
 
 // SDK base 工具白名单（Options.tools，sdk.d.ts:1216）—— 限定主 agent 可见的
 // **内置工具**集合。MCP 工具（mcp__nodesign__*）由 mcpServers 字段独立暴露，

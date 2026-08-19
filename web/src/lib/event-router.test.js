@@ -50,8 +50,10 @@ describe('两张名单 —— 成员资格即行为', () => {
     }
   });
 
-  it('精灵两事件在舞台名单（sprite_summary / recap）', () => {
+  it('精灵手写行在舞台名单；recap 已退役不许再回来', () => {
     expect(STAGE_EVENTS.has('run.sprite_summary')).toBe(true);
-    expect(STAGE_EVENTS.has('run.recap')).toBe(true);
+    // 08-19：recap 唯一的产出方式是那发写死走订阅的 haiku，线路整条拆了。
+    // 钉这一条是为了不让"名单先加上、发的人以后再说"的空壳复活。
+    expect(STAGE_EVENTS.has('run.recap')).toBe(false);
   });
 });

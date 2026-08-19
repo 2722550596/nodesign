@@ -2,6 +2,7 @@
  * server/api/me.js — 当前用户自视图（2026-07-30 内测）
  *
  *   GET    /api/me/usage              → { usedToday, limit, username, role }
+ *   GET    /api/me/models             → { options } 这个账号能选的模型（没有会话时问这条）
  *   GET    /api/me/showcase           → 个人作品橱窗（作品 + 它沉淀出来的 skill）
  *   GET    /api/me/showcase/:id/cover → 该作品封面 webp（复用首页那套截图缓存）
  *   DELETE /api/me/showcase/:id       → 移出橱窗（只删卡片，不动作品本体）
@@ -17,8 +18,23 @@ import { listEntries, getEntry, removeEntry } from '../lib/showcase-store.js';
 import { getArtifactCover } from '../lib/cover.js';
 import { getSharedDir } from '../projects/workspace.js';
 import { getProject } from '../projects/store.js';
+import { selectableModelsFor } from '../engine/agent/model-context.js';
 
 const router = express.Router();
+
+/**
+ * 这个账号能选的模型清单 —— **没有会话时**（首页快速开始 / 项目 Hub）走这条。
+ *
+ * 有会话的那条在 `GET /:pid/sessions/:sid/model`，它顺带回当前生效值；这里没有
+ * 可读的会话配置，所以只回清单，选中值仍由前端的本地偏好决定。
+ *
+ * 为什么要有这条：前端原来在没有会话时直接吃 `web/src/lib/models.js` 的
+ * `FALLBACK_MODELS` 硬编码常量，于是**带闸门的模型（本地 Qwen）在首页永远不出现** ——
+ * 会话里能选、首页选不了，同一颗按钮两种清单。兜底清单从此只在这条接口也挂了时用。
+ */
+router.get('/models', (req, res) => {
+  res.json({ options: selectableModelsFor(req.user) });
+});
 
 /**
  * 今日用量。**单位是美元**（口径见 lib/quota.js 文件头）。

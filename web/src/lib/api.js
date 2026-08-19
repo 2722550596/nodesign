@@ -68,6 +68,8 @@ export const Skills = {
 // ── Me（当前用户自视图：用量 + 个人橱窗）──
 export const Me = {
   usage: () => jsonRequest('GET', '/api/me/usage'),
+  /** 没有会话时的可选模型清单（有会话走 Sessions.model）。带闸门的模型只对获批账号露出 */
+  models: () => jsonRequest('GET', '/api/me/models'),
   /** 橱窗条目：作品 + 它沉淀出来的 skill（由 agent 的 crystallize_skill 产生） */
   showcase: () => jsonRequest('GET', '/api/me/showcase'),
   showcaseCoverUrl: (id) => `/api/me/showcase/${id}/cover`,
@@ -303,90 +305,8 @@ export const Assets = {
     `/api/projects/${pid}/browse/preview${at ? `?at=${encodeURIComponent(at)}` : ''}`,
 };
 
-// ── Exports（H3：session-scoped）──
-export const Exports = {
-  /** 当前任务里可以单独导出的东西（deck / 图 / 其它产物）*/
-  items: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports/items`),
-
-  /** 挑几样下载：单个原样、多个打 zip。返回 { blob, filename } */
-  pick: async (pid, paths, filename) => {
-    const res = await fetch(`/api/projects/${pid}/exports/pick`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ paths, filename }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
-    }
-    return { blob: await res.blob(), filename: parseFilenameFromDisposition(res.headers.get('content-disposition')) };
-  },
-
-  /**
-   * 烘焙类导出（html / pdf / pptx）。relPath 点名导哪一份产物 —— 不传就走寻址层
-   * 的默认目标。这几种要跑 playwright / esbuild，跟按卡打包不是一条管线。
-   */
-  download: async (pid, format, relPath) => {
-    const q = relPath ? `?path=${encodeURIComponent(relPath)}` : '';
-    const res = await fetch(`/api/projects/${pid}/exports/${format}${q}`);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
-    }
-    const blob = await res.blob();
-    const filename = parseFilenameFromDisposition(res.headers.get('content-disposition'));
-    return { blob, filename };
-  },
-
-  /**
-   * 按**产物卡**导出（2026-08-17 重做）。cardIds 就是画布上的卡 id。
-   * 一张卡也走这条，「导出全部图片」就是多传几个 id。
-   * 收不到的卡不拖累整批 —— 从 X-Export-Skipped 头里取回来，调用方要提示出去，
-   * 静默少东西是导出最贵的失败方式。
-   */
-  cards: async (pid, cardIds, format) => {
-    const res = await fetch(`/api/projects/${pid}/exports/cards`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cardIds, format }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      // 全军覆没时具体原因在 body 的 skipped 里，只报 error 的话用户只看到
-      // 「一张都没收到」，不知道是哪张、为什么
-      const detail = data.skipped?.[0]?.reason;
-      throw Object.assign(new Error(detail || data.error || res.statusText), { status: res.status });
-    }
-    let skipped = { total: 0, items: [] };
-    const raw = res.headers.get('x-export-skipped');
-    if (raw) { try { skipped = JSON.parse(decodeURIComponent(raw)); } catch { /* 头坏了不该拖垮下载 */ } }
-    return {
-      blob: await res.blob(),
-      filename: parseFilenameFromDisposition(res.headers.get('content-disposition')),
-      skipped,
-    };
-  },
-
-  list: (pid) => jsonRequest('GET', `/api/projects/${pid}/exports`),
-
-  downloadFile: async (pid, filename) => {
-    const res = await fetch(`/api/projects/${pid}/exports/file/${encodeURIComponent(filename)}`);
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
-    }
-    const blob = await res.blob();
-    return { blob, filename };
-  },
-};
-
-function parseFilenameFromDisposition(disposition) {
-  if (!disposition) return null;
-  const m = /filename\*=UTF-8''([^;]+)/.exec(disposition);
-  if (m) return decodeURIComponent(m[1].replace(/^"|"$/g, ''));
-  const m2 = /filename="([^"]+)"/.exec(disposition);
-  return m2 ? m2[1] : null;
-}
+// ── Exports ── 2026-08-19 迁去 ./api-exports.js（收 blob 不收 JSON，自成一族）
+export { Exports } from './api-exports.js';
 
 // ── Turn（唯一 LLM 入口）──
 export const Turn = {
