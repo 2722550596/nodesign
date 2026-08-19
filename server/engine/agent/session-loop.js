@@ -56,9 +56,9 @@ import { PLAN_MODE_DENY, isReadonlyBashCommand } from './plan-mode-gate.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
-import { resolveSdkSpoofModel, pickThinkingConfig } from './model-context.js';
+import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
-import { getOrStartProxy } from '../../lib/binary-fixup-proxy.js';
+import { getOrStartIngress, registerIngressSession, unregisterIngressSession } from '../../lib/model-ingress.js';
 import { summarizeReply, summarizeRecap, clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
@@ -215,7 +215,7 @@ export async function runSession({
   // 老代码这些 await 在主 try 块之外，任一抛错 → Promise reject 只被 turn.js
   // console.error，没有 run.start 也没有 run.error，run 行永远 pending，
   // 前端完全零反馈（丢状态路径 P5）。现在失败时补 run.error + markRunFailed。
-  let wsRoot, realGatewayUrl, baseUrlForBinary, fastModel, isResume, installed;
+  let wsRoot, baseUrlForBinary, apiKeyForBinary, fastModel, isResume, installed;
   try {
     wsRoot = await sharedCtx.workspace.ensure();
 
@@ -223,20 +223,29 @@ export async function runSession({
     // 挪到 hooks.js 的 PreToolUse(Skill/Bash)：agent 真的开始 deck 工作
     // （加载 deskskill / cp 模板）才拷。非 deck 会话（便签 / 整理画布）cwd 干净。
 
-    realGatewayUrl = process.env.NODESIGN_GATEWAY_URL || process.env.ANTHROPIC_BASE_URL;
-    baseUrlForBinary = realGatewayUrl;
-    if (realGatewayUrl) {
-      try {
-        const proxy = await getOrStartProxy(realGatewayUrl);
-        // 编码 sessionId 进 BASE_URL 路径 → proxy 解析后透传给 NoDesk 的 ND-Thread-Id
-        baseUrlForBinary = `${proxy.baseUrl}/__nd/${encodeURIComponent(sessionId)}`;
-      } catch (err) {
-        console.warn(`[session-loop] proxy start failed, fallback direct: ${err.message}`);
-      }
+    // ── 通路由模型表决定（2026-08-19 重建，前身是全局 NODESIGN_GATEWAY_URL 开关）──
+    // 订阅模型：什么都不注入（ANTHROPIC_API_KEY 一出现 binary 就弃 OAuth）。
+    // API 模型：BASE_URL 指进程内通用入口（model-ingress），入口按请求 body.model
+    // 查表换上游换钥匙；binary 侧的 API_KEY 只是"逼它进 API 模式"的占位符。
+    // helper（title 总结 / auto-compact / promptSuggestions）与 subagent 因此
+    // 天然全通：它们的请求同样进入口、同样被反查路由 —— 不再依赖旧版那个
+    // 跨会话互写的 NODESIGN_CURRENT_APP_MODEL 进程全局 env。
+    const route = resolveModelRoute(model);
+    if (route.mode === 'api') {
+      const ingress = await getOrStartIngress();   // 起不来就让 init 失败，别静默直连
+      baseUrlForBinary = `${ingress.baseUrl}/__nd/${encodeURIComponent(sessionId)}`;
+      apiKeyForBinary = 'nd-ingress-managed';
+      // SDK 内部 helper 可能用不在表里的 Claude 名发请求（config 目录默认模型），
+      // 注册会话 fast 兜底路由让它们改道而不是 502。finally 配对注销。
+      registerIngressSession(sessionId, model);
+      // API 路的 fast model 必须同表可路由（订阅 haiku 在 API 模式会 404），
+      // 所以 env 覆盖在这条路上不生效 —— 表是唯一真相。
+      fastModel = route.fastModel;
+    } else {
+      baseUrlForBinary = process.env.ANTHROPIC_BASE_URL;
+      apiKeyForBinary = process.env.ANTHROPIC_API_KEY;
+      fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
     }
-
-    // 快速 model（subagent + SDK helper 共用）
-    fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
 
     // 检测 jsonl 是否已存在 —— 决定走 resume（已存在）还是 sessionId（新建）
     // 之前的 bug：session-loop 永远传 sessionId，但如果用户 close session 后又
@@ -285,12 +294,10 @@ export async function runSession({
   const sdkEnv = {
     ...process.env,
     ANTHROPIC_BASE_URL: baseUrlForBinary,
-    // 订阅模式（gateway URL 未设）下不能注入 NODESIGN_GATEWAY_KEY —— binary 见到
-    // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth。此时 GATEWAY_KEY 仅供
-    // generate_image 等业务工具直读。
-    ANTHROPIC_API_KEY: realGatewayUrl
-      ? (process.env.NODESIGN_GATEWAY_KEY || process.env.ANTHROPIC_API_KEY)
-      : process.env.ANTHROPIC_API_KEY,
+    // 订阅模型：apiKeyForBinary = process.env 原值（通常 undefined）——binary 见到
+    // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth，所以订阅路绝不能注入。
+    // API 模型：占位符（真钥匙在 model-ingress 按上游注入，不经 binary）。
+    ANTHROPIC_API_KEY: apiKeyForBinary,
     CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
     CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
     // auto-memory 强制开启分支（binary gate：DISABLE 置 falsy 值 = force on，
@@ -306,8 +313,8 @@ export async function runSession({
     ...(platform.autoModeEnabled ? { CLAUDE_CODE_AUTO_MODE_MODEL: platform.autoModeModel } : {}),
     // bwrap 垫片：绕开 apply-seccomp 的 unshare 竞态（见 isolation.js / ops/sandbox-shim）
     ...sandboxShimEnv({ dataRoot: PROJECTS_DATA_ROOT }),
-    // 快速 helper model：默认 claude-haiku-4-5-20251001-cc，env 可覆盖。
-    // 用于 SDK 内部 helper（如 task title 总结、auto-compaction 等小调）。
+    // 快速 helper model（SDK 内部 helper：task title 总结、auto-compaction 等）。
+    // 通路见上方 route 注释：订阅 = env 可覆盖；API = 表内 fastModel。
     ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
   };
 
@@ -643,13 +650,11 @@ export async function runSession({
     };
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
-    // 当前 turn id 写到 process.env，让 binary-fixup-proxy 拦截 LLM 请求时拿到
-    // 透传成 ND-Trace-Id（NoDesk 后台按 trace 串单轮 LLM 调用链路）。SDK 串行
-    // 处理 turn，全局变量在同一时刻只对应一个活动 turn，无 race。
+    // 当前 turn id 写到 process.env（历史上给 proxy 透传 trace 头用；NoDesk 退役
+    // 后暂无消费方，保留是因为惯性成本为零、删了想再串链路要重接）。
+    // 旧的 NODESIGN_CURRENT_APP_MODEL 已随 model-ingress 重建退役：路由改为按
+    // 请求 body.model 查表，天然无跨会话互写问题。
     process.env.NODESIGN_CURRENT_TURN_ID = runId;
-    // appModel 重设：cross-session 同进程多 session 时另一 session 可能覆盖了，
-    // 这里防御性还原。session-level 主设在下方 try 块入口；finally 配对清。
-    process.env.NODESIGN_CURRENT_APP_MODEL = model;
     markRunStarted(runId);
     sharedCtx.emit(Events.start());
   };
@@ -755,10 +760,6 @@ export async function runSession({
     promoteNextPendingRunId(sessionId);
     // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
-    // 注意：NODESIGN_CURRENT_APP_MODEL 不在这里删（session-level 而非 turn-level）。
-    // 否则 SDK 的 promptSuggestions / 其他 helper 在 end_turn 之后立即发起的请求
-    // 会拿不到 appModel → reverse 不触发 → 真打 DMX Opus 4.7 烧钱。
-    // 在 runSession 的 finally 条件清（只清自己设的值）。
   };
 
   // ── idle timeout 兜底 ──
@@ -844,23 +845,6 @@ export async function runSession({
 
   let stream;
   try {
-    // appModel 给 binary-fixup-proxy 用（出口把 SDK spoofing alias 还原成真 model 给 gateway）。
-    //
-    // 2026-05-10 修：原版只在 startTurn 设、finishTurn 删 —— 但 SDK 的 promptSuggestions
-    // helper 在每次 end_turn 之后立刻发请求（复用主 agent 的整套 model + tools + system
-    // prompt），那时 env 已被 finishTurn 删 → proxy reverse 不触发 → 真打到 DMX 的
-    // Claude Opus 4.7 = 烧钱 leak。
-    //
-    // 修法：env 改为 session-level —— session 起始（在 try 块内、紧贴 stream 起）设，
-    // 整个 session 保持，finally 配对条件清。
-    // 放 try 内的关键：万一 try 之前 init 抛错（workspace.ensure / loadSkill /
-    // ensureSkillStarterFiles / proxy start / buildSdkOptions 等都可能），env 还没
-    // 被设，无 leak 风险。配对的 finally 只清自己设的值（防 cross-session 互写误清）。
-    //
-    // startTurn 内仍重设（防 cross-session 同进程多 session 互写覆盖；真要严格隔离
-    // 需 AsyncLocalStorage，但 NoDesign 默认配置全 session 同 model 无害）。
-    process.env.NODESIGN_CURRENT_APP_MODEL = model;
-
     stream = query({ prompt: inputQueue, options: sdkOptions });
     attachSessionQuery(sessionId, stream);
 
@@ -996,11 +980,7 @@ export async function runSession({
     }
   } finally {
     clearInterval(idleScanTimer);
-    // session-level appModel env 条件清：只清自己刚才设的值；若 cross-session
-    // 互写时另一 session 已覆盖，留给那个 session 自己的 finally 清。防误清。
-    if (process.env.NODESIGN_CURRENT_APP_MODEL === model) {
-      delete process.env.NODESIGN_CURRENT_APP_MODEL;
-    }
+    unregisterIngressSession(sessionId);   // API 会话的 fast 兜底路由配对注销（订阅会话 noop）
     // 带 token 比对：sid 若已被新 register 占用（closeQuerySession 已同步让位 +
     // 用户重发起新 runSession），unregister 看到 _token 不匹配 → noop 不误删新 entry
     unregisterQuerySession(sessionId, sessionToken);

@@ -21,6 +21,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { ensureWorkspace, getWorkspaceRoot, readFile, writeFile, listDir, exists, safeResolve } from '../runtime/workspace.js';
 import { EventBus } from './events.js';
+import { repriceUsageDeltas } from './model-context.js';
 
 export class AgentContext {
   /**
@@ -187,7 +188,11 @@ export class AgentContext {
     this.counters.durationMs = result.duration_ms ?? this.counters.durationMs;
     this.counters.durationApiMs = result.duration_api_ms ?? this.counters.durationApiMs;
 
-    const deltas = this._diffModelUsage(result.modelUsage);
+    // reprice：仅 API 会话 —— key 从 SDK spoof alias 还原成 appModel、按表价
+    // 重算 costUsd（SDK 按 alias 的 Claude 价目表算，Kimi 时代虚高 30×）。
+    // 订阅会话原样过（alias 与真订阅模型名同形，必须以会话通路为准，见
+    // model-context.js repriceUsageDeltas 注释）。
+    const deltas = repriceUsageDeltas(this._diffModelUsage(result.modelUsage), this.appModel);
     if (deltas) {
       let inp = 0; let out = 0; let cr = 0; let cc = 0; let cost = 0;
       for (const d of Object.values(deltas)) {

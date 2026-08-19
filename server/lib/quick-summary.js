@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { platform } from '../runtime/platform.js';
 
-const MODEL = () => process.env.NODESIGN_FAST_MODEL || 'claude-haiku-4-5-20251001-cc';
+const MODEL = () => process.env.NODESIGN_FAST_MODEL || 'claude-haiku-4-5';
 // 25s：首发要付 CLI 冷启动税（实测首发 15s 会被掐，第二发 ~8s 内回）。
 // 短句是装饰，晚到不如不到的反面 —— 它有首句底稿垫着，晚到只是显影慢一拍。
 const TIMEOUT_MS = 25_000;

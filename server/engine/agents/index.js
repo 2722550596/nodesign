@@ -36,6 +36,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveModelRoute } from '../agent/model-context.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,14 +68,16 @@ const STUB_PROMPT = (name) =>
 /**
  * 给定主 model，挑一个搭配的快速 model（subagent + SDK helper 共用）。
  *
- * 当前默认：主 kimi-k2.6 → 快速 claude-haiku-4-5-20251001-cc（DMXAPI -cc 变体，
- * Anthropic 协议、3.4 折）。其他主 model 默认沿用主 model 自己（不强制降级
- * 避免拼错模型名导致 404）。env NODESIGN_FAST_MODEL 显式覆盖优先级最高。
+ * 2026-08-19 起查表：API 通路模型的 fastModel 在 model-context.js 表里逐行配
+ * （必须同表可路由 —— 订阅 haiku 在 API 模式会 404，旧的 DMXAPI haiku-cc
+ * 硬编码就是"换了 api 之后 helper 起不来"的病根之一）。订阅模型沿用主 model
+ * 自己（不强制降级避免拼错模型名导致 404）。env NODESIGN_FAST_MODEL 显式覆盖
+ * 只对订阅路生效，见 session-loop 的通路注释。
  */
 export function resolveDefaultFastModel(mainModel) {
   if (!mainModel) return null;
-  if (/^kimi-k2\.6/i.test(mainModel)) return 'claude-haiku-4-5-20251001-cc';
-  return mainModel;
+  const route = resolveModelRoute(mainModel);
+  return route.mode === 'api' ? route.fastModel : mainModel;
 }
 
 /**
@@ -115,7 +118,7 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
     || process.env.NODESIGN_FAST_MODEL
     || resolveDefaultFastModel(mainModel)
     || mainModel
-    || 'claude-haiku-4-5-20251001-cc';
+    || 'claude-haiku-4-5';
   // sdkSpoofMain：vision-checker 用的"主 agent SDK 视角 model"。
   // 调用方未传 sdkModel 时 fallback 到 mainModel（非 Kimi 主时两者相等无害）。
   const sdkSpoofMain = sdkModel || mainModel;

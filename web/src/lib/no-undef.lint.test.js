@@ -42,6 +42,7 @@ const GLOBALS = new Set([
   'createImageBitmap', 'ImageBitmap', 'OffscreenCanvas',   // 画布/位图（BrowserWindow 的帧渲染用）
   'Image', 'Audio', 'Option', 'DOMParser', 'XMLHttpRequest', 'CustomEvent', 'Event',
   'Node', 'Element', 'HTMLElement', 'SVGElement', 'CanvasRenderingContext2D', 'Path2D',
+  'HTMLMediaElement', 'AudioBufferSourceNode', 'OscillatorNode',   // 媒体/WebAudio 原型（motion-lab 页内采样器挂钩）
   'getComputedStyle', 'matchMedia', 'scrollTo', 'alert', 'confirm', 'prompt', 'open',
   'performance', 'crypto', 'btoa', 'atob', 'process', 'globalThis',
   'Math', 'JSON', 'Date', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Symbol',

@@ -54,7 +54,6 @@ const GRANDFATHERED = {
   'server/lib/plugin-validator.js': 721,
   // web/src/components/AuthGate.jsx 08-17 拆完出表（684 → 210）：材质词汇迁去
   // login-wall/wall-css.js，一套构图一个文件迁去 login-wall/scenes/ —— 走 600 通用上限
-  'server/lib/binary-fixup-proxy.js': 651,
   'server/engine/agent/agent-shared.js': 625,
   'server/projects/board-store.js': 640,
   'server/engine/mcp/tools/web-search.js': 548,
