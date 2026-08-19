@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { taskManifest, can, KINDS, formatAllowed } from './index.js';
+import { pairDocxSources } from './docx.js';
 import { PRESETS } from '../docx/tokens.js';
 import { buildDocx } from '../docx/build.js';
 
@@ -142,6 +143,61 @@ describe('word 文件夹（2026-08-18：目录型实例，成员 = 多版本）'
     const m = await taskManifest(d);
     expect(m.artifacts[0].kind).toBe('docx');
     expect(m.artifacts[0].file).toBe('公文/文档.docx');
+  });
+});
+
+describe('源文件配对自动纠偏（2026-08-19：stem 对不上时的兜底，宁缺勿错）', () => {
+  const SRC = JSON.stringify({ preset: '办公标准', content: [{ t: 'p', text: 'x' }] });
+
+  it('纯配对：同 stem 精确 > 版本记号唯一对唯一 > 双方各剩一个', () => {
+    // 精确
+    expect(pairDocxSources(['a.docx'], ['a.json']).get('a.docx')).toBe('a.json');
+    // 版本记号（要带分隔符）
+    const m = pairDocxSources(['简历-v2.docx', '简历-v3.docx'], ['文档-v2.json', '文档-v3.json']);
+    expect(m.get('简历-v2.docx')).toBe('文档-v2.json');
+    expect(m.get('简历-v3.docx')).toBe('文档-v3.json');
+    // 裸尾数不算版本（报告2024 撞车风险太高）
+    expect(pairDocxSources(['报告2024.docx', '别的.docx'], ['数据2024.json']).get('报告2024.docx')).toBeUndefined();
+    // 各剩一个 → 配
+    expect(pairDocxSources(['刘万钢-简历-v3.docx'], ['文档-v3.json']).get('刘万钢-简历-v3.docx')).toBe('文档-v3.json');
+    // 歧义（两 docx 一源、无版本信号）→ 都不配
+    const amb = pairDocxSources(['甲.docx', '乙.docx'], ['源.json']);
+    expect(amb.size).toBe(0);
+  });
+
+  it('⭐生产实锤形状：文件夹里 docx 与源不同 stem，manifest 也要配得上', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '简历'));
+    await fs.writeFile(path.join(d, '简历', '刘万钢-简历-v3.docx'), docxBuf);
+    await fs.writeFile(path.join(d, '简历', '文档-v3.json'), SRC);
+    const m = await taskManifest(d);
+    expect(m.artifacts[0].members[0].sourceFile).toBe('简历/文档-v3.json');
+    expect(m.artifacts[0].sourceFile).toBe('简历/文档-v3.json');
+  });
+
+  it('不是源形状的 json 不被认走（data.json 躺在旁边）', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '报表'));
+    await fs.writeFile(path.join(d, '报表', '季度.docx'), docxBuf);
+    await fs.writeFile(path.join(d, '报表', 'data.json'), '{"rows":[1,2,3]}');
+    const m = await taskManifest(d);
+    expect(m.artifacts[0].members[0].sourceFile).toBeNull();
+  });
+
+  it('根层单文件同样兜底', async () => {
+    const d = await mkTask({ '排版源.json': SRC });
+    await fs.writeFile(path.join(d, '合同终稿.docx'), docxBuf);
+    const m = await taskManifest(d);
+    expect(m.artifacts[0].sourceFile).toBe('排版源.json');
+  });
+
+  it('同 stem 不读文件也认（pending 半写状态的源不能因为 parse 不过就丢关联）', async () => {
+    const d = await mkTask({});
+    await fs.mkdir(path.join(d, '公文'));
+    await fs.writeFile(path.join(d, '公文', '文档.docx'), docxBuf);
+    await fs.writeFile(path.join(d, '公文', '文档.json'), '{ 写到一半的');
+    const m = await taskManifest(d);
+    expect(m.artifacts[0].members[0].sourceFile).toBe('公文/文档.json');
   });
 });
 

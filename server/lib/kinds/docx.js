@@ -54,6 +54,92 @@ async function topLevelDocx(dir) {
   return sortDocxNames(entries.filter(e => e.isFile()).map(e => e.name));
 }
 
+/* ── 源文件配对（2026-08-19 自动纠偏） ─────────────────────────
+ *
+ * 约定是源和产物同 stem（文档.json → 文档.docx），但 agent 真会写出
+ * `刘万钢-简历-v3.docx` + `文档-v3.json` 这种组合（生产实锤）——按老判据
+ * sourceFile 关联不上，窗里「看源码」消失、banner 误标「外来文档」，下一个
+ * 会话就真把它当外来文档改。所以 stem 对不上时做两级兜底，宁缺勿错：
+ * 配错源比配不上更坏（agent 会去改一份别的文档的 JSON 然后 build 覆盖）。
+ */
+
+/** 这份 json 长得像不像 docx 的 token 源（content 数组 + preset/tokens 至少一样） */
+async function isDocxSourceShape(absPath) {
+  try {
+    const stat = await fs.stat(absPath);
+    if (stat.size > 2 * 1024 * 1024) return false;   // 源文件不会大到哪去，超了就不是
+    const j = JSON.parse(await fs.readFile(absPath, 'utf8'));
+    return !!j && Array.isArray(j.content)
+      && (typeof j.preset === 'string' || (j.tokens && typeof j.tokens === 'object' && !Array.isArray(j.tokens)));
+  } catch { return false; }
+}
+
+const stemOf = (n) => n.replace(/\.(docx|json)$/i, '');
+/** 末尾的版本记号（要带分隔符：`-v3` / `_2` 算，`报告2024` 不算 —— 裸尾数太容易撞） */
+const verOf = (n) => (stemOf(n).match(/[-_][vV]?(\d+)$/) || [])[1] ?? null;
+
+/**
+ * docx 名单 × 源候选名单 → Map(docx 名 → 源名)。纯函数，好测。
+ * 三级：同 stem 精确 → 版本记号唯一对唯一 → 双方各剩一个。
+ * 剩下的一律不配（多对一/一对多是歧义，配错的代价见上）。
+ */
+export function pairDocxSources(docxNames, jsonNames) {
+  const res = new Map();
+  const freeJson = new Set(jsonNames);
+  for (const d of docxNames) {
+    const want = `${stemOf(d)}.json`;
+    if (freeJson.has(want)) { res.set(d, want); freeJson.delete(want); }
+  }
+  const freeDocx = docxNames.filter(d => !res.has(d));
+  // 版本记号：两边都唯一才配（v2/v3 各一份的多版本文件夹就是这形状）
+  const byVer = (names) => {
+    const m = new Map();
+    for (const n of names) {
+      const v = verOf(n);
+      if (v == null) continue;
+      m.set(v, m.has(v) ? null : n);   // 同版本出现两次 = 歧义，记 null
+    }
+    return m;
+  };
+  const dv = byVer(freeDocx);
+  const jv = byVer([...freeJson]);
+  for (const [v, d] of dv) {
+    const j = jv.get(v);
+    if (d && j) { res.set(d, j); freeJson.delete(j); }
+  }
+  const left = docxNames.filter(d => !res.has(d));
+  if (left.length === 1 && freeJson.size === 1) res.set(left[0], [...freeJson][0]);
+  return res;
+}
+
+/**
+ * 目录顶层的源配对结果 Map(docx 名 → 源名)。
+ * 同 stem 直接认（命名约定本身就是信号，不读文件 —— pending 半写状态的源也认，
+ * 跟老判据一致）；只有剩下配不上的才读 json 做形状校验再进模糊配对 —— 目录里
+ * 躺着的 data.json / 配置文件不能被当成源认走。命名规矩的目录一个文件都不读。
+ */
+async function resolveSources(dirAbs, docxNames) {
+  let entries = [];
+  try { entries = await fs.readdir(dirAbs, { withFileTypes: true }); } catch { /* */ }
+  const jsons = entries
+    .filter(e => e.isFile() && /\.json$/i.test(e.name) && !e.name.startsWith('.') && !isReservedFile(e.name))
+    .map(e => e.name);
+  const res = new Map();
+  const claimed = new Set();
+  for (const d of docxNames) {
+    const want = `${stemOf(d)}.json`;
+    if (jsons.includes(want) && !claimed.has(want)) { res.set(d, want); claimed.add(want); }
+  }
+  const freeDocx = docxNames.filter(d => !res.has(d));
+  if (!freeDocx.length) return res;
+  const fuzzy = [];
+  for (const n of jsons) {
+    if (!claimed.has(n) && await isDocxSourceShape(path.join(dirAbs, n))) fuzzy.push(n);
+  }
+  for (const [d, j] of pairDocxSources(freeDocx, fuzzy)) res.set(d, j);
+  return res;
+}
+
 /**
  * word 文件夹（2026-08-18）：一级子目录顶层有 .docx（或 token 源）、且没有任何
  * 网页入口 → 整个文件夹是**一件**目录型 word 产物，里面的 .docx 是它的成员
@@ -122,14 +208,15 @@ export default {
   async instanceManifest(taskDir, _marker, inst) {
     // ── word 文件夹：目录型实例，members 是它的版本清单 ──
     if (inst.dir) {
+      const pairs = await resolveSources(path.join(taskDir, inst.dir), inst.files);
       const members = [];
       for (const f of inst.files) {
         const stem = f.replace(/\.docx$/i, '');
+        const src = pairs.get(f);
         members.push({
           file: `${inst.dir}/${f}`,
           title: stem === '文档' ? inst.dir : stem,
-          sourceFile: (await exists(path.join(taskDir, inst.dir, `${stem}.json`)))
-            ? `${inst.dir}/${stem}.json` : null,
+          sourceFile: src ? `${inst.dir}/${src}` : null,
         });
       }
       const primary = members[0];
@@ -151,6 +238,11 @@ export default {
       };
     }
     const stem = inst.file.replace(/\.docx$/i, '');
+    // 配对要看根层**全部** docx（唯一候选那级的语义是"整个目录里就这一对"）；
+    // pending 实例的 docx 还没落盘，不在 topLevelDocx 里，补进去让同 stem 那级认
+    const roots = await topLevelDocx(taskDir);
+    if (!roots.includes(inst.file)) roots.push(inst.file);
+    const pairs = await resolveSources(taskDir, roots);
     return {
       kind: 'docx',
       root: '',
@@ -164,7 +256,7 @@ export default {
       single: false,
       title: stem === '文档' ? null : stem,
       // 有没有 token 源，决定了「改它」走重建还是走手术（见 dump-styles.js）
-      sourceFile: (await exists(path.join(taskDir, `${stem}.json`))) ? `${stem}.json` : null,
+      sourceFile: pairs.get(inst.file) ?? null,
     };
   },
 
