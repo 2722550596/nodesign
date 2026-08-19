@@ -129,6 +129,37 @@ export async function pageCount(absPath) {
 }
 
 /**
+ * 圈选截图（docx 版，2026-08-19）：用户在产物窗的页图上框了一块 —— 这里没有
+ * DOM 也没有 chromium，"用户所见"就是 LibreOffice 渲的那张页图，所以直接从
+ * 页图缓存裁，跟 region-shot（chromium 版）出同一种规格的 webp。
+ *
+ * @param {string} absPath  .docx 绝对路径
+ * @param {number} page     1-based
+ * @param {{x,y,w,h}} region  坐标基准 = 页图原始像素（CACHE_DPI 下的 PNG，
+ *   前端拿 naturalWidth 换算好再送 —— 服务端不知道用户把图缩放成了多大）
+ * @returns {Promise<{ buf: Buffer, page: number }>}
+ */
+export async function regionShotFromPage(absPath, page, region, { pad = 32, longEdge = 1200 } = {}) {
+  const { dir, count } = await ensurePages(absPath);
+  if (!count) throw Object.assign(new Error('这份文档渲染出来是空的'), { status: 422 });
+  const n = Math.min(Math.max(1, Number(page) || 1), count);
+  const src = path.join(dir, `page-${n}.png`);
+  const { default: sharp } = await import('sharp');
+  const meta = await sharp(src).metadata();
+  const left = Math.max(0, Math.round(region.x) - pad);
+  const top = Math.max(0, Math.round(region.y) - pad);
+  const width = Math.min(meta.width - left, Math.round(region.w) + pad * 2);
+  const height = Math.min(meta.height - top, Math.round(region.h) + pad * 2);
+  if (!(width >= 1) || !(height >= 1)) {
+    throw Object.assign(new Error('圈选区域落在页面之外'), { status: 400 });
+  }
+  const buf = await sharp(src).extract({ left, top, width, height })
+    .resize({ width: longEdge, height: longEdge, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 82 }).toBuffer();
+  return { buf, page: n };
+}
+
+/**
  * 整份 PDF（产物窗「PDF 视图」用，跟着 .docx 的 mtime 走 —— 永不陈旧，这是
  * 它做成按需视图而不是落盘文件的全部理由）。
  * @returns {Promise<{ buf: Buffer }>}

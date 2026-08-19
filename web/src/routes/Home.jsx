@@ -432,7 +432,13 @@ function ThumbnailBox({ project }) {
           const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
           // 空响应（204）在部分浏览器也会触发 load，宽高为 0 → 当没封面
           if (!w || !h) setFailed(true);
-          else setRatio(w / h);
+          // 比例钳在 [1, 2]：竖版封面（word 的 A4 页、9:16 deck）原样放行的话，
+          // 一张卡能长到别的卡两倍高 —— 网格整行被它撑开，且 hover 的
+          // transform/box-shadow 过渡每帧要重绘的面积翻倍，页面肉眼可见地变卡
+          // （2026-08-19 A/B 实测：钳完慢帧率回到无 docx 卡的基线）。
+          // object-fit: cover + object-position: top 本来就在裁，这里只是把裁的
+          // 程度限住 —— 竖版封面显示顶部一方块（文档首页开头、deck 首屏上沿）。
+          else setRatio(Math.min(2, Math.max(1, w / h)));
         }}
         onError={() => setFailed(true)}
       />

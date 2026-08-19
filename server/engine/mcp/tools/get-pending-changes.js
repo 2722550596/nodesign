@@ -115,6 +115,12 @@ the preview rather than clicking one element:
   tool result as an image right after the JSON. Look at it: it is the ground
   truth of what the user was looking at, and the elements list is only an
   index into it.
+- docxPage (present when path is a .docx): the user lassoed on a rendered page
+  image of a word document — docxPage is the 1-based page number, region is in
+  page-image pixels, and there are NO elements/container (a page image has no
+  DOM). The shot is cropped from the same LibreOffice page render the user was
+  looking at. To act on it, edit the token JSON source and rebuild with
+  build_docx — never edit the .docx itself.
 
 After processing, call mcp__nodesign__clear_pending_changes to clear the
 buffer so subsequent turns don't see the same changes again.`,

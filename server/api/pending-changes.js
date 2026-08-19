@@ -38,7 +38,8 @@ import { guardProject } from './_guard.js';
 import {
   ensureSessionWorkspace, ensureProjectWorkspace, validateSessionId, getSharedDir,
 } from '../projects/workspace.js';
-import { renderRegionShot, saveRegionShot } from '../lib/region-shot.js';
+import { renderRegionShot, saveRegionShot, PADDING, OUT_LONG_EDGE } from '../lib/region-shot.js';
+import { regionShotFromPage } from '../lib/docx-pages.js';
 
 const router = express.Router();
 
@@ -254,17 +255,27 @@ router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], asyn
     let shot = null;
     let shotError = null;
     let shotNote = null;   // 截图成功但通道退化（file:// 回退）时的提醒
+    let docxPage = null;   // docx 圈选：圈的是第几页（页图坐标系没有"整页文档"这回事）
     try {
-      const { buffer, degraded } = await renderRegionShot({
-        absPath,
-        projectId: req.params.pid,
-        workspaceRoot: sharedDir,
-        region: { x: region.x, y: region.y, w: region.w, h: region.h },
-        viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
-      });
-      shot = await saveRegionShot(sessionRoot, itemId, buffer);
-      // 没走成 http 的话这张图不能当"用户所见"用，得让 agent 知道
-      if (degraded) shotNote = degraded;
+      if (/\.docx$/i.test(relPath)) {
+        // docx 没有 DOM 也进不了 chromium —— "用户所见"就是 LO 渲的页图，
+        // 直接从页图缓存裁（region 坐标基准 = 页图原始像素，前端换算好再送）
+        const r = await regionShotFromPage(absPath, body.docxPage, region,
+          { pad: PADDING, longEdge: OUT_LONG_EDGE });
+        shot = await saveRegionShot(sessionRoot, itemId, r.buf);
+        docxPage = r.page;
+      } else {
+        const { buffer, degraded } = await renderRegionShot({
+          absPath,
+          projectId: req.params.pid,
+          workspaceRoot: sharedDir,
+          region: { x: region.x, y: region.y, w: region.w, h: region.h },
+          viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
+        });
+        shot = await saveRegionShot(sessionRoot, itemId, buffer);
+        // 没走成 http 的话这张图不能当"用户所见"用，得让 agent 知道
+        if (degraded) shotNote = degraded;
+      }
     } catch (err) {
       shotError = err?.message || String(err);
       console.warn('[region-comment] 截图失败，只带元素清单下单:', shotError);
@@ -276,6 +287,7 @@ router.post(['/:pid/region-comment', '/:pid/sessions/:sid/region-comment'], asyn
       path: relPath,
       text,
       region: { x: Math.round(region.x), y: Math.round(region.y), w: Math.round(region.w), h: Math.round(region.h) },
+      ...(docxPage ? { docxPage } : {}),
       ...(body.container && typeof body.container === 'object' ? { container: body.container } : {}),
       viewport: { width: Math.round(viewport.width), height: Math.round(viewport.height) },
       elements,

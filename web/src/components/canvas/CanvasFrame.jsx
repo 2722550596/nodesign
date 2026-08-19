@@ -340,6 +340,8 @@ export default function CanvasFrame({
               // 单文件卡），没点名再退回整卡地址
               onExport={(fmt, file) => onExport?.(fmt, file ? `docx:${file}` : docxSrc.cardId)}
               fileVersions={fileVersions}
+              // 圈选评论（页图版）：path/docxPage 由窗内部补（当前成员、当前页只有它知道）
+              onRegionComment={onRegionComment}
               onClose={() => setDocxSrc(null)}
               onToolbarGroups={reportWinGroups}
             />

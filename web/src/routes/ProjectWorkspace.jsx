@@ -1717,7 +1717,7 @@ export default function ProjectWorkspace() {
    * 他会以为没发出去。消息里只写一句指路，具体内容 agent 自己去
    * get_pending_changes 拉 —— 那边有图有元素清单，比塞进聊天里省得多。
    */
-  const handleRegionComment = async ({ region, viewport, container, elements, text, path }) => {
+  const handleRegionComment = async ({ region, viewport, container, elements, text, path, docxPage }) => {
     // 无会话闸门 2026-08-13 撤除：没有会话时 handleSend 自己会起一条新的
     if (!path) {
       showToast('这份产物没有任务路径，圈选暂时用不了', 'error');
@@ -1726,14 +1726,17 @@ export default function ProjectWorkspace() {
     const rel = path;
     await PendingChanges.regionComment(id, {
       path: rel, region, viewport, container, elements, text,
+      // docx 圈的是页图，得说清第几页（服务端按它去页图缓存裁）
+      ...(docxPage ? { docxPage } : {}),
     });
-    const what = elements.length
-      ? `${elements.slice(0, 3).map(e => `<${e.tag}>`).join('')}${elements.length > 3 ? ' 等' : ''}`
-      : '一块区域';
+    const what = docxPage ? `第 ${docxPage} 页`
+      : elements.length
+        ? `${elements.slice(0, 3).map(e => `<${e.tag}>`).join('')}${elements.length > 3 ? ' 等' : ''}`
+        : '一块区域';
     useGlobalStore.getState().openChatDock();   // 对话在悬浮卡里流，收起时唤出来
     await handleSend(text
       ? `我在 ${rel} 上圈了一块（${what}）：${text}`
-      : `我在 ${rel} 上圈了一块（${what}），看一下 —— 截图和框住的元素都在 pending changes 里。`);
+      : `我在 ${rel} 上圈了一块（${what}），看一下 —— 截图和框住的${docxPage ? '区域' : '元素'}都在 pending changes 里。`);
   };
 
   /**

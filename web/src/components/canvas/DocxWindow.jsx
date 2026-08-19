@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Maximize2, Scan, FileJson, Eye, FileType2, Loader2 } from 'lucide-react';
+import {
+  ChevronLeft, ChevronRight, Maximize2, Scan, FileJson, Eye, FileType2, Loader2,
+  SquareDashedMousePointer,
+} from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { COLOR, CANVAS, GAP, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { versionOfFile } from '../../lib/file-versions.js';
-import ArtifactWindow, { exportToolGroup } from './ArtifactWindow.jsx';
-import { PAPER_SHADOW } from '../../lib/paper.js';
+import ArtifactWindow, { exportToolGroup, INK_READOUT } from './ArtifactWindow.jsx';
+import ToolbarButton, { TOOL_BTN } from '../ui/ToolbarButton.jsx';
+import DocxRegionSelect from './DocxRegionSelect.jsx';
+import { INK_SURFACE, PAPER_SHADOW } from '../../lib/paper.js';
 
 /**
  * DocxWindow —— word 文档的产物窗（2026-08-17，跟 DeckWindow / SiteWindow 并列的第三种）
@@ -50,6 +55,8 @@ export default function DocxWindow({
   onExport,
   onClose,
   onToolbarGroups,
+  /** 圈选评论（页图版）：({ region, viewport, elements, container, text, path, docxPage }) => Promise */
+  onRegionComment = null,
   /** 版本表（穿透浏览器缓存）。按**当前成员**取版本，切成员各取各的 */
   fileVersions = null,
 }) {
@@ -59,9 +66,11 @@ export default function DocxWindow({
   const [error, setError] = useState(null);
   const [fit, setFit] = useState('height');     // 'height' 铺满高度 | 'width' 铺满宽度
   const [tab, setTab] = useState('preview');    // 'preview' | 'pdf' | 'source'
+  const [regionMode, setRegionMode] = useState(false);
   const [source, setSource] = useState(null);
   const [imgUrl, setImgUrl] = useState(null);
   const boxRef = useRef(null);
+  const imgRef = useRef(null);
 
   // 当前看哪个成员。卡片双击进来时看主成员；prop 换了（开了另一张卡）跟着换
   const [cur, setCur] = useState(file);
@@ -140,21 +149,32 @@ export default function DocxWindow({
     // ⭐word 文件夹的导航：成员（多版本）切换。site 的「页」是文件、docx 文件夹
     // 的「份」也是文件 —— 但版本不是页，翻页键留给页，切版本用选择器。
     // 单份文档（members 空）没有这一组，窗跟原来一模一样。
+    //
+    // ⚠️ `value` 必须给：工具栏的签名守卫（CanvasFrame.sigOf）对 `node` 组只看
+    // id + value，切成员只变 node 内容的话签名不动、工具栏不重渲 —— 表现是
+    // 「选了另一份，选择器上的名字要等按一下翻页才变」（2026-08-19 实踩）。
     (members && members.length > 1) ? {
       id: 'member',
+      value: cur,
       node: (
         <select
           value={cur}
           onChange={(e) => setCur(e.target.value)}
           title="这个文件夹里的文档（多版本并排放，选一份看）"
           style={{
-            maxWidth: 180, padding: '2px 4px', border: `1px solid ${COLOR.border}`,
-            borderRadius: 4, background: COLOR.bgWhite, color: COLOR.text,
+            maxWidth: 180, height: 24, padding: '0 4px',
+            // 工具栏是墨面（INK_SURFACE），控件配色跟着它走 —— 白底 select 压在
+            // 墨面药丸上就是「一条工具栏两种物料」（SitePublishControl 踩过的同一课）
+            border: `1px solid ${INK_SURFACE.hair}`,
+            borderRadius: TOOL_BTN.radius, background: 'transparent', color: INK_SURFACE.text,
             fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, cursor: 'pointer',
           }}
         >
           {members.map(m => (
-            <option key={m.file} value={m.file}>{m.title || m.file}</option>
+            // 下拉列表是系统渲染的，不吃 select 的透明底 —— 选项要自带可读配色
+            <option key={m.file} value={m.file} style={{ background: COLOR.bgWhite, color: COLOR.text }}>
+              {m.title || m.file}
+            </option>
           ))}
         </select>
       ),
@@ -162,28 +182,35 @@ export default function DocxWindow({
     // ⭐word 特制控件：翻页。deck 的"页"是 section、站点的"页"是文件，
     // 只有文档的页是**排版算出来的** —— 改一个字号页数就变，所以页码不能存，
     // 只能每次问渲染管线。
+    // 按钮·读数·按钮挤在**一个** node 组里 = 一颗药丸（原来拆成三个组，渲成
+    // 三颗各自为政的小药丸）；value 带上 page/count，翻页中段签名才会变。
     {
-      id: 'pageprev',
-      items: [{ id: 'prev', icon: ChevronLeft, title: '上一页（← / PageUp）', disabled: page <= 1, onClick: () => go(-1) }],
-    },
-    // 页码是**读数不是按钮** —— ToolbarButton 没有"静态项"这回事，塞进 items
-    // 会渲成一颗点不动的按钮。工具栏留了 `node` 逃生舱（SiteWindow 的发布控件
-    // 走的也是它），读数走那条。
-    {
-      id: 'pageno',
+      id: 'pager',
+      value: `${page}/${count ?? ''}`,
       node: (
-        <span style={{
-          padding: `0 ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-          color: COLOR.text2, whiteSpace: 'nowrap', userSelect: 'none',
-        }}>
-          {count ? `${page} / ${count}` : page}
-        </span>
+        <>
+          <ToolbarButton dataId="prev" icon={ChevronLeft} title="上一页（← / PageUp）" disabled={page <= 1} onClick={() => go(-1)} />
+          <span style={{
+            ...INK_READOUT, fontFamily: FONT_MONO, fontVariantNumeric: 'tabular-nums',
+            padding: `0 ${GAP.xs}px`, minWidth: 40, textAlign: 'center',
+            whiteSpace: 'nowrap', userSelect: 'none',
+          }}>
+            {count ? `${page} / ${count}` : page}
+          </span>
+          <ToolbarButton dataId="next" icon={ChevronRight} title="下一页（→ / PageDown）" disabled={!!count && page >= count} onClick={() => go(1)} />
+        </>
       ),
     },
-    {
-      id: 'pagenext',
-      items: [{ id: 'next', icon: ChevronRight, title: '下一页（→ / PageDown）', disabled: !!count && page >= count, onClick: () => go(1) }],
-    },
+    // 圈选说事：页图上框一块 + 一句话，发进 pending-changes（deck / site 同款
+    // 动作；docx 没有 DOM，元素清单那一维天然不存在）
+    (onRegionComment && tab === 'preview') ? {
+      id: 'regionmode',
+      items: [{
+        id: 'region', icon: SquareDashedMousePointer, label: '圈选',
+        title: '在页面上框一块发给 agent',
+        active: regionMode, onClick: () => setRegionMode(v => !v),
+      }],
+    } : null,
     {
       id: 'fit',
       items: [
@@ -205,7 +232,17 @@ export default function DocxWindow({
       ],
     },
     exportToolGroup({ kind: 'docx', exports: artifactExports, onExport: onExport ? (fmt) => onExport(fmt, cur) : null }),
-  ].filter(Boolean), [page, count, fit, tab, curSource, artifactExports, onExport, go, members, cur]);
+  ].filter(Boolean), [page, count, fit, tab, curSource, artifactExports, onExport, go, members, cur,
+    onRegionComment, regionMode]);
+
+  // 圈选提交：坐标已被 DocxRegionSelect 换算成页图像素，这里补上"哪份文档、
+  // 第几页"。elements/container 传空不传缺 —— 服务端合同里它们是数组/对象槽位
+  const submitRegion = useCallback(async ({ region, viewport, text }) => {
+    await onRegionComment?.({
+      region, viewport, elements: [], container: null, text,
+      path: cur, docxPage: page,
+    });
+  }, [onRegionComment, cur, page]);
 
   const imgStyle = fit === 'height'
     ? { height: '100%', width: 'auto', maxWidth: '100%' }
@@ -266,9 +303,18 @@ export default function DocxWindow({
           ) : (
             <div style={{ position: 'relative', height: fit === 'height' ? '100%' : 'auto', maxWidth: '100%' }}>
               <img
+                ref={imgRef}
                 alt={`${title || cur} 第 ${page} 页`}
                 src={imgUrl || undefined}
                 style={{ ...imgStyle, display: 'block', background: '#fff', boxShadow: PAPER_SHADOW.mid, borderRadius: 2 }}
+              />
+              {/* key 带文档+页：翻页/切成员后半成品的框不该还挂在新页上 */}
+              <DocxRegionSelect
+                key={`${cur}#${page}`}
+                active={regionMode && !loading}
+                imgRef={imgRef}
+                onSubmit={submitRegion}
+                onExit={() => setRegionMode(false)}
               />
               {loading && (
                 <div style={{
@@ -276,8 +322,10 @@ export default function DocxWindow({
                   background: 'rgba(255,255,255,0.65)', gap: GAP.sm,
                   fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, borderRadius: 2,
                 }}>
+                  {/* spin 不是全局 keyframes，得自带 —— 少了这条图标是冻住的（实踩） */}
+                  <style>{'@keyframes spin{to{transform:rotate(360deg)}}'}</style>
                   <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                  首次打开要渲染，两秒左右
+                  加载中
                 </div>
               )}
             </div>

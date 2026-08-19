@@ -16,10 +16,10 @@ import { openArtifactPage, launchPerceptionBrowser, degradedNote } from '../engi
 import fs from 'node:fs/promises';
 
 /** 圈外多留这么多像素当上下文 */
-const PADDING = 32;
+export const PADDING = 32;
 
 /** 出图长边上限，跟 screenshot 工具同口径（API 侧本来就会缩到这个规格） */
-const OUT_LONG_EDGE = 1200;
+export const OUT_LONG_EDGE = 1200;
 
 /** 截图串行：一台 1 核机器上同时开两个 chromium 会双双卡住 */
 let chain = Promise.resolve();
