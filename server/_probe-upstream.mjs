@@ -1,13 +1,18 @@
 /**
- * server/_probe-gemini-relay.mjs — 中转站(api.lament0.link) Anthropic 协议 × Gemini 探针。
+ * server/_probe-upstream.mjs — **接入体检**：任何说 Anthropic 协议的上游，接进
+ * model-context.js 之前先跑这一趟，结果直接决定该行要开哪些 quirk shim。
  *
- * 背景：接非 Claude 模型的第一道闸是 tool_result 里的图片能不能过桥
- * （agent 感知栈全靠工具回图），第二道是 prompt cache 有没有（成本差一个量级）。
- * 08-14 只测过纯文本工具调用；这里把「只有真跑才知道的四条」+ 视觉一次验完。
+ * 查的是「只有真跑才知道」的那几条：tool_result 里的图片能不能过桥（agent 感知栈
+ * 全靠工具回图，这是第一生死闸）、prompt cache 有没有（成本差一个量级）、流式
+ * tool_use 分片拼不拼得回、max_tokens 钳不钳制、count_tokens 在不在。
  *
- * 用法：node server/_probe-gemini-relay.mjs [modelId]
- *   不带参数默认 中转-gemini-3.1-pro-preview。
- * 钥匙从 ~/apikey/gemini_bangongyi.txt 读（1 行 base、3 行 key），不进仓库不打日志。
+ * 用法：
+ *   node server/_probe-upstream.mjs [modelId]              # 默认打中转站
+ *   PROBE_BASE=http://127.0.0.1:8080 PROBE_KEY=x \
+ *     node server/_probe-upstream.mjs qwen3.8-27b          # 本地盒子（隧道口）
+ *
+ * 不给 PROBE_BASE 时从 ~/apikey/gemini_bangongyi.txt 读（1 行 base、3 行 key），
+ * 钥匙不进仓库不打日志。
  */
 
 import fs from 'node:fs';
@@ -15,9 +20,14 @@ import path from 'node:path';
 import os from 'node:os';
 import sharp from 'sharp';
 
-const lines = fs.readFileSync(path.join(os.homedir(), 'apikey/gemini_bangongyi.txt'), 'utf8').split('\n');
-const BASE = lines[0].trim().replace(/\/+$/, '');
-const KEY = lines[2].trim();
+function resolveTarget() {
+  if (process.env.PROBE_BASE) {
+    return { BASE: process.env.PROBE_BASE.replace(/\/+$/, ''), KEY: process.env.PROBE_KEY || 'no-auth' };
+  }
+  const lines = fs.readFileSync(path.join(os.homedir(), 'apikey/gemini_bangongyi.txt'), 'utf8').split('\n');
+  return { BASE: lines[0].trim().replace(/\/+$/, ''), KEY: lines[2].trim() };
+}
+const { BASE, KEY } = resolveTarget();
 const MODEL = process.argv[2] || '中转-gemini-3.1-pro-preview';
 
 const results = [];

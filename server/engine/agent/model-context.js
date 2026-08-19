@@ -119,19 +119,23 @@ const MODELS = Object.freeze([
     },
   },
   // 本地 Qwen（HauhauCS/Qwen3.8-27B-Uncensored-…-Aggressive-MTP-GGUF，底座官方
-  // Qwen3.8-27B，有视觉）。⚠️ window 必须跟箱子 llama-server 的 -c 一致：alias
-  // 是 200k 名，SDK 在 ~180k 才触发 auto-compact，箱子 -c 低于 180k 的话长会话
-  // 会先撞上游 400 —— 起服务按 -c 196608 + KV q8_0 来（32G 卡 Q5_K_P 装得下）。
-  // thinking 'enabled8k' 是暂定：llama.cpp /v1/messages 对 thinking 参数的映射
-  // 没真跑核实过，Qwen3.8 默认 xhigh 有想太多的毛病，箱子开机后第一件事验这个。
+  // Qwen3.8-27B，有视觉）。⚠️ window 必须跟箱子 llama-server 的 -c 一致：低了
+  // 会在 SDK 触发 auto-compact 之前先撞上游 400。262144 = 该模型原生上限
+  // （YaRN 可外推到 1M，但那要额外开 rope 参数且短上下文质量有代价，不默认走）。
+  // alias 用 1M 档：SDK 按 alias 查 rawMaxTokens，用 200k 名会让 auto-compact 在
+  // ~180k 就触发，白扔 80k。⚠️ 这个 alias 同时是线上可选的订阅模型名，安全性靠两点
+  // （改动前先确认它们还成立）：①订阅会话根本不进 ingress，WIRE_LOOKUP 只服务
+  // API 会话；②repriceUsageDeltas 先看会话通路，订阅会话原样早退不 remap。
   {
-    id: 'qwen3.8-27b', window: 196_608,
+    id: 'qwen3.8-27b', window: 262_144,
     api: {
       upstream: 'qwenLocal', wireModel: 'qwen3.8-27b',
-      sdkAlias: 'claude-opus-5',
+      sdkAlias: 'claude-opus-5[1m]',
       fastModel: 'qwen3.8-27b',
       thinking: 'enabled8k',
-      liftImages: true,    // 它有视觉；即便上游吃 tool_result 图，提升到顶层也无害
+      // ⭐ 08-19 盒上体检 9/9：llama.cpp 的 /v1/messages **原生直通 tool_result 图片**
+      // （中转站 Gemini 桥正是死在这一项）。原样直通比提升到顶层更忠实，故关掉 lift。
+      liftImages: false,
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },   // 本地盒子按租金付费，token 记 0（不然按 opus-5 虚价记账）
     },
   },

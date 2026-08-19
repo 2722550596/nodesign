@@ -17,9 +17,14 @@ import os from 'node:os';
 import sharp from 'sharp';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 
-const lines = fs.readFileSync(path.join(os.homedir(), 'apikey/gemini_bangongyi.txt'), 'utf8').split('\n');
-const BASE = lines[0].trim().replace(/\/+$/, '');
-const KEY = lines[2].trim();
+function resolveTarget() {
+  if (process.env.PROBE_BASE) {
+    return { BASE: process.env.PROBE_BASE.replace(/\/+$/, ''), KEY: process.env.PROBE_KEY || 'no-auth' };
+  }
+  const lines = fs.readFileSync(path.join(os.homedir(), 'apikey/gemini_bangongyi.txt'), 'utf8').split('\n');
+  return { BASE: lines[0].trim().replace(/\/+$/, ''), KEY: lines[2].trim() };
+}
+const { BASE, KEY } = resolveTarget();
 const MODEL = process.argv[2] || '中转-gemini-3.1-pro-preview';
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320">
