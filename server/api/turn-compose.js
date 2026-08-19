@@ -57,7 +57,13 @@ export async function composeUserMessage(chat, attachments, pendingSummary, asse
       : '';
     let hint = '建议挑 1 张关键图 Read 看一眼（你能直接 vision 看到颜色/质感/排版），再决定动手。如果跟用户的 brief 不相关可以先不看。';
     if (assetsSummary.hasBinaryDocs) {
-      hint += ' PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包），用 Bash 跑 python3 解：pdf 用 pdfplumber 或 PyPDF2、ppt 用 python-pptx、docx 用 python-docx、xlsx 用 openpyxl。**python 提取出来的不只是文本，通常还包含嵌入图片**（导出到临时目录如 `/tmp/extracted/` 或 `./assets/extracted/`）—— 提取完一定 Read 看图片（vision 自动渲染），别只看 stdout 文本就以为信息齐了。文档里的图常含关键 brand 元素 / 数据图表 / 案例视觉，跳过看图等于丢了一半内容。';
+      // ⚠️ 这段推荐的每条命令都要在这台机器上真验过再写 —— 08-19 前这里教的是
+      // pdfplumber/PyPDF2/python-docx/openpyxl，四个包环境里一个都没装且 pip 三条路
+      // 全堵（PEP 668 + 只读 site-packages），每个读文档的会话固定吃三次失败（agent 上报实锤）。
+      hint += ' PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包）。用系统自带的工具解（pdfplumber/PyPDF2/python-docx/openpyxl 这些 python 包**没装且装不上**，别试）：'
+        + 'pdf 文本 `pdftotext -layout 文件.pdf -`；pdf 转页图 `pdftoppm -png -r 100 文件.pdf 页前缀` 再 Read 图片；pdf 嵌入图 `pdfimages -png`。'
+        + 'docx/pptx/xlsx 用 `soffice --headless --convert-to txt|csv|pdf --outdir 目录 文件`（xlsx 转 csv；⚠️ soffice 吃不下中文文件名，先拷成 ASCII 名，并加 `-env:UserInstallation=file:///tmp/lo-任意名` 免得和渲染管线抢 profile）；docx/pptx 里的嵌入图直接 `unzip -o 文件 "word/media/*"`（pptx 是 `ppt/media/*`）。'
+        + '**提取出来的不只是文本，通常还包含嵌入图片** —— 提取完一定 Read 看图片（vision 自动渲染），别只看 stdout 文本就以为信息齐了。文档里的图常含关键 brand 元素 / 数据图表 / 案例视觉，跳过看图等于丢了一半内容。';
     }
     blocks.push({
       type: 'text',

@@ -137,6 +137,92 @@ describe('resolveSource —— 报错要能自修', () => {
   });
 });
 
+describe('缩进互斥 —— firstLine* 与 hanging* 同给必须拦（写了会静默覆盖悬挂）', () => {
+  it('块级：firstLineChars: 0 + hangingChars 是最典型的踩法', () => {
+    try {
+      resolveSource({
+        preset: '办公标准',
+        content: [{ t: 'p', indent: { firstLineChars: 0, hangingChars: 450 }, text: 'x' }],
+      });
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.detail).toContain('互斥');
+      expect(e.detail).toContain('hanging');   // 告诉它留哪一半
+    }
+  });
+
+  it('样式级：twip 系写法同样拦', () => {
+    expect(() => resolveSource({
+      preset: '办公标准',
+      tokens: { styles: { Tag: { type: 'paragraph', name: 'Tag', para: { indent: { firstLineTwip: 0, hangingTwip: 1320 } } } } },
+      content: [{ t: 'p', text: 'x' }],
+    })).toThrow(/token 没过校验/);
+  });
+
+  it('只写 hanging* 是正路，不拦', () => {
+    const { content } = resolveSource({
+      preset: '办公标准',
+      content: [{ t: 'p', indent: { leftChars: 450, hangingChars: 450 }, text: 'x' }],
+    });
+    expect(content[0].indent.hangingChars).toBe(450);
+  });
+});
+
+describe('超链接 —— run 上的 link 键', () => {
+  const src = (content, extra = {}) => ({ preset: '办公标准', content, ...extra });
+
+  it('没协议的 link 被拒，报错里给出可用协议', () => {
+    try {
+      resolveSource(src([{ t: 'p', runs: [{ text: 'x', link: 'github.com/a' }] }]));
+      throw new Error('本该抛');
+    } catch (e) {
+      expect(e.detail).toContain('https://');
+    }
+  });
+
+  it('link 必须配着 text（没有可点的字的链接没有意义）', () => {
+    expect(() => resolveSource(src([{ t: 'p', runs: [{ br: true, link: 'https://a.com' }] }])))
+      .toThrow(/认不出的字段|content/);
+  });
+
+  it('页眉页脚里的 link 被拒（要单独关系表，还没做 —— 拒了才不产悬空 r:id）', () => {
+    expect(() => resolveSource(src([{ t: 'p', text: 'x' }],
+      { footer: [{ t: 'p', runs: [{ text: 'a', link: 'https://a.com' }] }] })))
+      .toThrow(/页脚/);
+  });
+
+  it('构建出的 docx：w:hyperlink 包住 run，关系表带 TargetMode="External"，& 转义，同 URL 复用 rId', async () => {
+    const d = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-link-'));
+    const srcPath = path.join(d, '文档.json');
+    const out = path.join(d, '文档.docx');
+    const url = 'https://example.com/q?a=1&b=2';
+    await fs.writeFile(srcPath, JSON.stringify({
+      preset: '办公标准',
+      content: [
+        { t: 'p', runs: [{ text: '主页', link: url }, ' 和 ', { text: '再来一次', link: url }] },
+        { t: 'p', runs: [{ text: '邮箱', link: 'mailto:a@b.com' }] },
+        { t: 'table', widthsTwip: [4000, 4000], rows: [[{ text: '格里的链接', runs: [{ text: '格里', link: 'https://cell.example' }] }, 'x']] },
+      ],
+      footer: '— 1 —',   // 占掉一个 rId，验证超链接的号段避让
+    }));
+    await buildFromSource(srcPath, out);
+    const zip = readZip(await fs.readFile(out));
+    const doc = entryData(zip, 'word/document.xml').toString('utf8');
+    const rels = entryData(zip, 'word/_rels/document.xml.rels').toString('utf8');
+
+    const hlinks = doc.match(/<w:hyperlink r:id="(rId\d+)"/g) ?? [];
+    expect(hlinks.length).toBe(4);
+    expect(new Set(hlinks).size).toBe(3);                       // 同 URL 两处 = 同一个 rId
+    expect(rels).toContain('TargetMode="External"');
+    expect(rels).toContain('a=1&amp;b=2');                      // & 必须转义成合法 XML
+    expect(rels).toContain('mailto:a@b.com');
+    // 超链接的 rId 不许撞 footer 已占的号
+    const footerId = rels.match(/Id="(rId\d+)"[^>]*footer/)[1];
+    for (const h of new Set(hlinks)) expect(h).not.toContain(`"${footerId}"`);
+    await fs.rm(d, { recursive: true, force: true });
+  });
+});
+
 describe('buildFromSource —— 落盘', () => {
   it('真写出一个能解开的 docx，styles.xml 里有 preset 的样式', async () => {
     const d = await fs.mkdtemp(path.join(os.tmpdir(), 'nd-bfs-'));

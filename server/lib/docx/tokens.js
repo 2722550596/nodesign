@@ -271,6 +271,23 @@ function badSize(v) {
   return typeof v === 'string' && !(v in ZIHAO);
 }
 
+/**
+ * indent 里 firstLine* 和 hanging* 互斥。OOXML 的 w:ind 里它们是**同一个属性的
+ * 正负两面**（悬挂 = 负的首行缩进），同时给的话哪个生效随渲染器不同——LO 实测
+ * firstLine 覆盖 hanging，ECMA-376 又说 hanging 优先。写 `firstLineChars: 0` +
+ * `hangingChars` 的人是想"清掉继承的首行缩进再悬挂"，但悬挂本身就含这层意思，
+ * 多写那个 0 反而把悬挂静默打掉（agent 实踩：两轮 build 白跑，2026-08-19 上报）。
+ * 跟 lineRule:'auto' 同族：写了不报错但生效成别的东西，必须在校验层拦。
+ */
+export function indentConflict(ind) {
+  if (!ind || typeof ind !== 'object') return null;
+  const fl = ind.firstLineChars ?? ind.firstLineTwip;
+  const hg = ind.hangingChars ?? ind.hangingTwip;
+  if (fl == null || hg == null) return null;
+  return 'indent 的 firstLine* 和 hanging* 互斥（同一个属性的正负两面，同时给会静默覆盖悬挂）。'
+    + '要悬挂缩进只写 hanging*——悬挂天然含「首行回到左缘」，不用再补 firstLineChars: 0';
+}
+
 export function validateTokens(tok) {
   const errs = [];
   if (tok.v !== 1) errs.push('v must be 1');
@@ -294,6 +311,8 @@ export function validateTokens(tok) {
     if (badSize(st.run?.sizePt)) errs.push(`styles.${id}.run.sizePt: unknown 字号 ${st.run.sizePt}`);
     if (st.basedOn && !tok.styles[st.basedOn]) errs.push(`styles.${id}.basedOn: no such style '${st.basedOn}'`);
     checkSpacing(`styles.${id}.para`, st.para?.spacing);
+    const indErr = indentConflict(st.para?.indent);
+    if (indErr) errs.push(`styles.${id}.para.indent: ${indErr}`);
   }
   if (badSize(tok.base?.sizePt)) errs.push(`base.sizePt: unknown 字号 ${tok.base.sizePt}`);
   checkSpacing('base', tok.base?.spacing);

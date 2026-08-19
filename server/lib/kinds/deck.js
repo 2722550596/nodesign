@@ -11,10 +11,6 @@ import { isReservedFile } from '../task-scan.js';
 
 const ENTRY = 'canvas.html';
 
-async function exists(p) {
-  try { await fs.access(p); return true; } catch { return false; }
-}
-
 export default {
   id: 'deck',
   entryFile: ENTRY,
@@ -23,8 +19,6 @@ export default {
   capabilities: ['browsable'],   // 入口是 html，能塞进 iframe / playwright
   exportFormats: ['html', 'pdf', 'pptx', 'handoff'],
   referenceDoc: { file: 'hybrid-reference', title: 'Hybrid deck 技术参考' },
-
-  detect: (taskDir) => exists(path.join(taskDir, ENTRY)),
 
   // deck 没有构建这回事，产物根 = 任务根
   artifactRoot: async () => '',

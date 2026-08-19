@@ -11,10 +11,10 @@
  *   文档.json  —— token + 内容的**真相源**（我们自己造的文档走这条）
  *   *.docx     —— 构建产物；也可能是用户上传的外来文档（那时没有 json 源）
  *
- * detect 两者都认，是因为「外来 docx 也是 word 任务」这件事从第一天就成立，
+ * 实例发现两者都认，是因为「外来 docx 也是 word 任务」这件事从第一天就成立，
  * 等接编辑那一段再改判据 = 到时候要动寻址、导出、前端三处。
  *
- * ⚠️ 判定次序：docx 排在 deck / site **之后**（见 index.js 的 KIND_ORDER）。
+ * ⚠️ 判定次序：docx 排在 deck / site **之后**（taskManifest 里 docx 实例最后 append）。
  * 任务里同时有 canvas.html / index.html 和一个 .docx 时，那个 docx 是素材不是
  * 产物，不能把整个任务判成 word。
  */
@@ -95,12 +95,6 @@ export default {
   // 目录型实例判据（卡即文件夹）：word 文件夹带成员表；根层散放的单份 .docx
   // 是单文件产物。全仓只问 isDirArtifact（kinds/index.js），别在调用点自判
   directory: (a) => !!a.members,
-
-  /** 有 token 源、或者有现成 .docx（含用户上传的外来文档），都算 word 任务 */
-  async detect(taskDir) {
-    if (await exists(path.join(taskDir, SOURCE))) return true;
-    return (await topLevelDocx(taskDir)).length > 0;
-  },
 
   // 源和产物同住任务根，没有构建目录这回事
   artifactRoot: async () => '',

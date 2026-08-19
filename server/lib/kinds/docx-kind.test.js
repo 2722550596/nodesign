@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { detectTaskKind, taskManifest, can, KINDS, formatAllowed } from './index.js';
+import { taskManifest, can, KINDS, formatAllowed } from './index.js';
 import { PRESETS } from '../docx/tokens.js';
 import { buildDocx } from '../docx/build.js';
 
@@ -49,10 +49,9 @@ describe('能力位', () => {
   });
 });
 
-describe('detect 判定', () => {
+describe('形态判定（权威 = taskManifest；平行的 detectTaskKind 链 2026-08-19 拆除）', () => {
   it('只有 token 源也算 word 任务（构建前的窗口期）', async () => {
     const d = await mkTask({ '文档.json': '{"tokens":{},"content":[]}' });
-    expect(await detectTaskKind(d)).toBe('docx');
     const m = await taskManifest(d);
     expect(m.kind).toBe('docx');
     expect(m.artifacts[0].file).toBe('文档.docx');   // 指向将要出现的地方
@@ -93,7 +92,7 @@ describe('detect 判定', () => {
   it('Word 的 ~$ 锁文件不算产物', async () => {
     const d = await mkTask({});
     await fs.writeFile(path.join(d, '~$文档.docx'), 'lock');
-    expect(await detectTaskKind(d)).toBeNull();
+    expect(await taskManifest(d)).toBeNull();
   });
 });
 

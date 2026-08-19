@@ -106,17 +106,6 @@ export default {
   directory: (a) => !a.single,
   discoverInstances,
 
-  /** 任务根 / 声明的产物根 / 约定产物目录，任何一处有 index.html 都算站点 */
-  async detect(taskDir, marker) {
-    const declared = normRoot(marker?.root);
-    if (declared && await exists(path.join(taskDir, declared, ENTRY))) return true;
-    if (await exists(path.join(taskDir, ENTRY))) return true;
-    for (const d of OUTPUT_DIRS) {
-      if (await exists(path.join(taskDir, d, ENTRY))) return true;
-    }
-    return false;
-  },
-
   artifactRoot,
 
   /**

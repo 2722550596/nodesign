@@ -20,7 +20,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PRESETS, validateTokens , PARA_KEYS, RUN_KEYS } from './tokens.js';
+import { PRESETS, validateTokens, indentConflict, PARA_KEYS, RUN_KEYS } from './tokens.js';
 import { buildDocx } from './build.js';
 
 /** 深合并：对象递归，其余（含数组）整体替换 —— 数组是有序整体，逐项合并只会得到怪东西 */
@@ -64,10 +64,14 @@ function stripNotes(v) {
  * 「写了没生效」比「写了报错」坏得多：报错你会改，不报错你会以为已经做到了。
  */
 const P_BLOCK_KEYS = new Set(['t', 'style', 'text', 'runs', 'sizePt', 'list', ...PARA_KEYS]);
-const RUN_OBJ_KEYS = new Set(['text', 'br', 'fld', ...RUN_KEYS]);
+const RUN_OBJ_KEYS = new Set(['text', 'br', 'fld', 'link', ...RUN_KEYS]);
 const TABLE_BLOCK_KEYS = new Set(['t', 'widthsTwip', 'rows']);
 
-function validateContent(content, numbering) {
+/** 超链接目标必须带协议 —— w:hyperlink 走的是 TargetMode="External" 的关系，
+ *  相对路径和 #书签是另外两种机制（后者要 w:anchor），这个引擎不做 */
+const LINK_SCHEME = /^(https?:\/\/|mailto:|tel:)/i;
+
+function validateContent(content, numbering, { noLinks = false } = {}) {
   const errs = [];
   const numNames = new Set(Object.keys(numbering ?? {}));
   const checkList = (list, where) => {
@@ -87,11 +91,22 @@ function validateContent(content, numbering) {
       if (!P_BLOCK_KEYS.has(k)) errs.push(`${where}: unknown key ${k}${hint(k)}`);
     }
     checkList(b.list, where);
+    const indErr = indentConflict(b.indent);
+    if (indErr) errs.push(`${where}.indent: ${indErr}`);
     for (const [i, r] of (b.runs ?? []).entries()) {
       if (typeof r === 'string') continue;
       if (!r || typeof r !== 'object') { errs.push(`${where}.runs[${i}]: 只能是字符串或对象`); continue; }
       for (const k of Object.keys(r)) {
         if (!RUN_OBJ_KEYS.has(k)) errs.push(`${where}.runs[${i}]: unknown key ${k}`);
+      }
+      if (r.link != null) {
+        if (noLinks) {
+          errs.push(`${where}.runs[${i}].link: 页眉页脚里暂不支持超链接（要单独的关系表，还没做）`);
+        } else if (typeof r.link !== 'string' || !LINK_SCHEME.test(r.link)) {
+          errs.push(`${where}.runs[${i}].link: 要带协议的完整地址（https:// / mailto: / tel:），拿到的是 ${JSON.stringify(r.link)}`);
+        } else if (r.text == null) {
+          errs.push(`${where}.runs[${i}].link: 链接要有可点的字 —— link 只能配着 text 用`);
+        }
       }
     }
   };
@@ -183,7 +198,7 @@ export function resolveSource(rawSrc) {
   const footer = hdrFtr(src.footer);
   for (const [name, blocks] of [['header', header], ['footer', footer]]) {
     if (!Array.isArray(blocks) || !blocks.length) continue;
-    const errs = validateContent(blocks, tokens.numbering);
+    const errs = validateContent(blocks, tokens.numbering, { noLinks: true });
     if (errs.length) {
       throw new DocxSourceError(`${name}（页${name === 'header' ? '眉' : '脚'}）里有认不出的字段`,
         `${errs.join('\n')}\n（页眉页脚跟 content 里的块是同一套写法：对齐/缩进这些键**平铺在块上**，`

@@ -12,13 +12,14 @@
  *   injectFit      导出 / 独立打开时是否注入整屏翻页 fit script
  *   exportFormats  这个形态可用的导出格式 id 列表（前端导出菜单按它渲染）
  *   referenceDoc   首次写这种产物时注入的技术参考 { file, title }
- *   detect(taskDir, marker)        → bool     文件证据判形态
  *   artifactRoot(taskDir, marker)  → string   产物根（相对任务根，'' = 任务根）
  *   manifest(taskDir, marker)      → { root, entry, entryRel, pages, drafts }
  *   describe(taskDir, manifest)    → string   每轮注入清单里的一行说明
  *
- * 判定次序 = KIND_ORDER。文件优先、marker 兜底：文件会被用户和 agent 直接改，
- * marker 不会，让不会变的那个当兜底而不是当权威。
+ * 形态判定 = taskManifest 的实例发现顺序（deck → site → docx 垫底），文件优先、
+ * marker 兜底：文件会被用户和 agent 直接改，marker 不会，让不会变的那个当兜底
+ * 而不是当权威。（原来还有条平行的 detect/detectTaskKind 判定链，对「散装
+ * html + docx」跟 taskManifest 给不同答案且全仓无生产调用方，2026-08-19 拆除。）
  */
 
 import path from 'node:path';
@@ -26,17 +27,10 @@ import fs from 'node:fs/promises';
 import deck from './deck.js';
 import site from './site.js';
 import docx from './docx.js';
-import { isReservedFile } from '../task-scan.js';
 
 export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site, [docx.id]: docx });
 
 export { RESERVED_DIRS, isReservedFile } from '../task-scan.js';
-
-/**
- * 判定优先级：canvas.html 在 index.html 之前（一个任务只做一种形态）。
- * docx 垫底 —— 任务里同时有网页入口和 .docx 时，那个 docx 是素材不是产物。
- */
-const KIND_ORDER = [deck.id, site.id, docx.id];
 
 export function kindDef(kind) {
   return KINDS[kind] || null;
@@ -80,34 +74,6 @@ export async function readTaskMarker(root) {
 }
 
 /**
- * 判定任务形态。**文件即真相，marker 兜底。**
- *
- * 次序：canvas.html → deck；站点证据（index.html 在任务根 / 声明的产物根 /
- * 约定构建目录）→ site；只有散装 .html（proto-暖调.html 这类探索期试作，
- * 主 deck 还没铺）→ deck；都没有 → marker.kind → null。
- *
- * @returns {Promise<string|null>} null = 还判不出来（空目录 / 只有素材）
- */
-export async function detectTaskKind(taskDir, marker) {
-  const m = marker === undefined ? await readTaskMarker(taskDir) : marker;
-  for (const id of KIND_ORDER) {
-    if (await KINDS[id].detect(taskDir, m)) return id;
-  }
-  if (await hasLooseHtml(taskDir)) return deck.id;
-  const k = m?.kind;
-  return KINDS[k] ? k : null;
-}
-
-/** 工作区顶层有没有散装 .html（探索期：试作先行，主 deck 未铺） */
-async function hasLooseHtml(root) {
-  try {
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries.some(e => e.isFile() && /\.html?$/i.test(e.name)
-      && !e.name.startsWith('.') && !isReservedFile(e.name));
-  } catch { return false; }
-}
-
-/**
  * 任务的完整 manifest —— 服务端唯一的解析器，前端、感知工具、导出都吃这份。
  *
  * 多产物平权（2026-07-29）：一个任务目录可以装多个平等产物，`artifacts` 是
@@ -145,7 +111,7 @@ export async function taskManifest(taskDir) {
     artifacts.push(decorate(site)(await site.instanceManifest(taskDir, marker, i)));
   }
   // docx **垫底但不隐身**（2026-08-18 拍板）：任务里已有 deck / site 时，旁边的
-  // .docx 不参与形态判定（KIND_ORDER 已保证），但照样出卡 —— 「不当判定依据」
+  // .docx 不参与形态判定（append 在 deck / site 之后已保证），但照样出卡 —— 「不当判定依据」
   // 和「不显示」是两回事，用户产出的 word 附件消失在画布上比多一张卡更坏。
   for (const i of await docx.discoverInstances(taskDir, marker)) {
     artifacts.push(decorate(docx)(await docx.instanceManifest(taskDir, marker, i)));

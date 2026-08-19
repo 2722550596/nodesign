@@ -184,6 +184,15 @@
 字号变了缩进跟着变；写 `firstLineTwip: 480` 则是写死的物理长度，改字号就错位。
 （`Chars` 的单位是百分之一字，所以 2 字 = 200。）
 
+⚠️ **`firstLine*` 和 `hanging*` 互斥（引擎会拦）**。它们在 OOXML 里是同一个
+属性的正负两面 —— 悬挂就是负的首行缩进。要悬挂缩进**只写 `hanging*`**，
+它天然含「首行回到左缘」，不用（也不能）再补 `firstLineChars: 0` 去清继承：
+
+```jsonc
+{ "leftChars": 450, "hangingChars": 450 }                        // ✅ 悬挂缩进
+{ "firstLineChars": 0, "leftChars": 450, "hangingChars": 450 }   // ❌ 会被拒
+```
+
 **行距的坑（引擎会拦，但先说清楚）**：
 ```jsonc
 "spacing": { "line": 1.5, "lineRule": "multiple" }   // ✅ 1.5 倍行距
@@ -216,10 +225,23 @@
 ```
 
 - `text` 和 `runs` 二选一。`runs` 里字符串 = 纯文本 run，对象 = 带格式的 run
-- run 对象的键 = 上面 **style.run 那 14 个** + `text` + `br` + `fld`
+- run 对象的键 = 上面 **style.run 那 14 个** + `text` + `br` + `fld` + `link`
 - `br`: `true` 换行；`"page"` 分页符；`"column"` 分栏符
 - `fld`: 域。目前只有 `"PAGE"`（当前页码）和 `"NUMPAGES"`（总页数），
   **写在页脚里**，别手打数字——手打的"1"在第二页还是 1
+- `link`: 超链接目标，配着 `text` 用。要带协议的完整地址
+  （`https://` / `mailto:` / `tel:`）。**视觉不会自动变**——想要经典的蓝色
+  下划线就照常写 `color` / `underline`，中文简历那种「可点但不染色」什么都
+  不用加。只在正文（含表格）里可用，页眉页脚暂不支持
+
+```jsonc
+{ "t": "p", "runs": [
+    "联系： ",
+    { "text": "github.com/Xiaokebuyu", "link": "https://github.com/Xiaokebuyu" },
+    " | ",
+    { "text": "hi@example.com", "link": "mailto:hi@example.com", "color": "1155CC", "underline": true }
+] }
+```
 
 ⭐ **块级直接格式是平铺在块上的，没有 `para` 包层**：
 
@@ -275,6 +297,8 @@
 ## 引擎当前做不到的（诚实边界）
 
 - ~~自动编号~~ **已支持**（2026-08-18），见下面的 numbering 一节
+- ~~超链接~~ **已支持**（2026-08-19，run 上的 `link` 键，见 content 一节）；
+  **页眉页脚里的超链接**仍做不到（要单独的关系表）
 - **自动目录**：可以用 `fld` 插 TOC 域，但内容要用户在 Word 里按 F9 更新域
   才会生成；我们的渲染预览里它显示的是占位文案
 - **图片**：还没接
@@ -354,6 +378,8 @@
 | `"styles": { "X": { "numbering": ... } }` | `unknown key numbering` | `numbering` 是**顶层**键（跟 `styles` 平级，不在 `styles` 里面），风格里用的是 `para.list` |
 | 块上写 `"para": { "align": ... }` | 报 `unknown key para` | 平铺：`{ "t": "p", "align": ... }` |
 | 页眉/页脚里写 `"para": {...}` | 报 `unknown key para` | 跟 content 同一套写法，键平铺在块上 |
+| `"indent": { "firstLineChars": 0, "hangingChars": 450 }` | 被拒（互斥） | 悬挂只写 `{ "hangingChars": 450 }`，不用清 firstLine |
+| `"link": "github.com/x"` | 被拒（没协议） | `"link": "https://github.com/x"` |
 | `"lineRule": "auto"` | 被拒 | `multiple` / `exact` / `atLeast` |
 | `"color": "#CC0000"` | 颜色不对 | 不带 `#`：`"CC0000"` |
 | `"sizePt": "小四号"` | `unknown 字号` | `"小四"` |

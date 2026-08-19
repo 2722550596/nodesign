@@ -37,7 +37,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import {
-  KINDS, kindDef, detectTaskKind, readTaskMarker, taskManifest, artifactOfPath, can,
+  KINDS, kindDef, readTaskMarker, taskManifest, artifactOfPath, can,
 } from './kinds/index.js';
 
 export const KIND_DECK = 'deck';
@@ -61,7 +61,7 @@ const ENTRY_EXTS = new Set(
 );
 
 // 形态判定与解析的权威在 kinds/，这里转发老名字（消费方 import 不用改两次）
-export { detectTaskKind, readTaskMarker, taskManifest, kindDef, artifactOfPath };
+export { readTaskMarker, taskManifest, kindDef, artifactOfPath };
 export { formatAllowed, docxClaimedFiles, isDirArtifact } from './kinds/index.js';
 export { can };
 

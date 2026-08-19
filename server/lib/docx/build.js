@@ -238,7 +238,7 @@ export function buildStylesXml(tokens) {
 
 /* ── document.xml ─────────────────────────────── */
 
-function buildRun(tokens, r) {
+function buildRun(tokens, r, links) {
   if (typeof r === 'string') r = { text: r };
   const kids = [];
   const rPr = buildRPr(tokens, r);
@@ -254,10 +254,20 @@ function buildRun(tokens, r) {
     const attrs = /^\s|\s$/.test(t) ? [['xml:space', 'preserve']] : [];
     kids.push(elem('w:t', attrs, [textNode(t)]));
   }
-  return elem('w:r', [], kids);
+  const runEl = elem('w:r', [], kids);
+  // 超链接：run 包进 w:hyperlink，目标在关系表里（TargetMode="External"）。
+  // 视觉刻意不动 —— 中文简历那种「可点但不染色」不该被迫对抗默认蓝下划线；
+  // 要经典观感就照常写 color/underline
+  if (r.link) {
+    const id = links?.get(r.link);
+    // 到这儿查不到只可能是收集和构建不一致 —— 宁可炸也不产悬空 r:id（Word 报文档损坏）
+    if (id == null) throw new Error(`run.link 没登记进关系表：${r.link}`);
+    return elem('w:hyperlink', [['r:id', id], ['w:history', '1']], [runEl]);
+  }
+  return runEl;
 }
 
-export function buildPara(tokens, block) {
+export function buildPara(tokens, block, links) {
   const pKids = [];
   const propKids = [];
   if (block.style) propKids.push(val('w:pStyle', block.style));
@@ -266,11 +276,11 @@ export function buildPara(tokens, block) {
   propKids.push(...paraProps(block, ctx));   // 直接格式（block 上的 align/indent/... 覆盖）
   if (propKids.length) pKids.push(sortChildren(elem('w:pPr', [], propKids)));
   const runs = block.runs ?? (block.text != null ? [block.text] : []);
-  for (const r of runs) pKids.push(buildRun(tokens, r));
+  for (const r of runs) pKids.push(buildRun(tokens, r, links));
   return elem('w:p', [], pKids);
 }
 
-function buildTable(tokens, block) {
+function buildTable(tokens, block, links) {
   const widths = block.widthsTwip;
   const kids = [
     sortChildren(elem('w:tblPr', [], [
@@ -291,7 +301,7 @@ function buildTable(tokens, block) {
           ...(c.shading ? [elem('w:shd', [['w:val', 'clear'], ['w:color', 'auto'], ['w:fill', c.shading]])] : []),
           val('w:vAlign', 'center'),
         ])),
-        buildPara(tokens, { ...c, indent: c.indent ?? {} }),
+        buildPara(tokens, { ...c, indent: c.indent ?? {} }, links),
       ]);
     });
     kids.push(elem('w:tr', [], tcs));
@@ -299,11 +309,11 @@ function buildTable(tokens, block) {
   return elem('w:tbl', [], kids);
 }
 
-export function buildBody(tokens, content, rels) {
+export function buildBody(tokens, content, rels, links) {
   const kids = [];
   for (const block of content) {
-    if (block.t === 'p') kids.push(buildPara(tokens, block));
-    else if (block.t === 'table') kids.push(buildTable(tokens, block));
+    if (block.t === 'p') kids.push(buildPara(tokens, block, links));
+    else if (block.t === 'table') kids.push(buildTable(tokens, block, links));
     else if (block.t === 'pageBreak') {
       kids.push(elem('w:p', [], [elem('w:r', [], [elem('w:br', [['w:type', 'page']])])]));
     } else throw new Error(`unknown block: ${block.t}`);
@@ -335,9 +345,36 @@ export function buildBody(tokens, content, rels) {
   return elem('w:body', [], kids);
 }
 
-export function buildDocumentXml(tokens, content, rels = {}) {
-  const root = elem('w:document', [[W, NS_W], ['xmlns:r', NS_R]], [buildBody(tokens, content, rels)]);
+export function buildDocumentXml(tokens, content, rels = {}, links = null) {
+  const root = elem('w:document', [[W, NS_W], ['xmlns:r', NS_R]], [buildBody(tokens, content, rels, links)]);
   return DECL + serializeNode(root);
+}
+
+/** 正文（含表格单元格）里出现过的超链接目标，按出现顺序去重。
+ *  只扫 content —— 页眉页脚的 link 在校验层就被拒了（要单独关系表，没做） */
+export function collectLinks(content) {
+  const urls = [];
+  const seen = new Set();
+  const fromRuns = (runs) => {
+    for (const r of runs ?? []) {
+      if (r && typeof r === 'object' && typeof r.link === 'string' && r.link && !seen.has(r.link)) {
+        seen.add(r.link);
+        urls.push(r.link);
+      }
+    }
+  };
+  for (const b of content ?? []) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.t === 'p') fromRuns(b.runs);
+    else if (b.t === 'table') {
+      for (const row of b.rows ?? []) {
+        for (const cell of row ?? []) {
+          if (cell && typeof cell === 'object') fromRuns(cell.runs);
+        }
+      }
+    }
+  }
+  return urls;
 }
 
 function buildHdrFtr(tokens, name, blocks) {
@@ -354,8 +391,11 @@ const CT = (over) => `${DECL}<Types xmlns="http://schemas.openxmlformats.org/pac
   + over.map(([p, t]) => `<Override PartName="${p}" ContentType="${t}"/>`).join('')
   + '</Types>';
 
+/** 关系表是字符串拼的，超链接 Target 是外来 URL —— & 这类字符不转义就是坏 XML */
+const escAttr = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 const REL = (rels) => `${DECL}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
-  + rels.map(([id, type, target]) => `<Relationship Id="${id}" Type="${type}" Target="${target}"/>`).join('')
+  + rels.map(([id, type, target, mode]) => `<Relationship Id="${id}" Type="${type}" Target="${escAttr(target)}"${mode ? ` TargetMode="${mode}"` : ''}/>`).join('')
   + '</Relationships>';
 
 const T_DOC = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml';
@@ -424,6 +464,16 @@ export async function buildDocx(tokens, content, opts = {}) {
     overrides.push(['/word/footer1.xml', T_FTR]);
     nextId += 1;
   }
+  // 超链接（2026-08-19）：rId 从同一个计数器发 —— 撞上 styles/settings/numbering/
+  // header/footer 已占的号段，Word 打开直接报「文档已损坏」（agent 手写后处理时
+  // 实踩过）。同一 URL 复用同一个 rId
+  const links = new Map();
+  for (const url of collectLinks(content)) {
+    const id = `rId${nextId}`;
+    nextId += 1;
+    links.set(url, id);
+    docRels.push([id, `${R_BASE}/hyperlink`, url, 'External']);
+  }
 
   addEntry(zip, '[Content_Types].xml', CT(overrides));
   addEntry(zip, '_rels/.rels', REL([
@@ -435,6 +485,6 @@ export async function buildDocx(tokens, content, opts = {}) {
   addEntry(zip, 'word/settings.xml', buildSettingsXml(tokens));
   if (opts.header) addEntry(zip, 'word/header1.xml', buildHdrFtr(tokens, 'w:hdr', opts.header));
   if (opts.footer) addEntry(zip, 'word/footer1.xml', buildHdrFtr(tokens, 'w:ftr', opts.footer));
-  addEntry(zip, 'word/document.xml', buildDocumentXml(tokens, content, rels));
+  addEntry(zip, 'word/document.xml', buildDocumentXml(tokens, content, rels, links));
   return writeZip(zip);
 }
