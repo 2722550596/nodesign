@@ -28,6 +28,7 @@
  */
 
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
+import { withParamSanitizer } from './param-sanitizer.js';
 import { makeScreenshotCanvasTool } from './tools/screenshot.js';
 import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
 import { makeExportHandoffTool } from './tools/export-handoff.js';
@@ -267,6 +268,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     ALWAYS_LOAD_TOOLS.has(t.name)
       ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
       : t
+  )).map((t) => (
+    // 参数标签泄漏消毒（2026-08-19）：上游偶发把下一个参数吞进上一个字符串参数
+    // （</rationale><parameter name="scope">… 原样落进 tool_use.input，会话
+    // 008fe16c 4/4 实锤）。挂在出口包全部工具 —— 哪个工具中招看 recordIssue。
+    withParamSanitizer(t, { projectId, sessionId })
   ));
 
   const server = createSdkMcpServer({
