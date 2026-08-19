@@ -46,7 +46,7 @@ import { getProjectBus } from '../ws/broker.js';
 import { getLastContextUsage } from '../engine/runs/live-turn.js';
 import { Events } from '../engine/agent/events.js';
 import { resolveSessionModel, applySessionModel } from '../engine/agent/session-model.js';
-import { SELECTABLE_MODELS } from '../engine/agent/model-context.js';
+import { selectableModelsFor } from '../engine/agent/model-context.js';
 
 /**
  * 进行中的 rewind 操作 sid 集合 —— 供 turn.js startNewRunSession 守卫使用，
@@ -214,7 +214,7 @@ router.get('/:pid/sessions/:sid/model', async (req, res, next) => {
     const { model, override, fallback } = await resolveSessionModel(
       getSessionMetaDir(req.params.pid, req.params.sid),
     );
-    res.json({ model, override, default: fallback, options: SELECTABLE_MODELS });
+    res.json({ model, override, default: fallback, options: selectableModelsFor(req.user) });
   } catch (err) { next(err); }
 });
 
@@ -230,7 +230,7 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     }
     // 只收清单里的 id：随手传个拼错的 model 进去，SDK 会自己 fallback、真实容量
     // 查不到，两处都不报错，事后只能从"怎么变慢了"倒推
-    if (typeof raw === 'string' && !SELECTABLE_MODELS.some((m) => m.id === raw)) {
+    if (typeof raw === 'string' && !selectableModelsFor(req.user).some((m) => m.id === raw)) {
       return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
     }
 
@@ -244,7 +244,7 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
       default: fallback,
       changed: result.changed,
       restarted: result.restarted,
-      options: SELECTABLE_MODELS,
+      options: selectableModelsFor(req.user),
     });
   } catch (err) { next(err); }
 });

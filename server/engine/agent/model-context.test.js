@@ -12,6 +12,7 @@ import {
   resolveModelRoute,
   resolveWireModel,
   repriceUsageDeltas,
+  selectableModelsFor,
   UPSTREAMS,
 } from './model-context.js';
 
@@ -25,6 +26,18 @@ describe('派生导出（旧签名不变）', () => {
       expect(typeof m.label).toBe('string');
       expect(typeof m.desc).toBe('string');
     }
+  });
+
+  it('闸门：本地 Qwen 只对 admin/获批账号露出，普通账号看不见', () => {
+    const plain = selectableModelsFor({ role: 'user' }).map((m) => m.id);
+    expect(plain).not.toContain('qwen3.8-27b');
+    expect(plain).toContain('claude-sonnet-5[1m]');          // 无闸门的照常在
+
+    for (const u of [{ role: 'admin' }, { role: 'user', allowLocalGen: true }]) {
+      expect(selectableModelsFor(u).map((m) => m.id)).toContain('qwen3.8-27b');
+    }
+    // 未登录 / 拿不到用户对象时按最严处理
+    expect(selectableModelsFor(null).map((m) => m.id)).not.toContain('qwen3.8-27b');
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {

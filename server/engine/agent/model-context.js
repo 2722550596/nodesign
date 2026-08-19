@@ -128,6 +128,10 @@ const MODELS = Object.freeze([
   // API 会话；②repriceUsageDeltas 先看会话通路，订阅会话原样早退不 remap。
   {
     id: 'qwen3.8-27b', window: 262_144,
+    // gate 'localGen'：跟 roll_film / paint_still 同一套批准制（admin 免批）——
+    // 它本来就跑在同一台本地盒子上，语义天然一致。盒子没开时它会 fail-loud 502，
+    // 所以绝不能对没批准的账号露出来。
+    select: { label: 'Qwen3.8 27B（本地）', desc: '本地盒子 · 无审查 · 盒子没开时不可用', gate: 'localGen' },
     api: {
       upstream: 'qwenLocal', wireModel: 'qwen3.8-27b',
       sdkAlias: 'claude-opus-5[1m]',
@@ -191,10 +195,27 @@ for (const row of MODELS) {
 
 // ── 旧导出（签名不变，全部改为查表）──
 
-/** 前端 picker 可选清单。只有带 select 的行 —— API 模型的用户暴露另配闸门 */
+/**
+ * picker 的**全量**清单（含带闸门的行）。⚠️ 对外接口一律用
+ * `selectableModelsFor(user)`，直接用这个等于把闸门拆了。保留导出是因为它是
+ * 「表里哪些行可选」的唯一真相，闸门只是在它上面过滤。
+ */
 export const SELECTABLE_MODELS = Object.freeze(
   MODELS.filter((m) => m.select).map((m) => Object.freeze({ id: m.id, ...m.select })),
 );
+
+/**
+ * 按用户过滤可选模型。`gate: 'localGen'` 的行只对 admin / 已批准本地产线的账号
+ * 露出（同 roll_film / paint_still 那套批准制）。
+ *
+ * ⚠️ 三处消费方必须都走它：GET /model 的清单、PUT /model 的校验、turn.js 的
+ * body.model 校验。少一处就是一个绕过闸门的后门 —— 2026-08-19 的独立评审
+ * 正是在 turn.js 抓到过这种漏校验。
+ */
+export function selectableModelsFor(user) {
+  const approved = user?.role === 'admin' || !!user?.allowLocalGen;
+  return SELECTABLE_MODELS.filter((m) => !m.gate || (m.gate === 'localGen' && approved));
+}
 
 /** 决定 sdkOptions.model 喂什么。API 行给 alias；订阅/未知原样返回（让 SDK 自己 fallback） */
 export function resolveSdkSpoofModel(appModel) {
