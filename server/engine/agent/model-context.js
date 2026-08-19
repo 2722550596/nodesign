@@ -240,9 +240,16 @@ export function pickThinkingConfig(model) {
 /**
  * 会话模型 → 通路描述。session-loop 据此决定 env 注入。
  *
+ * `window` 要喂给 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`：2026-08-19 盒上实测，
+ * SDK 的压缩窗口 = **min(该 env, 别名的 rawMaxTokens)**（getContextUsage 的
+ * autocompactSource 会从 model-default/auto 变成 env）。两个都得对：
+ *   - 只靠别名：200k 名白扔容量，1M 名会一路涨到远超上游 n_ctx 然后炸
+ *   - 只靠 env：会被别名的 rawMaxTokens 钳住（200k 别名 + env 262144 = 200000）
+ * 所以 sdkAlias 一律选 1M 档打底，真实值由这个 env 钉死。
+ *
  * @returns {{ mode: 'subscription' } | {
  *   mode: 'api', appModel: string, sdkAlias: string, fastModel: string,
- *   upstreamId: string, upstream: object,
+ *   window: number, upstreamId: string, upstream: object,
  * }}
  */
 export function resolveModelRoute(appModel) {
@@ -253,6 +260,7 @@ export function resolveModelRoute(appModel) {
     appModel: row.id,
     sdkAlias: row.api.sdkAlias,
     fastModel: row.api.fastModel,
+    window: row.window,
     upstreamId: row.api.upstream,
     upstream: UPSTREAMS[row.api.upstream],
   };

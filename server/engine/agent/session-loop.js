@@ -215,7 +215,7 @@ export async function runSession({
   // 老代码这些 await 在主 try 块之外，任一抛错 → Promise reject 只被 turn.js
   // console.error，没有 run.start 也没有 run.error，run 行永远 pending，
   // 前端完全零反馈（丢状态路径 P5）。现在失败时补 run.error + markRunFailed。
-  let wsRoot, baseUrlForBinary, apiKeyForBinary, fastModel, isResume, installed;
+  let wsRoot, baseUrlForBinary, apiKeyForBinary, fastModel, compactWindow, isResume, installed;
   try {
     wsRoot = await sharedCtx.workspace.ensure();
 
@@ -241,10 +241,16 @@ export async function runSession({
       // API 路的 fast model 必须同表可路由（订阅 haiku 在 API 模式会 404），
       // 所以 env 覆盖在这条路上不生效 —— 表是唯一真相。
       fastModel = route.fastModel;
+      // 把**真实**上下文窗口钉给 SDK。不设的话 SDK 只能按 spoof alias 猜，而
+      // alias 的容量和上游真实 n_ctx 基本对不上：猜小了白扔容量，猜大了会一路
+      // 涨到超过上游 n_ctx 再炸。实测规律见 resolveModelRoute 注释。
+      compactWindow = route.window;
     } else {
       baseUrlForBinary = process.env.ANTHROPIC_BASE_URL;
       apiKeyForBinary = process.env.ANTHROPIC_API_KEY;
       fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
+      // 订阅模型的真名 SDK 自己认得，别去覆盖它已知正确的默认值
+      compactWindow = null;
     }
 
     // 检测 jsonl 是否已存在 —— 决定走 resume（已存在）还是 sessionId（新建）
@@ -320,6 +326,8 @@ export async function runSession({
     // 快速 helper model（SDK 内部 helper：task title 总结、auto-compaction 等）。
     // 通路见上方 route 注释：订阅 = env 可覆盖；API = 表内 fastModel。
     ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
+    // 真实上下文窗口（仅 API 路；订阅路留空让 SDK 用它自己的正确默认）
+    ...(compactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compactWindow) } : {}),
   };
 
   const sdkOptions = {

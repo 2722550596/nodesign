@@ -76,13 +76,22 @@ describe('路由', () => {
     expect(resolveWireModel(undefined)).toBe(null);
   });
 
-  it('本地 Qwen 行：无鉴权上游、alias=opus-5、count_tokens 由上游真答', () => {
+  it('本地 Qwen 行：无鉴权上游、count_tokens 由上游真答', () => {
     const w = resolveWireModel('claude-opus-5');
     expect(w?.appModel).toBe('qwen3.8-27b');
     expect(w?.upstream.authStyle).toBe('none');
     expect(w?.upstream.keyEnv).toBe(null);
     expect(w?.upstream.countTokens).toBe(true);
     expect(resolveModelRoute('qwen3.8-27b').fastModel).toBe('qwen3.8-27b');
+  });
+
+  it('⚠️ 每个 API 行的 sdkAlias 容量必须 ≥ 真实 window —— SDK 压缩窗口取二者较小值', () => {
+    for (const id of ['qwen3.8-27b', 'gemini-3.1-pro', 'kimi-k2.6']) {
+      const r = resolveModelRoute(id);
+      const aliasWindow = resolveModelContextWindow(r.sdkAlias);
+      expect(aliasWindow, `${id} 的 alias ${r.sdkAlias} 容量不足`).toBeGreaterThanOrEqual(r.window);
+      expect(r.window).toBe(resolveModelContextWindow(id));   // route.window 就是表里那个
+    }
   });
 });
 
