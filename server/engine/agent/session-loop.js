@@ -51,7 +51,7 @@ import {
 // session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
-import { buildIsolationOptions, sandboxShimEnv } from './isolation.js';
+import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isolation.js';
 import { PLAN_MODE_DENY, isReadonlyBashCommand } from './plan-mode-gate.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { recordIssue, signatureOf } from '../../lib/issues-store.js';
@@ -279,11 +279,8 @@ export async function runSession({
   // 工具名（server.toolNames，见 mcp/index.js）——不另立第二份清单。
   const nodesignServer = createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx });
 
-  // npm 缓存：沙盒里 HOME 不可写，默认的 ~/.npm 会让 `npm i` EROFS 直接失败。
-  // 放数据根下共用一份（内容寻址 + 完整性校验，跨会话共用不构成投毒面）。
-  // 目录必须先存在 —— bwrap 绑一个不存在的路径会起不来。
-  const npmCacheDir = path.join(PROJECTS_DATA_ROOT, '.npm-cache');
-  try { await fs.mkdir(npmCacheDir, { recursive: true }); } catch { /* 起不来也不该拦会话 */ }
+  // npm 缓存 + 沙盒可写 tmp（$TMPDIR / pip 缓存）：细节与教训见 isolation.js
+  const agentDirs = await prepareAgentDirs({ dataRoot: PROJECTS_DATA_ROOT, projectId, sessionId });
 
   const sdkEnv = {
     ...process.env,
@@ -302,7 +299,8 @@ export async function runSession({
     // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
     // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
     ENABLE_TOOL_SEARCH: 'true',
-    npm_config_cache: npmCacheDir,
+    // npm_config_cache / CLAUDE_CODE_TMPDIR / PIP_CACHE_DIR（见 isolation.js）
+    ...agentDirs.envPatch,
     // auto 模式分类器用哪个模型。判"这个动作越不越界"是需要判断力的活，
     // 默认 opus —— 这一步省钱等于把闸门交给一个更笨的看门人。
     ...(platform.autoModeEnabled ? { CLAUDE_CODE_AUTO_MODE_MODEL: platform.autoModeModel } : {}),
@@ -601,7 +599,7 @@ export async function runSession({
 
     // 隔离两道闸（sandbox 管 Bash，permissions.deny 管 Read/Write 这类进程内工具）
     // 全在 agent/isolation.js 里，改之前读那份文件头上的四条实测教训。
-    ...buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv }),
+    ...buildIsolationOptions({ cwdRoot, sharedRoot, ...agentDirs, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv }),
 
     toolConfig: {
       askUserQuestion: { previewFormat: 'html' },

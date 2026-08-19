@@ -21,8 +21,46 @@
  */
 
 import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs/promises';
 import { platform } from '../../runtime/platform.js';
 import { autoModeSettings } from './auto-mode-rules.js';
+
+/**
+ * 会话要用的缓存/临时目录一次备齐（2026-08-19 从 session-loop 下沉）。
+ *
+ * - npmCacheDir：共用 npm 缓存（数据根下；内容寻址 + 完整性校验，跨会话共用
+ *   不构成投毒面）。沙盒里 HOME 不可写，不给它 `npm i` 直接 EROFS。
+ * - agentTmpDir：沙盒里 Bash 的 $TMPDIR。SDK 按 CLAUDE_CODE_TMPDIR 派生沙盒
+ *   tmp（没设就 os.tmpdir()），而派生出来的 /tmp/claude 在 bwrap 里只读 ——
+ *   agent 装个 py7zr 连撞四堵墙、venv 静默失败（iss_msz25m5p_v5so）。
+ *   ⚠️ 必须短：SDK 二进制里有条 warn —— 这个路径超 ~30 字节时 AF_UNIX socket
+ *   放不下，子进程 $TMPDIR **静默回退**默认值（= 白配）。所以挂 /tmp/nd 下、
+ *   按项目分目录；沙盒里遮兄弟目录见 buildIsolationOptions。
+ * - pip 缓存指进 agentTmpDir/pip，不然每条 pip 命令先吐一段
+ *   ~/.cache/pip 不可写的 WARNING 噪音。
+ *
+ * 目录必须先存在 —— bwrap 绑一个不存在的路径会起不来；建不出来也不拦会话。
+ * envPatch 直接摊进 sdkEnv。
+ */
+export async function prepareAgentDirs({ dataRoot, projectId, sessionId }) {
+  const npmCacheDir = path.join(dataRoot, '.npm-cache');
+  const agentTmpRoot = path.join(os.tmpdir(), 'nd');
+  const agentTmpDir = path.join(agentTmpRoot, projectId || String(sessionId || 'anon').slice(0, 12));
+  for (const d of [npmCacheDir, path.join(agentTmpDir, 'pip')]) {
+    try { await fs.mkdir(d, { recursive: true }); } catch { /* 起不来也不该拦会话 */ }
+  }
+  return {
+    npmCacheDir,
+    agentTmpRoot,
+    agentTmpDir,
+    envPatch: {
+      npm_config_cache: npmCacheDir,
+      CLAUDE_CODE_TMPDIR: agentTmpDir,
+      PIP_CACHE_DIR: path.join(agentTmpDir, 'pip'),
+    },
+  };
+}
 
 /**
  * bwrap 垫片的 env（PATH 前插一个目录，里面的 `bwrap` 是我们的包装脚本）
@@ -55,11 +93,14 @@ export function sandboxShimEnv({ baseEnv = process.env, dataRoot } = {}) {
  * @param {string} o.cwdRoot       会话工作区（= sharedRoot，扁平化之后同一个目录）
  * @param {string} o.sharedRoot    项目共享根
  * @param {string} o.npmCacheDir   共用 npm 缓存（在数据根下，必须可写可读）
+ * @param {string} [o.agentTmpRoot] 所有项目沙盒 tmp 的根（/tmp/nd）—— 整体遮读
+ * @param {string} [o.agentTmpDir]  本项目的沙盒 tmp（CLAUDE_CODE_TMPDIR 指它）——
+ *                                  开可写可读天窗。两个一起传或都不传。
  * @param {string} o.dataRoot      PROJECTS_DATA_ROOT
  * @param {object} o.env           传给 SDK 的 env（凭据抹除按它的键名算）
  * @returns {{ sandbox: object, settings: object }} 直接摊进 query options
  */
-export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRoot, env }) {
+export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, agentTmpRoot, agentTmpDir, dataRoot, env }) {
   return {
     sandbox: {
       enabled: platform.sandboxEnabled,
@@ -84,6 +125,9 @@ export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRo
             path.join(sharedRoot, 'assets'),
           ] : []),
           npmCacheDir,
+          // 本项目的沙盒 tmp（CLAUDE_CODE_TMPDIR / $TMPDIR / pip 缓存都指这里）。
+          // 没有它 Bash 的 tmp 只读：venv 静默失败、pip --user EROFS、npm 装不上
+          ...(agentTmpDir ? [agentTmpDir] : []),
         ],
         denyWrite: ['/etc', '/usr', '/bin', '/sbin', '/private/etc'],
         // 数据根整个盖住、再用 allowRead 给自己的工作区开天窗。
@@ -93,8 +137,10 @@ export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, dataRo
         // 原注释写的"连 ls 数据根都只看得见自己那一个条目"过强，是错的；
         // platform.js 那边的说法才对：「目录级 denyRead 拦得住 cat，拦不住 ls
         // 看文件名 —— 文件名不是秘密，接受」。
-        denyRead: [...platform.credentialBlacklist(), dataRoot],
-        allowRead: [cwdRoot, npmCacheDir],
+        // agentTmpRoot（/tmp/nd）同 dataRoot 一个待遇：根整个遮住、自己的子目录
+        // 开天窗 —— 不遮的话 /tmp/nd/<别的项目>/ 就是跨项目读通道
+        denyRead: [...platform.credentialBlacklist(), dataRoot, ...(agentTmpRoot ? [agentTmpRoot] : [])],
+        allowRead: [cwdRoot, npmCacheDir, ...(agentTmpDir ? [agentTmpDir] : [])],
       },
       credentials: {
         // filesystem 那层拦得住 `cat .env`，拦不住 `env` —— 服务端 process.env

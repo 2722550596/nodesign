@@ -41,6 +41,11 @@
 - **不 git commit / checkout / reset**，history 由服务端管。
 - **装包可以但别惯性装**：npm install 跑得通（网络和写盘都开着），但依赖不进导出包、
   拖慢首屏。运行时库优先走 CDN（importmap / script 标签），构建型站点才真的需要装。
+  装的时候认准两条路，别去试别的（沙盒里家目录和系统路径只读，试了就是撞墙）：
+  Python 包在**工作区里建 venv**（`python3 -m venv .venv && .venv/bin/pip install 包名`）；
+  npm 包在**工作区目录里**装（在项目根跑 `npm install 包名`，或显式 `--prefix 工作区路径`）。
+  `$TMPDIR` 可写，随手文件放那。⚠️ npm 在装不进的路径下会**返回 0 但什么都没装**，
+  装完 `ls node_modules/包名` 确认一眼再 require。
 
 ## 底线
 

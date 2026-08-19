@@ -1,8 +1,46 @@
 // 隔离配置与 bwrap 垫片（2026-08-15）
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { sandboxShimEnv } from './isolation.js';
+import { sandboxShimEnv, buildIsolationOptions } from './isolation.js';
 import { platform } from '../../runtime/platform.js';
+
+describe('prepareAgentDirs', () => {
+  it('目录真的建出来（bwrap 绑不存在的路径起不来）+ envPatch 三件套', async () => {
+    const { prepareAgentDirs } = await import('./isolation.js');
+    const os = await import('node:os');
+    const fs = await import('node:fs');
+    const dirs = await prepareAgentDirs({ dataRoot: os.tmpdir(), projectId: 'proj_test_iso', sessionId: 's1' });
+    expect(dirs.agentTmpRoot).toBe(path.join(os.tmpdir(), 'nd'));
+    expect(dirs.agentTmpDir).toBe(path.join(os.tmpdir(), 'nd', 'proj_test_iso'));
+    expect(fs.existsSync(path.join(dirs.agentTmpDir, 'pip'))).toBe(true);
+    expect(dirs.envPatch).toEqual({
+      npm_config_cache: dirs.npmCacheDir,
+      CLAUDE_CODE_TMPDIR: dirs.agentTmpDir,
+      PIP_CACHE_DIR: path.join(dirs.agentTmpDir, 'pip'),
+    });
+    // ⚠️ CLAUDE_CODE_TMPDIR 超 ~30 字节时 SDK 静默回退（AF_UNIX 上限）——
+    // 生产 os.tmpdir()=/tmp 时必须稳稳在限内
+    if (os.tmpdir() === '/tmp') expect(Buffer.byteLength(dirs.agentTmpDir)).toBeLessThanOrEqual(30);
+  });
+});
+
+describe('沙盒 tmp（2026-08-19，iss_msz25m5p_v5so）', () => {
+  const base = { cwdRoot: '/w', sharedRoot: null, npmCacheDir: '/data/.npm-cache', dataRoot: '/data', env: {} };
+
+  it('传了 agentTmpDir：可写可读开天窗，tmp 根整体遮读（跨项目通道）', () => {
+    const { sandbox } = buildIsolationOptions({ ...base, agentTmpRoot: '/tmp/nd', agentTmpDir: '/tmp/nd/proj_a' });
+    expect(sandbox.filesystem.allowWrite).toContain('/tmp/nd/proj_a');
+    expect(sandbox.filesystem.allowRead).toContain('/tmp/nd/proj_a');
+    expect(sandbox.filesystem.denyRead).toContain('/tmp/nd');
+  });
+
+  it('没传就完全不出现（数组里不能混进 undefined —— bwrap 参数会炸）', () => {
+    const { sandbox } = buildIsolationOptions(base);
+    for (const list of [sandbox.filesystem.allowWrite, sandbox.filesystem.allowRead, sandbox.filesystem.denyRead]) {
+      expect(list.every((p) => typeof p === 'string' && p.length > 0)).toBe(true);
+    }
+  });
+});
 
 describe('bwrap 垫片的 env', () => {
   it('沙盒没开就不插 PATH（垫片只为沙盒服务）', () => {
