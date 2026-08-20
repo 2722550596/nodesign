@@ -39,6 +39,10 @@ import {
   getCurrentTurnRunId,
   setCurrentTurnRunId,
   promoteNextPendingRunId,
+  claimRunByUuid,
+  releaseCurrentTurnRunId,
+  getPendingRunCount,
+  getQueueDepth,
   registerPendingQuestion,
   registerPendingElicitation,
   registerPendingPlanApproval,
@@ -331,6 +335,12 @@ export async function runSession({
   const sdkOptions = {
     cwd: cwdRoot,
     abortController: sessionAbortController,
+    // --replay-user-messages（2026-08-20）：让 CLI 把每条用户消息在**真正并进对话
+    // 的那一刻**原样回显（带我们 push 时盖的 uuid）。这是 run 记账的 turn 边界锚 ——
+    // 没有它就只能靠"一条消息一个 result"计数接力，而 CLI 会把 turn 进行中追加的
+    // 消息并进当前轮，链一错就永不自愈。机制全文见 active-runs.js claimRunByUuid。
+    // SDK 没把这面旗做成具名选项，走 extraArgs 透传（值 null = 无参布尔旗）。
+    extraArgs: { 'replay-user-messages': null },
     // 新建 → sessionId 让 SDK 用我们的 sid；已存在 → resume 续 jsonl 历史
     ...(isResume ? { resume: sessionId } : { sessionId }),
     // title 仅在新建时有效（resume 用持久化的 title）
@@ -765,12 +775,37 @@ export async function runSession({
 
     activeTurnRunId = null;
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
-    // 晋升排队的下一 turn（无排队时置 null）—— 追加消息在 turn 内不再抢占
-    // currentRunId（见 active-runs pushUserMessage），排队的 runId 在这里接棒。
-    // 老逻辑固定置 null 的副作用：mid-turn 追加后第二轮没有 run.start/run.done。
-    promoteNextPendingRunId(sessionId);
+    // 让出 currentRunId。排队的下一 turn **不在这里按计数晋升**（2026-08-20 起）——
+    // 由它自己的回显来认领（见 for-await 循环头的回显锚）。老接力在 CLI 并轮后
+    // 永久错一格（run 记账错位案，见 active-runs.js）。
+    releaseCurrentTurnRunId(sessionId);
     // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
+  };
+
+  // ── 并轮关账（2026-08-20）──
+  // 回显到了一条排队消息、而 turn 正在跑 = CLI 把它并进了当前轮。它的 run 行不能
+  // 停在 pending（那就是老病：runs 表里"排队 N 分钟"的假象），也不能等一个永远不来
+  // 的 result。就地 running→succeeded，metadata 记它并进了谁；token/费用全记在承载它
+  // 的那一轮（SDK 的 result 本来就只给一份）。run.merged 事件给前端/审计看，前端
+  // 现在不消费（追加那条从没被认领过 runId，不需要清状态）。
+  const closeMergedRun = (runId, intoRunId) => {
+    try { markRunStarted(runId); } catch { /* 不该已 running；兜底继续关 */ }
+    try {
+      mergeRunMetadata(runId, { mergedIntoRunId: intoRunId, sdkSessionId: sharedCtx.sdkSessionId });
+      markRunSucceeded(runId, {});
+    } catch (err) {
+      console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} close merged run=${runId} failed: ${err.message}`);
+    }
+    console.info(`[session-loop] sid=${sessionId.slice(0, 8)} run=${runId} merged into running turn run=${intoRunId}`);
+    eventBus.publish({ type: 'run.merged', sessionId, runId, intoRunId, ts: new Date().toISOString() });
+  };
+  // "已排队 N 条"的 N = 还没被 CLI 回显认领的 run 数（见 active-runs getQueueDepth）。
+  // 认领一条就广播一次，让前端递减；turn 处理完也广播（见 result 分支）。
+  const publishQueueDepth = () => {
+    eventBus.publish({
+      type: 'run.queue.depth', sessionId, depth: getQueueDepth(sessionId), ts: new Date().toISOString(),
+    });
   };
 
   // ── idle timeout 兜底 ──
@@ -893,6 +928,30 @@ export async function runSession({
       // 单个 turn 跑超 30 分钟（多页 deck + 子代理）会被 idle timeout 掐死（P8）
       markSessionActivity(sessionId);
 
+      // ── 回显锚（2026-08-20，run 记账错位案）──
+      // CLI 开了 --replay-user-messages：我们 push 的每条用户消息会在**真正被并进
+      // 对话的那一刻**回显回来（带 push 时盖的 uuid）。按 uuid 认领它的 run：
+      //   promoted → 它的 turn 现在开始（下面的边界检测接手 startTurn）
+      //   merged   → 它被并进了正在跑的这一轮，就地关账，不另起 turn
+      // 机制与探针证据见 active-runs.js claimRunByUuid 上方的注释。
+      if (message.type === 'user' && message.uuid && !message.parent_tool_use_id) {
+        const claim = claimRunByUuid(sessionId, message.uuid);
+        if (claim?.outcome === 'merged') {
+          closeMergedRun(claim.runId, claim.intoRunId);
+        } else if (claim?.outcome === 'unknown') {
+          console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} replayed run=${claim.runId} not pending nor current (ignored)`);
+        }
+        if (claim) publishQueueDepth();
+      } else if (
+        !activeTurnRunId && !getCurrentTurnRunId(sessionId) && getPendingRunCount(sessionId) > 0
+        && (message.type === 'assistant' || message.type === 'stream_event')
+      ) {
+        // 回显锚缺席（CLI 没回显就开始说话了）→ FIFO 兜底，别让排队的 run 没人认领。
+        // 正常运行不该走到这里；走到了就是 CLI 行为变了，warn 让人看见。
+        const promoted = promoteNextPendingRunId(sessionId);
+        console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} replay anchor missing, FIFO fallback promoted run=${promoted}`);
+      }
+
       // 检测 turn 边界：currentRunId 切换 → 新 turn
       const cid = getCurrentTurnRunId(sessionId);
       if (cid && cid !== activeTurnRunId) {
@@ -939,12 +998,7 @@ export async function runSession({
           });
         }
         // turn 处理完 emit 当前 queue 积压（让前端"已排队 N 条"递减）
-        eventBus.publish({
-          type: 'run.queue.depth',
-          sessionId,
-          depth: inputQueue.size,
-          ts: new Date().toISOString(),
-        });
+        publishQueueDepth();
         // 不 throw —— query 继续等下一条 user message
       }
     }
