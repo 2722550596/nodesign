@@ -69,6 +69,7 @@ import { makePublishSiteTool } from './tools/publish-site.js';
 import { makeReportIssueTool } from './tools/report-issue.js';
 import { makeRollFilmTool } from './tools/roll-film.js';
 import { makePaintStillTool } from './tools/paint-still.js';
+import { makeLookupTagsTool } from './tools/lookup-tags.js';
 
 /**
  * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
@@ -157,6 +158,12 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 在线才可用（NODESIGN_H3BOX_SSH）；动漫向/视频关键帧首选，通用生图仍走
       // generate_image。视觉 QC 归用户。
       makePaintStillTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
+
+      // lookup_tags — danbooru 标签画前查询（2026-08-20）。paint_still 画完的体检
+      // 只能事后说"这批图别信"；这个把查的动作挪到画前，配手册的起手纪律
+      // （先理解用户要什么 → 想候选标签 → 查 → 再画）。薄壳，逻辑与体检共用
+      // lib/danbooru-tags.js。deferred：名字自解释，且 paint_still 描述里点了名。
+      makeLookupTagsTool(),
 
       // report_issue — agent 给维护者写信（08-02 由 report_friction 扩容改名）：
       // bug / friction / idea 三类走同一张 issues 表。跟 PostToolUseFailure 的

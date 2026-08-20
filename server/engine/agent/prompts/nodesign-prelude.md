@@ -275,11 +275,11 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 `read_board` · `arrange_on_board` · `create_on_board` · `organize_board` · `deliver_files` ·
 `read_document` ·
 `crystallize_skill` ·
-`report_issue` · `roll_film` · `paint_still`
+`report_issue` · `roll_film` · `paint_still` · `lookup_tags`
 
 自部署产线两件（都跑在站主的 GPU 盒子上；盒子不在线工具会明说，转告用户即可，
 没有自动备胎）：`roll_film`（文生视频，MiniMax-H3，一次调用可批量提交多镜、串行 3-5 分钟/镜、出一镜上墙一镜，单镜 ≤12.25s
-——用户明确要视频才用，发车前先告知）、`paint_still`（生图，同样批量提交逐张上墙；
+——用户明确要视频才用，发车前先告知）、`paint_still`（生图，同样批量提交逐张上墙；danbooru 系三档**先理解用户要什么→`lookup_tags` 查真实标签→再画**；
 noobai / noobai-eps / pony=danbooru 标签，anima=自然语言，krea2=12B 审美档自然语言、
 反 AI 油光脸；选型看工具描述与首调手册，不在线可改走 generate_image）。**产物你可以看**（2026-08-18 解禁，此前这里写着一律不许看）：
 看的目的是**挑掉技术性废图**——重复人物、肢体崩坏、整体色偏、全黑全白、糊成一团、

@@ -380,6 +380,14 @@ Quality prefixes and per-model sampler settings are applied box-side — do not
 repeat them in the prompt. LoRA trigger words DO have to be written into the
 prompt yourself; the cookbook lists them.
 
+TAG DISCIPLINE (noobai / noobai-eps / pony): pure comma-separated tags, no
+sentences, spaces not underscores. Before the FIRST still of a new subject or
+scene: understand what the user wants → write candidate tags → run
+lookup_tags ONCE on all of them → paint with the verified ones. Re-rolls of
+the same scene need no new lookup. The return of this tool carries a tag
+check-up (weak/missing/sentence-like fragments) — fix those before judging
+the batch.
+
 Use for anime needs and video keyframes (1344x768 matches the video lane).
 Requires the box online — if unreachable, tell the user and fall back to
 generate_image.

@@ -175,7 +175,8 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       hooks: [makePreToolUseRollFilmCookbookInjector()],
     }, {
       // paint_still 首次调用时注入本地生图手册（四模型选型+BFL 官方提示词实践）
-      matcher: 'mcp__nodesign__paint_still',
+      // 08-20 起 lookup_tags 也触发：纪律是"先查后画"，手册得在第一次查的时候就到
+      matcher: 'mcp__nodesign__(paint_still|lookup_tags)',
       hooks: [makePreToolUsePaintStillCookbookInjector()],
     }, {
       // AskUserQuestion 首次调用时注入 NoDesign 的 preview 协议（2026-07-28 从
