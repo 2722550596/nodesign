@@ -14,7 +14,7 @@
     "test": "npm run test:server && cd web && npx vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.232",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.237",
     "async-mutex-lite": "^1.0.0",
     "better-sqlite3": "^12.8.0",
     "cors": "^2.8.5",
