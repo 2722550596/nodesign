@@ -17,29 +17,32 @@ import {
 } from './model-context.js';
 
 describe('派生导出（旧签名不变）', () => {
-  it('SELECTABLE_MODELS 只暴露带 select 的行；没 select 的 API 行（kimi）不进 picker，带闸门的（qwen/gemini）进全量清单', () => {
+  it('SELECTABLE_MODELS 只暴露带 select 的行；没 select 的 API 行（kimi / qwen / 3.1 Pro）不进 picker', () => {
     const ids = SELECTABLE_MODELS.map((m) => m.id);
     expect(ids).toContain('claude-sonnet-5[1m]');
     expect(ids).toContain('claude-opus-5[1m]');
     expect(ids.some((id) => /kimi/i.test(id))).toBe(false);
     expect(SELECTABLE_MODELS.find((m) => m.id === 'gemini-3.7-flash')?.gate).toBe('localGen');
     expect(ids).not.toContain('gemini-3.1-pro');   // 3.1 Pro 行保留给体检当对照组，不进 picker
+    // 08-20 摘牌：盒子关机，行和线路都留着（api 字段仍在），只是不给人选
+    expect(ids).not.toContain('qwen3.8-27b');
+    expect(resolveWireModel('qwen3.8-27b')?.appModel).toBe('qwen3.8-27b');   // ⭐ 摘牌 ≠ 拆线
     for (const m of SELECTABLE_MODELS) {
       expect(typeof m.label).toBe('string');
       expect(typeof m.desc).toBe('string');
     }
   });
 
-  it('闸门：本地 Qwen 与中转 Gemini 3.7 Flash 只对 admin/获批账号露出，普通账号看不见', () => {
+  it('闸门：中转 Gemini 3.7 Flash 只对 admin/获批账号露出，普通账号看不见', () => {
     const plain = selectableModelsFor({ role: 'user' }).map((m) => m.id);
-    expect(plain).not.toContain('qwen3.8-27b');
     expect(plain).not.toContain('gemini-3.7-flash');
     expect(plain).toContain('claude-sonnet-5[1m]');          // 无闸门的照常在
 
     for (const u of [{ role: 'admin' }, { role: 'user', allowLocalGen: true }]) {
       const ids = selectableModelsFor(u).map((m) => m.id);
-      expect(ids).toContain('qwen3.8-27b');
       expect(ids).toContain('gemini-3.7-flash');
+      // 摘了牌的行，连 admin 也选不到（gate 是"谁能看见"，select 是"在不在牌上"）
+      expect(ids).not.toContain('qwen3.8-27b');
     }
     // 未登录 / 拿不到用户对象时按最严处理
     const anon = selectableModelsFor(null).map((m) => m.id);

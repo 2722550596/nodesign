@@ -144,10 +144,17 @@ const MODELS = Object.freeze([
     // 视觉 + MTP 投机 + 1 槽 × 131072，再留 ~5G 给同卡的 ComfyUI（noobai）。换回 96G 盒子
     // 就是 262_144 × 3 槽。盒上配置住 ops/qwen-box/（serve-prod.sh），两边要一起改。
     id: 'qwen3.8-27b', window: 131_072,
-    // gate 'localGen'：跟 roll_film / paint_still 同一套批准制（admin 免批）——
-    // 它本来就跑在同一台本地盒子上，语义天然一致。盒子没开时它会 fail-loud 502，
-    // 所以绝不能对没批准的账号露出来。
-    select: { label: 'Qwen3.8 27B（本地）', desc: '本地盒子 · 无审查 · 盒子没开时不可用', gate: 'localGen' },
+    // ⏸ **08-20 用户拍板从 picker 摘牌**（盒子按小时租，已关机）。删掉 `select` 一处，
+    // 三个消费方一起拒：GET /api/me/models 的清单、PUT /model 的校验、turn.js 的
+    // body.model 校验（都走 selectableModelsFor —— 所以摘牌不会留后门）。
+    // **线路原样留着**：下面 api 字段一个字没动，WIRE_LOOKUP / resolveSessionWire /
+    // 记账 reprice 全照旧；已经钉在 qwen 的老会话仍会路由过去，盒子没开就 502 fail-loud
+    // （这是设计，不是 bug）。同理 gemini-3.1-pro 那行也是「留行不留牌」，先例在下面。
+    // 复牌 = 把这一行放回来，别的都不用动：
+    //   select: { label: 'Qwen3.8 27B（本地）', desc: '本地盒子 · 无审查 · 盒子没开时不可用', gate: 'localGen' },
+    // ⚠️ 复牌时别丢 `gate: 'localGen'` —— 跟 roll_film / paint_still 同一套批准制
+    // （admin 免批），它本来就跑在同一台本地盒子上，语义天然一致；没这个闸就是对
+    // 所有账号露出一个「一按就 502」的按钮。
     // 无审查权重跑在自己租的盒子上（不出网、零成本、只对获批账号开）。这条路上
     // prelude 的整节「底线」不注入 —— 站主 08-19 拍板，理由是那节是**平台对外
     // 开放**才需要的产物政策（产物能一键挂到站主域名下），而这台盒子上跑的是

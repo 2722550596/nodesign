@@ -3,7 +3,7 @@ import { Check, Loader2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions, Me } from '../../lib/api.js';
-import { FALLBACK_MODELS } from '../../lib/models.js';
+import { FALLBACK_MODELS, isModelPrefStale } from '../../lib/models.js';
 import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
 
 /**
@@ -108,6 +108,19 @@ export default function ModelPicker({
   }, [hasSession, projectId, sessionId]);
 
   const options = remote?.options?.length ? remote.options : FALLBACK_MODELS;
+
+  /**
+   * 本地偏好过期自净（2026-08-20 随「本地 Qwen 摘牌」加）。
+   *
+   * 光在这里改显示不够 —— **开新会话时 ProjectWorkspace 是直接从 store 读
+   * `modelPref` 发出去的**，picker 只是个显示层。所以发现过期要把 store 里那个值
+   * 修回来，否则用户点"新会话"拿到的是 400 `unknown model`。判据见 isModelPrefStale
+   * （只认服务端真清单，拿兜底清单判会误伤带闸门的模型）。
+   */
+  useEffect(() => {
+    if (hasSession) return;
+    if (isModelPrefStale(modelPref, remote?.options)) setModelPref(remote.options[0].id);
+  }, [hasSession, remote, modelPref, setModelPref]);
   /**
    * 现在跑的是哪个。两条路都保证是个具体模型：有会话看服务端（`remote.model`
    * 已经把覆盖和全局默认算完），没会话看本地偏好（store 里没选过就是
