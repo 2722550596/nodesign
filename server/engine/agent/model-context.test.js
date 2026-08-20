@@ -22,28 +22,29 @@ describe('派生导出（旧签名不变）', () => {
     expect(ids).toContain('claude-sonnet-5[1m]');
     expect(ids).toContain('claude-opus-5[1m]');
     expect(ids.some((id) => /kimi/i.test(id))).toBe(false);
-    expect(SELECTABLE_MODELS.find((m) => m.id === 'gemini-3.1-pro')?.gate).toBe('localGen');
+    expect(SELECTABLE_MODELS.find((m) => m.id === 'gemini-3.7-flash')?.gate).toBe('localGen');
+    expect(ids).not.toContain('gemini-3.1-pro');   // 3.1 Pro 行保留给体检当对照组，不进 picker
     for (const m of SELECTABLE_MODELS) {
       expect(typeof m.label).toBe('string');
       expect(typeof m.desc).toBe('string');
     }
   });
 
-  it('闸门：本地 Qwen 与中转 Gemini 只对 admin/获批账号露出，普通账号看不见', () => {
+  it('闸门：本地 Qwen 与中转 Gemini 3.7 Flash 只对 admin/获批账号露出，普通账号看不见', () => {
     const plain = selectableModelsFor({ role: 'user' }).map((m) => m.id);
     expect(plain).not.toContain('qwen3.8-27b');
-    expect(plain).not.toContain('gemini-3.1-pro');
+    expect(plain).not.toContain('gemini-3.7-flash');
     expect(plain).toContain('claude-sonnet-5[1m]');          // 无闸门的照常在
 
     for (const u of [{ role: 'admin' }, { role: 'user', allowLocalGen: true }]) {
       const ids = selectableModelsFor(u).map((m) => m.id);
       expect(ids).toContain('qwen3.8-27b');
-      expect(ids).toContain('gemini-3.1-pro');
+      expect(ids).toContain('gemini-3.7-flash');
     }
     // 未登录 / 拿不到用户对象时按最严处理
     const anon = selectableModelsFor(null).map((m) => m.id);
     expect(anon).not.toContain('qwen3.8-27b');
-    expect(anon).not.toContain('gemini-3.1-pro');
+    expect(anon).not.toContain('gemini-3.7-flash');
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {

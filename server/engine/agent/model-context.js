@@ -112,6 +112,9 @@ const MODELS = Object.freeze([
   { id: 'claude-opus-4-7',       window: 200_000 },
   { id: 'claude-sonnet-4-6',     window: 200_000 },
   { id: 'claude-haiku-4-5',      window: 200_000 },
+  // 只当 alias 用的订阅名（08-20）：SDK 二进制认识的 1M 名里还空着的一个（strings 扫过：
+  // opus-4-6/4-7/4-8/5、sonnet-4-5-20250929/4-6/5 七个 [1m]），给 gemini-3.7-flash 行做 spoof。
+  { id: 'claude-opus-4-6[1m]',   window: 1_000_000 },
 
   // ── API 通路 ──
   // kimi-k2 已删：与 k2.6 共用 alias 是历史遗留，反查表容不下撞车，且 NoDesk
@@ -164,9 +167,8 @@ const MODELS = Object.freeze([
   },
   {
     id: 'gemini-3.1-pro', window: 1_000_000,
-    // 08-20 暴露：跟 qwen 同一道 localGen 闸（admin 免批 + 获批账号），用户拍板"qwen 怎么接
-    // gemini 就怎么接"。中转站寿命不在自己手里、计量单位不明（见 memory），所以不对普通账号开。
-    select: { label: 'Gemini 3.1 Pro（中转）', desc: '1M 窗口 · 走中转站 API · 无缓存，长会话贵', gate: 'localGen' },
+    // 不进 picker（08-20 用户拍板要 3.7 Flash 不要 3.1 Pro）。行保留：它是中转站唯一稳定的
+    // 「中转-」通道，`_ingress-check.mjs` 拿它当接入体检的对照组。
     api: {
       upstream: 'lament', wireModel: '中转-gemini-3.1-pro-preview',
       // sonnet-4-6[1m] 对 Gemini 3.1 Pro 是诚实的（真 1M 窗口）。订阅路的真
@@ -183,6 +185,27 @@ const MODELS = Object.freeze([
       // 官方牌价（>200k 档 $4/$18 未分档 —— 单轮跨档的少数请求会低估，先接受）。
       // ⚠️ 中转站自己的计量单位不明，这里的 USD 是配额/展示用的近似。
       prices: { input: 2.0, output: 12.0, cacheRead: 0.2, cacheWrite: 0 },
+    },
+  },
+  {
+    id: 'gemini-3.7-flash', window: 1_000_000,
+    // 08-20 用户拍板：要 3.7 Flash，先用中转站 + lift shim 顶着。它只在中转站的「反重力-」
+    // 通道上有（转卖 Antigravity OAuth 额度），今天体检 6/9：文本/视觉/非流式 tool_use/
+    // prompt cache 真命中（cache_read 8162）都好；流式 stop_reason 恒=end_turn（假上游实验证明
+    // CLI 认块不认 stop_reason，无功能后果）；tool_result 图丢靠 liftImages 修。⛔硬伤是
+    // 「当前无可用凭证」500 说来就来、不分请求大小、一来就是整段时间 —— 所以同 qwen 走
+    // localGen 闸，label 写明不稳定，只给自己人。思考档在模型名里（-high/-medium/-low），
+    // 选 high 即"默认高"；thinking 参数照旧 strip。
+    select: { label: 'Gemini 3.7 Flash（中转）', desc: '反重力通道 · 随时可能 500 · 思考档 high', gate: 'localGen' },
+    api: {
+      upstream: 'lament', wireModel: '反重力-流式抗截断/gemini-3.7-flash-high',
+      sdkAlias: 'claude-opus-4-6[1m]',     // 3.7 Flash 真 1M 窗口，alias 诚实；见上面那行订阅名的注释
+      fastModel: 'gemini-3.7-flash',
+      thinking: 'strip',
+      liftImages: true,
+      // 官方促销价（2027-01-01 起翻倍 $1.5/$7.5）；缓存命中按输入价一折。中转站计量单位不明，
+      // 这里的 USD 仍是配额/展示用的近似。
+      prices: { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
     },
   },
 ]);
