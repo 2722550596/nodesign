@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { transformForUpstream, liftImagesFromToolResult, estimateInputTokens } from './model-ingress.js';
+import {
+  transformForUpstream, liftImagesFromToolResult, estimateInputTokens,
+  resolveSessionWire, registerIngressSession, unregisterIngressSession,
+} from './model-ingress.js';
 import { resolveWireModel, UPSTREAMS } from '../engine/agent/model-context.js';
 import sharp from 'sharp';
 
@@ -175,5 +178,55 @@ describe('图片归一：按上游声明的 imageFormats 转码', () => {
     const parsed = { model: 'x', messages: msgs(block) };
     await transformForUpstream(parsed, wireFor(UPSTREAMS.qwenLocal));
     expect(parsed.messages[0].content[0].source.media_type).toBe('image/gif');
+  });
+});
+
+describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20）', () => {
+  // 背景：API 行的 sdkAlias 同时是真实 Claude 名。qwen 会话里的 binary 若用
+  // 'claude-sonnet-4-6'（gemini 行的 alias、钥匙配着）发一发 helper 请求，全表反查
+  // 会带着 lament 的钥匙静默转发 —— 入口成功转发不留日志，只有记账侧事后看得见。
+  const SID = 'ingress-test-qwen';
+  it('无会话前缀 / 没注册：全表反查照旧（探针、体检走这条）', () => {
+    expect(resolveSessionWire('claude-sonnet-4-6', null)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
+    expect(resolveSessionWire('claude-sonnet-4-6', 'never-registered')).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
+    expect(resolveSessionWire('nonsense-model', null)).toEqual({ wire: null, reason: 'none' });
+  });
+  it('qwen 会话：自己的 alias（原样 / 剥[1m]）→ 自己那行', () => {
+    registerIngressSession(SID, 'qwen3.8-27b');
+    try {
+      expect(resolveSessionWire('claude-opus-5[1m]', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'qwen3.8-27b' } });
+      expect(resolveSessionWire('claude-opus-5', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'qwen3.8-27b' } });
+      expect(resolveSessionWire('qwen3.8-27b', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'qwen3.8-27b' } });
+    } finally { unregisterIngressSession(SID); }
+  });
+  it('⛔ qwen 会话拿 gemini 行的 alias 发请求 → 不跨行，改道本会话 fast（qwen 自己），且标 collision', () => {
+    registerIngressSession(SID, 'qwen3.8-27b');
+    try {
+      const r = resolveSessionWire('claude-sonnet-4-6', SID);
+      expect(r.reason).toBe('collision');
+      expect(r.collidesWith).toBe('gemini-3.1-pro');
+      expect(r.wire.appModel).toBe('qwen3.8-27b');
+      expect(r.wire.upstreamId).toBe('qwenLocal');
+      // kimi 行的 alias 同理
+      expect(resolveSessionWire('claude-opus-4-7', SID)).toMatchObject({ reason: 'collision', collidesWith: 'kimi-k2.6', wire: { appModel: 'qwen3.8-27b' } });
+    } finally { unregisterIngressSession(SID); }
+  });
+  it('qwen 会话：不在表里的 helper 名 → fast 兜底（fallback）', () => {
+    registerIngressSession(SID, 'qwen3.8-27b');
+    try {
+      expect(resolveSessionWire('claude-haiku-4-5', SID)).toMatchObject({ reason: 'fallback', fastModel: 'qwen3.8-27b', wire: { appModel: 'qwen3.8-27b' } });
+    } finally { unregisterIngressSession(SID); }
+  });
+  it('gemini 会话拿 kimi alias → 改道 gemini 自己（反向同样封）；注销后回到全表反查', () => {
+    registerIngressSession(SID, 'gemini-3.1-pro');
+    try {
+      expect(resolveSessionWire('claude-opus-4-7[1m]', SID)).toMatchObject({ reason: 'collision', wire: { appModel: 'gemini-3.1-pro' } });
+    } finally { unregisterIngressSession(SID); }
+    expect(resolveSessionWire('claude-opus-4-7[1m]', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'kimi-k2.6' } });
+  });
+  it('订阅模型注册 = noop（订阅会话根本不经入口）', () => {
+    registerIngressSession(SID, 'claude-sonnet-5[1m]');
+    expect(resolveSessionWire('claude-sonnet-4-6', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
+    unregisterIngressSession(SID);
   });
 });

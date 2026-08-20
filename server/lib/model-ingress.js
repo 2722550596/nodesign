@@ -14,7 +14,9 @@
  *
  *   1. 剥 /__nd/<sessionId> 路径前缀（只用于日志归属）
  *   2. body.model 反查路由（appModel / sdkAlias / 剥[1m]的 alias 都认）；
- *      查不到 → 502 fail-loud，绝不盲转发（盲转发 = 烧错通路的钱且无人知晓）
+ *      查不到 → 502 fail-loud，绝不盲转发（盲转发 = 烧错通路的钱且无人知晓）。
+ *      注册过的 API 会话只认自己那行 + 自己的 fast 行，其它名字改道 fast 兜底
+ *      （未知名 = SDK helper；在表里但属于别的行 = 撞名雷，见 resolveSessionWire）
  *   3. count_tokens：上游没有该端点（表里标了 / 404 实测过）→ 本地估算短路
  *   4. 修补：model 还原成上游真名 · thinking strip/enabled8k · tool_result
  *      图片提升到顶层（Kimi 与 Gemini 桥都丢 tool_result 图，08-19 探针实锤）·
@@ -56,19 +58,57 @@ const countTokensDead = new Set();
 // 重试 8 次）。旧基建里这类请求静默打错通路烧钱；fail-loud 之后它们会 502 =
 // helper 功能死。这里给注册过的会话一条兜底：未知 model 名 → 本会话的 fast
 // 模型。session-loop 在 API 会话起 query 前注册、finally 注销。
-const sessionFastRoute = new Map();   // sessionId → fastModel appModel
+//
+// ⛔ 撞名雷（2026-08-19 审计标出、08-20 封死）：API 行的 sdkAlias 同时也是真实的
+// Claude 名（gemini 行 = claude-sonnet-4-6[1m]，kimi 行 = claude-opus-4-7[1m]）。
+// qwen 会话里的 binary 若用这类名字发一发 helper 请求（SDK 换个 config 默认名就会），
+// 按全表反查会**命中别的行**、带着别家钥匙静默转发 —— 事前无警报、成功转发不留
+// 日志，只有记账侧（qwen run 里冒出 gemini 行）事后才看得见。表级断言封不住它
+// （SDK 内部会用哪些名字没法枚举），所以改成**会话级路由**：一个会话只认自己那行
+// 和自己的 fast 行，其它一概改道 fast 兜底，绝不跨行。
+const sessionRoutes = new Map();     // sessionId → { appModel, fastModel }
 const fallbackLogged = new Set();     // `${sid}:${model}` 只告一次，防日志洪水
 
 export function registerIngressSession(sessionId, appModel) {
   const route = resolveModelRoute(appModel);
-  if (route.mode === 'api') sessionFastRoute.set(sessionId, route.fastModel);
+  if (route.mode === 'api') sessionRoutes.set(sessionId, { appModel: route.appModel, fastModel: route.fastModel });
 }
 
 export function unregisterIngressSession(sessionId) {
-  sessionFastRoute.delete(sessionId);
+  sessionRoutes.delete(sessionId);
   for (const k of fallbackLogged) {
     if (k.startsWith(sessionId + ':')) fallbackLogged.delete(k);
   }
+}
+
+/**
+ * 会话级路由决策（纯函数，有单测）。
+ *
+ * - 没注册的会话 / 无会话前缀（探针、体检）：全表反查，查不到就是 null（502）。
+ * - 注册过的 API 会话：只认**自己那行**和**自己的 fast 行**。其它名字一律改道
+ *   fast 兜底 —— 不在表里的是 SDK helper 默认名（'fallback'），在表里但属于别的行
+ *   的就是撞名雷（'collision'），后者尤其不能放过去（那是别家的钥匙、真钱）。
+ *
+ * @param {string|undefined} bodyModel
+ * @param {string|null} sessionTag
+ * @returns {{ wire: ReturnType<typeof resolveWireModel>, reason: 'table'|'fallback'|'collision'|'none',
+ *             fastModel?: string, sessionModel?: string, collidesWith?: string }}
+ */
+export function resolveSessionWire(bodyModel, sessionTag) {
+  const direct = resolveWireModel(bodyModel);
+  const sess = sessionTag ? sessionRoutes.get(sessionTag) : null;
+  if (!sess) return { wire: direct, reason: direct ? 'table' : 'none' };
+  if (direct && (direct.appModel === sess.appModel || direct.appModel === sess.fastModel)) {
+    return { wire: direct, reason: 'table' };
+  }
+  const wire = resolveWireModel(sess.fastModel);
+  return {
+    wire,
+    reason: direct ? 'collision' : 'fallback',
+    fastModel: sess.fastModel,
+    sessionModel: sess.appModel,
+    ...(direct ? { collidesWith: direct.appModel } : {}),
+  };
 }
 
 /**
@@ -139,16 +179,17 @@ async function handleRequest(req, res, bodyBuf) {
     return;
   }
 
-  let wire = resolveWireModel(parsed?.model);
-  if (!wire && sessionTag && sessionFastRoute.has(sessionTag)) {
-    // 会话级兜底：SDK 内部 helper 用不在表里的 Claude 名发请求 → 改道本会话
-    // 的 fast 模型（helper 只需要"一个能干活的模型"，不挑名字）
-    const fastModel = sessionFastRoute.get(sessionTag);
-    wire = resolveWireModel(fastModel);
+  const routed = resolveSessionWire(parsed?.model, sessionTag);
+  const wire = routed.wire;
+  if (wire && routed.reason !== 'table') {
     const logKey = `${sessionTag}:${parsed?.model}`;
-    if (wire && !fallbackLogged.has(logKey)) {
+    if (!fallbackLogged.has(logKey)) {
       fallbackLogged.add(logKey);
-      console.warn(`[model-ingress] sid=${sidShort} 未知 model '${parsed?.model}' → 会话 fast 兜底（${fastModel}）`);
+      if (routed.reason === 'collision') {
+        console.warn(`[model-ingress] sid=${sidShort} ⛔ 撞名：model '${parsed?.model}' 属于别的行（${routed.collidesWith}），本会话是 ${routed.sessionModel} —— 不跨行转发，改道会话 fast（${routed.fastModel}）`);
+      } else {
+        console.warn(`[model-ingress] sid=${sidShort} 未知 model '${parsed?.model}' → 会话 fast 兜底（${routed.fastModel}）`);
+      }
     }
   }
   if (!wire) {

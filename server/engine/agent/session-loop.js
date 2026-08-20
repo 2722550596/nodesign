@@ -286,7 +286,7 @@ export async function runSession({
     }
     sharedCtx.emit(Events.error(`会话初始化失败：${err.message}`, 'INIT_FAILED', err.stack));
     // registerIngressSession 在本 try 内、其后还有可抛的 await —— 这里配对注销，
-    // 否则 init 失败的 API 会话在 sessionFastRoute 里残留（2026-08-19 评审抓的洞）。
+    // 否则 init 失败的 API 会话在 ingress 的 sessionRoutes 里残留（2026-08-19 评审抓的洞）。
     // 主路径的注销在下方大 try 的 finally；两处都是幂等 delete，不怕重复。
     unregisterIngressSession(sessionId);
     unregisterQuerySession(sessionId, sessionToken);
