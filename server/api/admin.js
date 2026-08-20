@@ -20,7 +20,7 @@ import { createInvite, listInvites, getInvite, updateInvite, listUsers, getUserB
 import { usedCostToday, usedCostTotal, usedTokensToday, limitFor } from '../lib/quota.js';
 import { listIssues, setIssueStatus, removeIssue, issueStats } from '../lib/issues-store.js';
 import { createNotice, listNotices, getActiveNotice, retireNotice, retireAllNotices } from '../lib/notice-store.js';
-import { flagCounts, listFlags, removeFlag, levelFor, LEVELS } from '../lib/moderation.js';
+import { flagCounts, listFlags, removeFlag, levelForKnob, LEVELS } from '../lib/moderation.js';
 
 const router = express.Router();
 router.use(adminGuard);
@@ -65,7 +65,8 @@ router.get('/users', (_req, res) => {
     tokensToday: usedTokensToday(u.id),       // 参考
     effectiveDailyLimitUsd: limitFor(u),
     flagsCount: flags.get(u.id) || 0,
-    effectiveModerationLevel: levelFor(u),     // 默认档算完的实际生效值
+    effectiveModerationLevel: levelForKnob(u, 'subscription'),  // 订阅模型：默认档算完的实际生效值
+    effectiveModerationLevelApi: levelForKnob(u, 'api'),         // 本地/中转旋钮的生效值
   }));
   res.json({ users });
 });
@@ -76,12 +77,14 @@ router.patch('/users/:id', (req, res) => {
   const patch = {};
   if (typeof req.body?.disabled === 'boolean') patch.disabled = req.body.disabled;
   // 外审强度：null = 跟随默认档（试用 strict / 正式 loose / admin off）
-  if ('moderationLevel' in (req.body || {})) {
-    const lv = req.body.moderationLevel;
+  // 两个旋钮（08-20）：订阅模型 / 本地与中转（见 lib/moderation.js 文件头）
+  for (const key of ['moderationLevel', 'moderationLevelApi']) {
+    if (!(key in (req.body || {}))) continue;
+    const lv = req.body[key];
     if (lv !== null && !LEVELS.includes(lv)) {
-      return res.status(400).json({ error: `moderationLevel 需为 ${LEVELS.join('/')} 或 null` });
+      return res.status(400).json({ error: `${key} 需为 ${LEVELS.join('/')} 或 null` });
     }
-    patch.moderationLevel = lv;
+    patch[key] = lv;
   }
   if ('localGen' in (req.body || {})) {
     patch.localGen = !!req.body.localGen;

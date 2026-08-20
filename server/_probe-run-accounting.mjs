@@ -19,7 +19,8 @@ import { runSession } from './engine/agent/session-loop.js';
 import { EventBus } from './engine/agent/events.js';
 import { createRun, getRun } from './engine/runs/store.js';
 import { AsyncQueue } from './lib/async-queue.js';
-import { pushUserMessage, closeQuerySession } from './engine/runs/active-runs.js';
+import { closeQuerySession } from './engine/runs/active-runs.js';
+import { pushUserMessage } from './engine/runs/turn-relay.js';
 
 if (!process.env.DB_PATH || /server[\\/]db[\\/]nodesign\.db$/.test(path.resolve(process.env.DB_PATH))) {
   console.error('refusing to run: DB_PATH must point at a scratch db, not the production one');
@@ -104,7 +105,10 @@ const checks = [
   ['db: all three succeeded', rows.every((r) => r.status === 'succeeded')],
   ['db: run2.metadata.mergedIntoRunId = run1', r2.metadata?.mergedIntoRunId === run1.id],
   ['db: run3.started_at >= run1.finished_at', r3.startedAt >= r1.finishedAt],
-  ['db: run1 started before run2 created (no off-by-one)', r1.startedAt <= r2.createdAt],
+  // 并进去的那条，它的"执行窗口"必须落在承载它那一轮里（老病是每条 run 的窗口其实是
+  // 下一轮的）。不拿 run1.started_at ≤ run2.created_at 当判据 —— run1 的 startTurn 发生在
+  // 首条 SDK 消息到达时，CLI 冷启动慢一点就晚于 m2 的 created_at，那是时序不是错位。
+  ['db: run2 (merged) timestamps fall inside run1 window', r2.startedAt >= r1.startedAt && r2.finishedAt <= r1.finishedAt],
 ];
 let all = true;
 for (const [name, ok] of checks) { log(`[${pf(ok)}] ${name}`); all = all && ok; }

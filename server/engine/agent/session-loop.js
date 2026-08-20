@@ -38,11 +38,6 @@ import {
   unregisterQuerySession,
   getCurrentTurnRunId,
   setCurrentTurnRunId,
-  promoteNextPendingRunId,
-  claimRunByUuid,
-  releaseCurrentTurnRunId,
-  getPendingRunCount,
-  getQueueDepth,
   registerPendingQuestion,
   registerPendingElicitation,
   registerPendingPlanApproval,
@@ -51,6 +46,10 @@ import {
   closeQuerySession,
   markSessionActivity,
 } from '../runs/active-runs.js';
+import {
+  promoteNextPendingRunId, claimRunByUuid, releaseCurrentTurnRunId, getPendingRunCount,
+  closeMergedRun, publishQueueDepth,
+} from '../runs/turn-relay.js';
 // skill 起手文件拷贝已挪 hooks.js PreToolUse(Skill/Bash)（2026-07-27），
 // session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
 import { loadInstalledPlugins } from './plugin-loader.js';
@@ -58,7 +57,7 @@ import { createHooks } from './hooks.js';
 import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isolation.js';
 import { PLAN_MODE_DENY, isReadonlyBashCommand } from './plan-mode-gate.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
-import { recordIssue, signatureOf } from '../../lib/issues-store.js';
+import { assertInitContract } from './init-contract.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensoredModel } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
@@ -388,7 +387,8 @@ export async function runSession({
       // 获批账号开、产物不外发，完整那节的前提（对外开放平台）根本不成立。
       append: (() => {
         const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
-        return renderPrelude(owner ? levelFor(owner) : 'loose', {
+        // 档位按模型通路取旋钮（08-20 两旋钮：订阅 / 本地与中转），model 是上面已解析的会话模型
+        return renderPrelude(owner ? levelFor(owner, model) : 'loose', {
           uncensored: isUncensoredModel(model),
         });
       })(),
@@ -783,31 +783,6 @@ export async function runSession({
     delete process.env.NODESIGN_CURRENT_TURN_ID;
   };
 
-  // ── 并轮关账（2026-08-20）──
-  // 回显到了一条排队消息、而 turn 正在跑 = CLI 把它并进了当前轮。它的 run 行不能
-  // 停在 pending（那就是老病：runs 表里"排队 N 分钟"的假象），也不能等一个永远不来
-  // 的 result。就地 running→succeeded，metadata 记它并进了谁；token/费用全记在承载它
-  // 的那一轮（SDK 的 result 本来就只给一份）。run.merged 事件给前端/审计看，前端
-  // 现在不消费（追加那条从没被认领过 runId，不需要清状态）。
-  const closeMergedRun = (runId, intoRunId) => {
-    try { markRunStarted(runId); } catch { /* 不该已 running；兜底继续关 */ }
-    try {
-      mergeRunMetadata(runId, { mergedIntoRunId: intoRunId, sdkSessionId: sharedCtx.sdkSessionId });
-      markRunSucceeded(runId, {});
-    } catch (err) {
-      console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} close merged run=${runId} failed: ${err.message}`);
-    }
-    console.info(`[session-loop] sid=${sessionId.slice(0, 8)} run=${runId} merged into running turn run=${intoRunId}`);
-    eventBus.publish({ type: 'run.merged', sessionId, runId, intoRunId, ts: new Date().toISOString() });
-  };
-  // "已排队 N 条"的 N = 还没被 CLI 回显认领的 run 数（见 active-runs getQueueDepth）。
-  // 认领一条就广播一次，让前端递减；turn 处理完也广播（见 result 分支）。
-  const publishQueueDepth = () => {
-    eventBus.publish({
-      type: 'run.queue.depth', sessionId, depth: getQueueDepth(sessionId), ts: new Date().toISOString(),
-    });
-  };
-
   // ── idle timeout 兜底 ──
   // 用户关 tab 后 WS-disconnect grace 是常规清理路径；这里再加一道：
   // session 超过 IDLE_TIMEOUT 无任何活动（push message / turn 边界）→ 自动关。
@@ -823,69 +798,6 @@ export async function runSession({
     }
   }, IDLE_SCAN_INTERVAL_MS);
   idleScanTimer.unref?.();
-
-  // ── 开局契约自检（2026-08-14 空壳钩子灭门案第 3 层，真正治本）──
-  //
-  // 背景：一个 `{ matcher: 'Bash' }` 空壳钩子条目让 SDK initialize 的大 try 吞掉
-  // TypeError → 全部程序化钩子 + 全部 in-process MCP server 无声蒸发，mcp_servers
-  // 里连 failed 都不留，会话照常跑 —— 潜伏六天。能静默这么久的结构性原因是这里
-  // 从来不消费 system:init：SDK 开局就把「会话里实际有哪些 server / 工具」告诉了
-  // 我们，但没人看。
-  //
-  // 现在对账：nodesign 必须 connected，且 server 实例声明的每个工具（探针实测
-  // deferred 工具也在 init.tools 里，27/27）都必须出现。不满足 → recordIssue 进
-  // 自动层 + throw 杀会话（外层 catch 走真错路径：markRunFailed + run.error 前端
-  // 显式可见）。已知代价：SDK 改 init 形状会误杀会话 —— 但误杀 5 分钟定位，
-  // 静默降级是 6 天暗账；工具残废的会话产出是负价值还烧钱，杀掉比放行仁慈。
-  const assertInitContract = (init) => {
-    const problems = [];
-    const nd = (init.mcp_servers || []).find((s) => s.name === 'nodesign');
-    if (!nd) {
-      problems.push('mcp_servers 里没有 nodesign（in-process MCP server 蒸发，连 failed 状态都不留）');
-    } else if (nd.status !== 'connected') {
-      problems.push(`nodesign server status=${nd.status}（预期 connected）`);
-    }
-    const registered = new Set(init.tools || []);
-    const expected = (nodesignServer.toolNames || []).map((n) => `mcp__nodesign__${n}`);
-    const missing = expected.filter((n) => !registered.has(n));
-    if (missing.length) {
-      problems.push(`nodesign 工具缺 ${missing.length}/${expected.length}：${missing.join(', ')}`);
-    }
-    // 权限模式对账（2026-08-15）：**要的和拿到的可能不一样，而且是静默的**。
-    // 实测：会话模型是 haiku 时 `permissionMode:'auto'` 会被无声降级成 'default'，
-    // init 里照报 default，没有任何报错 —— 分类器一次都不跑，我们却以为它在把关。
-    // 只警告不杀：降级后的会话还能干活，杀掉代价大于收益；但必须在日志里喊出来。
-    const wantMode = isResume ? null : (initialPermissionMode === 'plan' ? 'plan' : platform.permissionModeDefault);
-    if (wantMode && init.permissionMode && init.permissionMode !== wantMode) {
-      console.warn(
-        `[session-loop] ⚠️ sid=${sessionId.slice(0, 8)} 权限模式被降级：要 ${wantMode}，`
-        + `实际 ${init.permissionMode}（模型 ${sdkModel} 可能不支持该模式）`,
-      );
-    }
-    if (!problems.length) {
-      console.info(
-        `[session-loop] sid=${sessionId.slice(0, 8)} init 契约自检 ✓ `
-        + `(nodesign connected, ${expected.length}/${expected.length} tools, `
-        + `mode=${init.permissionMode ?? '未报'})`,
-      );
-      return;
-    }
-    const detail = problems.join('；');
-    // 自动层留案底（fail-soft：记录本身不能变成新故障源）。signature 只含缺失
-    // 集合不含 sessionId —— 同一种蒸发聚成一行计数。
-    try {
-      recordIssue({
-        source: 'auto',
-        toolName: 'session_init_contract',
-        summary: `开局契约自检失败：${detail.slice(0, 120)}`,
-        detail,
-        projectId,
-        sessionId,
-        signature: signatureOf(`session_init_contract|${missing.join(',')}|${nd ? nd.status : 'absent'}`),
-      });
-    } catch { /* ignore */ }
-    throw new Error(`开局契约自检失败（杀会话）：${detail}`);
-  };
 
   // ── main stream loop ──
 
@@ -937,11 +849,11 @@ export async function runSession({
       if (message.type === 'user' && message.uuid && !message.parent_tool_use_id) {
         const claim = claimRunByUuid(sessionId, message.uuid);
         if (claim?.outcome === 'merged') {
-          closeMergedRun(claim.runId, claim.intoRunId);
+          closeMergedRun({ runId: claim.runId, intoRunId: claim.intoRunId, sessionId, sdkSessionId: sharedCtx.sdkSessionId, eventBus });
         } else if (claim?.outcome === 'unknown') {
           console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} replayed run=${claim.runId} not pending nor current (ignored)`);
         }
-        if (claim) publishQueueDepth();
+        if (claim) publishQueueDepth(eventBus, sessionId);
       } else if (
         !activeTurnRunId && !getCurrentTurnRunId(sessionId) && getPendingRunCount(sessionId) > 0
         && (message.type === 'assistant' || message.type === 'stream_event')
@@ -968,7 +880,8 @@ export async function runSession({
 
       // 开局契约自检：init 每次到达都对账（新建/resume 各来一次）
       if (message.type === 'system' && message.subtype === 'init') {
-        assertInitContract(message);
+        // 开局契约自检（空壳钩子灭门案第 3 层）—— 全文见 init-contract.js
+        assertInitContract(message, { sessionId, projectId, isResume, initialPermissionMode, platform, sdkModel, nodesignServer });
       }
 
       handleSDKMessage(sharedCtx, message);
@@ -998,7 +911,7 @@ export async function runSession({
           });
         }
         // turn 处理完 emit 当前 queue 积压（让前端"已排队 N 条"递减）
-        publishQueueDepth();
+        publishQueueDepth(eventBus, sessionId);
         // 不 throw —— query 继续等下一条 user message
       }
     }

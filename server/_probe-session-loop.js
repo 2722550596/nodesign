@@ -14,7 +14,8 @@ import { runSession } from './engine/agent/session-loop.js';
 import { EventBus } from './engine/agent/events.js';
 import { createRun, _truncateRunsTable } from './engine/runs/store.js';
 import { AsyncQueue } from './lib/async-queue.js';
-import { pushUserMessage, closeQuerySession } from './engine/runs/active-runs.js';
+import { closeQuerySession } from './engine/runs/active-runs.js';
+import { pushUserMessage } from './engine/runs/turn-relay.js';
 
 const TURN_1_TOKEN = 'sl_turn1_alpha';
 const TURN_2_TOKEN = 'sl_turn2_beta';

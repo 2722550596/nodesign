@@ -1,7 +1,7 @@
 /**
- * active-runs：run ↔ 用户消息的配对状态机（2026-08-20 run 记账错位案的钉子）。
+ * turn-relay：run ↔ 用户消息的配对状态机（2026-08-20 run 记账错位案的钉子）。
  *
- * 被钉住的语义（机制全文见 active-runs.js claimRunByUuid 上方注释）：
+ * 被钉住的语义（机制全文见 turn-relay.js claimRunByUuid 上方注释）：
  *   - push 盖 uuid；idle 直设 current；有人在跑或有人排队 → 一律排队
  *   - 回显认领：current / promoted / merged / unknown 四种结果
  *   - finishTurn 只让出 current，不按计数晋升
@@ -10,17 +10,11 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AsyncQueue } from '../../lib/async-queue.js';
+import { registerQuerySession, unregisterQuerySession, getCurrentTurnRunId } from './active-runs.js';
 import {
-  registerQuerySession,
-  unregisterQuerySession,
-  pushUserMessage,
-  claimRunByUuid,
-  releaseCurrentTurnRunId,
-  promoteNextPendingRunId,
-  getCurrentTurnRunId,
-  getPendingRunCount,
-  getQueueDepth,
-} from './active-runs.js';
+  pushUserMessage, claimRunByUuid, releaseCurrentTurnRunId, promoteNextPendingRunId,
+  getPendingRunCount, getQueueDepth,
+} from './turn-relay.js';
 
 const SID = 'test-session-merge';
 let queue;

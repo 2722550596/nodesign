@@ -17,7 +17,11 @@
  *   3. 连坐 —— 24h 内 3 次即停用；critical 类（未成年人色情 / 恐怖主义）
  *      一次即停用。停用走 users.disabled，requestUser 的 60s 缓存过后全线失效。
  *
- * 强度三档，**per-user 可调**（users.moderation_level，站主在控制台按人设）：
+ * 强度三档，**per-user、per-通路可调**（站主在控制台按人设）。08-20 起按模型通路分成
+ * 两个独立旋钮：users.moderation_level 管订阅模型（Sonnet/Opus，跑在站主账号上），
+ * users.moderation_level_api 管本地 qwen / 中转站那些走 ingress 的 API 行。哪条通路
+ * 由 model-context 的 resolveModelRoute 说了算，这里不判模型名。两边默认档推导相同。
+ * 同一档位值同时管 GPT 外审和 prelude 的成人句（见 agent/system-prompts.js）。
  *   off     不审
  *   loose   只拦"换个说法也还是违法"的硬线：未成年人色情 / 恐怖主义 / 武器毒品
  *           制作 / 可操作的犯罪教程 / 恶意软件 / 教唆自残 / 人肉真实个人。
@@ -31,6 +35,7 @@
 
 import db from '../engine/runs/store.js';
 import { updateUser } from '../auth/users-store.js';
+import { resolveModelRoute } from '../engine/agent/model-context.js';
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS moderation_flags (
@@ -65,16 +70,36 @@ if (process.env.NODESIGN_MODERATION !== 'off' && !process.env.OPENAI_API_KEY) {
 }
 
 /** 该账号实际生效的强度档（显式覆盖 > 默认档） */
-export function levelFor(user) {
+/**
+ * 这个模型用哪个旋钮：'subscription'（users.moderation_level）| 'api'
+ * （users.moderation_level_api）。不认识的名字 / 没给名字一律算订阅 ——
+ * 拼错只能落到管站主账号的那个旋钮，不能落到更松的一边。
+ */
+export function moderationKnobFor(appModel) {
+  return resolveModelRoute(appModel).mode === 'api' ? 'api' : 'subscription';
+}
+
+/**
+ * 某用户在某模型上的实际生效档。
+ * @param {object|null} user
+ * @param {string|null} [appModel]  会话/这条消息会落在哪个模型上；不给 = 订阅旋钮
+ */
+export function levelFor(user, appModel = null) {
+  return levelForKnob(user, moderationKnobFor(appModel));
+}
+
+/** 直接按旋钮取（admin 列表展示两枚章用）。 */
+export function levelForKnob(user, knob) {
   if (!user) return 'off';
-  if (LEVELS.includes(user.moderationLevel)) return user.moderationLevel;
+  const explicit = knob === 'api' ? user.moderationLevelApi : user.moderationLevel;
+  if (LEVELS.includes(explicit)) return explicit;
   if (user.role === 'admin') return 'off';
   return user.lifetimeCostLimitUsd != null ? 'strict' : 'loose';   // 试用号严，正式号宽
 }
 
-export function shouldModerate(user) {
+export function shouldModerate(user, appModel = null) {
   if (process.env.NODESIGN_MODERATION === 'off' || !process.env.OPENAI_API_KEY) return false;
-  return levelFor(user) !== 'off';
+  return levelFor(user, appModel) !== 'off';
 }
 
 // 两档共用的开场与收尾；差别在中间那段拦什么、放什么。

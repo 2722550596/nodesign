@@ -1,0 +1,55 @@
+/**
+ * 外审档两旋钮（2026-08-20）：订阅模型看 moderationLevel，本地/中转（API 行）看
+ * moderationLevelApi，默认档推导两边相同。钉住的是"按模型通路取旋钮"这件事 ——
+ * 站主给朋友开 qwen 无审查不该顺带放开 Sonnet，反之亦然。
+ */
+import { describe, it, expect } from 'vitest';
+import { levelFor, moderationKnobFor } from './moderation.js';
+
+const SUB = 'claude-sonnet-5[1m]';
+const QWEN = 'qwen3.8-27b';
+const GEMINI = 'gemini-3.1-pro';
+const user = (o = {}) => ({ id: 'u1', role: 'user', lifetimeCostLimitUsd: null, moderationLevel: null, moderationLevelApi: null, ...o });
+
+describe('moderationKnobFor', () => {
+  it('订阅行 / 未知名 / 空 → subscription；API 行 → api', () => {
+    expect(moderationKnobFor(SUB)).toBe('subscription');
+    expect(moderationKnobFor('claude-opus-5')).toBe('subscription');
+    expect(moderationKnobFor('typo-model')).toBe('subscription');
+    expect(moderationKnobFor(null)).toBe('subscription');
+    expect(moderationKnobFor(QWEN)).toBe('api');
+    expect(moderationKnobFor(GEMINI)).toBe('api');
+  });
+});
+
+describe('levelFor(user, appModel)', () => {
+  it('订阅旋钮 off、API 旋钮没设：Sonnet 关审，qwen/gemini 走默认 loose', () => {
+    const u = user({ moderationLevel: 'off' });
+    expect(levelFor(u, SUB)).toBe('off');
+    expect(levelFor(u, QWEN)).toBe('loose');
+    expect(levelFor(u, GEMINI)).toBe('loose');
+  });
+  it('API 旋钮 off、订阅没设：qwen/gemini 关审，Sonnet 仍 loose —— 给朋友开 qwen 不放开 Sonnet', () => {
+    const u = user({ moderationLevelApi: 'off' });
+    expect(levelFor(u, QWEN)).toBe('off');
+    expect(levelFor(u, GEMINI)).toBe('off');
+    expect(levelFor(u, SUB)).toBe('loose');
+  });
+  it('两边都显式设、互不牵连', () => {
+    const u = user({ moderationLevel: 'strict', moderationLevelApi: 'off' });
+    expect(levelFor(u, SUB)).toBe('strict');
+    expect(levelFor(u, QWEN)).toBe('off');
+  });
+  it('默认档推导两边相同：admin off / 试用 strict / 正式 loose', () => {
+    for (const m of [SUB, QWEN]) {
+      expect(levelFor(user({ role: 'admin' }), m)).toBe('off');
+      expect(levelFor(user({ lifetimeCostLimitUsd: 5 }), m)).toBe('strict');
+      expect(levelFor(user(), m)).toBe('loose');
+    }
+  });
+  it('不给模型 = 订阅旋钮（老签名兼容）；拼错的档位值当没设', () => {
+    expect(levelFor(user({ moderationLevel: 'off', moderationLevelApi: 'strict' }))).toBe('off');
+    expect(levelFor(user({ moderationLevelApi: 'nope' }), QWEN)).toBe('loose');
+    expect(levelFor(null, QWEN)).toBe('off');
+  });
+});

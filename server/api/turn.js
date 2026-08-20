@@ -43,13 +43,11 @@ import { readAssetsSummary } from '../projects/assets-summary.js';
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
-  cancelRun, provideAnswer, getQuery, provideElicitation,
-  hasActiveQuerySession, pushUserMessage, getQuerySession, closeQuerySession,
-  getQueueDepth, setSessionPermissionMode, getSessionIdByRunId,
-  providePlanRequestDecision,
-  providePlanApprovalDecision,
+  cancelRun, provideAnswer, getQuery, provideElicitation, hasActiveQuerySession, getQuerySession, closeQuerySession, setSessionPermissionMode, getSessionIdByRunId, providePlanRequestDecision, providePlanApprovalDecision,
 } from '../engine/runs/active-runs.js';
-import { applySessionModel } from '../engine/agent/session-model.js';
+import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
+import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
+import { lruGet, lruPut, inflightTurns, INFLIGHT_RETENTION_MS } from './turn-inflight.js';
 import { selectableModelsFor } from '../engine/agent/model-context.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
@@ -62,45 +60,6 @@ import { platform } from '../runtime/platform.js';
 import { composeUserMessage } from './turn-compose.js';
 
 const router = express.Router();
-
-/**
- * Phase A.6（2026-05-07）：requestId LRU dedup —— 弱网下用户重发 / fetch retry
- * 同 requestId 直接返已存在的 { runId, sessionId }，不重复 createRun / startNewRunSession。
- *
- * 数据：Map<requestId, { pid, runId, sessionId, ts }>，简单 5 分钟 TTL + 1024 容量上限
- * （超过先驱逐最旧）。同进程内存，重启清空（此时活 run 也都死了，一致）。
- *
- * race 修复（2026-05-08）：原版 lruGet → createRun → lruPut 之间无并发保护。两个
- * 并发 POST 同 requestId 都通过 lruGet 返 null → 各自 createRun → 双 run 同 sid
- * 推进同 inputQueue → agent 收两条同 chat 处理两轮（双倍 token / canvas 双写）。
- *
- * 加 inflightTurns Map<requestId, Promise<result>>：第一 POST 进来注册 in-flight
- * Promise；第二 POST 看到 in-flight 就 await 拿第一个的 result 返 deduped。
- * 第一个 POST 拿到 res 写完 lruPut + resolveInflight，5s 后 delete in-flight（让
- * LRU 接管后续幂等查询）。
- */
-const REQUEST_LRU_TTL_MS = 5 * 60 * 1000;
-const REQUEST_LRU_MAX = 1024;
-const requestLru = new Map();
-const inflightTurns = new Map();  // requestId → Promise<{ pid, runId, sessionId }>
-const INFLIGHT_RETENTION_MS = 5_000;
-function lruGet(requestId) {
-  const rec = requestLru.get(requestId);
-  if (!rec) return null;
-  if (Date.now() - rec.ts > REQUEST_LRU_TTL_MS) {
-    requestLru.delete(requestId);
-    return null;
-  }
-  return rec;
-}
-function lruPut(requestId, rec) {
-  if (requestLru.size >= REQUEST_LRU_MAX) {
-    // 驱逐最早（Map 保留插入顺序）
-    const firstKey = requestLru.keys().next().value;
-    if (firstKey) requestLru.delete(firstKey);
-  }
-  requestLru.set(requestId, { ...rec, ts: Date.now() });
-}
 
 /**
  * Emit run.permission_mode_changed —— 广播 SDK 实际 permissionMode 的变化。所有
@@ -245,8 +204,17 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 口径全在 lib/moderation.js。
     // 没有文字就没有可审的东西（附件本来就不审，见 lib/moderation.js）——
     // 拿空串去问分类器只是白花一次调用和 1 秒。
-    if (shouldModerate(req.user) && chatText.trim()) {
-      const verdict = await moderateText(chatText, levelFor(req.user));
+    //
+    // 08-20 起外审档按模型通路取旋钮（订阅 / 本地与中转各一个），所以这里要先知道
+    // 这条消息会落在哪个模型上：新会话带 body.model 就是它（白名单校验在下面那段，
+    // 这里只是读；非法名最终会 400），否则读该会话的 session-config（新会话没文件
+    // → 全局默认）。只读不写 —— 模型持久化仍在外审之后，拦下的消息不该改会话配置。
+    const requestedModelForGate = typeof req.body?.model === 'string' && req.body.model.trim()
+      ? req.body.model.trim() : null;
+    const turnModel = requestedModelForGate
+      || (await resolveSessionModel(getSessionMetaDir(project.id, sid))).model;
+    if (shouldModerate(req.user, turnModel) && chatText.trim()) {
+      const verdict = await moderateText(chatText, levelFor(req.user, turnModel));
       if (!verdict.ok) {
         const rec = recordViolation({
           userId: req.user.id, projectId: project.id,

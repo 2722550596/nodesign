@@ -64,6 +64,16 @@ if (!userCols.has('moderation_level')) {
   db.exec('ALTER TABLE users ADD COLUMN moderation_level TEXT');
   console.log('[users-store] users.moderation_level column added');
 }
+// 08-20 外审档按模型通路拆成两个旋钮：moderation_level 只管订阅模型（Sonnet/Opus，
+// 跑在站主账号上），moderation_level_api 管本地 qwen / 中转站那些走 ingress 的 API 行。
+// 站主要的是"给朋友开 qwen 无审查"不必顺带放开 Sonnet、"收紧 Sonnet"不必顺带收紧 qwen。
+// 迁移口径：已显式设过档位的号把现值**复制**进 API 旋钮 —— 迁移当天谁的行为都不变
+// （否则昨天为 qwen 设了 off 的朋友，今天 qwen 突然变 loose），之后站主按人调。
+if (!userCols.has('moderation_level_api')) {
+  db.exec('ALTER TABLE users ADD COLUMN moderation_level_api TEXT');
+  const n = db.prepare('UPDATE users SET moderation_level_api = moderation_level WHERE moderation_level IS NOT NULL').run().changes;
+  console.log(`[users-store] users.moderation_level_api column added (copied ${n} explicit level(s) from moderation_level)`);
+}
 // 本地产线（roll_film/paint_still）批准制：admin 天生有，其余账号站主点开才有
 if (!userCols.has('local_gen')) {
   db.exec('ALTER TABLE users ADD COLUMN local_gen INTEGER NOT NULL DEFAULT 0');
@@ -119,7 +129,8 @@ function rowToUser(row) {
     dailyCostLimitUsd: row.daily_cost_limit_usd ?? null,
     lifetimeCostLimitUsd: row.lifetime_cost_limit_usd ?? null,
     dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
-    moderationLevel: row.moderation_level ?? null,    // null = 跟随默认档
+    moderationLevel: row.moderation_level ?? null,    // 订阅模型的外审档；null = 跟随默认档
+    moderationLevelApi: row.moderation_level_api ?? null,  // 本地 qwen / 中转站的外审档；null = 跟随默认档
     allowLocalGen: !!row.local_gen,                   // 本地产线批准（admin 免批）
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
@@ -161,11 +172,12 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, localGen } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, moderationLevelApi, localGen } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
   if (moderationLevel !== undefined) { sets.push('moderation_level = ?'); args.push(moderationLevel ?? null); }
+  if (moderationLevelApi !== undefined) { sets.push('moderation_level_api = ?'); args.push(moderationLevelApi ?? null); }
   if (localGen !== undefined) { sets.push('local_gen = ?'); args.push(localGen ? 1 : 0); }
   if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
   if (lifetimeCostLimitUsd !== undefined) { sets.push('lifetime_cost_limit_usd = ?'); args.push(lifetimeCostLimitUsd ?? null); }
