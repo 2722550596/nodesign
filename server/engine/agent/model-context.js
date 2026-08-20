@@ -139,7 +139,11 @@ const MODELS = Object.freeze([
   // （改动前先确认它们还成立）：①订阅会话根本不进 ingress，WIRE_LOOKUP 只服务
   // API 会话；②repriceUsageDeltas 先看会话通路，订阅会话原样早退不 remap。
   {
-    id: 'qwen3.8-27b', window: 262_144,
+    // window 必须等于盒上 llama-server 启动日志里的 `n_ctx_slot`（每槽上下文），低了 SDK
+    // 在 auto-compact 之前先撞上游 400。08-20 起盒子是 RTX 5090 32G：OrcaRouter Q5_K_M +
+    // 视觉 + MTP 投机 + 1 槽 × 131072，再留 ~5G 给同卡的 ComfyUI（noobai）。换回 96G 盒子
+    // 就是 262_144 × 3 槽。盒上配置住 ops/qwen-box/（serve-prod.sh），两边要一起改。
+    id: 'qwen3.8-27b', window: 131_072,
     // gate 'localGen'：跟 roll_film / paint_still 同一套批准制（admin 免批）——
     // 它本来就跑在同一台本地盒子上，语义天然一致。盒子没开时它会 fail-loud 502，
     // 所以绝不能对没批准的账号露出来。
