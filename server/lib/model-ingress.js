@@ -37,6 +37,22 @@ import https from 'node:https';
 import sharp from 'sharp';
 import { resolveWireModel, resolveModelRoute, UPSTREAMS } from '../engine/agent/model-context.js';
 
+// ── 出站连接池 ──
+// ⛔ 08-20 生产真踩：本地盒子（authStyle 'none' = 环回 SSH 隧道）走 Node 默认
+// globalAgent，而它 **keepAlive 默认开着**。llama-server 几秒就关掉空闲连接，
+// 那个 FIN 要先穿过 SSH 隧道才到 Node —— 窗口里 Node 会从池子里挑一条**其实已经
+// 死了的 socket** 发请求，结果就是 `ECONNRESET: socket hang up` 刷屏（一分钟几百条），
+// 而盒子那头 `ss` 看到的连接数是 0（两边对同一条连接的死活认知不一致，是识别信号）。
+// 隧道内建连接本来就便宜（没有 TLS 握手），所以本地上游一律不复用连接。
+// 远端上游（中转站/HTTPS）保持 keep-alive：那边握手贵，且没有隧道拖慢 FIN。
+const AGENTS = new Map();
+function agentFor(wire, useHttps) {
+  if (wire.upstream.authStyle !== 'none') return undefined;   // 远端：用默认 globalAgent
+  const key = useHttps ? 'https' : 'http';
+  if (!AGENTS.has(key)) AGENTS.set(key, new (useHttps ? https : http).Agent({ keepAlive: false }));
+  return AGENTS.get(key);
+}
+
 let _instance = null;
 
 const PREFIX_RE = /^\/__nd\/([^/]+)(\/.*)$/;
@@ -239,6 +255,7 @@ async function handleRequest(req, res, bodyBuf) {
     path: joinPath(target.pathname, origPath),
     method: 'POST',
     headers,
+    agent: agentFor(wire, useHttps),
   }, (proxyRes) => {
     // count_tokens 404 → 降级本地估算并记住这个上游没有该端点
     if (isCountTokens && (proxyRes.statusCode === 404 || proxyRes.statusCode === 405)) {
