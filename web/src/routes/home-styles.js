@@ -73,6 +73,11 @@ export const CSS = `
   background-color: var(--paper); background-image: var(--grain);
   box-shadow: ${PAPER_SHADOW.mid};
   transform: rotate(-0.35deg);
+  /* 2026-08-20：模型下拉被下面的项目卡盖住。transform 让这张纸自成一个层叠上下文，
+     ModelPicker 菜单的 zIndex:60 只在纸内部有效；而项目卡的图钉/菜单（.pin/.last/
+     .more/.ndd-menu，z 6~9）直接参与 .ndd-in 的层叠、DOM 又在纸后面，于是压过来。
+     给纸一个高于 9 的层级 —— 纸和卡片在空间上不重叠，只有菜单弹出来时才见分晓。 */
+  z-index: 10;
   transition: box-shadow 0.2s; }
 /* 笔记本红边线：字写在线右边，跟随便贴一张白纸区分开 */
 .ndd-pad::before { content: ''; position: absolute; left: 40px; top: 0; bottom: 0; width: 1px;
