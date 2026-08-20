@@ -17,27 +17,33 @@ import {
 } from './model-context.js';
 
 describe('派生导出（旧签名不变）', () => {
-  it('SELECTABLE_MODELS 只暴露带 select 的行，API 模型不进 picker', () => {
+  it('SELECTABLE_MODELS 只暴露带 select 的行；没 select 的 API 行（kimi）不进 picker，带闸门的（qwen/gemini）进全量清单', () => {
     const ids = SELECTABLE_MODELS.map((m) => m.id);
     expect(ids).toContain('claude-sonnet-5[1m]');
     expect(ids).toContain('claude-opus-5[1m]');
-    expect(ids.some((id) => /gemini|kimi/i.test(id))).toBe(false);
+    expect(ids.some((id) => /kimi/i.test(id))).toBe(false);
+    expect(SELECTABLE_MODELS.find((m) => m.id === 'gemini-3.1-pro')?.gate).toBe('localGen');
     for (const m of SELECTABLE_MODELS) {
       expect(typeof m.label).toBe('string');
       expect(typeof m.desc).toBe('string');
     }
   });
 
-  it('闸门：本地 Qwen 只对 admin/获批账号露出，普通账号看不见', () => {
+  it('闸门：本地 Qwen 与中转 Gemini 只对 admin/获批账号露出，普通账号看不见', () => {
     const plain = selectableModelsFor({ role: 'user' }).map((m) => m.id);
     expect(plain).not.toContain('qwen3.8-27b');
+    expect(plain).not.toContain('gemini-3.1-pro');
     expect(plain).toContain('claude-sonnet-5[1m]');          // 无闸门的照常在
 
     for (const u of [{ role: 'admin' }, { role: 'user', allowLocalGen: true }]) {
-      expect(selectableModelsFor(u).map((m) => m.id)).toContain('qwen3.8-27b');
+      const ids = selectableModelsFor(u).map((m) => m.id);
+      expect(ids).toContain('qwen3.8-27b');
+      expect(ids).toContain('gemini-3.1-pro');
     }
     // 未登录 / 拿不到用户对象时按最严处理
-    expect(selectableModelsFor(null).map((m) => m.id)).not.toContain('qwen3.8-27b');
+    const anon = selectableModelsFor(null).map((m) => m.id);
+    expect(anon).not.toContain('qwen3.8-27b');
+    expect(anon).not.toContain('gemini-3.1-pro');
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {

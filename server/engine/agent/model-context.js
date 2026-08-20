@@ -164,13 +164,21 @@ const MODELS = Object.freeze([
   },
   {
     id: 'gemini-3.1-pro', window: 1_000_000,
+    // 08-20 暴露：跟 qwen 同一道 localGen 闸（admin 免批 + 获批账号），用户拍板"qwen 怎么接
+    // gemini 就怎么接"。中转站寿命不在自己手里、计量单位不明（见 memory），所以不对普通账号开。
+    select: { label: 'Gemini 3.1 Pro（中转）', desc: '1M 窗口 · 走中转站 API · 无缓存，长会话贵', gate: 'localGen' },
     api: {
       upstream: 'lament', wireModel: '中转-gemini-3.1-pro-preview',
       // sonnet-4-6[1m] 对 Gemini 3.1 Pro 是诚实的（真 1M 窗口）。订阅路的真
       // claude-sonnet-4-6 不经入口（无 api 字段），不撞。
       sdkAlias: 'claude-sonnet-4-6[1m]',
       fastModel: 'gemini-3.1-pro',
-      thinking: 'strip',           // Gemini thinking 关不掉，参数过桥行为未知 —— 出口删掉让上游自决
+      // 'strip' = 出口删掉 thinking 字段让上游自决。08-20 探针（同一题各打两轮）：
+      // enabled 2k / 32k / adaptive / output_config.effort=high 在这个中转站上**全无可观测
+      // 效果** —— 不 400、不回 thinking 块、output_tokens 是噪声（none 两轮 1417 vs 63）。
+      // Gemini 3.1 Pro 自身默认 thinking_level=high，所以"默认高"就是 strip；这里没有
+      // 可调的旋钮，别为它造一个。
+      thinking: 'strip',
       liftImages: true,            // 08-19 探针：桥把 tool_result 图转成文本，提升到顶层修法已验证
       // 官方牌价（>200k 档 $4/$18 未分档 —— 单轮跨档的少数请求会低估，先接受）。
       // ⚠️ 中转站自己的计量单位不明，这里的 USD 是配额/展示用的近似。
