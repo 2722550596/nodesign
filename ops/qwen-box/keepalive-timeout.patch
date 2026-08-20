@@ -1,0 +1,16 @@
+diff --git a/tools/server/server-http.cpp b/tools/server/server-http.cpp
+index 2ec137a..6b3efb3 100644
+--- a/tools/server/server-http.cpp
++++ b/tools/server/server-http.cpp
+@@ -161,6 +161,11 @@ bool server_http_context::init(const common_params & params) {
+     // set timeouts and change hostname and port
+     srv->set_read_timeout (params.timeout_read);
+     srv->set_write_timeout(params.timeout_write);
++    // [nodesign 08-20] httplib 默认只给「连上后等首字节」5 秒（CPPHTTPLIB_KEEPALIVE_TIMEOUT_SECOND=5，
++    // llama.cpp 没改也没暴露成参数）。经 SSH 隧道（上行 ~200KB/s、RTT ~400ms）并发上传多个 100KB+ 的
++    // 请求 body 时，排后面的首字节晚于 5 秒就被关连接 → 客户端看到 socket hang up。放宽到 60 秒；
++    // 这个值同时也是 keep-alive 连接的空闲上限，放宽无害。
++    srv->set_keep_alive_timeout(60);
+     srv->set_socket_options([reuse_port = params.reuse_port](const socket_t sock) {
+         httplib::set_socket_opt(sock, SOL_SOCKET, SO_REUSEADDR, 1);
+         if (reuse_port) {

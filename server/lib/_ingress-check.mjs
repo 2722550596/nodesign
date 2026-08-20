@@ -181,6 +181,44 @@ if (process.argv.includes('--sdk')) {
   }
 }
 
+// ── 6. 本地盒子的 slot 数 vs Nodesign 的并发闸（两边必须一样多）──
+//
+// 这条契约横跨进程边界：`-np` 写在盒上的 ops/qwen-box/serve*.sh 里（换机重建），
+// 闸写在 .env。**注释拦不住任何人**，这里是唯一能自动发现两边走偏的地方。
+// ⚠️ 08-20 起 5090 32G 盒子是 -np 1 / 闸 3 —— 这项红是**已知**的（按模型 maxConcurrent ⏸ 未拍板），
+// 别当成回归；换回 96G 盒子（-np 3）它就该绿。
+//   slot 多了 → 白占显存（每路一份满窗 KV，约 13G）
+//   slot 少了 → 请求堵在 llama-server 里，Nodesign 以为还有余量，
+//               用户看到无解释的慢而不是那句诚实的「现在有点挤」
+// 盒子没开机时跳过（这台机器是手动开关的，连不上不算失败）。
+{
+  const { UPSTREAMS } = await import('../engine/agent/model-context.js');
+  const cap = Number(process.env.NODESIGN_MAX_CONCURRENT_RUNS) || 3;
+  // ⚠️ 只有**连不上**才算"盒子关机"可以跳过。超时/500 一律当失败报出来 ——
+  // 第一版把两者混成一个 null，结果是：llama-server 满负荷时 /slots 回得慢，
+  // 检查静默跳过，而那正是最该看它的时候。**静默跳过不等于通过。**
+  // 超时给足 15 秒（实测空闲秒回，三路满载时会明显变慢）。
+  let slots = null;
+  let reason = '';
+  try {
+    const r = await fetch(`${UPSTREAMS.qwenLocal.baseUrl}/slots`, { signal: AbortSignal.timeout(15000) });
+    if (r.ok) slots = (await r.json()).length;
+    else reason = `HTTP ${r.status}`;
+  } catch (e) {
+    // ECONNREFUSED = 盒子/隧道没起来；其余（超时、reset）是真异常
+    reason = /ECONNREFUSED|ENOTFOUND/.test(e?.cause?.code || e?.message || '') ? 'OFF' : (e?.name || String(e));
+  }
+  if (reason === 'OFF') {
+    console.log(`— 6 本地盒子 slot 数 vs 并发闸 — 跳过（盒子没开机 / 隧道没起，${UPSTREAMS.qwenLocal.baseUrl}）`);
+  } else if (slots === null) {
+    check('6 本地盒子 slot 数 == NODESIGN_MAX_CONCURRENT_RUNS', false,
+      `盒子在线但 /slots 没答：${reason}（这不是"跳过"，是真异常）`);
+  } else {
+    check('6 本地盒子 slot 数 == NODESIGN_MAX_CONCURRENT_RUNS', slots === cap,
+      `llama-server -np ${slots} / 闸 ${cap}` + (slots === cap ? '' : ' ← 改一边就要改另一边'));
+  }
+}
+
 await stopIngress();
 const bad = results.filter((r) => !r.ok);
 console.log(`\n===== ingress-check: ${results.length - bad.length}/${results.length} 通过 =====`);

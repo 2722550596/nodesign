@@ -158,6 +158,15 @@ const MODELS = Object.freeze([
     // 这个仓库为「同一件东西有多个实例」付过最贵的学费。以后再接一个无审查模型
     // 只加这一个字段，一行逻辑都不用动。
     uncensored: true,
+    // ⭐ **盒上 llama-server 的 `-np`（slot 数）应当等于 `NODESIGN_MAX_CONCURRENT_RUNS`。**
+    //   slot 比闸多 → 白占显存（每路一份满窗 KV）
+    //   slot 比闸少 → 请求在 llama-server 里排队，而 Nodesign 以为自己还有余量，
+    //                 用户看到的是无解释的慢，不是「现在有点挤」那句诚实的 BUSY
+    // 08-19 的 96G 盒子两边都是 3（巧合不是设计）；**08-20 起的 5090 32G 盒子是 `-np 1`
+    // 而闸仍是 3 —— 已知走偏**，出路是按模型给 maxConcurrent（⏸ 未拍板），在那之前
+    // 第 2 个 qwen 请求就是在盒上排队。盒上脚本在 ops/qwen-box/（serve.sh=96G，
+    // serve-prod.sh=5090），改任何一边都要改另一边；这条契约没法用 lint 拦 ——
+    // `server/lib/_ingress-check.mjs` 第 6 项会真查 /slots 比对，换机后跑一次。
     api: {
       upstream: 'qwenLocal', wireModel: 'qwen3.8-27b',
       sdkAlias: 'claude-opus-5[1m]',
