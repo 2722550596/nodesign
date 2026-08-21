@@ -89,6 +89,7 @@ import {
   makePostToolUseStyleAnchorNudge,
 } from './hooks/post-guidance.js';
 import { makePostToolUseCanvasValidationHandler } from './hooks/canvas-validate.js';
+import { makePostToolUseSiteValidationHandler } from './hooks/site-validate.js';
 import { makePostToolUseFailureHandler } from './hooks/failure.js';
 import { makePostToolUseSubagentReportRecovery } from './hooks/post-subagent-report.js';
 
@@ -299,7 +300,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       // 跨 turn 持续延期下一轮（spec.json schema 扩展）。
       {
         matcher: 'Edit|Write',
-        hooks: [makePostToolUseCanvasValidationHandler({ ctx, workspaceRoot })],
+        hooks: [
+          makePostToolUseCanvasValidationHandler({ ctx, workspaceRoot }),
+          // 站点页两条硬规则（viewport / 根路径）—— 08-21 起手模板删了，规则改靠 lint 传播
+          makePostToolUseSiteValidationHandler({ workspaceRoot }),
+        ],
       },
       // record_decision 一般**不注** additionalContext（"继续主任务"那种跟 SDK
       // preset 重复，agent 自己懂）。唯一例外是"锚定风格"这一笔：那是项目级

@@ -27,8 +27,12 @@
 导出、发布看的**全是产物根** —— 改完源必须重新构建，否则用户看到的还是旧的。
 `node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
 
-手写起手：`mkdir 观察日志 && cp site.template.html 观察日志/index.html &&
-cp style.template.css 观察日志/style.css`，然后改（文件夹名换成真站名）。
+手写起手：`mkdir 观察日志`，然后 Write `观察日志/index.html` 和 `观察日志/style.css`
+（文件夹名换成真站名；没有起手模板，骨架从需求推、样式从风格名推）。
+写页面的两条硬规则 —— 违反预览就出错，系统在你每次写站点页后会 lint：
+- `<head>` 里必须有 `<meta name="viewport" content="width=device-width, initial-scale=1">`
+  （缺了手机端按 980px 虚拟视口渲染，媒体查询看着"没生效"）
+- 站内链接一律**相对路径**（下面「路径铁律」）
 
 ## 路径铁律
 
