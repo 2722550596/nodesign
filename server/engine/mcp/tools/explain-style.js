@@ -27,7 +27,8 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, requireBrowsable } from '../../../lib/artifact-target.js';
-import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
+import { degradedNote, SITE_DEVICE_W } from './helpers/perception-page.js';
+import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 
 /** 简写 → 它能设置的长手属性（只列常踩的那些，够覆盖真实事故） */
 const SHORTHAND_OF = {
@@ -83,25 +84,23 @@ Note it reports the FIRST element matching the selector.`,
       path: z.string().optional().describe(CANVAS_PATH_DESC),
       device: z.enum(['desktop', 'tablet', 'mobile']).optional()
         .describe('Viewport width, so media queries resolve the way they do at that breakpoint (default desktop 1440).'),
+      live: z.boolean().optional().describe(LIVE_PARAM_DESC),
     },
-    async ({ selector, property, path: relPath, device }) => {
+    async ({ selector, property, path: relPath, device, live }) => {
       const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target) return asText('No page found.', true);
       const guard = requireBrowsable(target);
       if (guard) return asText(guard, true);
 
-      const W = { desktop: 1440, tablet: 834, mobile: 390 }[device || 'desktop'];
+      const W = SITE_DEVICE_W[device || 'desktop'];
       const prop = property.trim().toLowerCase();
 
-      let browser;
+      let acq;
       try {
-        browser = await launchPerceptionBrowser();
-        const opened = await openArtifactPage(browser, {
-          projectId, workspaceRoot, absPath: target.absPath, viewport: { width: W, height: 900 },
-        });
-        await opened.goto();
-        const page = opened.page;
+        acq = await acquireArtifactPage({ projectId, workspaceRoot, target, live, viewport: { width: W, height: 900 } });
+        const page = acq.page;
+        const opened = acq;
 
         const computed = await page.evaluate(([sel, p]) => {
           const el = document.querySelector(sel);
@@ -209,7 +208,8 @@ Note it reports the FIRST element matching the selector.`,
         const degraded = degradedNote(opened);   // 契约：note 非空必须写进返回文本
         const lines = [
           ...(degraded ? [degraded, ''] : []),
-          `${selector} → ${prop} computes to "${computed}"  (viewport ${W}px)`,
+          ...(acq.liveNote ? [acq.liveNote, ''] : []),
+          `${selector} → ${prop} computes to "${computed}"  (viewport ${acq.live ? acq.viewport.width : W}px)`,
           '',
           'Declarations that matched, weakest first:',
         ];
@@ -230,7 +230,7 @@ Note it reports the FIRST element matching the selector.`,
       } catch (err) {
         return asText(`explain_style failed: ${err?.message || String(err)}`, true);
       } finally {
-        await browser?.close().catch(() => {});
+        await acq?.release?.();   // 一次性：关浏览器；live：松会话锁
       }
     },
   );

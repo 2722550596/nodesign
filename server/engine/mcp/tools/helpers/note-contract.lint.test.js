@@ -43,7 +43,9 @@ describe('openArtifactPage 的 note 契约', () => {
       const src = readFileSync(file, 'utf8');
       // 定义它的那个文件自己不算
       if (file.endsWith(path.join('helpers', 'perception-page.js'))) continue;
-      if (!/\bopenArtifactPage\s*\(/.test(src)) continue;
+      if (file.endsWith(path.join('helpers', 'acquire-page.js'))) continue;   // 它就是出口本身，note 原样透传
+      // 08-21 起老工具改走 acquireArtifactPage（live / 一次性同一个出口），契约一样：退化要说
+      if (!/\b(openArtifactPage|acquireArtifactPage)\s*\(/.test(src)) continue;
       const handles = /degradedNote|\.note\b|viaHttp/.test(src);
       if (!handles) offenders.push(path.relative(ROOT, file));
     }

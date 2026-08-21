@@ -17,7 +17,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
+import { degradedNote } from './helpers/perception-page.js';
+import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
@@ -32,7 +33,7 @@ const MAX_RESULTS = 50;
 export function makeQueryElementsTool({ workspaceRoot, projectId, sessionId, ctx: _ctx }) {
   return tool(
     'query_elements',
-    `Query elements in canvas.html via CSS selector. Returns a list of
+    `Query elements in your artifact page (site page / deck) via CSS selector. Returns a list of
 matched elements with { anchor, tag, text, bbox, dataAttrs }.
 
 The anchor object (dataId / path / textHint / bbox) is the same schema used
@@ -67,8 +68,9 @@ never HTML entities ("&quot;" reaches the selector literally and breaks it).`,
         .optional()
         .describe('Optional: scope query to a specific page (prepends section[data-page="N"] to selector)'),
       path: z.string().optional().describe(CANVAS_PATH_DESC),
+      live: z.boolean().optional().describe(LIVE_PARAM_DESC),
     },
-    async ({ selector, page: pageIndex, path: relPath }) => {
+    async ({ selector, page: pageIndex, path: relPath, live }) => {
       if (!workspaceRoot) {
         return {
           content: [{ type: 'text', text: 'No workspace bound; cannot query.' }],
@@ -97,16 +99,12 @@ never HTML entities ("&quot;" reaches the selector literally and breaks it).`,
         ? `section[data-page="${pageIndex}"] ${selector}`
         : selector;
 
-      let browser;
+      let acq;
       try {
-        browser = await launchPerceptionBrowser();
-        // 走 http（与用户预览同源），不再 file://；理由见 helpers/perception-page.js
-        const opened = await openArtifactPage(browser, {
-          projectId, workspaceRoot, absPath: canvasPath,
-          viewport: { width: dims.width, height: dims.height },
-        });
-        const page = opened.page;
-        await opened.goto();
+        // 页面从统一口拿（helpers/acquire-page.js）：live:true = 会话里现在这一页；否则新开走 http
+        acq = await acquireArtifactPage({ projectId, workspaceRoot, target, live, viewport: { width: dims.width, height: dims.height } });
+        const page = acq.page;
+        const opened = acq;
 
         const result = await page.evaluate(({ sel, max }) => {
           const els = Array.from(document.querySelectorAll(sel));
@@ -180,7 +178,7 @@ never HTML entities ("&quot;" reaches the selector literally and breaks it).`,
         return {
           content: [{
             type: 'text',
-            text: `${degraded ? `${degraded}\n\n` : ''}Matched ${result.total} element(s)${truncatedNote}:`
+            text: `${degraded ? `${degraded}\n\n` : ''}${acq.liveNote ? `${acq.liveNote}\n\n` : ''}Matched ${result.total} element(s)${truncatedNote}:`
               + `\n\n${JSON.stringify(result.items, null, 2)}`,
           }],
         };
@@ -190,9 +188,7 @@ never HTML entities ("&quot;" reaches the selector literally and breaks it).`,
           isError: true,
         };
       } finally {
-        if (browser) {
-          try { await browser.close(); } catch { /* ignore */ }
-        }
+        await acq?.release?.();   // 一次性：关浏览器；live：松会话锁
       }
     },
   );

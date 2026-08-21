@@ -16,7 +16,8 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
+import { degradedNote } from './helpers/perception-page.js';
+import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
@@ -41,7 +42,7 @@ export function makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId,
   return tool(
     'get_computed_styles',
     `Get the actual rendered computed styles for elements matching a CSS
-selector in canvas.html. Returns the post-CSS-cascade values (px / rgb()
+selector in your artifact page (site page / deck). Returns the post-CSS-cascade values (px / rgb()
 form), not raw stylesheet declarations.
 
 Use when:
@@ -66,8 +67,9 @@ Returns up to 30 elements.`,
         .optional()
         .describe('Optional: scope to a specific page (prepends section[data-page="N"])'),
       path: z.string().optional().describe(CANVAS_PATH_DESC),
+      live: z.boolean().optional().describe(LIVE_PARAM_DESC),
     },
-    async ({ selector, props, page: pageIndex, path: relPath }) => {
+    async ({ selector, props, page: pageIndex, path: relPath, live }) => {
       if (!workspaceRoot) {
         return {
           content: [{ type: 'text', text: 'No workspace bound; cannot read computed styles.' }],
@@ -97,16 +99,12 @@ Returns up to 30 elements.`,
         : selector;
       const finalProps = (Array.isArray(props) && props.length > 0) ? props : DEFAULT_PROPS;
 
-      let browser;
+      let acq;
       try {
-        browser = await launchPerceptionBrowser();
-        // 走 http（与用户预览同源），不再 file://；理由见 helpers/perception-page.js
-        const opened = await openArtifactPage(browser, {
-          projectId, workspaceRoot, absPath: canvasPath,
-          viewport: { width: dims.width, height: dims.height },
-        });
-        const page = opened.page;
-        await opened.goto();
+        // 页面从统一口拿（helpers/acquire-page.js）：live:true = 会话里现在这一页；否则新开走 http
+        acq = await acquireArtifactPage({ projectId, workspaceRoot, target, live, viewport: { width: dims.width, height: dims.height } });
+        const page = acq.page;
+        const opened = acq;
 
         const result = await page.evaluate(({ sel, p, max }) => {
           const els = Array.from(document.querySelectorAll(sel));
@@ -149,7 +147,7 @@ Returns up to 30 elements.`,
         return {
           content: [{
             type: 'text',
-            text: `${degraded ? `${degraded}\n\n` : ''}Computed styles for ${result.total} element(s)${truncatedNote}:`
+            text: `${degraded ? `${degraded}\n\n` : ''}${acq.liveNote ? `${acq.liveNote}\n\n` : ''}Computed styles for ${result.total} element(s)${truncatedNote}:`
               + `\n\n${JSON.stringify(result.items, null, 2)}`,
           }],
         };
@@ -159,9 +157,7 @@ Returns up to 30 elements.`,
           isError: true,
         };
       } finally {
-        if (browser) {
-          try { await browser.close(); } catch { /* ignore */ }
-        }
+        await acq?.release?.();   // 一次性：关浏览器；live：松会话锁
       }
     },
   );

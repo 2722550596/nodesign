@@ -36,7 +36,8 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';
 import { can } from '../../../lib/kinds/index.js';
 import { screenshotDocx } from './screenshot-docx.js';
-import { openArtifactPage, launchPerceptionBrowser } from './helpers/perception-page.js';
+import { SITE_DEVICE_W } from './helpers/perception-page.js';
+import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 import { normalizeShot, detectPaintTransform, attachPageDiagnostics, runWaitFor, runBeforeShot } from './helpers/shot-pipeline.js';
 import { recordMotion, pickNearestFrames, composeSheet, encodeWebm, motionCaptionLines } from './helpers/motion-lab.js';
 
@@ -49,17 +50,18 @@ const RASTER_SCALE = 0.6;
  * @param {string} deps.workspaceRoot
  * @param {import('../../agent/context.js').AgentContext} [deps.ctx]
  */
-/** 站点断点档位（跟前端 web/src/lib/board-geometry.js 的 SITE_VIEWPORTS 对齐）*/
-const SITE_DEVICE_W = { desktop: 1440, tablet: 834, mobile: 390 };
 
 export function makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx }) {
   return tool(
     'screenshot_canvas',
-    `Take a screenshot of the current canvas.html in this workspace and return it
-as an image content block. Use this to visually inspect the design you wrote
-— check spacing, contrast, hierarchy, layout, alignment.
+    `Take a screenshot of the artifact you are working on — a site page
+(<site>/index.html and its other pages, with their style.css), a deck (.html),
+or a .docx (rendered to page images) — and return it as an image. Use this to
+visually inspect what you wrote: spacing, contrast, hierarchy, layout, alignment.
 
-Works for both artifact kinds; the tool detects which one you are on.
+The tool detects the artifact kind from the path. Each call is a FRESH load
+(reproducible). To look at a page in its current interactive state (menus open,
+game mid-play) use live:true against the artifact session (artifact_open).
 
 DECK — default viewport = the deck-aspect declared on canvas wrap (16:9 → 1920×1080,
 9:16 → 1080×1920, 16:10 → 1920×1200, 4:3 → 1440×1080). Target one page with pageIndex.
@@ -117,13 +119,13 @@ For NUMERIC motion data (exact positions/rotations per frame, overshoot %, settl
 time, hard-cut detection) use the trace_motion tool instead — ToolSearch it.
 
 Use this tool when:
-- You finished writing or editing canvas.html and want to verify it looks right
+- You finished writing or editing a page / deck and want to verify it looks right
 - The user asks "what does it look like" or "show me the result"
 - You suspect a layout bug and want to see the rendered output
 - You want a closeup of one specific page or element (use pageIndex / selector)
 
 Do NOT use this tool when:
-- canvas.html doesn't exist yet (write it first)
+- the file doesn't exist yet (write it first)
 - You haven't actually changed the design since the last screenshot`,
     {
       viewport: z
@@ -204,8 +206,9 @@ Do NOT use this tool when:
         .string()
         .optional()
         .describe(CANVAS_PATH_DESC),
+      live: z.boolean().optional().describe(LIVE_PARAM_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, frames, trigger, click, saveVideo, path: relPath }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, frames, trigger, click, saveVideo, path: relPath, live }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -255,37 +258,27 @@ Do NOT use this tool when:
       // scrollTo 与 fullPage 互斥：前者的语义就是"真的滚，按视口抓"
       const fp = scrollTo != null ? false : (fullPage !== undefined ? fullPage === true : isSite);
 
-      let browser;
+      let acq;
       try {
-        // 动态 import：playwright 启动慢，模块顶部 import 会拖累其他工具
-        const { chromium } = await import('playwright');
-        browser = await launchPerceptionBrowser();
-        // 位图缩放（2026-07-28 上下文瘦身）：布局仍按 deck 逻辑尺寸排（1920 宽），
-        // 但光栅按 RASTER_SCALE 出图。vision token 按像素算（≈ w*h/750），
-        // 1920×1080 一张 ≈1.85k tokens，0.6 倍后 ≈1.0k，排版检查完全够看。
-        // 要读小字（版权行 / 数据标签）显式传 detail:'high' 走 1.0。
+        // 位图缩放（2026-07-28 上下文瘦身，08-21 按新视觉档重算）：布局仍按 deck 逻辑
+        // 尺寸排（1920 宽），光栅按 RASTER_SCALE 出图。高分辨率档 token = ⌈w/28⌉×⌈h/28⌉：
+        // 1920×1080 全幅 2691 token，×0.6 = 1152×648 → 1008 token，排版检查完全够看。
+        // 要读小字（版权行 / 数据标签）显式传 detail:'high' 走 1.0（现在真的是 1920×1080，
+        // 旧档会先缩到 1568）。
         const rasterScale = detail === 'high' ? 1 : RASTER_SCALE;
-        // ⭐ 走 http（跟用户预览同一条 artifact-file 通道、同源），不再 file://。
-        // 理由与退化情形见 helpers/perception-page.js —— file:// 下 fetch/XHR 死、
-        // localStorage 全任务共用 "null" 桶，自检看到的不是用户看到的东西。
-        // colorScheme 钉死 light 由 helper 统一负责（"截图必须可复现"的契约）。
-        const opened = await openArtifactPage(browser, {
-          projectId, workspaceRoot, absPath: canvasPath,
+        // ⭐ 页面从统一口拿（helpers/acquire-page.js）：live:true = 产物会话里现在这一页
+        // （状态保留、用完只松锁）；否则新开一只保真 chromium 走 http（跟用户预览同一条
+        // artifact-file 通道、同源），用完关 —— "截图必须可复现"的契约不破。
+        acq = await acquireArtifactPage({
+          projectId, workspaceRoot, target, live,
           viewport: vp, deviceScaleFactor: rasterScale,
         });
-        const page = opened.page;
+        const page = acq.page;
+        const opened = acq;   // degradedNote / viaHttp 的口径不变
+        // live 页的视口是会话的，不是本次参数的 —— 下面所有按 vp 算的东西都得按真视口
+        if (acq.live) { vp.width = acq.viewport.width; vp.height = acq.viewport.height; }
         const diag = attachPageDiagnostics(page, { console: consoleLevel });
-
-        // waitUntil: 'networkidle' 等所有外部 fetch（CDN 字体 / 图片）完成。
-        // networkidle 超时不再整个失败 —— 慢 CDN / 长轮询页面照样截，超时记进诊断。
-        let gotoNote = opened.note;
-        try {
-          await opened.goto();
-        } catch (err) {
-          if (!/Timeout/i.test(String(err?.message))) throw err;
-          gotoNote = [gotoNote, 'networkidle not reached in 15s (slow/looping network activity) — captured anyway']
-            .filter(Boolean).join(' | ');
-        }
+        let gotoNote = [opened.note, acq.gotoNote, acq.liveNote].filter(Boolean).join(' | ') || null;
 
         // 三段各自计时（waitFor / beforeShot / settle），caption 报用时 ——
         // agent 之前分不清 5 秒预算被哪一段吃掉，只能碰运气重截
@@ -494,6 +487,12 @@ Do NOT use this tool when:
             ? `site ${device || 'desktop'} ${vp.width}px, fullPage=${fp}`
             : `fullPage=${fp}`;
         }
+        // live 页的 DPR 是会话的（1），detail:'normal' 的 0.6 光栅在这里事后缩
+        if (acq.live && rasterScale < 1) {
+          const { default: sharp } = await import('sharp');
+          const m = await sharp(buf).metadata();
+          buf = await sharp(buf).resize({ width: Math.max(1, Math.round((m.width || 1) * rasterScale)) }).png().toBuffer();
+        }
 
         // emit 让前端可见 agent 在自检
         try {
@@ -580,9 +579,7 @@ Do NOT use this tool when:
           isError: true,
         };
       } finally {
-        if (browser) {
-          try { await browser.close(); } catch { /* ignore close errors */ }
-        }
+        await acq?.release?.();   // 一次性：关浏览器；live：松会话锁
       }
     },
   );

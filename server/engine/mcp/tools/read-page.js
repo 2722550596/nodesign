@@ -40,7 +40,7 @@ async function detectThumbnailHint(workspaceRoot, sectionHtml) {
   try {
     await fs.access(path.join(workspaceRoot, 'assets', 'generated', '.thumbnails'));
     return '[hint] preview iframe 加载的 <img src> 指向 thumbnail（assets/generated/.thumbnails/*.thumb.webp）；'
-      + '下面 outerHTML 中的 src 是真实 src（同 Read canvas.html），重生原图 N 秒内 thumbnail 自动更新。';
+      + '下面 outerHTML 中的 src 是真实 src（同 Read 源文件），重生原图 N 秒内 thumbnail 自动更新。';
   } catch {
     return '';
   }
@@ -118,14 +118,14 @@ function extractReactMountSources(raw, sectionHtml) {
 export function makeReadPageTool({ workspaceRoot, sessionId, ctx: _ctx }) {
   return tool(
     'read_page',
-    `Read a specific page (a single \`<section data-page="N">\`) from canvas.html.
+    `DECK ONLY. Read a specific page (a single \`<section data-page="N">\`) from the deck .html.
 
 Use this instead of Read+Grep+offset/limit when you want to inspect or
 reason about one specific page in detail. Returns the outerHTML of that
 section (including attributes and full subtree).
 
 **Hybrid mode**: when canvas.html has \`<script type="text/babel">\` blocks
-(the default Hybrid format from canvas.template.html), this tool also
+(the Hybrid format from the deck starter canvas.template.html), this tool also
 returns the corresponding React mount source code for any
 \`data-react-mount\` / \`id\` attribute it finds in the section — so you
 don't need to Read the whole babel script just to find the component
@@ -137,10 +137,11 @@ When to use:
 - Debugging why a specific page renders wrong
 
 When NOT to use:
-- Reading the whole deck structure → use Read on canvas.html with limit:50
+- Reading the whole deck structure → use Read on the deck .html with limit:50
   to see all section openings
 - Finding a specific element across pages → use Grep
-- canvas.html doesn't exist yet (creating from scratch) → use Write directly`,
+- the deck file doesn't exist yet (creating from scratch) → use Write directly
+- sites: pages are separate files — Read them, or list_pages for the site map`,
     {
       page: z
         .number()
@@ -171,7 +172,7 @@ When NOT to use:
             return {
               content: [{
                 type: 'text',
-                text: 'canvas.html does not exist yet. Use Write to create it first '
+                text: 'That deck file does not exist yet. Use Write to create it first '
                   + '(see SKILL.md for the section data-page="N" structure).',
               }],
               isError: true,

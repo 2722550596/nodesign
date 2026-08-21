@@ -52,6 +52,12 @@ const PORT = Number(process.env.PORT || 4001);
 
 /** 127.0.0.1 而不是 localhost：避免 ::1/127.0.0.1 双栈解析下 cookie 域对不上 */
 export const PERCEPTION_ORIGIN = `http://127.0.0.1:${PORT}`;
+/**
+ * 站点检查的真实设备宽（08-21 收成一份：以前 screenshot / explain_style / profile_scroll
+ * 各抄一份 {desktop:1440,…}）。站点没有"比例"，版面是宽度算出来的，所以档位给
+ * 真实设备宽、直接当 viewport、不缩放。
+ */
+export const SITE_DEVICE_W = { desktop: 1440, tablet: 834, mobile: 390 };
 
 /**
  * 开一个「保真」chromium。凡是要把页面变成给人或给模型看的像素的地方都走这里 ——

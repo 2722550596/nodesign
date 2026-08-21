@@ -6,15 +6,27 @@
  * 全部只依赖 playwright Page 与 sharp，不碰工作区寻址 —— 拆出来是搬家不是重写。
  */
 
-// ── 出图归一化（2026-07-29）──
-// 背景：fullPage 截长站点页时 PNG 会超 API 的图片上限（尺寸 8000px / 字节 5MB），
-// 整个工具调用直接报错。而且 API 侧本来就会把长边 >1568 或总像素 >~1.15MP 的图
-// 缩到这个规格再喂给模型 —— 本地先缩到同规格，模型看到的画面一个像素不差，
-// 但传输体积小一个量级、永远不会触发上限报错。编码统一 webp（API 支持，比 PNG 小得多）。
-const API_LONG_EDGE = 1568;
-const API_MAX_PIXELS = 1_150_000;
-/** 导出给"坐标 1:1"断言用（browse-computer：视口必须落在不缩放的范围内） */
+// ── 出图归一化（2026-07-29 立，2026-08-21 按新视觉档重算）──
+// 背景：fullPage 截长站点页时 PNG 会超 API 的图片上限，整个工具调用直接报错；
+// 本地先缩到模型真用得上的规格，传输体积小一个量级、永远不触发上限。编码统一 webp。
+//
+// 08-21 重算（会话模型 Opus 5 / Sonnet 5 / Opus 4.7+ 都是高分辨率档）：
+//   - 该档位 token = ⌈w/28⌉ × ⌈h/28⌉，上限 4784 token ≈ 3.75MP；长边上限 2576。
+//     旧值 1568 / 1.15MP 是 Opus 4.6 及以前的档，对现役模型是把画面白白缩掉 40% 长边。
+//   - 长边**定 2000 不定 2576**：一个请求里超过 20 张图时，每张都按"任一边 ≤2000px"
+//     严格限制（否则整个请求被拒）。agent 会话里截图攒到 20 张以上是常态，2000 是
+//     无论上下文里有多少张都安全的值。代价：极端长图（1440 宽的整页站）长边压到 2000，
+//     仍比旧的 1568 多 27%。
+//   - 非订阅通路（中转 gemini / 本地 qwen）在 model-ingress 另有 VISION_MAX_DIM=1568
+//     再压一道，这里放宽不影响它们。
+//   - 成本：1366×768 → 49×28=1372 token（旧算法 1399，几乎不变）；1920×1080 全幅
+//     → 69×39=2691（旧档会先缩到 1568×882 → 1792）；2000×1125 → 72×41=2952。
+const API_LONG_EDGE = 2000;
+const API_MAX_PIXELS = 3_750_000;
+/** 导出给"坐标 1:1"断言和产物会话的 frame 计算用（两处都要和这里同一套算法） */
 export const API_IMAGE_LIMITS = { longEdge: API_LONG_EDGE, maxPixels: API_MAX_PIXELS };
+/** 高分辨率档的 token 估算（⌈w/28⌉×⌈h/28⌉），给 caption 报成本用 */
+export const visionTokens = (w, h) => Math.ceil(w / 28) * Math.ceil(h / 28);
 
 // ── 渲染层保真（2026-08-07）──
 // 2026-08-05 事故：一次 screenshot_canvas 的位图整体呈暗色反转（深棕底米白字），
@@ -77,7 +89,7 @@ export async function normalizeShot(buf) {
     if (scale < 1) img = img.resize(tw, th);
     const out = await img.webp({ quality: 82 }).toBuffer();
     let note = scale < 1
-      ? `image normalized ${w}x${h} -> ${tw}x${th} webp ${(out.length / 1024).toFixed(0)}KB (matches what the vision API would downscale to anyway)`
+      ? `image normalized ${w}x${h} -> ${tw}x${th} webp ${(out.length / 1024).toFixed(0)}KB (vision limit: long edge ${API_LONG_EDGE}px / ~${(API_MAX_PIXELS / 1e6).toFixed(2)}MP; ≈${visionTokens(tw, th)} tokens)`
       : null;
     // 极端长图：整体缩完细节所剩无几，提示换姿势而不是硬看
     if (scale < 0.35 && Math.max(w, h) / Math.min(w, h) > 4) {

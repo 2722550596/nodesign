@@ -22,7 +22,8 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable } from '../../../lib/artifact-target.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
-import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
+import { degradedNote } from './helpers/perception-page.js';
+import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 import { runWaitFor, runBeforeShot, attachPageDiagnostics, normalizeShot } from './helpers/shot-pipeline.js';
 import { recordMotion, seriesReport, chartSvg, fmtNum, motionCaptionLines } from './helpers/motion-lab.js';
 import { promises as fs } from 'node:fs';
@@ -69,6 +70,7 @@ For SEEING the frames instead of measuring them, use screenshot_canvas with
 frames:[...] (filmstrip contact sheet).`,
     {
       path: z.string().optional().describe(CANVAS_PATH_DESC),
+      live: z.boolean().optional().describe(LIVE_PARAM_DESC),
       expressions: z
         .record(z.string(), z.string())
         .optional()
@@ -104,7 +106,7 @@ frames:[...] (filmstrip contact sheet).`,
         .optional()
         .describe('Browser viewport; defaults to the deck aspect (decks) or 1440x900 (sites).'),
     },
-    async ({ path: relPath, expressions, durationMs, trigger, click, waitFor, beforeShot, viewport }) => {
+    async ({ path: relPath, expressions, durationMs, trigger, click, waitFor, beforeShot, viewport, live }) => {
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
       const guard = requireBrowsable(target);
@@ -130,19 +132,13 @@ frames:[...] (filmstrip contact sheet).`,
       }
 
       const dur = durationMs ?? 2000;
-      let browser;
+      let acq;
       try {
-        browser = await launchPerceptionBrowser();
-        const opened = await openArtifactPage(browser, {
-          projectId, workspaceRoot, absPath: target.absPath, viewport: vp,
-        });
-        const page = opened.page;
+        acq = await acquireArtifactPage({ projectId, workspaceRoot, target, live, viewport: vp });
+        const page = acq.page;
+        const opened = acq;
+        if (acq.live) vp = acq.viewport;
         const diag = attachPageDiagnostics(page);
-        try {
-          await opened.goto();
-        } catch (err) {
-          if (!/Timeout/i.test(String(err?.message))) throw err;
-        }
 
         const waitForNote = waitFor ? await runWaitFor(page, waitFor) : null;
         const beforeShotNote = beforeShot ? await runBeforeShot(page, beforeShot) : null;
@@ -155,6 +151,8 @@ frames:[...] (filmstrip contact sheet).`,
         const lines = [];
         const degraded = degradedNote(opened);
         if (degraded) lines.push(degraded, '');
+        if (acq.liveNote) lines.push(acq.liveNote, '');
+        if (acq.gotoNote) lines.push(acq.gotoNote, '');
         lines.push(`trace_motion — ${target.relPath} @ ${vp.width}x${vp.height}, ${dur}ms after t=0${trigger || click ? '' : ' (no trigger — ambient recording)'}`);
 
         const seriesList = [];
@@ -200,7 +198,7 @@ frames:[...] (filmstrip contact sheet).`,
       } catch (err) {
         return { content: [{ type: 'text', text: `trace_motion failed: ${err?.message || String(err)}` }], isError: true };
       } finally {
-        await browser?.close().catch(() => {});
+        await acq?.release?.();   // 一次性：关浏览器；live：松会话锁
       }
     },
   );

@@ -46,6 +46,7 @@ import {
 } from './tools/browse.js';
 import { makeBrowserComputerTool } from './tools/browse-computer.js';
 import { makeBrowserFindTool, makeBrowserBatchTool } from './tools/browse-find-batch.js';
+import { makeArtifactOpenTool, makeArtifactComputerTool, makeArtifactFindTool, makeArtifactBatchTool } from './tools/artifact-session.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
@@ -118,6 +119,9 @@ const ALWAYS_LOAD_TOOLS = new Set([
   // browser_batch 的卖点"省掉模型往返"和 browser_find 的"ref 比像素稳"都在描述里，
   // 名字本身不卖；三件描述合计 ≈ 5.5k 字符，缓存里每轮增量约等于零。
   'browser_computer', 'browser_find', 'browser_batch',
+  // 08-21 产物会话四件：成品检查的交互半边（状态跨调用留着）。artifact_batch 的卖点
+  // "一趟跑完 + 结尾截图"和 live:true 的存在都只在描述里说，常驻。
+  'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_batch',
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
@@ -136,9 +140,21 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     makeBrowserComputerTool({ projectId, ctx }),
     makeBrowserFindTool({ projectId }),
   ];
+  // 五个能骑到产物会话上（live:true）的量具：先建一次，artifact_batch 拿同一批实例
+  const screenshotCanvas = makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx });
+  const queryElements = makeQueryElementsTool({ workspaceRoot, projectId, sessionId, ctx });
+  const getComputedStyles = makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx });
+  const explainStyle = makeExplainStyleTool({ workspaceRoot, projectId, sessionId });
+  const traceMotion = makeTraceMotionTool({ workspaceRoot, projectId, sessionId });
+  // 产物会话三件（engine/perception/session.js）：artifact_open / computer / find
+  const artifactSessionTools = [
+    makeArtifactOpenTool({ projectId, workspaceRoot, sessionId }),
+    makeArtifactComputerTool({ projectId }),
+    makeArtifactFindTool({ projectId }),
+  ];
   const tools = [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
-      makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx }),
+      screenshotCanvas,
 
       // screenshot_url — 外部 URL 截图（2026-07-29）。explorer 找视觉参考不再
       // 只能 WebFetch 文本转述；主 agent 也能直接看参考站。http/https only。
@@ -206,7 +222,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 感知层：list_pages / query_elements / get_computed_styles —— playwright
       // headless 跑出来真实 render 后的元数据，agent 不再盲改
       makeListPagesTool({ workspaceRoot, projectId, sessionId, ctx }),
-      makeQueryElementsTool({ workspaceRoot, projectId, sessionId, ctx }),
+      queryElements,
 
       // profile_scroll — 滚动性能量具（2026-08-18）。用户说"一顿一顿"时 agent
       // 以前手里零工具，只能自己起 http server 手搓 rAF 采样。不进常驻工具表
@@ -215,12 +231,12 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // explain_style — CSS 级联诊断（2026-08-18）。computed 只给结果不给原因，
       // 而 agent 手里没有 devtools 的 Styles 面板。同样走 deferred。
-      makeExplainStyleTool({ workspaceRoot, projectId, sessionId }),
+      explainStyle,
 
       // trace_motion — 动画数值示波器（2026-08-19，iss_mszv782a_toab）。缓动/过冲/
       // 硬切从"看静帧猜"变成逐帧采样量出来。deferred：名字自解释，且常驻的
       // screenshot_canvas 描述里点了名（胶片条管看、这个管量）。
-      makeTraceMotionTool({ workspaceRoot, projectId, sessionId }),
+      traceMotion,
 
       // ── 浏览通道（2026-08-18）：agent 真的会用浏览器 ──
       // 常驻一个 chromium（按项目键、带持久 profile），所以能点链接、翻子页、
@@ -236,9 +252,14 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       ...browseBatchable,
       // 一次往返跑一串（串行、遇错即停、结尾补截图）—— 省的是模型回合数
       makeBrowserBatchTool({ tools: browseBatchable }),
+      // ── 产物会话（2026-08-21）：成品检查的交互半边 ──
+      // artifact_open 把产物开进常驻会话，artifact_computer/find 对着它点、敲、找；
+      // 五个量具 live:true 就量会话里现在这一页；artifact_batch 一趟跑一串。
+      ...artifactSessionTools,
+      makeArtifactBatchTool({ tools: [...artifactSessionTools, screenshotCanvas, queryElements, getComputedStyles, explainStyle, traceMotion] }),
       // 撞验证墙时举手叫人（阻塞等，默认 120 秒超时 —— 人可能就走了）
       makeBrowserRequestHelpTool({ projectId, ctx }),
-      makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx }),
+      getComputedStyles,
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI
       makeNavigateToPageTool({ ctx }),

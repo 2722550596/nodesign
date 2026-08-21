@@ -34,6 +34,21 @@ describe('browser_computer 坐标空间', () => {
     expect(checkCoord([1])).toMatch(/\[x, y\]/);
     expect(checkCoord(['a', 'b'])).toMatch(/\[x, y\]/);
   });
+
+  it('checkCoord 按传入的 frame（截图空间）判界，不按视口', () => {
+    const frame = { w: 1000, h: 500, scale: 0.5 };   // 2000×1000 的页缩一半
+    expect(checkCoord([999, 499], frame)).toBeNull();
+    expect(checkCoord([1001, 10], frame)).toMatch(/1000×500 screenshot/);
+  });
+
+  it('08-21 视觉档参数：长边 2000（>20 图时每边 ≤2000 的硬限制）、3.75MP；常见产物视口不再被缩', () => {
+    expect(API_IMAGE_LIMITS.longEdge).toBe(2000);
+    expect(API_IMAGE_LIMITS.maxPixels).toBe(3_750_000);
+    const scaleOf = (w, h) => Math.min(1, API_IMAGE_LIMITS.longEdge / Math.max(w, h), Math.sqrt(API_IMAGE_LIMITS.maxPixels / (w * h)));
+    expect(scaleOf(1920, 1080)).toBe(1);   // deck 全幅 1:1（旧档会缩到 1568）
+    expect(scaleOf(1440, 900)).toBe(1);    // 站点桌面 1:1
+    expect(scaleOf(1440, 4000)).toBeCloseTo(0.5, 2);   // 超长整页才缩（长边 2000）
+  });
 });
 
 describe('键名翻译（xdotool 风格 → Playwright）', () => {

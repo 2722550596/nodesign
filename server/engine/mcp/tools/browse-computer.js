@@ -13,11 +13,12 @@
  * **动作名和参数形状**，不是 `toolset_name` 字段 —— Claude in Chrome 用 MCP 包同一
  * 套动作照样熟练。所以这里直接做 MCP，订阅通路和本地模型通路一视同仁。
  *
- * ## 坐标空间 = 截图像素 = 视口像素，1:1
+ * ## 坐标空间 = 截图像素；frame 负责它和页面像素的换算
  *
- * 视口定 1366×768（registry.js）：1.05MP，低于 shot-pipeline 的 1568/1.15MP 归一化
- * 阈值，所以截图**不缩**，模型从图上读的坐标就是页面像素，不用乘 scale。
- * 这条靠 browse-computer.test.js 的断言守着 —— 以后谁改视口或改归一化阈值，测试会响。
+ * `runAction(page, a, { frame, shot })` 对"页面从哪来"无知：浏览通道传
+ * frame={1366,768,scale 1}（视口 1366×768 在 shot-pipeline 阈值内，截图不缩，
+ * 1:1）；产物会话（artifact_computer）按产物视口算 frame，scale 可能 <1，模型读到
+ * 的坐标 ÷ scale 才是页面像素（文档推荐做法）。所有回给模型的坐标都是截图空间。
  *
  * ## 闸不用动
  *
@@ -34,6 +35,8 @@ import { recordVisit, saveFrame } from '../../browse/state.js';
 import { normalizeShot } from './helpers/shot-pipeline.js';
 
 const VP = _limits.VIEWPORT;
+/** 浏览通道的截图空间：视口像素 1:1（browse-computer.test.js 守着这个前提） */
+export const BROWSE_FRAME = { w: VP.width, h: VP.height, scale: 1 };
 const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
 
 export const ACTIONS = [
@@ -91,45 +94,63 @@ export function parseChords(text) {
   });
 }
 
-/** 坐标校验：必须落在视口里（坐标空间就是截图像素，越界只能是读错了图） */
-export function checkCoord(c, label = 'coordinate') {
+/** 坐标校验（截图空间）：必须落在 frame 里 —— 坐标空间就是截图像素，越界只能是读错了图 */
+export function checkCoord(c, frame = BROWSE_FRAME, label = 'coordinate') {
   if (!Array.isArray(c) || c.length !== 2 || !c.every(n => Number.isFinite(n))) {
-    return `${label} must be [x, y] in viewport pixels`;
+    return `${label} must be [x, y] in screenshot pixels`;
   }
   const [x, y] = c;
-  if (x < 0 || y < 0 || x > VP.width || y > VP.height) {
-    return `${label} (${x}, ${y}) is outside the ${VP.width}×${VP.height} viewport — coordinates are screenshot pixels, origin top-left`;
+  if (x < 0 || y < 0 || x > frame.w || y > frame.h) {
+    return `${label} (${x}, ${y}) is outside the ${frame.w}×${frame.h} screenshot — coordinates are screenshot pixels, origin top-left`;
   }
   return null;
 }
 
-const cursors = new WeakMap();   // page → {x,y}，给省略坐标的 mouse_down/up/scroll 用
-const cursorOf = (page) => cursors.get(page) || { x: Math.round(VP.width / 2), y: Math.round(VP.height / 2) };
+const toPage = (v, frame) => v / frame.scale;
+const toShot = (v, frame) => Math.round(v * frame.scale);
+
+const cursors = new WeakMap();   // page → {x,y} 页面像素，给省略坐标的 mouse_down/up/scroll 用
+const cursorOf = (page, frame) => cursors.get(page) || { x: toPage(frame.w / 2, frame), y: toPage(frame.h / 2, frame) };
 const moveTo = async (page, x, y) => { await page.mouse.move(x, y); cursors.set(page, { x, y }); };
 
-/** coordinate / ref → {x,y,viaRef}。ref 会先滚进视口再取几何中心。 */
-async function resolveTarget(page, { coordinate, ref }, { required = true } = {}) {
+/**
+ * coordinate / ref → {x,y(页面像素), sx,sy(截图像素), viaRef}。ref 会先滚进视口再取几何中心。
+ */
+async function resolveTarget(page, { coordinate, ref }, frame, { required = true } = {}) {
   if (ref) {
     const h = await handleForRef(page, ref);
     if (!h) return { error: staleRefText(ref) };
     await h.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
     const box = await h.boundingBox();
     if (!box) return { error: `Error: ${ref} has no visible box on the page (hidden or zero-size).` };
-    const x = Math.round(box.x + box.width / 2);
-    const y = Math.round(box.y + box.height / 2);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const sx = toShot(x, frame); const sy = toShot(y, frame);
     // 滚了还在视口外（典型：藏在屏幕上方的 skip link）—— 别夹到边上去点个错的地方
-    if (x < 0 || y < 0 || x > VP.width || y > VP.height) {
-      return { error: `Error: ${ref} sits off-screen at (${x}, ${y}) even after scrolling it into view (probably a visually-hidden element) — pick another match or click a coordinate you can see.` };
+    if (sx < 0 || sy < 0 || sx > frame.w || sy > frame.h) {
+      return { error: `Error: ${ref} sits off-screen at (${sx}, ${sy}) even after scrolling it into view (probably a visually-hidden element) — pick another match or click a coordinate you can see.` };
     }
-    return { x, y, viaRef: ref };
+    // 真跑逮到的：站点自己的开场幕布盖着整页，点 ref 其实点在幕布上，页面一点反应
+    // 没有，agent 只能猜。查一下这个点最上层是谁；不是 ref 本身或它的祖/后代就报出来。
+    let coveredBy = null;
+    try {
+      coveredBy = await h.evaluate((el, [px, py]) => {
+        const top = document.elementFromPoint(px, py);
+        if (!top || top === el || el.contains(top) || top.contains(el)) return null;
+        const cls = typeof top.className === 'string' && top.className.trim() ? `.${top.className.trim().split(/\s+/)[0]}` : '';
+        return `${top.tagName.toLowerCase()}${top.id ? `#${top.id}` : ''}${cls}`;
+      }, [x, y]);
+    } catch { /* 查不到就不报 */ }
+    return { x, y, sx, sy, viaRef: ref, coveredBy };
   }
   if (coordinate) {
-    const bad = checkCoord(coordinate);
+    const bad = checkCoord(coordinate, frame);
     if (bad) return { error: `Error: ${bad}` };
-    return { x: coordinate[0], y: coordinate[1] };
+    return { x: toPage(coordinate[0], frame), y: toPage(coordinate[1], frame), sx: coordinate[0], sy: coordinate[1] };
   }
-  if (required) return { error: 'Error: this action needs a coordinate [x, y] or a ref (from browser_find).' };
-  return { ...cursorOf(page) };
+  if (required) return { error: 'Error: this action needs a coordinate [x, y] or a ref (from the find tool).' };
+  const c = cursorOf(page, frame);
+  return { ...c, sx: toShot(c.x, frame), sy: toShot(c.y, frame) };
 }
 
 async function withModifiers(page, mods, fn) {
@@ -139,7 +160,7 @@ async function withModifiers(page, mods, fn) {
   }
 }
 
-/** 视口截图：存桌面卡预览 + 归一化（1366×768 在阈值内，不缩）→ 文本块在前，图在后 */
+/** 浏览通道的视口截图：存桌面卡预览 + 归一化（1366×768 在阈值内，不缩）→ 文本块在前，图在后 */
 export async function viewportShot(page, projectId, lead) {
   const buf = await page.screenshot({ type: 'png' });
   await saveFrame(projectId, buf);
@@ -152,35 +173,40 @@ export async function viewportShot(page, projectId, lead) {
   };
 }
 
-async function zoomShot(page, region, lead) {
+async function zoomShot(page, region, frame, lead) {
   if (!Array.isArray(region) || region.length !== 4 || !region.every(n => Number.isFinite(n))) {
-    return asText('Error: zoom needs region [x0, y0, x1, y1] in viewport pixels.', true);
+    return asText('Error: zoom needs region [x0, y0, x1, y1] in screenshot pixels.', true);
   }
   const [x0, y0, x1, y1] = region.map(Math.round);
-  if (x0 < 0 || y0 < 0 || x1 > VP.width || y1 > VP.height || x1 - x0 < 8 || y1 - y0 < 8) {
-    return asText(`Error: zoom region [${region.join(', ')}] must lie inside the ${VP.width}×${VP.height} viewport and be at least 8×8.`, true);
+  if (x0 < 0 || y0 < 0 || x1 > frame.w || y1 > frame.h || x1 - x0 < 8 || y1 - y0 < 8) {
+    return asText(`Error: zoom region [${region.join(', ')}] must lie inside the ${frame.w}×${frame.h} screenshot and be at least 8×8.`, true);
   }
-  const w = x1 - x0; const h = y1 - y0;
-  const buf = await page.screenshot({ type: 'png', clip: { x: x0, y: y0, width: w, height: h } });
+  const clip = { x: toPage(x0, frame), y: toPage(y0, frame), width: toPage(x1 - x0, frame), height: toPage(y1 - y0, frame) };
+  const buf = await page.screenshot({ type: 'png', clip });
   const { default: sharp } = await import('sharp');
-  const k = Math.min(VP.width / w, VP.height / h);
+  const k = Math.min(frame.w / (x1 - x0), frame.h / (y1 - y0));   // 放大到塞满截图空间
   const up = await sharp(buf)
-    .resize({ width: Math.round(w * k), height: Math.round(h * k), fit: 'inside', withoutEnlargement: false, kernel: 'lanczos3' })
+    .resize({ width: Math.round((x1 - x0) * k), height: Math.round((y1 - y0) * k), fit: 'inside', withoutEnlargement: false, kernel: 'lanczos3' })
     .png().toBuffer();
   const shot = await normalizeShot(up);
   return {
     content: [
-      { type: 'text', text: `${lead}zoom of [${x0},${y0},${x1},${y1}] (${w}×${h}, ×${k.toFixed(1)}) — the coordinates you use next are STILL full-viewport pixels, not pixels of this zoomed image` },
+      { type: 'text', text: `${lead}zoom of [${x0},${y0},${x1},${y1}] (${x1 - x0}×${y1 - y0}, ×${(k / frame.scale).toFixed(1)}) — the coordinates you use next are STILL full-screenshot pixels, not pixels of this zoomed image` },
       { type: 'image', data: shot.data, mimeType: shot.mimeType },
     ],
   };
 }
 
-/** 跑一个动作。返回 CallToolResult。导航变化与闸拦截由调用方补到文本里。 */
-async function runAction(page, projectId, a) {
+/**
+ * 跑一个动作。返回 CallToolResult。导航变化与闸拦截由调用方补到文本里。
+ * @param {import('playwright').Page} page
+ * @param {object} a  工具入参
+ * @param {{frame:{w:number,h:number,scale:number}, shot:(page:any, lead:string)=>Promise<any>}} env
+ */
+export async function runAction(page, a, { frame, shot }) {
   const { action } = a;
-  if (action === 'screenshot') return viewportShot(page, projectId, 'screenshot');
-  if (action === 'zoom') return zoomShot(page, a.region, '');
+  if (action === 'screenshot') return shot(page, 'screenshot');
+  if (action === 'zoom') return zoomShot(page, a.region, frame, '');
   if (action === 'wait') {
     const s = Math.min(30, Math.max(0, Number(a.duration) || 0));
     await page.waitForTimeout(s * 1000);
@@ -205,16 +231,16 @@ async function runAction(page, projectId, a) {
     return asText(`held ${chord.join('+')} for ${s}s`);
   }
   if (action === 'scroll_to') {
-    if (!a.ref) return asText('Error: scroll_to needs a ref (from browser_find).', true);
+    if (!a.ref) return asText('Error: scroll_to needs a ref (from the find tool).', true);
     const h = await handleForRef(page, a.ref);
     if (!h) return asText(staleRefText(a.ref), true);
     await h.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
     await page.waitForTimeout(200);
     const box = await h.boundingBox();
-    return asText(box ? `scrolled ${a.ref} into view — now at (${Math.round(box.x + box.width / 2)}, ${Math.round(box.y + box.height / 2)})` : `scrolled toward ${a.ref} (it has no visible box)`);
+    return asText(box ? `scrolled ${a.ref} into view — now at (${toShot(box.x + box.width / 2, frame)}, ${toShot(box.y + box.height / 2, frame)})` : `scrolled toward ${a.ref} (it has no visible box)`);
   }
   if (action === 'scroll') {
-    const t = await resolveTarget(page, a, { required: false });
+    const t = await resolveTarget(page, a, frame, { required: false });
     if (t.error) return asText(t.error, true);
     const dir = a.scroll_direction;
     if (!['up', 'down', 'left', 'right'].includes(dir)) return asText('Error: scroll needs scroll_direction up|down|left|right.', true);
@@ -230,16 +256,16 @@ async function runAction(page, projectId, a) {
     await page.waitForTimeout(250);
     const after = await page.evaluate(() => [window.scrollX, window.scrollY]);
     const moved = before[0] !== after[0] || before[1] !== after[1];
-    return asText(`scrolled ${dir} ${amt} notches at (${t.x}, ${t.y})`
+    return asText(`scrolled ${dir} ${amt} notches at (${t.sx}, ${t.sy})`
       + (moved ? ` — scrollY ${before[1]} → ${after[1]}${before[0] !== after[0] ? `, scrollX ${before[0]} → ${after[0]}` : ''}`
         : ' — the window itself did not move (maybe a scrollable panel under the cursor took it, or the page is at its end; try the keyboard: key PageDown)'));
   }
   // ── 指针动作 ──
   const mods = parseModifiers(a.modifiers);
   if (action === 'left_click_drag') {
-    const from = await resolveTarget(page, { coordinate: a.start_coordinate }, { required: true });
+    const from = await resolveTarget(page, { coordinate: a.start_coordinate }, frame, { required: true });
     if (from.error) return asText(from.error.replace('this action needs a coordinate', 'left_click_drag needs start_coordinate'), true);
-    const to = await resolveTarget(page, a);
+    const to = await resolveTarget(page, a, frame);
     if (to.error) return asText(to.error, true);
     await withModifiers(page, mods, async () => {
       await moveTo(page, from.x, from.y);
@@ -248,18 +274,19 @@ async function runAction(page, projectId, a) {
       await page.mouse.up();
     });
     cursors.set(page, { x: to.x, y: to.y });
-    return asText(`dragged (${from.x}, ${from.y}) → (${to.x}, ${to.y})`);
+    return asText(`dragged (${from.sx}, ${from.sy}) → (${to.sx}, ${to.sy})`);
   }
   if (action === 'left_mouse_down' || action === 'left_mouse_up') {
-    const t = await resolveTarget(page, a, { required: false });
+    const t = await resolveTarget(page, a, frame, { required: false });
     if (t.error) return asText(t.error, true);
     await moveTo(page, t.x, t.y);
     if (action === 'left_mouse_down') await page.mouse.down(); else await page.mouse.up();
-    return asText(`${action} at (${t.x}, ${t.y})`);
+    return asText(`${action} at (${t.sx}, ${t.sy})`);
   }
-  const t = await resolveTarget(page, a);
+  const t = await resolveTarget(page, a, frame);
   if (t.error) return asText(t.error, true);
-  const at = `(${t.x}, ${t.y})${t.viaRef ? ` = ${t.viaRef}` : ''}`;
+  const at = `(${t.sx}, ${t.sy})${t.viaRef ? ` = ${t.viaRef}` : ''}`
+    + (t.coveredBy ? ` — ⚠ that point is covered by <${t.coveredBy}>: the ${action} landed on it, not on ${t.viaRef} (overlay / curtain / modal? dismiss it first or screenshot to see)` : '');
   if (action === 'mouse_move' || action === 'hover') {
     await moveTo(page, t.x, t.y);
     await page.waitForTimeout(150);
@@ -281,6 +308,51 @@ async function runAction(page, projectId, a) {
   return asText(`${action} ${at}${mods.length ? ` with ${mods.join('+')}` : ''}`);
 }
 
+/** 动作描述正文，browser_computer / artifact_computer 共用（坐标空间那句由各自补） */
+export const ACTIONS_DOC = `Actions (params in parentheses):
+  screenshot ()                         current view as an image
+  zoom (region [x0,y0,x1,y1])           region at higher magnification, for small text/icons
+  left_click | right_click | middle_click | double_click | triple_click (coordinate or ref, modifiers?)
+  hover | mouse_move (coordinate or ref)
+  left_click_drag (start_coordinate, coordinate)
+  left_mouse_down | left_mouse_up (coordinate?)   custom drags; pair them, move in between
+  scroll (scroll_direction, scroll_amount? 1-10 notches, coordinate?)
+  scroll_to (ref)                       scroll an element into view
+  type (text)                           literal text at the current focus
+  key (text, repeat? 1-100)             "Enter", "ctrl+a", "Backspace Backspace", "alt+Tab"
+  hold_key (text, duration ≤30s)
+  wait (duration ≤30s)`;
+
+/** 入参 schema，两个 computer 工具共用 */
+export const COMPUTER_SCHEMA = {
+  action: z.enum(ACTIONS).describe('Which action to perform (see the list above).'),
+  coordinate: z.array(z.number()).length(2).optional()
+    .describe('[x, y] screenshot pixels. Target for clicks/hover/mouse_move/scroll, and the END point of left_click_drag.'),
+  start_coordinate: z.array(z.number()).length(2).optional()
+    .describe('[x, y] START point for left_click_drag.'),
+  ref: z.string().optional()
+    .describe('Element reference from the find tool (e.g. "ref_3"). Alternative to coordinate for clicks/hover; required for scroll_to.'),
+  region: z.array(z.number()).length(4).optional()
+    .describe('[x0, y0, x1, y1] for zoom: top-left and bottom-right corners in screenshot pixels.'),
+  text: z.string().optional()
+    .describe('For type: the literal text. For key/hold_key: a key or +-chord, space-separated for a sequence ("Enter", "ctrl+s", "shift+Tab Tab").'),
+  modifiers: z.string().optional()
+    .describe('Modifier chord held during a click or scroll: shift / ctrl / alt / cmd, joined with + (e.g. "ctrl+shift").'),
+  scroll_direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('For scroll.'),
+  scroll_amount: z.number().int().min(1).max(10).optional().describe('For scroll: wheel notches, default 3.'),
+  repeat: z.number().int().min(1).max(100).optional().describe('For key: press the sequence this many times, default 1.'),
+  duration: z.number().min(0).max(30).optional().describe('Seconds, for wait and hold_key (max 30).'),
+};
+
+/** 动作抛的 Playwright 内部错 → agent 能行动的话（两个 computer 工具共用） */
+export function actionErrorText(action, err) {
+  const msg = String(err?.message || err).split('\n')[0];
+  if (/Execution context was destroyed|Target closed|frame was detached/i.test(msg)) {
+    return `Error: ${action} hit a page navigation in progress (${msg}). The page has changed underneath you — refs from before are stale; find again or screenshot first.`;
+  }
+  return `Error: ${action} failed: ${msg}`;
+}
+
 export function makeBrowserComputerTool({ projectId, ctx }) {
   return tool(
     'browser_computer',
@@ -294,44 +366,14 @@ viewport ${VP.width}×${VP.height}, 1:1 — no scaling). After zoom, coordinates
 full-viewport pixels. You can also target an element by ref from browser_find
 (pass ref instead of coordinate) — refs survive layout shifts, pixels do not.
 
-Actions (params in parentheses):
-  screenshot ()                         viewport image
-  zoom (region [x0,y0,x1,y1])           region at higher magnification, for small text/icons
-  left_click | right_click | middle_click | double_click | triple_click (coordinate or ref, modifiers?)
-  hover | mouse_move (coordinate or ref)
-  left_click_drag (start_coordinate, coordinate)
-  left_mouse_down | left_mouse_up (coordinate?)   custom drags; pair them, move in between
-  scroll (scroll_direction, scroll_amount? 1-10 notches, coordinate?)
-  scroll_to (ref)                       scroll an element into view
-  type (text)                           literal text at the current focus
-  key (text, repeat? 1-100)             "Enter", "ctrl+a", "Backspace Backspace", "alt+Tab"
-  hold_key (text, duration ≤30s)
-  wait (duration ≤30s)
+${ACTIONS_DOC}
 
 Each call runs ONE action and returns a short acknowledgment (plus the new
 location if the page navigated). When you can predict two or more steps — click
 a field, type, press Enter, look — use browser_batch, which runs them in one
 round trip and ends with a screenshot. Consent banners: find the button with
 browser_find and click its ref.`,
-    {
-      action: z.enum(ACTIONS).describe('Which action to perform (see the list above).'),
-      coordinate: z.array(z.number()).length(2).optional()
-        .describe('[x, y] viewport pixels. Target for clicks/hover/mouse_move/scroll, and the END point of left_click_drag.'),
-      start_coordinate: z.array(z.number()).length(2).optional()
-        .describe('[x, y] START point for left_click_drag.'),
-      ref: z.string().optional()
-        .describe('Element reference from browser_find (e.g. "ref_3"). Alternative to coordinate for clicks/hover; required for scroll_to.'),
-      region: z.array(z.number()).length(4).optional()
-        .describe('[x0, y0, x1, y1] for zoom: top-left and bottom-right corners in viewport pixels.'),
-      text: z.string().optional()
-        .describe('For type: the literal text. For key/hold_key: a key or +-chord, space-separated for a sequence ("Enter", "ctrl+s", "shift+Tab Tab").'),
-      modifiers: z.string().optional()
-        .describe('Modifier chord held during a click or scroll: shift / ctrl / alt / cmd, joined with + (e.g. "ctrl+shift").'),
-      scroll_direction: z.enum(['up', 'down', 'left', 'right']).optional().describe('For scroll.'),
-      scroll_amount: z.number().int().min(1).max(10).optional().describe('For scroll: wheel notches, default 3.'),
-      repeat: z.number().int().min(1).max(100).optional().describe('For key: press the sequence this many times, default 1.'),
-      duration: z.number().min(0).max(30).optional().describe('Seconds, for wait and hold_key (max 30).'),
-    },
+    COMPUTER_SCHEMA,
     async (a) => {
       try {
         return await withBrowser(projectId, async ({ page, guard }) => {
@@ -344,16 +386,14 @@ browser_find and click its ref.`,
           const onReq = (req) => { try { if (req.isNavigationRequest() && req.frame() === page.mainFrame()) navStarted = true; } catch { /* */ } };
           page.on('request', onReq);
           let r;
-          try { r = await runAction(page, projectId, a); } catch (err) {
+          try {
+            r = await runAction(page, a, { frame: BROWSE_FRAME, shot: (p, lead) => viewportShot(p, projectId, lead) });
+          } catch (err) {
             page.off('request', onReq);
-            const msg = err.message.split('\n')[0];
-            // 真跑逮到的：点了链接紧接着再用 ref，evaluate 撞上"Execution context was
-            // destroyed"—— 页面正在换。把它翻成 agent 能行动的话，不要裸抛 Playwright 内部错
-            if (/Execution context was destroyed|Target closed|frame was detached/i.test(msg)) {
+            if (/Execution context was destroyed|Target closed|frame was detached/i.test(String(err?.message))) {
               await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {});
-              return asText(`Error: ${a.action} hit a page navigation in progress (${msg}). The page has changed underneath you — refs from before are stale; browser_find again or screenshot first.`, true);
             }
-            return asText(`Error: ${a.action} failed: ${msg}`, true);
+            return asText(actionErrorText(a.action, err), true);
           }
           // 点击/按键可能换页：留 300ms 让导航请求发出来，发出来了就等 DOM 就绪再回话
           if (/click|key|type/.test(a.action) && !page.isClosed()) await page.waitForTimeout(300);

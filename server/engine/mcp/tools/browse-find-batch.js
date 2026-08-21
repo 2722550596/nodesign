@@ -1,5 +1,5 @@
 /**
- * mcp/tools/browse-find-batch.js — browser_find + browser_batch（2026-08-21）
+ * mcp/tools/browse-find-batch.js — browser_find + 通用 batch 工厂 + browser_batch（2026-08-21）
  *
  * 两个都照 Anthropic browser use toolset / Claude in Chrome 的形状：
  *
@@ -7,13 +7,13 @@
  *   ref 能直接喂给 browser_computer（ref 比像素稳：版面抖一下像素就偏，ref 还在）。
  *   匹配是**词法**的（engine/browse/refs.js 头注释说了为什么），描述里明说。
  *
- * - `browser_batch`：一次调用串行跑多条浏览器动作，**遇错即停**，后面的条目一律
- *   回规格原话 "Not executed: an earlier action in this turn failed."，结尾自动补一张
- *   视口截图（规格："your application can attach its own observation on the last
- *   result to save a round trip"）。省掉的是模型往返 —— 这条通道唯一真能砍掉的时间
- *   （page-digest.js 量过：浏览器本体不慢，慢的是回合数）。
+ * - `makeBatchTool`：一次调用串行跑多条动作，**遇错即停**，后面的条目一律回规格原话
+ *   "Not executed: an earlier action in this turn failed."，结尾自动补一张截图（规格：
+ *   "your application can attach its own observation on the last result to save a round
+ *   trip"）。省掉的是模型往返 —— 浏览和产物检查两条通道唯一真能砍掉的时间。
+ *   browser_batch 和 artifact_batch 都是它的实例（同一份合同，别抄两遍）。
  *
- *   ⚠️ 不在 withBrowser 里套 withBrowser：registry 的 mutex 同键串行、不可重入。
+ *   ⚠️ 不在 withBrowser / withSession 里套锁：registry 的 mutex 同键串行、不可重入。
  *   batch 逐条调用各工具自己的 handler，每条各自拿一次锁。
  *
  *   典型一趟（采参考站的设计 token）：navigate 内页 A → capture palette+fonts →
@@ -31,7 +31,7 @@ const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], 
 /** 规格原话（browser 版 halt 文案） */
 export const HALT_TEXT = 'Not executed: an earlier action in this turn failed.';
 /**
- * batch 能跑的工具。只有 request_help 不进来（它阻塞等人，一等两分钟）。
+ * browser_batch 能跑的工具。只有 request_help 不进来（它阻塞等人，一等两分钟）。
  * capture **在里面**（用户 08-21 点的）：采参考站的 token 本来就是"进内页 → 采 →
  * 进下一页 → 再采"的多步活，一页一个回合太贵；一趟 batch 把三四页的调色板/字体
  * 一起带回来才对味。
@@ -76,40 +76,29 @@ as an error telling you to find again.`,
 }
 
 /**
- * @param {{ tools: Array<{name:string, inputSchema:object, handler:Function}> }} deps
- *   可 batch 的工具定义（tool() 的返回值），按名字索引。传进来而不是自己 import
- *   构造：同一批 handler 只该有一份实例（projectId/ctx 都绑在里面）。
+ * 通用 batch 工厂。
+ * @param {object} o
+ * @param {string} o.name            工具名
+ * @param {string} o.description     描述（调用方写；工厂只负责合同）
+ * @param {Array<{name:string, inputSchema:object, handler:Function}>} o.tools   tool() 的返回值；
+ *   传进来而不是自己 import 构造：同一批 handler 只该有一份实例（projectId/ctx 都绑在里面）
+ * @param {string[]} o.batchable     允许的名字
+ * @param {{name:string, input:object}} [o.finalShot]   结尾补的那张"当前状态"；不传就不补
  */
-export function makeBrowserBatchTool({ tools }) {
-  const byName = new Map(tools.filter(t => BATCHABLE.includes(t.name)).map(t => [t.name, t]));
+export function makeBatchTool({ name, description, tools, batchable, finalShot }) {
+  const byName = new Map(tools.filter(t => batchable.includes(t.name)).map(t => [t.name, t]));
   const names = [...byName.keys()];
   return tool(
-    'browser_batch',
-    `Run a sequence of browser tool calls in ONE round trip. Each item is
-{name, input} where input is exactly what you would pass to that tool on its
-own. Items run SEQUENTIALLY and the batch STOPS at the first error: the failed
-item reports its error, every later item is answered "${HALT_TEXT}", and you
-replan from there. A viewport screenshot is appended at the end (unless the
-last item already produced an image, or screenshotAfter:false), so you always
-see the resulting state.
-
-Use this whenever you can predict two or more steps ahead — navigate, find the
-field, click it, type, press Enter, look — instead of paying a model round trip
-per action. The classic design-reference run is one batch: navigate to inner
-page A → browser_capture palette+fonts → navigate to inner page B → capture →
-navigate to C → capture. Six round trips become one, and every page's tokens
-land in assets/references/web/ with provenance. Coordinates you write in a
-batch refer to the screenshot you saw BEFORE the call; refs from an earlier
-browser_find are fine as long as the page has not navigated. Batchable tools:
-${names.join(', ')}. browser_batch cannot be nested.`,
+    name,
+    description,
     {
       actions: z.array(z.object({
         name: z.string().describe(`Tool name: one of ${names.join(' | ')}.`),
         input: z.record(z.string(), z.unknown()).optional().describe("That tool's input, same shape as calling it directly."),
       })).min(1).max(MAX_ITEMS)
-        .describe(`1-${MAX_ITEMS} items. Example: [{"name":"browser_find","input":{"query":"search"}},{"name":"browser_computer","input":{"action":"left_click","ref":"ref_1"}},{"name":"browser_computer","input":{"action":"type","text":"hello"}},{"name":"browser_computer","input":{"action":"key","text":"Enter"}}]`),
+        .describe(`1-${MAX_ITEMS} items, run in order. Each item: {"name": <tool>, "input": {...}}.`),
       screenshotAfter: z.boolean().optional()
-        .describe('Append a viewport screenshot at the end (default true). Set false for text-only sequences to save tokens.'),
+        .describe('Append a screenshot of the resulting state at the end (default true). Set false for text-only sequences to save tokens.'),
     },
     async ({ actions, screenshotAfter }, extra) => {
       const out = [];
@@ -117,13 +106,13 @@ ${names.join(', ')}. browser_batch cannot be nested.`,
       let failedAt = -1;
       let lastHadImage = false;
       for (let i = 0; i < n; i += 1) {
-        const { name, input } = actions[i];
-        const label = `[${i + 1}/${n}] ${name}${input?.action ? ` ${input.action}` : ''}`;
+        const { name: toolName, input } = actions[i];
+        const label = `[${i + 1}/${n}] ${toolName}${input?.action ? ` ${input.action}` : ''}`;
         if (failedAt >= 0) { out.push({ type: 'text', text: `${label}: ${HALT_TEXT}` }); continue; }
-        const def = byName.get(name);
+        const def = byName.get(toolName);
         if (!def) {
           failedAt = i;
-          out.push({ type: 'text', text: `${label}: Error: "${name}" is not batchable (use one of ${names.join(', ')}).` });
+          out.push({ type: 'text', text: `${label}: Error: "${toolName}" is not batchable here (use one of ${names.join(', ')}).` });
           continue;
         }
         const parsed = z.object(def.inputSchema).safeParse(input || {});
@@ -148,11 +137,11 @@ ${names.join(', ')}. browser_batch cannot be nested.`,
         }
         if (r?.isError) failedAt = i;
       }
-      if (screenshotAfter !== false && !lastHadImage) {
-        const shotDef = byName.get('browser_screenshot');
+      if (finalShot && screenshotAfter !== false && !lastHadImage) {
+        const shotDef = byName.get(finalShot.name);
         if (shotDef) {
           try {
-            const s = await shotDef.handler({}, extra);
+            const s = await shotDef.handler(finalShot.input || {}, extra);
             out.push({ type: 'text', text: `[after] current state${failedAt >= 0 ? ' (batch stopped early — look and replan)' : ''}:` });
             for (const b of (s.content || [])) out.push(b);
           } catch (err) {
@@ -163,4 +152,32 @@ ${names.join(', ')}. browser_batch cannot be nested.`,
       return { content: out, ...(failedAt >= 0 ? { isError: true } : {}) };
     },
   );
+}
+
+export function makeBrowserBatchTool({ tools }) {
+  const names = BATCHABLE.filter(n => tools.some(t => t.name === n));
+  return makeBatchTool({
+    name: 'browser_batch',
+    tools,
+    batchable: BATCHABLE,
+    finalShot: { name: 'browser_screenshot', input: {} },
+    description: `Run a sequence of browser tool calls in ONE round trip. Each item is
+{name, input} where input is exactly what you would pass to that tool on its
+own. Items run SEQUENTIALLY and the batch STOPS at the first error: the failed
+item reports its error, every later item is answered "${HALT_TEXT}", and you
+replan from there. A viewport screenshot is appended at the end (unless the
+last item already produced an image, or screenshotAfter:false), so you always
+see the resulting state.
+
+Use this whenever you can predict two or more steps ahead — navigate, find the
+field, click it, type, press Enter, look — instead of paying a model round trip
+per action. The classic design-reference run is one batch: navigate to inner
+page A → browser_capture palette+fonts → navigate to inner page B → capture →
+navigate to C → capture. Six round trips become one, and every page's tokens
+land in assets/references/web/ with provenance. Coordinates you write in a
+batch refer to the screenshot you saw BEFORE the call; refs from an earlier
+browser_find are fine as long as the page has not navigated. Batchable tools:
+${names.join(', ')}. browser_batch cannot be nested.
+Example: [{"name":"browser_find","input":{"query":"search"}},{"name":"browser_computer","input":{"action":"left_click","ref":"ref_1"}},{"name":"browser_computer","input":{"action":"type","text":"hello"}},{"name":"browser_computer","input":{"action":"key","text":"Enter"}}]`,
+  });
 }

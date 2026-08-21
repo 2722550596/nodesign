@@ -110,7 +110,7 @@ Lighter than read_page (which returns full outerHTML of one page).`,
         try {
           await fs.access(path.join(workspaceRoot, 'assets', 'generated', '.thumbnails'));
           thumbnailHint = '[hint] N 页摘要中若含 image url，preview iframe 加载的是 thumbnail 快照；'
-            + 'HTML 文件中的 src 是真实路径（同 Read canvas.html）。\n\n';
+            + 'HTML 文件中的 src 是真实路径（同 Read 源文件）。\n\n';
         } catch { /* no thumbnails dir */ }
 
         const degraded = degradedNote(opened);   // 契约：note 非空必须写进返回文本
