@@ -28,7 +28,7 @@ function resolveTarget() {
   return { BASE: lines[0].trim().replace(/\/+$/, ''), KEY: lines[2].trim() };
 }
 const { BASE, KEY } = resolveTarget();
-const MODEL = process.argv[2] || '中转-gemini-3.1-pro-preview';
+const MODEL = process.argv[2] || '反重力-流式抗截断/gemini-3.7-flash-high';
 
 const results = [];
 function check(name, ok, note = '') {

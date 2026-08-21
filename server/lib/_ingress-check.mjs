@@ -60,7 +60,7 @@ async function viaIngress(body, subPath = '') {
 }
 const textOf = (j) => (j?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
 
-const ALIAS_STRIPPED = resolveSdkSpoofModel('gemini-3.1-pro').replace(/\[1m\]$/i, '');
+const ALIAS_STRIPPED = resolveSdkSpoofModel('gemini-3.7-flash').replace(/\[1m\]$/i, '');
 const PEEK_TOOL = {
   name: 'peek_screen',
   description: 'Take a screenshot of the current screen and return it as an image.',
@@ -103,7 +103,7 @@ const PEEK_TOOL = {
 // ── 2. appModel 形态直呼（SMALL_FAST_MODEL 走的路）──
 {
   const r = await viaIngress({
-    model: 'gemini-3.1-pro', max_tokens: 200,
+    model: 'gemini-3.7-flash', max_tokens: 200,
     messages: [{ role: 'user', content: '只回两个字：收到' }],
   });
   check('2 appModel 直呼路由', r.status === 200 && /收到/.test(textOf(r.json)), `${r.status}`);
@@ -124,7 +124,7 @@ const PEEK_TOOL = {
 
 // ── 4b. 注册过的会话：未知 Claude 名走 fast 兜底（SDK helper 复活的机制）──
 {
-  registerIngressSession('ingress-check-session', 'gemini-3.1-pro');
+  registerIngressSession('ingress-check-session', 'gemini-3.7-flash');
   const r = await viaIngress({
     model: 'claude-sonnet-5', max_tokens: 200,
     messages: [{ role: 'user', content: '只回两个字：好的' }],
@@ -149,12 +149,12 @@ if (process.argv.includes('--sdk')) {
     const q = query({
       prompt: '调用 peek_screen 工具看一眼屏幕，然后告诉我：图片里写着什么文字、什么形状、什么颜色。',
       options: {
-        model: resolveSdkSpoofModel('gemini-3.1-pro'),
+        model: resolveSdkSpoofModel('gemini-3.7-flash'),
         env: {
           ...process.env,
           ANTHROPIC_BASE_URL: BASE,
           ANTHROPIC_API_KEY: 'nd-ingress-managed',
-          ANTHROPIC_SMALL_FAST_MODEL: 'gemini-3.1-pro',
+          ANTHROPIC_SMALL_FAST_MODEL: 'gemini-3.7-flash',
         },
         mcpServers: { probe: probeServer },
         allowedTools: ['mcp__probe__peek_screen'],

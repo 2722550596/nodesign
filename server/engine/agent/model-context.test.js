@@ -24,7 +24,10 @@ describe('派生导出（旧签名不变）', () => {
     expect(ids).toContain('claude-opus-5[1m]');
     expect(ids.some((id) => /kimi/i.test(id))).toBe(false);
     expect(SELECTABLE_MODELS.find((m) => m.id === 'gemini-3.7-flash')?.gate).toBe('localGen');
-    expect(ids).not.toContain('gemini-3.1-pro');   // 3.1 Pro 行保留给体检当对照组，不进 picker
+    expect(ids).not.toContain('gemini-3.1-pro');     // 3.1 Pro 行 08-21 深夜连同 kimi 行一起删了
+    expect(resolveWireModel('gemini-3.1-pro')).toBe(null);
+    expect(resolveWireModel('kimi-k2.6')).toBe(null);
+    expect(UPSTREAMS.moonshot).toBeUndefined();
     // 08-20 摘牌：盒子关机，行和线路都留着（api 字段仍在），只是不给人选
     expect(ids).not.toContain('qwen3.8-27b');
     expect(resolveWireModel('qwen3.8-27b')?.appModel).toBe('qwen3.8-27b');   // ⭐ 摘牌 ≠ 拆线
@@ -82,16 +85,16 @@ describe('派生导出（旧签名不变）', () => {
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {
-    expect(resolveSdkSpoofModel('kimi-k2.6')).toBe('claude-opus-4-7[1m]');
-    expect(resolveSdkSpoofModel('gemini-3.1-pro')).toBe('claude-sonnet-4-6[1m]');
+    expect(resolveSdkSpoofModel('deepseek-v4-flash-vision')).toBe('claude-opus-4-7[1m]');
+    expect(resolveSdkSpoofModel('gemini-3.7-flash')).toBe('claude-opus-4-6[1m]');
     expect(resolveSdkSpoofModel('claude-sonnet-5[1m]')).toBe('claude-sonnet-5[1m]');
     expect(resolveSdkSpoofModel('made-up-model')).toBe('made-up-model');
     expect(resolveSdkSpoofModel(null)).toBe(null);
   });
 
   it('window：查表 + pattern fallback + null', () => {
-    expect(resolveModelContextWindow('gemini-3.1-pro')).toBe(1_000_000);
-    expect(resolveModelContextWindow('kimi-k2.6')).toBe(256_000);
+    expect(resolveModelContextWindow('gemini-3.7-flash')).toBe(1_000_000);
+    expect(resolveModelContextWindow('deepseek-v4-flash-vision')).toBe(272_000);
     expect(resolveModelContextWindow('claude-sonnet-5')).toBe(200_000);
     expect(resolveModelContextWindow('kimi-future-model')).toBe(256_000);
     expect(resolveModelContextWindow('whatever[1m]')).toBe(1_000_000);
@@ -101,8 +104,8 @@ describe('派生导出（旧签名不变）', () => {
   it('thinking：Sonnet5+/Opus4.6+ adaptive+summarized；API 行 enabled+budget；老模型 enabled', () => {
     expect(pickThinkingConfig('claude-sonnet-5[1m]')).toEqual({ type: 'adaptive', display: 'summarized' });
     expect(pickThinkingConfig('claude-opus-4-7[1m]')).toEqual({ type: 'adaptive', display: 'summarized' });
-    expect(pickThinkingConfig('gemini-3.1-pro')).toEqual({ type: 'enabled', budgetTokens: 8192 });
-    expect(pickThinkingConfig('kimi-k2.6')).toEqual({ type: 'enabled', budgetTokens: 8192 });
+    expect(pickThinkingConfig('gemini-3.7-flash')).toEqual({ type: 'enabled', budgetTokens: 8192 });
+    expect(pickThinkingConfig('deepseek-v4-flash-vision')).toEqual({ type: 'enabled', budgetTokens: 8192 });
     expect(pickThinkingConfig('claude-haiku-4-5')).toEqual({ type: 'enabled', budgetTokens: 8192 });
   });
 });
@@ -111,18 +114,18 @@ describe('路由', () => {
   it('订阅模型 → subscription，API 模型带全套路由信息', () => {
     expect(resolveModelRoute('claude-sonnet-5[1m]')).toEqual({ mode: 'subscription' });
     expect(resolveModelRoute(null)).toEqual({ mode: 'subscription' });
-    const r = resolveModelRoute('gemini-3.1-pro');
+    const r = resolveModelRoute('gemini-3.7-flash');
     expect(r.mode).toBe('api');
-    expect(r.sdkAlias).toBe('claude-sonnet-4-6[1m]');
-    expect(r.fastModel).toBe('gemini-3.1-pro');
+    expect(r.sdkAlias).toBe('claude-opus-4-6[1m]');
+    expect(r.fastModel).toBe('gemini-3.7-flash');
     expect(r.upstream).toBe(UPSTREAMS.lament);
   });
 
   it('入口反查认三种形态：appModel / alias / 剥[1m]的 alias', () => {
-    for (const name of ['gemini-3.1-pro', 'claude-sonnet-4-6[1m]', 'claude-sonnet-4-6']) {
+    for (const name of ['gemini-3.7-flash', 'claude-opus-4-6[1m]', 'claude-opus-4-6']) {
       const w = resolveWireModel(name);
-      expect(w?.appModel).toBe('gemini-3.1-pro');
-      expect(w?.wireModel).toBe('中转-gemini-3.1-pro-preview');
+      expect(w?.appModel).toBe('gemini-3.7-flash');
+      expect(w?.wireModel).toBe('反重力-流式抗截断/gemini-3.7-flash-high');
       expect(w?.liftImages).toBe(true);
     }
     // 订阅名不该被路由（sonnet-5 没有 API 行）
@@ -140,7 +143,7 @@ describe('路由', () => {
   });
 
   it('⚠️ 每个 API 行的 sdkAlias 容量必须 ≥ 真实 window —— SDK 压缩窗口取二者较小值', () => {
-    for (const id of ['qwen3.8-27b', 'gemini-3.1-pro', 'kimi-k2.6']) {
+    for (const id of ['qwen3.8-27b', 'gemini-3.7-flash', 'deepseek-v4-flash-vision']) {
       const r = resolveModelRoute(id);
       const aliasWindow = resolveModelContextWindow(r.sdkAlias);
       expect(aliasWindow, `${id} 的 alias ${r.sdkAlias} 容量不足`).toBeGreaterThanOrEqual(r.window);
@@ -153,37 +156,33 @@ describe('repriceUsageDeltas', () => {
   const gUsage = { inputTokens: 68_000, outputTokens: 500, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 0.345 };
 
   it('API 会话：alias 还原成 appModel、按表价重算', () => {
-    const out = repriceUsageDeltas({ 'claude-sonnet-4-6': gUsage }, 'gemini-3.1-pro');
-    expect(Object.keys(out)).toEqual(['gemini-3.1-pro']);
-    // 68k×$2/M + 500×$12/M = 0.136 + 0.006 = 0.142
-    expect(out['gemini-3.1-pro'].costUsd).toBeCloseTo(0.142, 4);
-    expect(out['gemini-3.1-pro'].inputTokens).toBe(68_000);
+    const out = repriceUsageDeltas({ 'claude-opus-4-6': gUsage }, 'gemini-3.7-flash');
+    expect(Object.keys(out)).toEqual(['gemini-3.7-flash']);
+    // 68k×$0.75/M + 500×$3.75/M = 0.051 + 0.001875 = 0.052875
+    expect(out['gemini-3.7-flash'].costUsd).toBeCloseTo(0.052875, 5);
+    expect(out['gemini-3.7-flash'].inputTokens).toBe(68_000);
   });
 
   it('⚠️ 订阅会话原样返回 —— 真跑 sonnet-4-6 不能被错记成 Gemini 的账', () => {
-    const deltas = { 'claude-sonnet-4-6': gUsage };
+    const deltas = { 'claude-opus-4-6': gUsage };
     const out = repriceUsageDeltas(deltas, 'claude-sonnet-5[1m]');
     expect(out).toBe(deltas);   // 同一引用，一个字段没动
   });
 
   it('同一 appModel 的多个 key 形态归并相加', () => {
     const out = repriceUsageDeltas({
-      'claude-sonnet-4-6': { ...gUsage },
-      'gemini-3.1-pro': { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 0 },
-    }, 'gemini-3.1-pro');
-    expect(out['gemini-3.1-pro'].inputTokens).toBe(69_000);
+      'claude-opus-4-6': { ...gUsage },
+      'gemini-3.7-flash': { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 0 },
+    }, 'gemini-3.7-flash');
+    expect(out['gemini-3.7-flash'].inputTokens).toBe(69_000);
   });
 
   it('null / 空对象语义保持（context.js 的 fallback 分支依赖）', () => {
-    expect(repriceUsageDeltas(null, 'gemini-3.1-pro')).toBe(null);
-    expect(repriceUsageDeltas({}, 'gemini-3.1-pro')).toEqual({});
+    expect(repriceUsageDeltas(null, 'gemini-3.7-flash')).toBe(null);
+    expect(repriceUsageDeltas({}, 'gemini-3.7-flash')).toEqual({});
   });
 
-  it('没填价的 API 模型（kimi）：key 还原但 cost 保留 SDK 值', () => {
-    const out = repriceUsageDeltas({ 'claude-opus-4-7': { ...gUsage } }, 'kimi-k2.6');
-    expect(Object.keys(out)).toEqual(['kimi-k2.6']);
-    expect(out['kimi-k2.6'].costUsd).toBeCloseTo(0.345, 4);
-  });
+  // 「没填价的 API 模型 cost 保留 SDK 值」的样本（kimi 行）08-21 深夜随行删除；表里现在每条 API 行都有 prices
 
   it('本地 Qwen：零价表让 costUsd 归 0（不然按 opus-5 alias 虚价记账）', () => {
     const out = repriceUsageDeltas({
@@ -196,23 +195,25 @@ describe('repriceUsageDeltas', () => {
   it('API 会话里不在表里的 key（helper 走 fast 兜底）归到 fastModel、按 fast 价记', () => {
     const out = repriceUsageDeltas({
       'claude-sonnet-5': { inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 9.99 },
-    }, 'gemini-3.1-pro');
-    expect(Object.keys(out)).toEqual(['gemini-3.1-pro']);
-    expect(out['gemini-3.1-pro'].costUsd).toBeCloseTo(2.0, 4);   // gemini input $2/M，不是 SDK 的 9.99
+    }, 'gemini-3.7-flash');
+    expect(Object.keys(out)).toEqual(['gemini-3.7-flash']);
+    expect(out['gemini-3.7-flash'].costUsd).toBeCloseTo(0.75, 4);   // 3.7 flash input $0.75/M，不是 SDK 的 9.99
   });
 });
 
 describe('OpenCode Go · DeepSeek V4 Flash Vision 行（08-21 深夜）', () => {
-  it('走 zenGo 上游、真名 deepseek-v4-flash-vision-exp、alias 1M、gate localGen、helper 仍是免费 Ox', () => {
+  it('走 zenGo 上游、真名 deepseek-v4-flash-vision-exp、alias opus-4-7[1m]、窗口 272k、gate localGen、helper 仍是免费 Ox', () => {
     const r = resolveModelRoute('deepseek-v4-flash-vision');
     expect(r.mode).toBe('api');
     expect(r.upstream).toBe(UPSTREAMS.zenGo);
     expect(r.upstream.baseUrl).toBe('https://opencode.ai/zen/go/v1');
-    expect(r.sdkAlias).toBe('claude-opus-4-5');   // [1m] 池用光，200k 空名；窗口随之 200k
-    expect(r.window).toBe(200_000);
+    expect(r.sdkAlias).toBe('claude-opus-4-7[1m]');   // kimi 退役腾出的 1M 名；窗口用户拍板 272k
+    expect(r.window).toBe(272_000);
     expect(resolveModelContextWindow(r.sdkAlias)).toBeGreaterThanOrEqual(r.window);
     expect(r.fastModel).toBe('ox-alpha-helper');
-    expect(resolveWireModel('claude-opus-4-5')?.wireModel).toBe('deepseek-v4-flash-vision-exp');
+    expect(resolveWireModel('claude-opus-4-7')?.wireModel).toBe('deepseek-v4-flash-vision-exp');
+    expect(resolveWireModel('claude-opus-4-5')).toBe(null);   // 那个 200k 空名没再占
+    expect(resolveWireModel('claude-sonnet-4-6[1m]')).toBe(null);   // 3.1-pro 退役腾出的名空着
     expect(resolveWireModel('claude-sonnet-5')).toBe(null);   // 订阅默认名仍不可路由
     expect(SELECTABLE_MODELS.find((m) => m.id === 'deepseek-v4-flash-vision')?.gate).toBe('localGen');
     expect(selectableModelsFor({ role: 'user', plan: 'pro' }).map((m) => m.id)).not.toContain('deepseek-v4-flash-vision');

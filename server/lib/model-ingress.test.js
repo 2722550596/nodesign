@@ -16,7 +16,7 @@ const IMG = { type: 'image', source: { type: 'base64', media_type: 'image/png', 
 
 function geminiBody(extra = {}) {
   return {
-    model: 'claude-sonnet-4-6',   // SDK 序列化时剥了 [1m] 的 alias 形态
+    model: 'claude-opus-4-6',   // SDK 序列化时剥了 [1m] 的 alias 形态
     max_tokens: 32000,
     messages: [
       { role: 'user', content: '看一眼' },
@@ -34,18 +34,18 @@ describe('transformForUpstream（Gemini 路：rename + strip thinking + lift）'
   it('model 还原成上游真名', async () => {
     const body = geminiBody();
     await transformForUpstream(body, resolveWireModel(body.model));
-    expect(body.model).toBe('中转-gemini-3.1-pro-preview');
+    expect(body.model).toBe('反重力-流式抗截断/gemini-3.7-flash-high');
   });
 
   it('thinking 字段被整个删掉（strip 档）', async () => {
     const body = geminiBody({ thinking: { type: 'enabled', budget_tokens: 8192 } });
-    await transformForUpstream(body, resolveWireModel('claude-sonnet-4-6'));
+    await transformForUpstream(body, resolveWireModel('claude-opus-4-6'));
     expect('thinking' in body).toBe(false);
   });
 
   it('⭐tool_result 里的图提升到 user message 顶层，原位留占位文本', async () => {
     const body = geminiBody();
-    await transformForUpstream(body, resolveWireModel('claude-sonnet-4-6'));
+    await transformForUpstream(body, resolveWireModel('claude-opus-4-6'));
     const userMsg = body.messages[2];
     const toolResult = userMsg.content[0];
     expect(toolResult.content[0].type).toBe('text');            // 原位变占位
@@ -54,14 +54,16 @@ describe('transformForUpstream（Gemini 路：rename + strip thinking + lift）'
     expect(last.source.data).toBe(IMG.source.data);
   });
 
-  it('Kimi 路：adaptive 改写成 enabled+budget（enabled8k 档），已是 enabled 的不动', async () => {
+  it('enabled8k 档（原 Kimi 路，kimi 行 08-21 深夜删了，逻辑留着）：adaptive 改写成 enabled+budget，已是 enabled 的不动', async () => {
+    // 表里已无 enabled8k 的行，直接喂一个字面 wire 钉住流水线行为
+    const wire = { appModel: 'fake-kimi', wireModel: 'fake-kimi-wire', upstreamId: 'lament', upstream: UPSTREAMS.lament, thinking: 'enabled8k', liftImages: false };
     const a = { model: 'claude-opus-4-7', thinking: { type: 'adaptive' }, messages: [] };
-    await transformForUpstream(a, resolveWireModel(a.model));
-    expect(a.model).toBe('kimi-k2.6');
+    await transformForUpstream(a, wire);
+    expect(a.model).toBe('fake-kimi-wire');
     expect(a.thinking).toEqual({ type: 'enabled', budget_tokens: 8192 });
 
     const b = { model: 'claude-opus-4-7', thinking: { type: 'enabled', budget_tokens: 4096 }, messages: [] };
-    await transformForUpstream(b, resolveWireModel(b.model));
+    await transformForUpstream(b, wire);
     expect(b.thinking).toEqual({ type: 'enabled', budget_tokens: 4096 });
   });
 });
@@ -183,12 +185,12 @@ describe('图片归一：按上游声明的 imageFormats 转码', () => {
 
 describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20）', () => {
   // 背景：API 行的 sdkAlias 同时是真实 Claude 名。qwen 会话里的 binary 若用
-  // 'claude-sonnet-4-6'（gemini 行的 alias、钥匙配着）发一发 helper 请求，全表反查
+  // 'claude-opus-4-6'（gemini 行的 alias、钥匙配着）发一发 helper 请求，全表反查
   // 会带着 lament 的钥匙静默转发 —— 入口成功转发不留日志，只有记账侧事后看得见。
   const SID = 'ingress-test-qwen';
   it('无会话前缀 / 没注册：全表反查照旧（探针、体检走这条）', () => {
-    expect(resolveSessionWire('claude-sonnet-4-6', null)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
-    expect(resolveSessionWire('claude-sonnet-4-6', 'never-registered')).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
+    expect(resolveSessionWire('claude-opus-4-6', null)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.7-flash' } });
+    expect(resolveSessionWire('claude-opus-4-6', 'never-registered')).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.7-flash' } });
     expect(resolveSessionWire('nonsense-model', null)).toEqual({ wire: null, reason: 'none', role: 'main' });
   });
   it('qwen 会话：自己的 alias（原样 / 剥[1m]）→ 自己那行', () => {
@@ -220,13 +222,13 @@ describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20�
   it('⛔ qwen 会话拿 gemini 行的 alias 发请求 → 不跨行，改道本会话 fast（qwen 自己），且标 collision', () => {
     registerIngressSession(SID, 'qwen3.8-27b');
     try {
-      const r = resolveSessionWire('claude-sonnet-4-6', SID);
+      const r = resolveSessionWire('claude-opus-4-6', SID);
       expect(r.reason).toBe('collision');
-      expect(r.collidesWith).toBe('gemini-3.1-pro');
+      expect(r.collidesWith).toBe('gemini-3.7-flash');
       expect(r.wire.appModel).toBe('qwen3.8-27b');
       expect(r.wire.upstreamId).toBe('qwenLocal');
-      // kimi 行的 alias 同理
-      expect(resolveSessionWire('claude-opus-4-7', SID)).toMatchObject({ reason: 'collision', collidesWith: 'kimi-k2.6', wire: { appModel: 'qwen3.8-27b' } });
+      // deepseek 行的 alias（kimi 退役后转给它）同理
+      expect(resolveSessionWire('claude-opus-4-7', SID)).toMatchObject({ reason: 'collision', collidesWith: 'deepseek-v4-flash-vision', wire: { appModel: 'qwen3.8-27b' } });
     } finally { unregisterIngressSession(SID); }
   });
   it('qwen 会话：不在表里的 helper 名 → fast 兜底（fallback）；haiku 名 08-21 起属于 ox-alpha-helper 行 → 撞名改道', () => {
@@ -236,16 +238,16 @@ describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20�
       expect(resolveSessionWire('claude-haiku-4-5', SID)).toMatchObject({ reason: 'collision', collidesWith: 'ox-alpha-helper', wire: { appModel: 'qwen3.8-27b' } });
     } finally { unregisterIngressSession(SID); }
   });
-  it('gemini 会话拿 kimi alias → 改道 gemini 自己（反向同样封）；注销后回到全表反查', () => {
-    registerIngressSession(SID, 'gemini-3.1-pro');
+  it('gemini 会话拿 deepseek alias → 改道 gemini 自己（反向同样封）；注销后回到全表反查', () => {
+    registerIngressSession(SID, 'gemini-3.7-flash');
     try {
-      expect(resolveSessionWire('claude-opus-4-7[1m]', SID)).toMatchObject({ reason: 'collision', wire: { appModel: 'gemini-3.1-pro' } });
+      expect(resolveSessionWire('claude-opus-4-7[1m]', SID)).toMatchObject({ reason: 'collision', wire: { appModel: 'gemini-3.7-flash' } });
     } finally { unregisterIngressSession(SID); }
-    expect(resolveSessionWire('claude-opus-4-7[1m]', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'kimi-k2.6' } });
+    expect(resolveSessionWire('claude-opus-4-7[1m]', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'deepseek-v4-flash-vision' } });
   });
   it('订阅模型注册 = noop（订阅会话根本不经入口）', () => {
     registerIngressSession(SID, 'claude-sonnet-5[1m]');
-    expect(resolveSessionWire('claude-sonnet-4-6', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
+    expect(resolveSessionWire('claude-opus-4-6', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.7-flash' } });
     unregisterIngressSession(SID);
   });
 });

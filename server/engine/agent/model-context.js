@@ -46,13 +46,6 @@ export const UPSTREAMS = Object.freeze({
     authStyle: 'x-api-key',
     countTokens: false,   // 08-19 探针：404
   }),
-  moonshot: Object.freeze({
-    label: 'Moonshot Anthropic 兼容端点',
-    baseUrl: 'https://api.moonshot.cn/anthropic',
-    keyEnv: 'NODESIGN_UPSTREAM_MOONSHOT_KEY',
-    authStyle: 'x-api-key',
-    countTokens: true,
-  }),
   // 本地盒子（featurize 租的 5090 跑 llama-server，SSH 隧道 -L 到本机）。
   // llama.cpp 2025-11-28 起原生带 /v1/messages（含 count_tokens、SSE、tool_use、
   // vision；工具调用要 --jinja）—— 不需要任何协议转换层。authStyle 'none'：
@@ -143,23 +136,12 @@ const MODELS = Object.freeze([
   { id: 'claude-opus-4-8[1m]',   window: 1_000_000 },
   // 同上，七个里最后一个空着的，给 ox-alpha-max 行做 spoof（08-21 晚）
   { id: 'claude-sonnet-4-5-20250929[1m]', window: 1_000_000 },
-  // 08-21 深夜：[1m] 池用光（剩的 sonnet-5[1m] 是订阅默认行不许被路由），给 deepseek-v4-flash-vision 用 200k 空名（binary 认识）
-  { id: 'claude-opus-4-5',       window: 200_000 },
+  // alias 池现状（08-21 深夜清槽后）：opus-4-6[1m]→gemini-3.7-flash、opus-4-7[1m]→deepseek-v4-flash-vision、opus-4-8[1m]→ox-alpha、
+  // opus-5[1m]→qwen、sonnet-4-5-20250929[1m]→ox-alpha-max、haiku-4-5→ox-alpha-helper；**sonnet-4-6[1m] 空着备用**；sonnet-5[1m] 是订阅默认行不许被路由
 
   // ── API 通路 ──
-  // kimi-k2 已删：与 k2.6 共用 alias 是历史遗留，反查表容不下撞车，且 NoDesk
-  // 退役后那条路本来就没钥匙。session-model.js 的 LEGACY_FALLBACK 是 k2.6，保住。
-  {
-    id: 'kimi-k2.6', window: 256_000,
-    api: {
-      upstream: 'moonshot', wireModel: 'kimi-k2.6',
-      sdkAlias: 'claude-opus-4-7[1m]',
-      fastModel: 'kimi-k2.6',      // 旧的 DMXAPI haiku-cc 随 NoDesk 一起退役
-      thinking: 'enabled8k',       // adaptive 在 Kimi 上 = 0 thinking blocks（H3 实测）
-      liftImages: true,
-      prices: null,                // Moonshot 现价没核实过 —— 接真流量前先填
-    },
-  },
+  // kimi-k2.6 行与 moonshot 上游 08-21 深夜清掉（用户：「把 kimi 3.1pro 的槽都清理一下」）：NoDesk 退役后没走过流量，
+  // 它的 alias claude-opus-4-7[1m] 转给 deepseek-v4-flash-vision。'enabled8k' 的 thinking 档逻辑留在 transformForUpstream 里备用。
   // 本地 Qwen（HauhauCS/Qwen3.8-27B-Uncensored-…-Aggressive-MTP-GGUF，底座官方
   // Qwen3.8-27B，有视觉）。⚠️ window 必须跟箱子 llama-server 的 -c 一致：低了
   // 会在 SDK 触发 auto-compact 之前先撞上游 400。262144 = 该模型原生上限
@@ -215,28 +197,8 @@ const MODELS = Object.freeze([
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },   // 本地盒子按租金付费，token 记 0（不然按 opus-5 虚价记账）
     },
   },
-  {
-    id: 'gemini-3.1-pro', window: 1_000_000,
-    // 不进 picker（08-20 用户拍板要 3.7 Flash 不要 3.1 Pro）。行保留：它是中转站唯一稳定的
-    // 「中转-」通道，`_ingress-check.mjs` 拿它当接入体检的对照组。
-    api: {
-      upstream: 'lament', wireModel: '中转-gemini-3.1-pro-preview',
-      // sonnet-4-6[1m] 对 Gemini 3.1 Pro 是诚实的（真 1M 窗口）。订阅路的真
-      // claude-sonnet-4-6 不经入口（无 api 字段），不撞。
-      sdkAlias: 'claude-sonnet-4-6[1m]',
-      fastModel: 'gemini-3.1-pro',
-      // 'strip' = 出口删掉 thinking 字段让上游自决。08-20 探针（同一题各打两轮）：
-      // enabled 2k / 32k / adaptive / output_config.effort=high 在这个中转站上**全无可观测
-      // 效果** —— 不 400、不回 thinking 块、output_tokens 是噪声（none 两轮 1417 vs 63）。
-      // Gemini 3.1 Pro 自身默认 thinking_level=high，所以"默认高"就是 strip；这里没有
-      // 可调的旋钮，别为它造一个。
-      thinking: 'strip',
-      liftImages: true,            // 08-19 探针：桥把 tool_result 图转成文本，提升到顶层修法已验证
-      // 官方牌价（>200k 档 $4/$18 未分档 —— 单轮跨档的少数请求会低估，先接受）。
-      // ⚠️ 中转站自己的计量单位不明，这里的 USD 是配额/展示用的近似。
-      prices: { input: 2.0, output: 12.0, cacheRead: 0.2, cacheWrite: 0 },
-    },
-  },
+  // gemini-3.1-pro 行（中转-gemini-3.1-pro-preview，alias claude-sonnet-4-6[1m]）08-21 深夜清掉：退了 picker 后只做体检对照，
+  // 对照改用 3.7 Flash 行；sonnet-4-6[1m] 这个 alias 名腾出来备用。中转站 thinking 参数零效果的结论见 08-20 记录。
   {
     id: 'gemini-3.7-flash', window: 1_000_000,
     // 08-20 用户拍板：要 3.7 Flash，先用中转站 + lift shim 顶着。它只在中转站的「反重力-」
@@ -262,11 +224,12 @@ const MODELS = Object.freeze([
   // 额度内上游 cost 报 0、余额不扣 → 记账按**表价**（高峰价；北京 09-12/14-18 是高峰）让每用户日限跟 Go 池子一起受控，cost>0 以上游为准
   // （context.applyUpstreamBilling）。探针：文本/图(webp)/工具/流式全通，首字 ~450ms，reasoning_effort 收；DeepSeek ZDR。先 gate localGen 试跑，过关改 'subscription'
   {
-    id: 'deepseek-v4-flash-vision', window: 200_000,   // 真窗口 1M，但 [1m] alias 池用光 → 200k 空名 claude-opus-4-5，窗口如实标 200k（够用也省钱）
-    select: { label: 'DeepSeek V4 Flash · 视觉（Go）', desc: 'OpenCode Go 订阅 · 200k 上下文 · 有视觉 · 快 · 高峰 $0.44/$1.32 缓存 $0.014', gate: 'localGen' },
+    // 真窗口 1M；用户 08-21 深夜拍板压缩窗口 272k（省钱：携带成本 ≈ 1M 的 1/4、缓存失手最坏 $0.12/轮；近 14 天 649 回合只压缩过 11 次）
+    id: 'deepseek-v4-flash-vision', window: 272_000,
+    select: { label: 'DeepSeek V4 Flash · 视觉（Go）', desc: 'OpenCode Go 订阅 · 272k 上下文 · 有视觉 · 快 · 高峰 $0.44/$1.32 缓存 $0.014', gate: 'localGen' },
     api: {
       upstream: 'zenGo', wireModel: 'deepseek-v4-flash-vision-exp',
-      sdkAlias: 'claude-opus-4-5',
+      sdkAlias: 'claude-opus-4-7[1m]',   // kimi 退役腾出来的 1M 名；窗口由 CLAUDE_CODE_AUTO_COMPACT_WINDOW=272k 钉住
       fastModel: 'ox-alpha-helper',      // 一句话的活仍走免费 Ox helper
       thinking: 'strip',
       reasoningEffort: 'high',

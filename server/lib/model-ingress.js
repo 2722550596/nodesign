@@ -79,7 +79,7 @@ const countTokensDead = new Set();
 // 模型。session-loop 在 API 会话起 query 前注册、finally 注销。
 //
 // ⛔ 撞名雷（2026-08-19 审计标出、08-20 封死）：API 行的 sdkAlias 同时也是真实的
-// Claude 名（gemini 行 = claude-sonnet-4-6[1m]，kimi 行 = claude-opus-4-7[1m]）。
+// Claude 名（gemini-3.7-flash 行 = claude-opus-4-6[1m]，deepseek 行 = claude-opus-4-7[1m]，Ox 行 = claude-opus-4-8[1m]）。
 // qwen 会话里的 binary 若用这类名字发一发 helper 请求（SDK 换个 config 默认名就会），
 // 按全表反查会**命中别的行**、带着别家钥匙静默转发 —— 事前无警报、成功转发不留
 // 日志，只有记账侧（qwen run 里冒出 gemini 行）事后才看得见。表级断言封不住它

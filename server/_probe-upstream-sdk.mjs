@@ -25,7 +25,7 @@ function resolveTarget() {
   return { BASE: lines[0].trim().replace(/\/+$/, ''), KEY: lines[2].trim() };
 }
 const { BASE, KEY } = resolveTarget();
-const MODEL = process.argv[2] || '中转-gemini-3.1-pro-preview';
+const MODEL = process.argv[2] || '反重力-流式抗截断/gemini-3.7-flash-high';
 
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320">
   <rect width="480" height="320" fill="#102040"/>
