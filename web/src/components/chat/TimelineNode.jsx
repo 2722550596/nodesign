@@ -1,4 +1,4 @@
-import { COLOR, GAP } from '../../lib/theme.js';
+import { COLOR, GAP, WORKBENCH } from '../../lib/theme.js';
 import { useTimelinePosition } from './TimelineGroupContext.js';
 
 /**
@@ -73,7 +73,10 @@ export default function TimelineNode({
         top: ICON_TOP,
         width: ICON_SIZE,
         height: ICON_SIZE,
-        background: COLOR.bgWhite,
+        // 这块底色的职责是"打断时间轴线"，所以必须跟它所在的那一栏同色：聊天栏是
+        // WORKBENCH.panel（#FBF7EC），以前写成 COLOR.bgWhite（#FFFEF6，纸色）—— 每个
+        // 图标背后一小块比栏色亮一档的方块，用户 08-21 看出来的"图标和侧栏底色有色差"
+        background: WORKBENCH.panel,
         zIndex: 1,
         display: 'flex',
         alignItems: 'center',

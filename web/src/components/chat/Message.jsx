@@ -1,15 +1,7 @@
 import { useState, useMemo, memo } from 'react';
 import {
-  Wrench, ChevronRight, ChevronLeft,
-  FileText, Pencil, FilePlus, Search, Terminal,
-  Eye, Download, Bookmark, Bot,
-  ListChecks, FolderTree, Globe,
-  ShieldAlert, Info, AlertCircle, CheckCircle2,
-  HelpCircle, SkipForward, Send, Check,
-  Clock4, Compass, ScanEye, Palette, Sliders,
-  ImagePlus,
-  Trash2, Inbox, Highlighter, LayoutList, Navigation,
-  MousePointerClick, BookOpen, ClipboardCheck, Camera,
+  ChevronRight, ChevronLeft, ShieldAlert, Info, AlertCircle, CheckCircle2,
+  HelpCircle, SkipForward, Send, Check, Clock4,
 } from 'lucide-react';
 import { diffLines } from 'diff';
 import MarkdownText from './MarkdownText.jsx';
@@ -18,6 +10,7 @@ import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/t
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Turn, Sessions } from '../../lib/api.js';
 import TimelineNode from './TimelineNode.jsx';
+import { getToolIcon, isSubagentTool } from './tool-icons.js';
 import { useTimelinePosition } from './TimelineGroupContext.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
@@ -1131,57 +1124,6 @@ function ThinkingMessage({ content, isStreaming }) {
 }
 
 // ── 工具图标映射 —— 让用户一眼看出 agent 在做什么 ──
-const TOOL_ICONS = {
-  Read: FileText,
-  Write: FilePlus,
-  Edit: Pencil,                                // 铅笔 = 改文件
-  Glob: FolderTree,
-  Grep: Search,
-  Bash: Terminal,
-  TodoWrite: ListChecks,
-  WebFetch: Globe,
-  WebSearch: Globe,
-  Task: Bot,                                   // 通用 fallback（无 agentType 时）
-  AskUserQuestion: HelpCircle,                 // 问号 = 主动问用户
-  Skill: BookOpen,                             // SDK 内置 Skill 工具 — agent 加载方法论 body
-                                               // （跟 mcp__nodesign__read_page 视觉同源 = "在读方法论"）
-  // MCP nodesign 工具（2026-05-07 补齐 11 个漏映射；之前都走 fallback Wrench）
-  'mcp__nodesign__screenshot_canvas': Camera,
-  'mcp__nodesign__export_handoff': Download,
-  'mcp__nodesign__record_decision': Bookmark,
-  'mcp__nodesign__generate_image': ImagePlus,
-  'mcp__nodesign__expose_tweaks': Sliders,
-  'mcp__nodesign__get_pending_changes': Inbox,
-  'mcp__nodesign__clear_pending_changes': Trash2,
-  'mcp__nodesign__request_plan_mode': ClipboardCheck,
-  'mcp__nodesign__read_page': BookOpen,
-  'mcp__nodesign__list_pages': LayoutList,
-  'mcp__nodesign__navigate_to_page': Navigation,
-  'mcp__nodesign__highlight': Highlighter,
-  'mcp__nodesign__query_elements': MousePointerClick,
-  'mcp__nodesign__get_computed_styles': Palette,
-  'mcp__nodesign__web_search': Globe,
-};
-
-// Subagent 类型 → 专属 icon（Task 工具特化，让用户一眼分清派的是哪个子代理）
-const SUBAGENT_ICONS = {
-  'explorer': Compass,                          // 罗盘 = 研究员探索
-  'vision-checker': ScanEye,                    // 扫描眼 = 视觉评审
-  'ds-extractor': Palette,                      // 调色板 = 抽 design system
-  'tweak-proposer': Sliders,                    // 滑块 = 推 tweak schema
-};
-
-// SDK 的子代理工具名：老版 'Task'，新版 'Agent'（2026-07-30 真机确认两名并存期）
-function isSubagentTool(toolName) {
-  return toolName === 'Task' || toolName === 'Agent';
-}
-
-function getToolIcon(toolName, agentType) {
-  if (isSubagentTool(toolName) && agentType && SUBAGENT_ICONS[agentType]) {
-    return SUBAGENT_ICONS[agentType];
-  }
-  return TOOL_ICONS[toolName] || Wrench;
-}
 
 /** 路径 → 文件名（去目录） */
 function basename(p) {
