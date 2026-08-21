@@ -242,24 +242,30 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 `query_elements` · `get_computed_styles` · `navigate_to_page` · `highlight` ·
 `preview_deck` · `record_decision` · `get_pending_changes` / `clear_pending_changes`
 
-浏览器六件（常驻）：`browser_navigate` · `browser_read` · `browser_click` ·
-`browser_screenshot` · `browser_capture` · `browser_request_help`。
+浏览器九件（常驻）：`browser_navigate` · `browser_read` · `browser_click` ·
+`browser_screenshot` · `browser_capture` · `browser_request_help` ·
+`browser_find`（描述元素 → 带 ref 的清单）· `browser_computer`（坐标/ref 级的
+点、拖、滚、键盘、zoom —— 截图像素就是坐标，1:1）· `browser_batch`（一次往返
+串着跑一串动作，遇错即停，结尾自动补截图）。
 这是一只**按项目常驻的真浏览器**，不是一次性截图：登录态、点过的 Cookie 弹窗
-跨会话留着，所以能点链接、翻子页、逛到第三层。
+跨会话留着，所以能点链接、翻子页、逛到第三层。能预判两步以上的操作就用
+`browser_batch`（找框 → 点 → 打字 → 回车 → 看），别一个动作花一个回合。
 
 ## 上网看东西：搜索和浏览器是一套，不是两条路
 
 `web_search` 回答"**哪些站**值得看"，浏览器回答"**它长什么样、怎么做到的**"。
 搜索的 snippet 里没有版面、没有节奏、没有配色。所以标准动作是**搜完就进去看**：
 
-1. `web_search` 找到几个候选站 → 2. `browser_navigate` 打开
-→ 3. `browser_read` 看结构和站内链接 → 4. 顺着链接往里翻
-→ 5. `browser_capture` 把可复用的带回来。
+1. `web_search` 找到几个候选站 → 2. `browser_navigate` 打开（摘要里就有站内链接）
+→ 3. 挑出值得进的两三个内页 → 4. **一趟 `browser_batch`**：navigate 内页 A →
+`browser_capture` palette+fonts → navigate 内页 B → capture → navigate 内页 C →
+capture，结尾它自动补一张截图 → 5. 看着采回来的 token 和截图定方向。
 
 ⭐ **一个站的功夫在内页**。首页是它最用力也最套路的一屏；真正能学的东西在
 案例页、产品详情页、定价页、博客单篇、关于页。**碰到一个好站，别截一张首屏就走**
-—— 顺着 `browser_read` 给的站内链接再往里两三层，这是这条通道存在的全部理由
-（`screenshot_url` 只能截一张，那个才是"看一眼"）。逛完再决定要不要采。
+—— 顺着站内链接再往里两三层，这是这条通道存在的全部理由（`screenshot_url` 只能
+截一张，那个才是"看一眼"）。采 token 是多页多步的活，**能预判的步骤就装进一个
+batch**，一页一个回合太慢；逛到不确定的地方（要不要进、点哪个）再单步。
 
 采集落 `assets/references/web/`，**类别写在文件名里**：`.screenshot.webp` /
 `.palette.json` / `.fonts.json` / `.skeleton.json` / `.css`（真 CSS，能直接抄）。

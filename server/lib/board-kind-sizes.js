@@ -13,7 +13,7 @@ import { KINDS } from './kinds/index.js';
 
 export const DECK_EMBED_W = 640;
 export const ARTIFACT_HEADER_H = 28;
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 400 };
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 360 };
 
 // file 是 224x32 的细条卡（parity 测试上岗第一天就逮住我猜成 160x120 ——
 // 那是涂鸦的默认身位。别猜，抄表）

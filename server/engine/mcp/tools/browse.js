@@ -266,6 +266,9 @@ JS-driven navigation, tabs, accordions, "load more", cookie consent buttons
 (dismiss those once and the profile remembers).
 
 Prefer text= for buttons and links you can see, CSS selectors for structure.
+When neither fits (canvas UIs, icon buttons, drag handles, anything you can
+only point at), use browser_find to get a ref or browser_computer to click a
+coordinate off a screenshot.
 If a click opens a new tab, that tab is closed on purpose — the network gate
 cannot be installed on it in time, and an unguarded tab is a hole. Navigate to
 the URL directly instead.`,
@@ -325,8 +328,10 @@ This is what makes browsing useful for design work: read tells you what a page
 says, this tells you what it looks like — the layout rhythm, how the type is
 set, where the whitespace is, how an opening screen is composed.
 
-Default is the viewport (1440×900, cheap). fullPage for the whole scroll, or a
-selector for one component you want to look at closely.`,
+Default is the viewport (${_limits.VIEWPORT.width}×${_limits.VIEWPORT.height}, cheap; its pixels are the coordinate
+space browser_computer uses, 1:1). fullPage for the whole scroll, or a selector
+for one component you want to look at closely. For a magnified look at a small
+region use browser_computer zoom.`,
     {
       fullPage: z.boolean().optional().describe('Capture the whole scrollable page instead of the viewport. Several times more expensive.'),
       selector: z.string().optional().describe('Capture only the first element matching this CSS selector.'),

@@ -44,6 +44,8 @@ import {
   makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool, makeBrowserScreenshotTool,
   makeBrowserRequestHelpTool, makeBrowserCaptureTool,
 } from './tools/browse.js';
+import { makeBrowserComputerTool } from './tools/browse-computer.js';
+import { makeBrowserFindTool, makeBrowserBatchTool } from './tools/browse-find-batch.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
@@ -112,9 +114,28 @@ const ALWAYS_LOAD_TOOLS = new Set([
   // 卖点藏在描述里的不能。**
   'browser_navigate', 'browser_read', 'browser_click', 'browser_screenshot',
   'browser_request_help', 'browser_capture',
+  // 08-21 加的三件（坐标/引用级操作 + 词法找元 + 一次往返跑一串）。同一条理由：
+  // browser_batch 的卖点"省掉模型往返"和 browser_find 的"ref 比像素稳"都在描述里，
+  // 名字本身不卖；三件描述合计 ≈ 5.5k 字符，缓存里每轮增量约等于零。
+  'browser_computer', 'browser_find', 'browser_batch',
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
+  // 浏览通道里能被 browser_batch 串起来的七件：先建一次，batch 拿**同一批实例**
+  // （projectId/ctx 绑在 handler 里，不能再造第二份）。只有 request_help 不进
+  // batch（它阻塞等人）；capture 在里面 —— 逐页采 token 正是 batch 要省的那种回合。
+  const browseBatchable = [
+    makeBrowserNavigateTool({ projectId, ctx }),
+    makeBrowserReadTool({ projectId }),
+    makeBrowserClickTool({ projectId }),
+    makeBrowserScreenshotTool({ projectId }),
+    // 采集：把可复用的东西（调色板/字体/CSS/结构骨架/截图）落进
+    // assets/references/web/ + 出处 sidecar —— 下个会话还在
+    makeBrowserCaptureTool({ projectId, workspaceRoot, sessionId, ctx }),
+    // 坐标/引用级指针与键盘 + 词法找元（08-21，形状照 browser_toolset_20260801）
+    makeBrowserComputerTool({ projectId, ctx }),
+    makeBrowserFindTool({ projectId }),
+  ];
   const tools = [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
       makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx }),
@@ -212,15 +233,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 子代理一导航就把主 agent 正在看的那一页带走了，症状是"我刚打开的页面
       // 自己变了"。要给的话得先有"借用后还原"（存 URL、用完 goto 回去），
       // 或者第二个常驻名额；1 vCPU 上后者不成立。
-      makeBrowserNavigateTool({ projectId, ctx }),
-      makeBrowserReadTool({ projectId }),
-      makeBrowserClickTool({ projectId }),
-      makeBrowserScreenshotTool({ projectId }),
+      ...browseBatchable,
+      // 一次往返跑一串（串行、遇错即停、结尾补截图）—— 省的是模型回合数
+      makeBrowserBatchTool({ tools: browseBatchable }),
       // 撞验证墙时举手叫人（阻塞等，默认 120 秒超时 —— 人可能就走了）
       makeBrowserRequestHelpTool({ projectId, ctx }),
-      // 采集：把可复用的东西（调色板/字体/CSS/结构骨架/截图）落进
-      // assets/references/web/ + 出处 sidecar —— 下个会话还在
-      makeBrowserCaptureTool({ projectId, workspaceRoot, sessionId, ctx }),
       makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx }),
 
       // 控制层：emit 反向事件给前端，server 主动操作 canvas UI

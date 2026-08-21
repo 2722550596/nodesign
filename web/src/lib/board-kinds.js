@@ -15,8 +15,8 @@ export const ARTIFACT_HEADER_H = 28;
 const artifactCard = (previewH) => ({ w: DECK_EMBED_W, h: ARTIFACT_HEADER_H + previewH });
 
 /** 各形态的预览区高度：deck 是 16:9 设计稿，站点取一屏，世界要摊开地图 */
-// browse 是 1440×900 视口按 640 宽等比缩 = 400，跟站点同高（都是"一屏网页"）
-export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 400 };  // docx 是竖版 A4，给高一点
+// browse 是 1366×768 视口按 640 宽等比缩 = 360（08-21 视口随 browser_computer 改 16:9，坐标 1:1）
+export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 360 };  // docx 是竖版 A4，给高一点
 /** 主角档放大倍数（北极星路线1）：预览区放大、顶栏不变 —— sizeOf 与
  *  ArtifactCard 的画框都从这儿算，两处必须同源否则命中区和视觉错位 */
 export const HERO_SCALE = 1.5;

@@ -52,8 +52,15 @@ const MAX_RESIDENT = Number(process.env.ND_BROWSE_MAX) > 0
 const IDLE_MS = Number(process.env.ND_BROWSE_IDLE_MS || 0) || 5 * 60 * 1000;
 const NAV_TIMEOUT_MS = 30_000;
 
-/** 视口：按常见桌面宽，看设计参考要的是版面不是移动端 */
-const VIEWPORT = { width: 1440, height: 900 };
+/**
+ * 视口：桌面宽（看设计参考要的是版面不是移动端），**且坐标 1:1**。
+ * 08-21 从 1440×900 改 1366×768：1440×900=1.30MP 超过 shot-pipeline 的 1.15MP 归一化
+ * 阈值，截图会被缩 0.94 倍 → browser_computer 从图上读的坐标和页面像素差 6%，
+ * 点小按钮就偏。1366×768=1.05MP 在阈值内，截图不缩，坐标空间 = 截图像素 = 视口像素。
+ * 也是 Anthropic computer-use 文档给 web 应用推荐的档位。改它要连 browse-computer.test.js
+ * 的"视口在阈值内"断言一起过。
+ */
+const VIEWPORT = { width: 1366, height: 768 };
 
 /** projectId → entry */
 const live = new Map();

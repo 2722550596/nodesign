@@ -13,6 +13,8 @@
 // 但传输体积小一个量级、永远不会触发上限报错。编码统一 webp（API 支持，比 PNG 小得多）。
 const API_LONG_EDGE = 1568;
 const API_MAX_PIXELS = 1_150_000;
+/** 导出给"坐标 1:1"断言用（browse-computer：视口必须落在不缩放的范围内） */
+export const API_IMAGE_LIMITS = { longEdge: API_LONG_EDGE, maxPixels: API_MAX_PIXELS };
 
 // ── 渲染层保真（2026-08-07）──
 // 2026-08-05 事故：一次 screenshot_canvas 的位图整体呈暗色反转（深棕底米白字），
