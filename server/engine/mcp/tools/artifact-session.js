@@ -22,13 +22,15 @@
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { openSession, withSession, changedSinceOpen, peekSession } from '../../perception/session.js';
+import { openSession, withSession, changedSinceOpen, peekSession, defaultViewportFor } from '../../perception/session.js';
 import { findInPage, formatMatches } from '../../browse/refs.js';
 import { runAction, ACTIONS_DOC, COMPUTER_SCHEMA, actionErrorText } from './browse-computer.js';
 import { makeBatchTool, HALT_TEXT } from './browse-find-batch.js';
 import { normalizeShot, visionTokens } from './helpers/shot-pipeline.js';
 import { degradedNote } from './helpers/perception-page.js';
-import { CANVAS_PATH_DESC } from '../../../lib/artifact-target.js';
+import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
+import { collectMotionInventory, formatMotionInventory } from '../../motion/inventory.js';
+import { CANVAS_PATH_DESC, resolveCanvasTarget, requireBrowsable } from '../../../lib/artifact-target.js';
 
 const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
 
@@ -193,9 +195,65 @@ on reload/navigation.`,
   );
 }
 
-/** artifact_batch 能跑的：会话三件 + 五个能 live 的量具（它们在 batch 里要自己带 live:true） */
+/**
+ * artifact_motion：自己的产物"靠什么在动"——跟 browser_capture 的 motion 档**同一份引擎**
+ * （engine/motion/inventory.js），只是对着产物页。默认新开一只可复现；live:true 对着会话页
+ * （会真滚一遍再滚回顶，reveal 会被触发 —— 查交互态之前先想清楚要不要）。
+ */
+export function makeArtifactMotionTool({ projectId, workspaceRoot, sessionId }) {
+  return tool(
+    'artifact_motion',
+    `Inventory of WHAT moves on your artifact page and how: every stylesheet
+scanned for @keyframes / animation / transition / CSS scroll-driven animation
+(animation-timeline, scroll(), view()) / scroll-snap / sticky / reduced-motion;
+the browser's running animations (getAnimations: durations, easings, keyframes);
+motion libraries (GSAP + each ScrollTrigger's start/end/scrub/pin, Lenis, AOS…);
+and a REAL wheel scroll through the page that tells apart reveal-on-scroll
+elements (with their transition), scrub/parallax elements, and scroll hijacking.
+
+Same engine as browser_capture{kinds:['motion']} on reference sites — so you can
+compare "theirs vs mine" on equal terms: did my reveals actually wire up, is my
+ScrollTrigger range what I meant, did I forget prefers-reduced-motion. Pure
+declarations in your CSS you can Read; this tells you what the BROWSER sees at
+runtime, which is what the user sees.
+
+Fresh load by default (reproducible). live:true runs it on the artifact session's
+current page (it scrolls the page and returns to top — reveals get triggered).
+For how the motion LOOKS use screenshot_canvas frames; for numbers use trace_motion.`,
+    {
+      path: z.string().optional().describe(CANVAS_PATH_DESC),
+      device: z.enum(['desktop', 'tablet', 'mobile']).optional().describe('SITE ONLY, fresh-load mode: viewport width to inventory at (default desktop).'),
+      live: z.boolean().optional().describe(LIVE_PARAM_DESC),
+    },
+    async ({ path: relPath, device, live }) => {
+      let acq;
+      try {
+        const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
+        if (!target || !target.ok) return asText(target?.message || 'No artifact found — pass path.', true);
+        const guard = requireBrowsable(target);
+        if (guard) return asText(guard, true);
+        const vp = await defaultViewportFor(target, device);
+        acq = await acquireArtifactPage({ projectId, workspaceRoot, target, live, viewport: vp });
+        const inv = await collectMotionInventory(acq.page);
+        const lines = [
+          `motion inventory — ${target.relPath} @ ${acq.viewport.width}x${acq.viewport.height}`,
+          degradedNote(acq), acq.liveNote, acq.gotoNote, '',
+          ...formatMotionInventory(inv),
+          '', '→ to SEE it: screenshot_canvas { frames:[0,150,300,600,1000], scrollTo/beforeShot or live:true }; to MEASURE a curve: trace_motion.',
+        ].filter(l => l != null);
+        return asText(lines.join('\n'));
+      } catch (err) {
+        return asText(`artifact_motion 失败：${err.message}`, true);
+      } finally {
+        await acq?.release?.();
+      }
+    },
+  );
+}
+
+/** artifact_batch 能跑的：会话四件 + 五个能 live 的量具（它们在 batch 里要自己带 live:true） */
 export const ARTIFACT_BATCHABLE = [
-  'artifact_open', 'artifact_computer', 'artifact_find',
+  'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_motion',
   'screenshot_canvas', 'trace_motion', 'get_computed_styles', 'explain_style', 'query_elements',
 ];
 

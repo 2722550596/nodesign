@@ -336,7 +336,9 @@ export function formatMotionInventory(inv) {
     L.push(`滚动对照（真滚轮滚了 ${s.dispatchedPx}px，页面到 ${s.reachedY}/${Math.max(0, s.docHeight - s.viewportHeight)}）：`
       + `入场 reveal ${s.revealsTotal} 个 · 随滚动位置走的（scrub/视差）${s.scrubsTotal} 个`
       + (s.hijackSuspected ? ' · ⚠ 疑似滚动劫持（派发的滚轮像素远多于页面真滚的）' : ''));
-    if (s.reveals.length) L.push('  reveal 样本：' + s.reveals.slice(0, 5).map(x => `${x.target} ${x.from.opacity}/${x.from.transform}→${x.to.opacity}/${x.to.transform}${x.transition ? ` [${x.transition}]` : ''}${x.animation ? ` [anim ${x.animation}]` : ''}`).join(' · '));
+    // 滚完被拆掉/display:none 的元素（典型：开场幕布 lift 后 remove）computed 全空 —— 说"没了"，别打印空串
+    const st8 = (v) => (v.opacity === '' || v.opacity == null) && (!v.transform || v.transform === '') ? '(removed/hidden)' : `${v.opacity}/${v.transform}`;
+    if (s.reveals.length) L.push('  reveal 样本：' + s.reveals.slice(0, 5).map(x => `${x.target} ${st8(x.from)}→${st8(x.to)}${x.transition ? ` [${x.transition}]` : ''}${x.animation ? ` [anim ${x.animation}]` : ''}`).join(' · '));
     if (s.scrubs.length) L.push('  scrub/视差样本：' + s.scrubs.slice(0, 5).map(x => `${x.target}（滚到一半时 ${x.midTransform}）`).join(' · '));
   }
   if (r) {

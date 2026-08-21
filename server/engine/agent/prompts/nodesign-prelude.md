@@ -254,10 +254,11 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 滚动入场）；`browser_screenshot { frames:[…], scrollBy: 900 }` 出胶片条 + 元素探针，
 看它动起来的样子。静帧看不见时间轴，别只截一张就判断人家的动效。
 
-产物会话四件（常驻，**查自己的成品**）：`artifact_open`（把站点页 / deck / 游戏开进
+产物会话五件（常驻，**查自己的成品**）：`artifact_open`（把站点页 / deck / 游戏开进
 常驻会话，状态跨调用留着）· `artifact_computer`（对着它点、拖、滚、敲键盘、zoom、
-截图；坐标 = 截图像素）· `artifact_find`（描述 → ref）· `artifact_batch`（一趟跑一串，
-结尾自动截图）。静态看一眼仍用 `screenshot_canvas`（每次新开、可复现）；要查**交互
+截图；坐标 = 截图像素）· `artifact_find`（描述 → ref）· `artifact_motion`（自己的页靠
+什么在动：keyframes/transition/滚动驱动/ScrollTrigger/reveal 是否真接上了，跟参考站的
+motion 清单同一把尺）· `artifact_batch`（一趟跑一串，结尾自动截图）。静态看一眼仍用 `screenshot_canvas`（每次新开、可复现）；要查**交互
 态**（点开的菜单、填到一半的表单、玩到一半的游戏）就 `artifact_open` 再操作，然后
 让量具对着**现在这一页**量：`screenshot_canvas` / `trace_motion` / `get_computed_styles`
 / `explain_style` / `query_elements` 都认 `live:true`。改了文件后会话页是旧的，每个

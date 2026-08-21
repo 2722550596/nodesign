@@ -47,7 +47,7 @@ import {
 import { makeBrowserScreenshotTool } from './tools/browse-screenshot.js';
 import { makeBrowserComputerTool } from './tools/browse-computer.js';
 import { makeBrowserFindTool, makeBrowserBatchTool } from './tools/browse-find-batch.js';
-import { makeArtifactOpenTool, makeArtifactComputerTool, makeArtifactFindTool, makeArtifactBatchTool } from './tools/artifact-session.js';
+import { makeArtifactOpenTool, makeArtifactComputerTool, makeArtifactFindTool, makeArtifactMotionTool, makeArtifactBatchTool } from './tools/artifact-session.js';
 import { makeGetComputedStylesTool } from './tools/get-computed-styles.js';
 import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
@@ -122,7 +122,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   'browser_computer', 'browser_find', 'browser_batch',
   // 08-21 产物会话四件：成品检查的交互半边（状态跨调用留着）。artifact_batch 的卖点
   // "一趟跑完 + 结尾截图"和 live:true 的存在都只在描述里说，常驻。
-  'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_batch',
+  'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_batch', 'artifact_motion',
 ]);
 
 export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
@@ -152,6 +152,8 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     makeArtifactOpenTool({ projectId, workspaceRoot, sessionId }),
     makeArtifactComputerTool({ projectId }),
     makeArtifactFindTool({ projectId }),
+    // 自己的产物靠什么在动：跟 browser_capture motion 同一份引擎（engine/motion/inventory.js）
+    makeArtifactMotionTool({ projectId, workspaceRoot, sessionId }),
   ];
   const tools = [
       // C9 screenshot_canvas — playwright headless 截图 → image content block
