@@ -219,26 +219,36 @@ export class AgentContext {
    * 上游自报的费用覆盖（08-21 晚，lib/ingress/upstream-billing.js）。
    * billing = { appModel → { costUsd, responses, promptTokens, completionTokens, cachedTokens } }，
    * 是 ingress 在本轮累加、session-loop 结账前取走的。规则：
-   *   - 上游报了 cost（非 null）→ 覆盖 modelUsage[appModel].costUsd；token 数仍信 SDK 差分（口径不同）
-   *   - SDK 没有该模型条目（CLI 失败 / 估算没覆盖到的 helper）→ 用上游 token 数补一条
-   *   - 上游没报 cost → 不动（假数据比没有更坏）
-   * 覆盖后重算 totalCostUsd。记 counters.costSource='upstream' 供日志/排障。
+   *   - 上游报的 cost **> 0**（真扣了余额）→ 覆盖 modelUsage[appModel].costUsd；token 数仍信 SDK 差分（口径不同）
+   *   - 上游报 0 / 没报 → 保留表价算出来的数。OpenCode Go 订阅行（08-21 深夜实测）对订阅额度内的请求报 cost=0，
+   *     但它消耗的是全站共享的 Go 池子（$12/5h），按表价记才能让每用户日限跟着受控；免费行表价本就是 0
+   *   - SDK 没有该模型条目（CLI 失败 / 没覆盖到的 helper）→ 用上游 token 数补一条，按表价算（repriceUsageDeltas）
+   * 覆盖后重算 totalCostUsd。counters.costSource：'upstream'（上游真扣费覆盖过）| 'table'（只按表价）
    */
   applyUpstreamBilling(billing) {
     if (!billing || typeof billing !== 'object') return;
-    let touched = false;
+    let touched = false; let overrode = false;
     const usage = this.counters.modelUsage && typeof this.counters.modelUsage === 'object' ? this.counters.modelUsage : {};
     for (const [appModel, acc] of Object.entries(billing)) {
-      if (!acc || acc.costUsd == null) continue;
+      if (!acc || !acc.responses) continue;
+      const reported = acc.costUsd != null && Number(acc.costUsd) > 0 ? Number(acc.costUsd) : null;
       const prev = usage[appModel];
-      if (prev) usage[appModel] = { ...prev, costUsd: acc.costUsd };
-      else usage[appModel] = { inputTokens: acc.promptTokens || 0, outputTokens: acc.completionTokens || 0, cacheReadTokens: acc.cachedTokens || 0, cacheCreateTokens: 0, costUsd: acc.costUsd };
+      if (prev) {
+        if (reported != null) { usage[appModel] = { ...prev, costUsd: reported }; overrode = true; touched = true; }
+        continue;
+      }
+      // SDK 没这条（CLI 失败那类）：用上游 token 数补一条，先按表价，再看上游有没有真扣费
+      const cached = acc.cachedTokens || 0;
+      const raw = { [appModel]: { inputTokens: Math.max(0, (acc.promptTokens || 0) - cached), outputTokens: acc.completionTokens || 0, cacheReadTokens: cached, cacheCreateTokens: 0, costUsd: 0 } };
+      const priced = repriceUsageDeltas(raw, this.appModel)?.[appModel] || raw[appModel];
+      usage[appModel] = reported != null ? { ...priced, costUsd: reported } : priced;
+      if (reported != null) overrode = true;
       touched = true;
     }
     if (!touched) return;
     this.counters.modelUsage = usage;
     this.counters.totalCostUsd = Object.values(usage).reduce((s, d) => s + (d.costUsd || 0), 0);
-    this.counters.costSource = 'upstream';
+    this.counters.costSource = overrode ? 'upstream' : 'table';
   }
 
   /**

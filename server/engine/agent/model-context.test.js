@@ -201,3 +201,26 @@ describe('repriceUsageDeltas', () => {
     expect(out['gemini-3.1-pro'].costUsd).toBeCloseTo(2.0, 4);   // gemini input $2/M，不是 SDK 的 9.99
   });
 });
+
+describe('OpenCode Go · DeepSeek V4 Flash Vision 行（08-21 深夜）', () => {
+  it('走 zenGo 上游、真名 deepseek-v4-flash-vision-exp、alias 1M、gate localGen、helper 仍是免费 Ox', () => {
+    const r = resolveModelRoute('deepseek-v4-flash-vision');
+    expect(r.mode).toBe('api');
+    expect(r.upstream).toBe(UPSTREAMS.zenGo);
+    expect(r.upstream.baseUrl).toBe('https://opencode.ai/zen/go/v1');
+    expect(r.sdkAlias).toBe('claude-opus-4-5');   // [1m] 池用光，200k 空名；窗口随之 200k
+    expect(r.window).toBe(200_000);
+    expect(resolveModelContextWindow(r.sdkAlias)).toBeGreaterThanOrEqual(r.window);
+    expect(r.fastModel).toBe('ox-alpha-helper');
+    expect(resolveWireModel('claude-opus-4-5')?.wireModel).toBe('deepseek-v4-flash-vision-exp');
+    expect(resolveWireModel('claude-sonnet-5')).toBe(null);   // 订阅默认名仍不可路由
+    expect(SELECTABLE_MODELS.find((m) => m.id === 'deepseek-v4-flash-vision')?.gate).toBe('localGen');
+    expect(selectableModelsFor({ role: 'user', plan: 'pro' }).map((m) => m.id)).not.toContain('deepseek-v4-flash-vision');
+    expect(selectableModelsFor({ role: 'admin' }).map((m) => m.id)).toContain('deepseek-v4-flash-vision');
+    // Ox 三行已切 /zen/go
+    for (const id of ['ox-alpha', 'ox-alpha-max', 'ox-alpha-helper']) {
+      expect(resolveModelRoute(id).upstream).toBe(UPSTREAMS.zenGo);
+      expect(resolveWireModel(id)?.wireModel).toBe('ox-alpha-free');
+    }
+  });
+});

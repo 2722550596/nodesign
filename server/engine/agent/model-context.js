@@ -86,10 +86,8 @@ export const UPSTREAMS = Object.freeze({
     protocol: 'openai-chat',
     countTokens: false,   // 08-21 探针：404
   }),
-  // 08-21 晚：Zen 的第二个入口 /zen/go（用户给的）。同一把钥匙；模型目录**不同**（Ox 在这儿叫
-  // ox-alpha-free，主入口的 x-preview-f-free 它回 401 not supported）；每个响应自带 `cost`（美元字符串，
-  // 流式在 [DONE] 之后补一条 {"choices":[],"cost":"…"}）和 usage.cached_tokens —— 记账直接读它
-  // （lib/ingress/upstream-billing.js），不再按表价算。Ox 三行切到这儿跑对照；主入口那行留着随时切回。
+  // 08-21 晚：Zen 第二入口 /zen/go（= OpenCode Go 订阅入口）。同钥匙、目录不同（Ox 叫 ox-alpha-free，x-preview-f-free 它回 401）；
+  // 响应带 `cost`（流式在 [DONE] 之后补 {"choices":[],"cost":"…"}）与 cached_tokens → lib/ingress/upstream-billing.js。'zen' 留着可切回
   zenGo: Object.freeze({
     label: 'OpenCode Zen Go',
     baseUrl: 'https://opencode.ai/zen/go/v1',
@@ -145,6 +143,8 @@ const MODELS = Object.freeze([
   { id: 'claude-opus-4-8[1m]',   window: 1_000_000 },
   // 同上，七个里最后一个空着的，给 ox-alpha-max 行做 spoof（08-21 晚）
   { id: 'claude-sonnet-4-5-20250929[1m]', window: 1_000_000 },
+  // 08-21 深夜：[1m] 池用光（剩的 sonnet-5[1m] 是订阅默认行不许被路由），给 deepseek-v4-flash-vision 用 200k 空名（binary 认识）
+  { id: 'claude-opus-4-5',       window: 200_000 },
 
   // ── API 通路 ──
   // kimi-k2 已删：与 k2.6 共用 alias 是历史遗留，反查表容不下撞车，且 NoDesk
@@ -256,6 +256,22 @@ const MODELS = Object.freeze([
       // 官方促销价（2027-01-01 起翻倍 $1.5/$7.5）；缓存命中按输入价一折。中转站计量单位不明，
       // 这里的 USD 仍是配额/展示用的近似。
       prices: { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
+    },
+  },
+  // ── OpenCode Go · DeepSeek V4 Flash Vision Exp（08-21 深夜，第一条付费行）── /zen/go = OpenCode Go 订阅（$10/月换 $12/5h·$30/周·$60/月）：
+  // 额度内上游 cost 报 0、余额不扣 → 记账按**表价**（高峰价；北京 09-12/14-18 是高峰）让每用户日限跟 Go 池子一起受控，cost>0 以上游为准
+  // （context.applyUpstreamBilling）。探针：文本/图(webp)/工具/流式全通，首字 ~450ms，reasoning_effort 收；DeepSeek ZDR。先 gate localGen 试跑，过关改 'subscription'
+  {
+    id: 'deepseek-v4-flash-vision', window: 200_000,   // 真窗口 1M，但 [1m] alias 池用光 → 200k 空名 claude-opus-4-5，窗口如实标 200k（够用也省钱）
+    select: { label: 'DeepSeek V4 Flash · 视觉（Go）', desc: 'OpenCode Go 订阅 · 200k 上下文 · 有视觉 · 快 · 高峰 $0.44/$1.32 缓存 $0.014', gate: 'localGen' },
+    api: {
+      upstream: 'zenGo', wireModel: 'deepseek-v4-flash-vision-exp',
+      sdkAlias: 'claude-opus-4-5',
+      fastModel: 'ox-alpha-helper',      // 一句话的活仍走免费 Ox helper
+      thinking: 'strip',
+      reasoningEffort: 'high',
+      maxOutput: 128_000,
+      prices: { input: 0.44, output: 1.32, cacheRead: 0.014, cacheWrite: 0 },
     },
   },
   // ── OpenCode Zen · Ox Alpha（08-21，用户称「大事」的第一块）──
@@ -374,8 +390,7 @@ export const SELECTABLE_MODELS = Object.freeze(
  */
 export const SUBSCRIPTION_LOCK_REASON = DENIAL.subscription;
 
-/** 订阅 Claude 资格 = 账号档位能力（auth/tier.js：admin/pro 有，basic 无）。薄封装只为调用点读着顺。 */
-export function hasSubscriptionAccess(user) {
+export function hasSubscriptionAccess(user) {   // 订阅 Claude 资格 = 档位能力（auth/tier.js）；薄封装只为调用点读着顺
   return can(user, 'subscription');
 }
 
