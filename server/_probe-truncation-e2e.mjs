@@ -20,6 +20,8 @@ import fs from 'node:fs';
 
 // once | forever | rst | clean（对照组：上游全程正常）| busy（503 重试提示）
 // | donefin（发了 [DONE] 但末块没 finish_reason —— 不该被当半截）| billing（续接的账有没有结转）
+// | thinkonly（只想了没说就断 → ingress 就地重发，CLI 全程不知情）| thinkforever（一直只想不说 → 重发额度用完才判失败）
+// | thinkrst（只想不说 + **硬断连 RST** —— 08-21 夜评审 P0：req 的 error 先到，别让它把流封死）
 const MODE = process.argv[2] || 'once';
 const FOREVER = MODE === 'forever';
 const RST = MODE === 'rst';                    // 上游中途硬断连（RST），比干净 EOF 更狠
@@ -65,6 +67,22 @@ const fake = http.createServer((req, res) => {
     }
 
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache' });
+    // thinkonly / thinkforever：只吐 reasoning_content 就断（无 finish、无 [DONE]）—— ingress 该原地重发
+    if ((MODE === 'thinkonly' || MODE === 'thinkforever' || MODE === 'thinkrst') && !isSuggestion) {
+      const stillFail = MODE === 'thinkforever' || mainCalls === 1;
+      console.log(`[fake] ${tag} → ${stillFail ? '只想了没说就断' : '完整收尾'}`);
+      if (stillFail) {
+        sse(res, chunk({ role: 'assistant', reasoning_content: '让我想想这个问题…' }, null));
+        sse(res, { ...chunk({}, null), usage: USAGE });
+        // thinkrst：真 RST（不是干净 FIN）—— 生产上 Zen/中间层掐流常是这个形态
+        setTimeout(() => { try { MODE === 'thinkrst' ? res.socket.resetAndDestroy() : res.end(); } catch { /* */ } }, 40);
+        return;
+      }
+      sse(res, chunk({ role: 'assistant', content: REST }, null));
+      sse(res, { ...chunk({}, 'stop'), usage: USAGE });
+      res.write('data: [DONE]\n\n'); res.end();
+      return;
+    }
     // donefin：正文 + [DONE]，末块**不带** finish_reason，传输层完全干净 —— 这是"收完了"，不是被掐
     if (MODE === 'donefin' && !isSuggestion) {
       console.log(`[fake] ${tag} → 完整收尾但末块无 finish_reason（带 [DONE]）`);
@@ -159,7 +177,33 @@ console.log(`最终文本：${finalText.slice(0, 300)}`);
 
 const pf = (b) => (b ? 'PASS' : 'FAIL');
 let checks;
-if (MODE === 'donefin') {
+if (MODE === 'thinkrst') {
+  checks = [
+    ['ingress 原地重发了（上游 2 发）', mainCalls === 2],
+    ['⭐ 用户拿到的是完整答案（RST 版）', /NDCONTINUED/.test(finalText)],
+    ['run 落 succeeded', runRow?.status === 'succeeded'],
+  ];
+} else if (MODE === 'thinkonly' || MODE === 'thinkrst') {
+  const usage = getRunModelUsage(run.id);
+  const inp = usage.reduce((a, r) => a + (r.inputTokens || 0), 0);
+  console.log(`run_model_usage：${JSON.stringify(usage)}`);
+  checks = [
+    ['ingress 原地重发了（上游 2 发）', mainCalls === 2],
+    ['⭐ 用户拿到的是完整答案，CLI 全程不知道失败过', /NDCONTINUED/.test(finalText)],
+    ['⛔ 没有走 session-loop 续接（那是给"说了一半"的）', !notices.some((n) => n.includes('接着说完'))],
+    ['重发时提示了用户稍等', notices.some((n) => n.includes('重发'))],
+    ['run 落 succeeded', runRow?.status === 'succeeded'],
+    // ⭐ 有意为之：给 CLI（进而落库）的是**最后一发**的 usage = 真实上下文大小。
+    // 累加会让一次重发把 input 翻倍，CLI 的上下文计量提前触发压缩。真花掉的量走 onBilling 的累计。
+    ['给 CLI 的上下文数是最后一发、没被重发翻倍', inp > 0 && inp <= 6000],
+  ];
+} else if (MODE === 'thinkforever') {
+  checks = [
+    ['重发额度用完就停：1 + 2 = 3 发', mainCalls === 3],
+    ['最终以错误收场（不是假装成功的空回合）', /没有输出任何正文|还没输出正文|空响应/.test(finalText) || runRow?.status === 'failed'],
+    ['没有无限重发（回合 120s 内收场）', ms < 118000],
+  ];
+} else if (MODE === 'donefin') {
   checks = [
     ['⛔ 带 [DONE] 的完整响应不该被当半截 → 只打一发', mainCalls === 1],
     ['没有任何"被掐断"的提示', !notices.some((n) => n.includes('掐断') || n.includes('没说完'))],

@@ -272,6 +272,15 @@ export class OpenAIToAnthropicSSE extends Transform {
     this.truncated = null;     // 本次「半截」收场的原因（见 truncationReason；forward 层据此报给 session-loop 续接）
     this.cost = null;          // 上游报的本次费用（美元，/zen/go 在 [DONE] 后补的 cost 字段；null = 上游没报）
     this.doneSeen = false;     // 见过 [DONE]：之后只收 cost，收尾等 _flush
+    this.attempts = 1;         // 这条 SSE 一共打了几发上游（就地重发会 ++）
+    this.attemptUsage = null;  // 这一发的 usage
+    this.attemptCost = null;   // 这一发的 cost
+    // ⭐ 一份数两个读者，口径不同，别混（[[feedback-single-source-of-truth]]）：
+    //   this.usage      = **最后一发**的 usage → 进 message_delta 发给 CLI。CLI 拿它算"我的上下文多大"，
+    //                     累加会让一次重发把 input 翻倍，长会话里提前触发压缩。
+    //   this.usageTotal = **所有发**的累计 → 进 onBilling。记账问的是"真烧了多少"，失败那发也烧了。
+    this.usageTotal = null;
+    this.sawStreamError = false;   // 流中途发过 error 事件：这条流已经死了，不许再重发也不许再收尾
   }
   _emit(event, data) { this.push(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
   _ensureStart(chunk) {
@@ -295,8 +304,8 @@ export class OpenAIToAnthropicSSE extends Transform {
   }
   _handleChunk(chunk) {
     this._ensureStart(chunk);
-    if (chunk.usage) this.usage = chunk.usage;
-    if (chunk.cost != null) this.cost = Number(chunk.cost);
+    if (chunk.usage) this.attemptUsage = chunk.usage;
+    if (chunk.cost != null) this.attemptCost = Number(chunk.cost);
     const choice = chunk.choices?.[0];
     if (!choice) return;
     const d = choice.delta || {};
@@ -329,52 +338,125 @@ export class OpenAIToAnthropicSSE extends Transform {
     }
     if (choice.finish_reason) this.finish = choice.finish_reason;
   }
-  _finish() {
+  /**
+   * 一次上游往返结束（流关了/断了）。**只结账 + 给判决，不发收尾事件** —— 因为判决可能是
+   * "这一发白跑了，再打一次"，那时这条 SSE 还要继续用（forward 层的就地重发，见该文件）。
+   * @returns {{ kind: 'complete'|'truncated'|'empty', reason?: string }}
+   */
+  attemptEnd() {
+    this._foldAttemptTotals();
+    this._closeOpen();          // 失败那一发开着的 thinking 块也要闭合，否则块永远悬着
+    return this.verdict();
+  }
+
+  /**
+   * 这一发算什么：
+   *   empty     —— **零可见输出且收尾原因不可信**（没 finish / 私货 finish / 一个块都没开）。
+   *                这是"白跑一发"，可以就地重发（跟 OpenCode 对 unknown finish 的做法一个意思）。
+   *   truncated —— 说了一半被掐（判据见 truncationReason），照旧 end_turn 交付 + 标记续接。
+   *   complete  —— 正常收尾。⭐ 已知 finish（stop/length）+ 零可见输出**不算 empty**：
+   *                那是上游好好地告诉你"我就没话说"，OpenCode 同样直接结束不重试。
+   */
+  verdict() {
+    // 已经往流里发过 error 事件：这条流按协议就结束了（CLI 实测收到流中 error 会 0.2 秒静默重发，
+    // 人早走了）。既不能重发上游（纯烧钱），也不该再补 message_stop（error 之后再接内容块是非法的）。
+    if (this.sawStreamError) return { kind: 'errored', reason: 'upstream sent an error mid-stream' };
+    if (!this.started || (this.blockIndex < 0 && !this.finish)) {
+      return { kind: 'empty', reason: 'empty response' };
+    }
+    const zeroVisible = !this.sawText && !this.sawToolCall;
+    if (zeroVisible && !this.finish) return { kind: 'empty', reason: 'stream ended before any visible output' };
+    if (zeroVisible && isAlienFinish(this.finish)) return { kind: 'empty', reason: `finish_reason='${this.finish}' with no visible output` };
+    const truncated = truncationReason({ finish: this.finish, sawText: this.sawText, sawToolCall: this.sawToolCall, doneSeen: this.doneSeen });
+    if (truncated) return { kind: 'truncated', reason: truncated };
+    return { kind: 'complete' };
+  }
+
+  /** 整条响应收尾：发 Anthropic 的收场事件（或 error 事件）。调一次就封口。 */
+  finalize(v = this.verdict()) {
     if (this.done) return;
     this.done = true;
-    // 一个 chunk 都没来（200 但非 SSE 体 / 首字节前断连）或一个块都没开且没有收尾原因：
-    // 别包装成"成功的空消息"让 CLI 当正常结束 —— 发 error 事件（fable 评审 P2）
-    if (!this.started || (this.blockIndex < 0 && !this.finish)) {
+    if (v.kind === 'errored') {   // error 事件已经发过了（块也已闭合），不再补任何事件
+      this.failReason = this.failReason || v.reason;
+      return;
+    }
+    if (v.kind === 'empty') {
+      // 零可见输出且收尾不可信 —— forward 层已经就地重发过（额度用完了才走到这），
+      // 别包装成"成功的空消息"让 CLI 当正常结束（那会触发它"你上一轮没有可见输出"的催促循环）
       this._ensureStart(null);
-      this.failReason = 'empty response';
-      this._emit('error', { type: 'error', error: { type: 'api_error', message: `${this.label}返回了空响应，一个字都没有 —— 上游问题，已自动重试仍失败；稍后再发，或换个模型（upstream returned an empty response）` } });
+      this.failReason = v.reason;
+      const msg = v.reason === 'empty response'
+        ? `${this.label}返回了空响应，一个字都没有 —— 上游问题，已自动重发仍失败；稍后再发，或换个模型（upstream returned an empty response）`
+        : v.reason.startsWith('finish_reason=')
+          ? `${this.label}以 ${this.finish} 结束了这次请求，没有输出任何正文 —— 上游自己的链路出错，已自动重发仍失败；稍后再发，或换个模型（upstream ended with ${v.reason}）`
+          : `${this.label}在模型还在思考、还没输出正文时就结束了响应 —— 上游问题，已自动重发仍失败；稍后再发，或换个模型/思考档（upstream stream ended before any visible output）`;
+      console.warn(`[ingress/openai-chat] 零可见输出收场（${v.reason}）—— 重发额度已用完，这一轮判失败`);
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: msg } });
       return;
     }
-    // 没给 finish_reason 就断了、而且一个字/一个工具调用都没出（只有 thinking）：
-    // 这是上游早断流（Zen 08-21 真发生过），包装成 end_turn 会让 CLI 进"你上一轮没有
-    // 可见输出"的催促循环。发 error 让这一轮明确失败。有正文但没 finish_reason 的
-    // 算截断，仍按 end_turn 收尾只记 warn（重跑整轮的代价比半截答案更贵）
-    if (!this.finish && !this.sawText && !this.sawToolCall) {
-      console.warn('[ingress/openai-chat] upstream stream ended without finish_reason and without visible output (thinking-only)');
-      this._closeOpen();
-      this.failReason = 'stream ended before any visible output';
-      this._emit('error', { type: 'error', error: { type: 'api_error', message: `${this.label}在模型还在思考、还没输出正文时就结束了响应 —— 上游问题，已自动重试仍失败；稍后再发，或换个模型/思考档（upstream stream ended before any visible output）` } });
-      return;
+    if (v.kind === 'truncated') {
+      this.truncated = v.reason;
+      console.warn(`[ingress/openai-chat] 半截收场（${v.reason}）—— 按 end_turn 交付，标记待续接`);
+    } else if (isAlienFinish(this.finish)) {
+      console.warn(`[ingress/openai-chat] 未知 finish_reason='${this.finish}'（有可见输出）；按 end_turn 收尾`);
+    } else if (this.finish && !this.sawText && !this.sawToolCall) {
+      // 已知 finish 但零可见块：上游明说自己收完了，不重发（跟 OpenCode 一致）。CLI 会补一轮催促
+      console.warn(`[ingress/openai-chat] finish_reason='${this.finish}' 收尾但零可见输出（thinking-only）—— CLI 会补一轮催促`);
     }
-    // 给了 finish_reason，但那是上游私货（network_error 之类）而且一个可见块都没出：
-    // 同样发 error 让这一轮明确失败，CLI 0.2 秒后自己重发（假上游实测）。有可见输出的
-    // 私货 finish 只记 warn 按 end_turn 收尾 —— 半截答案也是答案，重跑整轮更贵
-    if (isAlienFinish(this.finish) && !this.sawText && !this.sawToolCall) {
-      console.warn(`[ingress/openai-chat] upstream finish_reason='${this.finish}' with no visible output — failing the turn so the CLI retries`);
-      this._closeOpen();
-      this.failReason = `finish_reason='${this.finish}' with no visible output`;
-      this._emit('error', { type: 'error', error: { type: 'api_error', message: `${this.label}以 ${this.finish} 结束了这次请求，没有输出任何正文 —— 上游自己的链路出错，已自动重试仍失败；稍后再发，或换个模型（upstream ended with finish_reason='${this.finish}' and no visible output）` } });
-      return;
-    }
-    if (isAlienFinish(this.finish)) console.warn(`[ingress/openai-chat] 未知 finish_reason='${this.finish}'（有可见输出）；按 end_turn 收尾`);
-    // 已知 finish 但零可见块（thinking-only）：行为不变，先只计数。CLI 会补一轮催促，
-    // 跑一周日志看这种情况多不多，再决定要不要一并 fail-loud（08-21 议定）
-    else if (this.finish && !this.sawText && !this.sawToolCall) console.warn(`[ingress/openai-chat] finish_reason='${this.finish}' 收尾但零可见输出（thinking-only）—— CLI 会补一轮催促`);
-    if (!this.finish) console.warn('[ingress/openai-chat] upstream stream ended without finish_reason (truncated); closing as end_turn');
-    // 半截：正文说了一半、收尾原因不可信（无 finish / 私货 finish）。照旧按 end_turn 交付，
-    // 但标记出来让 session-loop 自动续接一轮（判据与理由见 truncationReason）。
-    this.truncated = truncationReason({ finish: this.finish, sawText: this.sawText, sawToolCall: this.sawToolCall, doneSeen: this.doneSeen });
-    if (this.truncated) console.warn(`[ingress/openai-chat] 半截收场（${this.truncated}）—— 按 end_turn 交付，标记待续接`);
     this._closeOpen();
     const stop_reason = this.sawToolCall ? 'tool_use' : (STOP_MAP[this.finish] || 'end_turn');
     this._emit('message_delta', { type: 'message_delta', delta: { stop_reason, stop_sequence: null }, usage: usageFromOpenAI(this.usage) });
     this._emit('message_stop', { type: 'message_stop' });
   }
+
+  /**
+   * 就地失败收尾：发一条 error 事件就封口（重发那几发拿到 4xx/5xx 时用）。
+   * ⚠️ 必须走它而不是"手写 _emit + end"：`done` 要在这里置上，否则 `_flush` 会再判决一次、
+   * 补第二条 error，还会把 failReason 从真因（限流/鉴权）盖成"零可见输出"。
+   */
+  failWith(message, reason) {
+    if (this.done) return;
+    this.done = true;
+    this.failReason = reason || 'upstream error';
+    this._ensureStart(null);
+    this._closeOpen();
+    this._emit('error', { type: 'error', error: { type: 'api_error', message: String(message).slice(0, 2000) } });
+  }
+
+  /**
+   * 开始新一发上游往返（就地重发时调）。**只重置"这一发"的状态**：
+   * 块号 / 已发出的块 / 见过正文没 / 累计 usage 与 cost 全部保留 —— 它们属于这条 SSE 而不是某一发。
+   */
+  beginAttempt() {
+    this.buf = '';
+    this.finish = null;
+    this.doneSeen = false;
+    this.attemptUsage = null;
+    this.toolBlocks = new Map();   // 新一发的 tool_call index 从 0 重来，别跟上一发的块号串了
+    this.lastToolKey = undefined;
+    this.attempts += 1;
+  }
+
+  /** 把这一发的 usage/cost 折进整条响应的累计（失败那一发也烧了上游的 token，账要算它） */
+  _foldAttemptTotals() {
+    const u = this.attemptUsage;
+    if (u) {
+      this.usage = u;                       // 给 CLI 的：最后一发的真实上下文大小
+      const t = this.usageTotal || { prompt_tokens: 0, completion_tokens: 0 };
+      this.usageTotal = {
+        prompt_tokens: (t.prompt_tokens || 0) + (u.prompt_tokens || 0),
+        completion_tokens: (t.completion_tokens || 0) + (u.completion_tokens || 0),
+        prompt_tokens_details: { cached_tokens: (t.prompt_tokens_details?.cached_tokens || 0) + (u.prompt_tokens_details?.cached_tokens || 0) },
+        completion_tokens_details: { reasoning_tokens: (t.completion_tokens_details?.reasoning_tokens || 0) + (u.completion_tokens_details?.reasoning_tokens || 0) },
+      };
+      this.attemptUsage = null;
+    }
+    if (this.attemptCost != null) {
+      this.cost = (this.cost || 0) + this.attemptCost;
+      this.attemptCost = null;
+    }
+  }
+
   _transform(chunk, _enc, cb) {
     this.buf += chunk.toString('utf8');
     let nl;
@@ -389,9 +471,11 @@ export class OpenAIToAnthropicSSE extends Transform {
       if (payload === '[DONE]') { this.doneSeen = true; continue; }
       let j;
       try { j = JSON.parse(payload); } catch { continue; }
-      if (this.doneSeen || this.done) { if (j && j.cost != null) this.cost = Number(j.cost); continue; }
+      if (this.doneSeen || this.done) { if (j && j.cost != null) this.attemptCost = Number(j.cost); continue; }
       if (j?.error) {   // 流中途的错误体：转成 Anthropic error 事件
         this._ensureStart(j);
+        this._closeOpen();          // 先把开着的块闭合再发 error（顺序反了会出现 error 后面还跟 content_block_stop）
+        this.sawStreamError = true;
         this._emit('error', { type: 'error', error: { type: 'api_error', message: String(j.error.message || j.error) } });
         continue;
       }
@@ -399,5 +483,9 @@ export class OpenAIToAnthropicSSE extends Transform {
     }
     cb();
   }
-  _flush(cb) { this._finish(); cb(); }
+  _flush(cb) {
+    // 单发场景（没人调 attemptEnd 手动收尾）：走同一条判决 → 收尾的路，行为与从前一致
+    if (!this.done) this.finalize(this.attemptEnd());
+    cb();
+  }
 }

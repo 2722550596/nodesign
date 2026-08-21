@@ -299,6 +299,11 @@ async function handleRequest(req, res, bodyBuf) {
       onTruncated: (reason) => {
         if (routed.role === 'helper' || isCountTokens || isSuggestionQuery) return;
         noteUpstreamTruncation(sessionTag, reason, { appModel: wireFwd.appModel });
+      },
+      // 就地重发时说一声：那期间会话里什么都不动，用户只看到一个转不停的绿点（跟"上游繁忙"同一条通道）
+      onNotice: (text) => {
+        if (routed.role === 'helper') return;   // helper 的重发用户不需要知道
+        noticeSession(sessionTag, { key: 'upstream_retry', text, priority: 'warn' });
       } });
     return;
   }

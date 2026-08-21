@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { UpstreamTruncation } from './upstream-truncation.js';
-import { truncationReason, truncationOfChatResponse } from './openai-chat.js';
+import { truncationReason, truncationOfChatResponse, OpenAIToAnthropicSSE } from './openai-chat.js';
 
 describe('truncationReason —— 什么算「说到一半被掐」', () => {
   it('有正文 + 没有 finish_reason = 半截', () => {
@@ -74,5 +74,77 @@ describe('UpstreamTruncation —— 只记最近一次，取走即清', () => {
     const t = new UpstreamTruncation();
     expect(() => t.note(null, 'x')).not.toThrow();
     expect(t.take(null)).toBeNull();
+  });
+});
+
+// ── 就地重发（08-21 夜，跟 OpenCode 对齐）──
+describe('OpenAIToAnthropicSSE.verdict —— 哪一发该原地重发', () => {
+  const feed = (xf, lines) => { for (const l of lines) xf.write(`data: ${typeof l === 'string' ? l : JSON.stringify(l)}\n\n`); };
+  const chunk = (delta, finish = null) => ({ id: 'c1', model: 'm', choices: [{ index: 0, delta, finish_reason: finish }] });
+
+  it('只想了没说就断 = empty（该重发）', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    feed(xf, [chunk({ reasoning_content: '想想…' })]);
+    expect(xf.attemptEnd()).toMatchObject({ kind: 'empty', reason: 'stream ended before any visible output' });
+  });
+
+  it('一个 chunk 都没来 = empty（该重发）', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    expect(xf.attemptEnd()).toMatchObject({ kind: 'empty', reason: 'empty response' });
+  });
+
+  it('私货 finish + 零可见 = empty（该重发）', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    feed(xf, [chunk({ reasoning_content: '想想…' }), chunk({}, 'network_error')]);
+    expect(xf.attemptEnd()).toMatchObject({ kind: 'empty' });
+  });
+
+  it('⛔ 已知 finish + 零可见输出**不重发** —— 上游明说它收完了（OpenCode 同样不重试）', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    feed(xf, [chunk({ reasoning_content: '想想…' }), chunk({}, 'stop')]);
+    expect(xf.attemptEnd()).toMatchObject({ kind: 'complete' });
+  });
+
+  it('⛔ 说了一半被掐**不重发** —— 正文已经流给用户了，重发会重复（走 session-loop 续接）', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    feed(xf, [chunk({ content: '说到一半' })]);
+    expect(xf.attemptEnd()).toMatchObject({ kind: 'truncated', reason: 'no finish_reason' });
+  });
+
+  it('正常收尾 = complete', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    feed(xf, [chunk({ content: '说完了' }), chunk({}, 'stop')]);
+    expect(xf.attemptEnd()).toMatchObject({ kind: 'complete' });
+  });
+
+  it('跨发累计：失败那一发烧的 token 与 cost 也要算进账', () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    feed(xf, [{ ...chunk({ reasoning_content: '想' }), usage: { prompt_tokens: 100, completion_tokens: 20 }, cost: '0.01' }]);
+    expect(xf.attemptEnd().kind).toBe('empty');
+    xf.beginAttempt();
+    feed(xf, [{ ...chunk({ content: '好' }), usage: { prompt_tokens: 100, completion_tokens: 30 }, cost: '0.02' }, chunk({}, 'stop')]);
+    expect(xf.attemptEnd().kind).toBe('complete');
+    // ⭐ 两个读者两个口径：给 CLI 的是最后一发（上下文多大），给记账的是累计（真烧了多少）
+    expect(xf.usage.prompt_tokens).toBe(100);
+    expect(xf.usageTotal.prompt_tokens).toBe(200);
+    expect(xf.usageTotal.completion_tokens).toBe(50);
+    expect(xf.cost).toBeCloseTo(0.03);
+    expect(xf.attempts).toBe(2);
+  });
+
+  it('重发后块号接着往下排（同一条消息，不重开 message_start）', async () => {
+    const xf = new OpenAIToAnthropicSSE({ label: '上游' });
+    const out = [];
+    xf.on('data', (d) => out.push(d.toString()));
+    feed(xf, [chunk({ reasoning_content: '想' })]);
+    xf.attemptEnd();
+    xf.beginAttempt();
+    feed(xf, [chunk({ content: '好' }), chunk({}, 'stop')]);
+    xf.finalize(xf.attemptEnd());
+    await new Promise((r) => { xf.end(); xf.on('end', r); xf.resume(); });
+    const text = out.join('');
+    expect(text.match(/event: message_start/g)).toHaveLength(1);
+    expect(text.match(/event: message_stop/g)).toHaveLength(1);
+    expect(text).toMatch(/"index":0[\s\S]*"index":1/);   // 思考块 0，重发后的正文块 1
   });
 });
