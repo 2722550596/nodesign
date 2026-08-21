@@ -27,7 +27,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
-import { AgentContext } from './context.js';
+import { AgentContext, freshTurnCounters } from './context.js';
 import { Events } from './events.js';
 import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata, setRunMetrics, setRunModelUsage } from '../runs/store.js';
 import { getProject } from '../../projects/store.js';
@@ -47,7 +47,7 @@ import {
 } from '../runs/active-runs.js';
 import {
   promoteNextPendingRunId, claimRunByUuid, releaseCurrentTurnRunId, getPendingRunCount,
-  closeMergedRun, publishQueueDepth,
+  closeMergedRun, publishQueueDepth, pushUnclaimedMessage,
 } from '../runs/turn-relay.js';
 // skill 起手文件拷贝已挪 hooks.js PreToolUse(Skill/Bash)（2026-07-27），
 // session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
@@ -61,6 +61,8 @@ import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensor
 import { resolveSessionModel } from './session-model.js';
 import { getOrStartIngress, registerIngressSession, unregisterIngressSession } from '../../lib/model-ingress.js';
 import { takeUpstreamBilling } from '../../lib/ingress/upstream-billing.js';
+import { takeUpstreamTruncation } from '../../lib/ingress/upstream-truncation.js';
+import { registerSessionNotice, unregisterSessionNotice } from '../../lib/ingress/session-notice.js';
 import { clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
@@ -79,6 +81,12 @@ import { commitTaskWorkspace, commitWorkspace, PROJECTS_DATA_ROOT } from '../../
 import { taskManifest } from '../../lib/artifact-target.js';
 import { getUserById } from '../../auth/users-store.js';
 import { can, defaultModerationLevel } from '../../auth/tier.js';
+
+/**
+ * 半截续接时替 agent 说的那句话（见 maybeContinueTruncated）。写成"系统提示"而不是装成用户说话：
+ * 模型看得见前面那段半截是自己说的，让它接着写，别从头重来（重来一遍用户要看两份）。
+ */
+const CONTINUATION_PROMPT = '[系统] 上一条回复在传输途中被上游中断了，没有说完。请从被截断的地方接着写完，不要重复已经说过的内容，也不要为此道歉。如果上一条其实已经把话说完了，就继续执行手头的任务。';
 import { levelFor } from '../../lib/moderation.js';
 
 /**
@@ -217,6 +225,7 @@ export async function runSession({
   // console.error，没有 run.start 也没有 run.error，run 行永远 pending，
   // 前端完全零反馈（丢状态路径 P5）。现在失败时补 run.error + markRunFailed。
   let wsRoot, baseUrlForBinary, apiKeyForBinary, fastModel, compactWindow, isResume, installed;
+  let noticeHandler = null;   // ingress → 会话的通知回调（注销时按身份比对，别误删新会话的）
   try {
     wsRoot = await sharedCtx.workspace.ensure();
 
@@ -239,6 +248,12 @@ export async function runSession({
       // SDK 内部 helper 可能用不在表里的 Claude 名发请求（config 目录默认模型），
       // 注册会话 fast 兜底路由让它们改道而不是 502。finally 配对注销。
       registerIngressSession(sessionId, model);
+      // 上游抖的时候（Zen 一次 503 能挂 50~140 秒）会话里什么都不动，用户只看到一个转不停的绿点。
+      // 给 ingress 一条推消息的通道，让它把"正在重试"说出来。节流在 session-notice.js，finally 配对注销。
+      noticeHandler = ({ key, text, priority }) => {
+        try { sharedCtx.emit(Events.notification(key || 'upstream_retry', text, priority || 'warn')); } catch { /* 通知不该弄死会话 */ }
+      };
+      registerSessionNotice(sessionId, noticeHandler);
       // API 路的 fast model 必须同表可路由（订阅 haiku 在 API 模式会 404），
       // 所以 env 覆盖在这条路上不生效 —— 表是唯一真相。
       fastModel = route.fastModel;
@@ -297,6 +312,8 @@ export async function runSession({
     // 否则 init 失败的 API 会话在 ingress 的 sessionRoutes 里残留（2026-08-19 评审抓的洞）。
     // 主路径的注销在下方大 try 的 finally；两处都是幂等 delete，不怕重复。
     unregisterIngressSession(sessionId);
+    unregisterSessionNotice(sessionId, noticeHandler);
+    takeUpstreamTruncation(sessionId);   // 别留标记给下一个同 sid 的会话
     unregisterQuerySession(sessionId, sessionToken);
     try {
       eventBus.publish({ type: 'run.query.end', sessionId, reason: 'init_failed', ts: new Date().toISOString() });
@@ -591,21 +608,19 @@ export async function runSession({
   // ── per-turn lifecycle helpers ──
 
   let activeTurnRunId = null;
+  let turnStartedAt = 0;        // 本回合开始时刻（半截标记的新鲜度判据）
+  // 半截续接前存下的"第一轮的账"（结账时加回去）。⚠️ 必须声明在 finishTurn **之前**：
+  // finishTurn 引用它，写在下面的 try 块里会让闭包够不着 → 每个回合都 ReferenceError
+  // （真路径探针逮到的，node --check 和单测都看不见）。
+  let truncationCarry = null;
 
   const startTurn = (runId) => {
     activeTurnRunId = runId;
+    turnStartedAt = Date.now();
     markSessionActivity(sessionId);  // turn 边界 = 活跃信号
     // 重置 sharedCtx 的 per-turn state
     sharedCtx.runId = runId;
-    sharedCtx.counters = {
-      turns: 0, toolCalls: 0, toolFailures: 0,
-      compactBoundaries: 0, apiRetries: 0,
-      durationMs: 0, durationApiMs: 0, totalCostUsd: 0,
-      inputTokens: 0, outputTokens: 0,
-      cacheReadTokens: 0, cacheCreateTokens: 0,
-      subagentInputTokens: 0, subagentOutputTokens: 0,
-      modelUsage: null,   // absorbResult 差分后填 { model: 本turn增量 }
-    };
+    sharedCtx.counters = freshTurnCounters();
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
     // 当前 turn id 写到 process.env（历史上给 proxy 透传 trace 头用；NoDesk 退役
@@ -614,6 +629,11 @@ export async function runSession({
     // 请求 body.model 查表，天然无跨会话互写问题。
     process.env.NODESIGN_CURRENT_TURN_ID = runId;
     markRunStarted(runId);
+    // 丢掉回合之外留下的半截标记：CLI 在两个回合之间还会用**主模型**打几发
+    // （SUGGESTION MODE 的猜你想问、标题生成等，真路径探针实测），那些也会被
+    // ingress 标成半截。不清的话下一轮一开场就吃到陈旧标记，平白续接一次
+    // （用户看到 agent 没头没脑地"接着写"）。只有本回合内产生的标记才算数。
+    takeUpstreamTruncation(sessionId);
     sharedCtx.emit(Events.start());
   };
 
@@ -649,6 +669,9 @@ export async function runSession({
   const finishTurn = async (status, info) => {
     if (!activeTurnRunId) return;
     const runId = activeTurnRunId;
+    // 取消 / 出错路径没走到上面那次 addCarry —— 在这里补上，别让续接前那一轮的账凭空消失
+    // （取消掉的回合一样烧了 token，配额口径要计）
+    if (truncationCarry) { sharedCtx.addCarry(truncationCarry); truncationCarry = null; }
     if (status === 'success') {
       const artifactPath = await detectArtifact(sharedCtx);
       mergeRunMetadata(runId, { sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters });
@@ -705,6 +728,7 @@ export async function runSession({
       .catch((err) => console.warn('[git] turn commit failed:', err.message));
 
     activeTurnRunId = null;
+    turnStartedAt = 0;
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
     // 让出 currentRunId。排队的下一 turn **不在这里按计数晋升**（2026-08-20 起）——
     // 由它自己的回显来认领（见 for-await 循环头的回显锚）。老接力在 CLI 并轮后
@@ -764,6 +788,51 @@ export async function runSession({
         .then((usage) => { if (usage) sharedCtx.emit(Events.contextUsage(usage, sharedCtx.appModel)); })
         .catch(() => { /* fail-soft */ })
         .finally(() => { usageInFlight = false; });
+    };
+
+    // ── 半截续接（08-21 晚）──
+    // Zen 会在模型说到一半时把流掐了（无 finish_reason / 私货 finish 如 network_error），
+    // 正文已经吐了一半。转换层照旧按 end_turn 交付（假上游实测：有可见输出后再发 error 事件
+    // CLI **不重试**，只会把半截 + "Server error mid-response" 一起判 is_error 丢给用户），
+    // 于是半截答案就成了最终答案 —— agent 说半句话就收工。08-21 当天生产 4 次。
+    //
+    // 治法跟 OpenCode 1.18.21 对 unknown finish 的做法一样：半截那段原样留在历史里，
+    // 补一条用户消息让模型接着说，同一个 run 内再跑一轮（pushUnclaimedMessage 不认领 run）。
+    // 上限 MAX_CONTINUATIONS：上游持续半截时别把回合拖成无限循环。
+    // ⚠️ 别写 `Number(env) || 2`：设 0 想紧急关掉这个功能会落回 2（fable 评审 P2）
+    const envMax = Number(process.env.NODESIGN_TRUNCATION_CONTINUATIONS);
+    const MAX_CONTINUATIONS = Number.isFinite(envMax) && envMax >= 0 ? envMax : 2;
+    const continuationCounts = new Map();   // runId → 已续接次数
+    const maybeContinueTruncated = () => {
+      const mark = takeUpstreamTruncation(sessionId);
+      if (!mark) return false;
+      const runId = activeTurnRunId;
+      if (!runId) return false;
+      // 只认**本回合内**产生的标记。CLI 在回合之间还会用主模型打请求（猜你想问 / 标题），
+      // 上游一慢它们可能迟到；startTurn 那次清扫挡不住迟到的（fable 评审 P2）。
+      if (turnStartedAt && mark.at && mark.at < turnStartedAt) {
+        console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} 丢弃回合外的半截标记（${mark.reason}，早于本回合开始）`);
+        return false;
+      }
+      const used = continuationCounts.get(runId) || 0;
+      const sidShort = sessionId.slice(0, 8);
+      if (used >= MAX_CONTINUATIONS) {
+        console.warn(`[session-loop] sid=${sidShort} run=${runId} 半截续接已用满 ${used} 次（${mark.reason}），按现状收尾`);
+        sharedCtx.emit(Events.notification('upstream_truncated', `上游连着把回答掐断了 ${used + 1} 次，这段可能没说完。重发一次试试。`, 'warn'));
+        return false;
+      }
+      const pushed = pushUnclaimedMessage(sessionId, {
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: CONTINUATION_PROMPT }] },
+        parent_tool_use_id: null,
+      });
+      if (!pushed) return false;
+      continuationCounts.set(runId, used + 1);
+      // 第一轮的账要结转，否则被下一个 result 的 absorbResult 整个覆盖（fable 评审 P0）
+      truncationCarry = sharedCtx.takeCarry();
+      console.warn(`[session-loop] sid=${sidShort} run=${runId} 上一条回复被上游掐断（${mark.reason}）→ 自动续接第 ${used + 1}/${MAX_CONTINUATIONS} 次`);
+      sharedCtx.emit(Events.notification('upstream_truncated', '上游把回答掐断了，正在让它接着说完。', 'info'));
+      return true;
     };
 
     for await (const message of stream) {
@@ -829,11 +898,17 @@ export async function runSession({
         sharedCtx.absorbResult(message);
         // 上游自报费用（/zen/go 的 cost）覆盖 SDK/表价算出来的数：取走 ingress 本轮累计（没报就 null，不动）
         sharedCtx.applyUpstreamBilling(takeUpstreamBilling(sessionId));
+        // 半截续接过的回合：把续接前那一轮的账加回来（absorbResult 是赋值不是累加）。
+        // 放在 applyUpstreamBilling 之后 —— 上游自报 cost 只覆盖**本轮**那条，加完 carry 才是整回合的总账。
+        if (truncationCarry) { sharedCtx.addCarry(truncationCarry); truncationCarry = null; }
         const isCancelled = message.terminal_reason === 'aborted_streaming'
           || message.terminal_reason === 'aborted_tools';
 
         if (isCancelled) {
           await finishTurn('cancelled', { reason: message.terminal_reason });
+        } else if (message.subtype === 'success' && !message.is_error && maybeContinueTruncated()) {
+          // 半截续接：这一轮的收尾响应是"说到一半被上游掐了"，已经推了续接消息，
+          // **不结账**（同一个 run 接着跑，下一个 result 才是真收尾）。
         } else if (message.subtype === 'success' && message.is_error) {
           // 08-21 晚：API 层以 4xx 收场（如 ingress 连续失败止损回的 400）时，SDK 给的是
           // subtype=success + is_error=true + result=错误文案（假上游实测）。以前走下一分支当成功，
@@ -893,6 +968,8 @@ export async function runSession({
   } finally {
     clearInterval(idleScanTimer);
     unregisterIngressSession(sessionId);   // API 会话的 fast 兜底路由配对注销（订阅会话 noop）
+    unregisterSessionNotice(sessionId, noticeHandler);   // ingress → 会话的通知通道配对注销（按身份，别删掉新会话的）
+    takeUpstreamTruncation(sessionId);     // 半截标记跟会话同生命周期，别留
     // 带 token 比对：sid 若已被新 register 占用（closeQuerySession 已同步让位 +
     // 用户重发起新 runSession），unregister 看到 _token 不匹配 → noop 不误删新 entry
     unregisterQuerySession(sessionId, sessionToken);

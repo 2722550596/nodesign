@@ -40,6 +40,30 @@ const STOP_MAP = { tool_calls: 'tool_use', stop: 'end_turn', length: 'max_tokens
 /** finish_reason 是不是上游私货（不在 STOP_MAP 里）。null/undefined 不算 —— 那是"没给收尾原因"，另有分支 */
 const isAlienFinish = (finish) => Boolean(finish) && !(finish in STOP_MAP);
 
+/**
+ * 「半截」判据（08-21 晚，对齐 OpenCode 1.18.21 的 unknown-finish 续接）：**已经说出正文、
+ * 却没有可信的收尾原因**（无 finish_reason = 上游把流掐了；私货 finish 如 network_error）。
+ * 这种响应我们照旧按 end_turn 交付（假上游实测：有可见输出后再发 error 事件 CLI **不重试**，
+ * 只会把半截 + "Server error mid-response" 一起交给用户并判 is_error），
+ * 但要标记出来让 session-loop 自动续接一轮 —— 否则半截答案就是最终答案。
+ *
+ * ⚠️ 出过 tool_call 的不算：那种半截 CLI 自己会治（坏 JSON → __unparsedToolInput →
+ * 本地合成 InputValidationError tool_result → 模型自己重来，实测 8s 内自愈）。
+ * 对它续接等于叠加，实测还会把回合拖进 max_turns。
+ *
+ * @returns {string|null} 原因串（进日志/审计），null = 不是半截
+ */
+export function truncationReason({ finish, sawText, sawToolCall, doneSeen = false }) {
+  if (!sawText || sawToolCall) return null;
+  // ⭐ 上游好好地发了 `[DONE]` 只是末块没带 finish_reason（OpenAI 兼容实现里不罕见）：
+  // 那是**收完了**，不是被掐。少这一条判据的话，换一家这种脾气的上游就会每一轮都平白
+  // 续接到封顶 —— 3 倍 token、3 倍延迟，外加一条冤枉用户的告警（fable 评审 P1，探针复现过）。
+  if (!finish && doneSeen) return null;
+  if (!finish) return 'no finish_reason';
+  if (isAlienFinish(finish)) return `finish_reason='${finish}'`;
+  return null;
+}
+
 function textOfBlocks(blocks) {
   if (typeof blocks === 'string') return blocks;
   if (!Array.isArray(blocks)) return '';
@@ -210,6 +234,21 @@ export function toAnthropicError(status, bodyText) {
 }
 
 /**
+ * 非流式响应的「半截」判定（流式那份住在 OpenAIToAnthropicSSE.truncated；两边同一张判据 truncationReason）。
+ * @returns {string|null} 原因串，null = 不是半截
+ */
+export function truncationOfChatResponse(json) {
+  const choice = json?.choices?.[0];
+  if (!choice) return null;
+  const m = choice.message || {};
+  return truncationReason({
+    finish: choice.finish_reason,
+    sawText: Boolean(m.content) || Boolean(m.refusal),
+    sawToolCall: (m.tool_calls || []).length > 0,
+  });
+}
+
+/**
  * 流式：OpenAI SSE chunk → Anthropic SSE 事件。Transform，直接 pipe。
  * 状态机：当前打开的块（thinking/text/tool_use 之一）+ tool_calls 按 index 映射到块号。
  */
@@ -230,6 +269,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     this.sawToolCall = false;
     this.sawText = false;      // 有过可见正文（区分"只想没说"的早断流）
     this.failReason = null;    // 本次以 error 事件收场的原因（forward 层据此记会话失败计数；null = 正常收尾）
+    this.truncated = null;     // 本次「半截」收场的原因（见 truncationReason；forward 层据此报给 session-loop 续接）
     this.cost = null;          // 上游报的本次费用（美元，/zen/go 在 [DONE] 后补的 cost 字段；null = 上游没报）
     this.doneSeen = false;     // 见过 [DONE]：之后只收 cost，收尾等 _flush
   }
@@ -326,6 +366,10 @@ export class OpenAIToAnthropicSSE extends Transform {
     // 跑一周日志看这种情况多不多，再决定要不要一并 fail-loud（08-21 议定）
     else if (this.finish && !this.sawText && !this.sawToolCall) console.warn(`[ingress/openai-chat] finish_reason='${this.finish}' 收尾但零可见输出（thinking-only）—— CLI 会补一轮催促`);
     if (!this.finish) console.warn('[ingress/openai-chat] upstream stream ended without finish_reason (truncated); closing as end_turn');
+    // 半截：正文说了一半、收尾原因不可信（无 finish / 私货 finish）。照旧按 end_turn 交付，
+    // 但标记出来让 session-loop 自动续接一轮（判据与理由见 truncationReason）。
+    this.truncated = truncationReason({ finish: this.finish, sawText: this.sawText, sawToolCall: this.sawToolCall, doneSeen: this.doneSeen });
+    if (this.truncated) console.warn(`[ingress/openai-chat] 半截收场（${this.truncated}）—— 按 end_turn 交付，标记待续接`);
     this._closeOpen();
     const stop_reason = this.sawToolCall ? 'tool_use' : (STOP_MAP[this.finish] || 'end_turn');
     this._emit('message_delta', { type: 'message_delta', delta: { stop_reason, stop_sequence: null }, usage: usageFromOpenAI(this.usage) });

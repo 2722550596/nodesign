@@ -39,6 +39,8 @@ import { resolveWireModel, resolveModelRoute, UPSTREAMS } from '../engine/agent/
 import { forwardOpenAIChat } from './ingress/forward-openai-chat.js';
 import { failStreaks, exhaustedErrorBody } from './ingress/upstream-fail-streak.js';
 import { noteUpstreamBilling } from './ingress/upstream-billing.js';
+import { noteUpstreamTruncation } from './ingress/upstream-truncation.js';
+import { noticeSession } from './ingress/session-notice.js';
 
 // ── 出站连接池 ──
 // ⛔ 08-20 生产真踩：本地盒子（authStyle 'none' = 环回 SSH 隧道）走 Node 默认
@@ -230,6 +232,17 @@ async function handleRequest(req, res, bodyBuf) {
   }
 
   const isCountTokens = /^\/v1\/messages\/count_tokens\b/.test(origPath);
+  // CLI 在**回合之间**也用主模型打请求（猜你想问 / 标题生成），ingress 分不出角色（都是 main）。
+  // 它们的半截不该触发续接：那是给用户的建议词，不是 agent 的回答，接下去也没意义，
+  // 而且标记会串到下一个回合头上（fable 评审 P2；真路径探针里 SUGGESTION MODE 每回合都来一发）。
+  // 认的是 CLI 自己写死的提示词开头，认不出来最多是少一道保险（还有回合内新鲜度判据兜底）。
+  const isSuggestionQuery = (() => {
+    try {
+      const last = parsed?.messages?.[parsed.messages.length - 1];
+      const txt = typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content || '');
+      return txt.includes('SUGGESTION MODE');
+    } catch { return false; }
+  })();
 
   // 会话连续失败上限（upstream-fail-streak.js，僵尸 run 案）：上游持续死时 CLI 对 5xx 无上限退避重试，
   // 一个回合能挂一小时。到上限就回 400（CLI 不重试、回合以 is_error 收场、文案到用户、会话不死），
@@ -244,7 +257,20 @@ async function handleRequest(req, res, bodyBuf) {
     res.end(body);
     return;
   }
-  const noteOutcome = (ok, reason) => { if (!isCountTokens) failStreaks.note(streakKey, ok, reason); };
+  const noteOutcome = (ok, reason) => {
+    if (isCountTokens) return;
+    const n = failStreaks.note(streakKey, ok, reason);
+    // 上游抖的时候会话里什么都不动（CLI 在退避重试，一次 503 能挂 50~140 秒）—— 推一句人话，
+    // 让用户知道是在重试而不是卡死，等不及可以自己点停止。节流住在 session-notice.js。
+    if (!ok && routed.role !== 'helper') {
+      const label = wire.upstream?.label || wire.upstreamId;
+      noticeSession(sessionTag, {
+        key: 'upstream_retry',
+        text: `${label} 上游繁忙（${reason || '未知'}），正在自动重试第 ${n} 次；等不及可以点停止。`,
+        priority: 'warn',
+      });
+    }
+  };
 
   // count_tokens：上游没有该端点 → 本地估算短路（SDK 内部窗口计数要有数，
   // 否则 ContextUsageBar 永远"等待"、80% 预警从不触发 —— DMXAPI 时代真踩过）
@@ -266,7 +292,14 @@ async function handleRequest(req, res, bodyBuf) {
     const wireFwd = routed.role === 'helper' && wire.helperReasoningEffort ? { ...wire, reasoningEffort: wire.helperReasoningEffort } : wire;
     forwardOpenAIChat({ parsed, wire: wireFwd, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:'), onOutcome: noteOutcome,
       // 上游自报费用按会话 × appModel 累加（helper 请求记到 helper 行头上），session-loop 结账时取走
-      onBilling: (info) => noteUpstreamBilling(sessionTag, wireFwd.appModel, info) });
+      onBilling: (info) => noteUpstreamBilling(sessionTag, wireFwd.appModel, info),
+      // 「说到一半被掐」标记：session-loop 收到 result 时取走，有标记就自动续接一轮（upstream-truncation.js）。
+      // ⚠️ helper 一律不报（连"收得完整"也不报）：它就一句话的活不值得续接，而报 null 会把主行刚记下的
+      // 标记清掉（标题/摘要那发常常紧跟在主回合后面）。
+      onTruncated: (reason) => {
+        if (routed.role === 'helper' || isCountTokens || isSuggestionQuery) return;
+        noteUpstreamTruncation(sessionTag, reason, { appModel: wireFwd.appModel });
+      } });
     return;
   }
   const outBody = Buffer.from(JSON.stringify(parsed), 'utf8');

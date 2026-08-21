@@ -73,7 +73,9 @@ export const UPSTREAMS = Object.freeze({
   // 字段 = 透传 Anthropic。钥匙在 .env（NODESIGN_UPSTREAM_ZEN_KEY）。
   zen: Object.freeze({
     label: 'OpenCode Zen',
-    baseUrl: 'https://opencode.ai/zen/v1',
+    // 覆盖旋钮跟 qwenLocal 同款，**只给探针用**（假上游跑真 ingress+转换层，见 _probe-truncation-e2e.mjs）；
+    // 生产 .env 里不设 → 真地址。
+    baseUrl: process.env.NODESIGN_UPSTREAM_ZEN_URL || 'https://opencode.ai/zen/v1',
     keyEnv: 'NODESIGN_UPSTREAM_ZEN_KEY',
     authStyle: 'bearer',
     protocol: 'openai-chat',
@@ -83,7 +85,7 @@ export const UPSTREAMS = Object.freeze({
   // 响应带 `cost`（流式在 [DONE] 之后补 {"choices":[],"cost":"…"}）与 cached_tokens → lib/ingress/upstream-billing.js。'zen' 留着可切回
   zenGo: Object.freeze({
     label: 'OpenCode Zen Go',
-    baseUrl: 'https://opencode.ai/zen/go/v1',
+    baseUrl: process.env.NODESIGN_UPSTREAM_ZEN_GO_URL || 'https://opencode.ai/zen/go/v1',   // 探针覆盖，同上
     keyEnv: 'NODESIGN_UPSTREAM_ZEN_KEY',
     authStyle: 'bearer',
     protocol: 'openai-chat',

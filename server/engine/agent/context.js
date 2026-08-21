@@ -23,6 +23,34 @@ import { ensureWorkspace, getWorkspaceRoot, readFile, writeFile, listDir, exists
 import { EventBus } from './events.js';
 import { repriceUsageDeltas } from './model-context.js';
 
+/**
+ * 一个回合的计数器初值。**唯一形状真相**：AgentContext 构造函数与 session-loop 的
+ * startTurn（每个回合重置一次）都用它。
+ *
+ * ⛔ 08-21 夜血案：startTurn 里原来抄了一份字面量，08-21 深夜给构造函数加 `toolCharges`
+ * 时没同步过去 → startTurn 必定跑在任何工具之前 → `addToolCharge` 读 undefined 直接
+ * TypeError：generate_image 的 $0.20 一分没记，而且**成功出的图还会变成一次工具报错**。
+ * 收成一份就没有下一次。
+ */
+export function freshTurnCounters() {
+  return {
+    turns: 0,                  // SDK num_turns
+    toolCalls: 0,
+    toolFailures: 0,
+    compactBoundaries: 0,
+    apiRetries: 0,
+    durationMs: 0,
+    durationApiMs: 0,
+    totalCostUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreateTokens: 0,
+    modelUsage: null,   // 分模型本 turn 增量（absorbResult 差分产物）
+    toolCharges: {},    // 按件计价的工具花费（generate_image $0.20/张），absorbResult 末尾并进 modelUsage
+  };
+}
+
 export class AgentContext {
   /**
    * @param {object} opts
@@ -63,23 +91,8 @@ export class AgentContext {
     // 基准也归零，差分天然对齐。**不随 turn 边界重置**。
     this._modelUsageBase = null;
 
-    // 可观测计数器（落 run.metadata 用）
-    this.counters = {
-      turns: 0,                  // SDK num_turns
-      toolCalls: 0,
-      toolFailures: 0,
-      compactBoundaries: 0,
-      apiRetries: 0,
-      durationMs: 0,
-      durationApiMs: 0,
-      totalCostUsd: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cacheReadTokens: 0,
-      cacheCreateTokens: 0,
-      modelUsage: null,   // 分模型本 turn 增量（absorbResult 差分产物）
-      toolCharges: {},    // 按件计价的工具花费（08-21 深夜：generate_image $0.20/张），absorbResult 末尾并进 modelUsage
-    };
+    // 可观测计数器（落 run.metadata 用）—— 形状只有 freshTurnCounters 一份
+    this.counters = freshTurnCounters();
 
     this.startedAt = Date.now();
   }
@@ -215,6 +228,64 @@ export class AgentContext {
       this.counters.totalCostUsd = result.total_cost_usd ?? this.counters.totalCostUsd;
     }
     this._foldToolCharges();
+  }
+
+  /**
+   * 半截续接的账要**结转**（08-21 夜，fable 评审 P0）。
+   *
+   * 病：absorbResult 对 counters 是**赋值不是累加**（差分基准 _modelUsageBase 在第一个
+   * result 就前移了），而半截续接会让同一个 run 出现第二个 result → 第一轮的整份账
+   * （token、表价 cost、已经折进去的 generate_image 按件费、上游自报的真 cost）被第二轮
+   * 的增量整个覆盖 → 那一轮等于白跑，日限闸门（quota.usedCostToday 读 run_model_usage）少收。
+   * 真路径实测：续接的回合上游真打 2 发、落库只有 1 发的量。
+   *
+   * 用法：推续接消息**之前** takeCarry() 存一份，下一个 result 的 absorbResult /
+   * applyUpstreamBilling 跑完后 addCarry(carry) 加回去。多次续接会一路滚下去。
+   *
+   * ⚠️ 只加"可累加"的量：token / cost / 时长 / 工具计数。`turns` 不加 —— 它是 SDK 的
+   * num_turns，本身带累计语义，加了会双数。
+   */
+  takeCarry() {
+    const c = this.counters;
+    return {
+      inputTokens: c.inputTokens || 0,
+      outputTokens: c.outputTokens || 0,
+      cacheReadTokens: c.cacheReadTokens || 0,
+      cacheCreateTokens: c.cacheCreateTokens || 0,
+      totalCostUsd: c.totalCostUsd || 0,
+      durationMs: c.durationMs || 0,
+      durationApiMs: c.durationApiMs || 0,
+      toolCalls: c.toolCalls || 0,
+      toolFailures: c.toolFailures || 0,
+      compactBoundaries: c.compactBoundaries || 0,
+      apiRetries: c.apiRetries || 0,
+      modelUsage: c.modelUsage ? JSON.parse(JSON.stringify(c.modelUsage)) : null,
+    };
+  }
+
+  addCarry(carry) {
+    if (!carry) return;
+    const c = this.counters;
+    for (const k of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreateTokens', 'totalCostUsd', 'durationMs', 'durationApiMs']) {
+      c[k] = (c[k] || 0) + (carry[k] || 0);
+    }
+    // toolCalls 等计数器**不是**每回合重置后单调累加的差分量，而是 handleSDKMessage 一路 ++ 的，
+    // 续接期间它们没被重置（同一个 run 同一个 ctx）→ 已经含了第一轮，别再加一遍。
+    if (carry.modelUsage) {
+      const usage = c.modelUsage && typeof c.modelUsage === 'object' ? c.modelUsage : {};
+      for (const [name, d] of Object.entries(carry.modelUsage)) {
+        const prev = usage[name] || { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 0 };
+        usage[name] = {
+          ...prev,
+          inputTokens: (prev.inputTokens || 0) + (d.inputTokens || 0),
+          outputTokens: (prev.outputTokens || 0) + (d.outputTokens || 0),
+          cacheReadTokens: (prev.cacheReadTokens || 0) + (d.cacheReadTokens || 0),
+          cacheCreateTokens: (prev.cacheCreateTokens || 0) + (d.cacheCreateTokens || 0),
+          costUsd: (prev.costUsd || 0) + (d.costUsd || 0),
+        };
+      }
+      c.modelUsage = usage;
+    }
   }
 
   /** 按件计价的工具花费（generate_image 每张 $0.20）：工具成功后记一笔，结账时并进 modelUsage 同一本账 */

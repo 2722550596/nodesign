@@ -78,6 +78,35 @@ export function pushUserMessage(sessionId, runId, sdkUserMessage) {
  */
 
 /**
+ * 推一条**不认领 run** 的用户消息（08-21 晚，半截续接用）。
+ *
+ * 跟 pushUserMessage 的区别：不盖 uuid 章、不进 runIdByUuid、不碰 currentRunId/pendingRunIds。
+ * 因为它不是用户发的新一轮，而是**当前这一轮的延续** —— 半截被掐了，我们替 agent 说一句
+ * "接着说"。调用方（session-loop）此刻还没 finishTurn，currentRunId 仍是这一轮，
+ * 于是 CLI 回显它时 claimRunByUuid 返 null（不是我们盖章的消息，照旧忽略），
+ * turn 边界检测也不动（cid 没变）—— 整段续接算在同一个 run 里，token 照常累加。
+ *
+ * ⚠️ 别拿 pushUserMessage 干这件事：它会把 runId 塞进 pendingRunIds，而这个 runId
+ * 已经是 currentRunId，回显时走 'current' 分支不出队 —— 队列里那条永远清不掉，
+ * 前端"已排队 1 条"会一直亮着，还会误触发回显锚缺席的 FIFO 兜底。
+ *
+ * @returns {boolean} true = 推进队列了
+ */
+export function pushUnclaimedMessage(sessionId, sdkUserMessage) {
+  const rec = getQuerySession(sessionId);
+  if (!rec) return false;
+  if (rec.abortController.signal.aborted) return false;
+  rec.lastActivityAt = Date.now();
+  try {
+    rec.inputQueue.push(sdkUserMessage);
+    return true;
+  } catch (err) {
+    console.warn(`[turn-relay] pushUnclaimedMessage failed for ${sessionId}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * 回显到了一条带 uuid 的用户消息 → 认领它对应的 run。
  *
  * @param {string} sessionId
