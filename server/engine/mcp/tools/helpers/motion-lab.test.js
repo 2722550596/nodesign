@@ -33,8 +33,10 @@ describe('sheetLayout', () => {
     expect(Math.max(L.sheetW, L.sheetH)).toBeLessThanOrEqual(2000);        // 长边 ≤2000，归一化不再缩
     expect(L.cols * L.rows).toBeGreaterThanOrEqual(n);
   };
-  it('≤3 格一排；更多格子在预算内挑面积最大的排法', () => {
-    expect(sheetLayout(3, 800, 450)).toMatchObject({ cols: 3, rows: 1 });
+  it('在预算内挑格子面积最大的排法（3 格 800×450 竖排一列能保持原尺寸，就竖排）', () => {
+    const L3 = sheetLayout(3, 800, 450);
+    within(L3, 3);
+    expect(L3.cellW * L3.cellH).toBe(800 * 450);   // 没被缩
     for (const n of [4, 6, 10, 16, 24, 30]) within(sheetLayout(n, 1366, 768), n);
   });
   it('每格大小随格数下降但不至于看不清：10 格 ≥20 万像素，16 格 ≥12 万，30 格 ≥6 万', () => {
