@@ -135,12 +135,13 @@ export default function ModelPicker({
 
   const select = useCallback(async (id) => {
     setOpen(false);
-    // 看得见选不了的订阅行（08-21 公开注册号）：弹框说清楚怎么拿到，不发请求
+    // 看得见选不了的订阅行（08-21 公开注册号）：弹框说清楚是更高档位，不发请求。
+    // 口径（08-21 深夜）：pro 不对外分发，留着锁行只是让人知道有更高档，文案不给任何"去哪里拿资格"的路径
     const lockedOpt = options.find(o => o.id === id && o.locked);
     if (lockedOpt) {
       await confirmDialog({
-        title: '这个模型需要邀请码账号',
-        message: `${lockedOpt.label} 跑在站主的 Claude 订阅上，只对邀请码注册的账号开放。免费模型人人可用；想用 Claude 找站主要一个邀请码，注册时填进去就解锁。`,
+        title: '这个模型仅限 Pro 档',
+        message: `${lockedOpt.label} 跑在站主的 Claude 订阅上，属于 Pro 档，暂未对外开放。当前档位可用的模型都在列表里，不带锁的随便选。`,
         confirmLabel: '知道了', cancelLabel: '关闭',
       });
       return;
@@ -240,7 +241,7 @@ export default function ModelPicker({
               key={o.id}
               active={effective === o.id}
               label={o.label}
-              desc={o.locked ? `${o.lockReason || '需要邀请码账号'} · ${o.desc}` : o.desc}
+              desc={o.locked ? `${o.lockReason || '仅限 Pro 档'} · ${o.desc}` : o.desc}
               locked={!!o.locked}
               onClick={() => select(o.id)}
             />

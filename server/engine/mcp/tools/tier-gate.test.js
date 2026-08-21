@@ -3,20 +3,20 @@
  * 不起 SDK、不造项目：直接喂 owner 对象。
  */
 import { describe, it, expect } from 'vitest';
-import { tierDenialForOwner, withTierGate } from './tier-gate.js';
+import { tierDenialForOwner, withTierGate, chargeForImage } from './tier-gate.js';
 
 const admin = { id: 'a', role: 'admin' };
 const pro = { id: 'p', role: 'user', plan: 'pro' };
 const basic = { id: 'b-' + Date.now(), role: 'user', plan: 'basic' };
 
 describe('tierDenialForOwner', () => {
-  it('imageGen：admin/pro 放行，basic/无主拒绝（带 denied 前缀和工具名）', () => {
+  it('imageGen：admin/pro/basic 都放行（08-21 深夜 basic 开放，按张计价）；无主拒绝（带 denied 前缀和工具名）', () => {
     expect(tierDenialForOwner(admin, 'imageGen', 'generate_image')).toBeNull();
     expect(tierDenialForOwner(pro, 'imageGen', 'generate_image')).toBeNull();
-    const d = tierDenialForOwner(basic, 'imageGen', 'generate_image');
+    expect(tierDenialForOwner(basic, 'imageGen', 'generate_image')).toBeNull();
+    const d = tierDenialForOwner(null, 'imageGen', 'generate_image');
     expect(d.isError).toBe(true);
-    expect(d.content[0].text).toMatch(/^generate_image denied: .*basic/);
-    expect(tierDenialForOwner(null, 'imageGen', 'generate_image')?.isError).toBe(true);
+    expect(d.content[0].text).toMatch(/^generate_image denied: /);
   });
   it('webSearch：三档都放行；basic 到日上限后拒绝；pro 不计数', () => {
     const saved = process.env.NODESIGN_BASIC_WEB_SEARCH_PER_DAY;
@@ -46,5 +46,21 @@ describe('withTierGate', () => {
     const r = await wrapped.handler({}, {});
     expect(r.isError).toBe(true);
     expect(called).toBe(0);
+  });
+});
+
+describe('chargeForImage（08-21 深夜：生图按张计价，$0.20 默认，env NODESIGN_IMAGE_PRICE_USD）', () => {
+  it('出了图记一笔到 ctx.addToolCharge；错误/没图不记', () => {
+    const saved = process.env.NODESIGN_IMAGE_PRICE_USD; delete process.env.NODESIGN_IMAGE_PRICE_USD;
+    try {
+      const charges = []; const ctx = { addToolCharge: (n, v) => charges.push([n, v]) };
+      expect(chargeForImage({ content: [{ type: 'text', text: 'ok' }, { type: 'image', data: 'x', mimeType: 'image/png' }] }, ctx)).toBe(0.2);
+      expect(chargeForImage({ isError: true, content: [{ type: 'image', data: 'x' }] }, ctx)).toBe(0);
+      expect(chargeForImage({ content: [{ type: 'text', text: 'failed' }] }, ctx)).toBe(0);
+      expect(chargeForImage(null, ctx)).toBe(0);
+      expect(charges).toEqual([['generate_image', 0.2]]);
+      process.env.NODESIGN_IMAGE_PRICE_USD = '0.5';
+      expect(chargeForImage({ content: [{ type: 'image', data: 'x' }] }, null)).toBe(0.5);   // ctx 为空也不抛
+    } finally { if (saved === undefined) delete process.env.NODESIGN_IMAGE_PRICE_USD; else process.env.NODESIGN_IMAGE_PRICE_USD = saved; }
   });
 });

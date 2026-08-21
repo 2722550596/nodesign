@@ -55,7 +55,7 @@ function UserBadge() {
   const tier = usage?.tier || null;
   const sealed = tier === 'pro' || tier === 'admin';
   const title = tier === 'basic'
-    ? `${authUser.username} · basic 档 —— 拿到邀请码可解锁 Claude / 生图 / 发布`
+    ? `${authUser.username} · basic 档 —— Claude 与站点发布仅限 Pro 档，暂未对外开放`
     : authUser.username;
 
   return (

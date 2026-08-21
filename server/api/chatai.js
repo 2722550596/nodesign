@@ -57,7 +57,7 @@ const playing = new Set();
 function gateApproved(req, res) {
   // 档位 + 逐人批准（auth/tier.js localGenApproved）：basic 档不开，pro 档要被站主批过
   if (localGenApproved(req.user)) return true;
-  res.status(403).json({ error: '演出通路还没对这个账号开放，找管理员开通' });
+  res.status(403).json({ error: '演出通路尚未对这个账号开放' });
   return false;
 }
 
@@ -244,7 +244,7 @@ router.post('/:pid/chatai/turn', async (req, res, next) => {
 
     // 08-21 经营态：演出通路烧的是带钥匙的 API 钱，公开注册号（免费档）不开 —— 跟订阅 Claude 同一把资格
     if (!can(req.user, 'subscription')) {
-      return res.status(403).json({ error: '演出模式目前只对邀请码账号开放；basic 档先用设计会话，想开通找站主要邀请码', code: 'MODEL_LOCKED' });
+      return res.status(403).json({ error: '演出模式仅限 Pro 档，暂未对外开放；当前档位请用设计会话', code: 'MODEL_LOCKED' });
     }
     const quota = checkQuota(req.user);
     if (!quota.ok) {

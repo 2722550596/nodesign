@@ -215,9 +215,12 @@ describe('OpenCode Go · DeepSeek V4 Flash Vision 行（08-21 深夜）', () => 
     expect(resolveWireModel('claude-opus-4-5')).toBe(null);   // 那个 200k 空名没再占
     expect(resolveWireModel('claude-sonnet-4-6[1m]')).toBe(null);   // 3.1-pro 退役腾出的名空着
     expect(resolveWireModel('claude-sonnet-5')).toBe(null);   // 订阅默认名仍不可路由
-    expect(SELECTABLE_MODELS.find((m) => m.id === 'deepseek-v4-flash-vision')?.gate).toBe('localGen');
-    expect(selectableModelsFor({ role: 'user', plan: 'pro' }).map((m) => m.id)).not.toContain('deepseek-v4-flash-vision');
-    expect(selectableModelsFor({ role: 'admin' }).map((m) => m.id)).toContain('deepseek-v4-flash-vision');
+    // 08-21 深夜开闸给所有档（basic 靠 $5/天日限管着）
+    expect(SELECTABLE_MODELS.find((m) => m.id === 'deepseek-v4-flash-vision')?.gate).toBeUndefined();
+    for (const u of [{ role: 'user', plan: 'basic' }, { role: 'user', plan: 'pro' }, { role: 'admin' }]) {
+      expect(allowedModelsFor(u).map((m) => m.id)).toContain('deepseek-v4-flash-vision');
+    }
+    expect(modelIsFree('deepseek-v4-flash-vision')).toBe(false);   // 付费行：走 checkQuota 的美元日限，不走免费轮次闸
     // Ox 三行已切 /zen/go
     for (const id of ['ox-alpha', 'ox-alpha-max', 'ox-alpha-helper']) {
       expect(resolveModelRoute(id).upstream).toBe(UPSTREAMS.zenGo);

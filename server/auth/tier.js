@@ -42,8 +42,18 @@ const CAPABILITIES = Object.freeze({
   admin: Object.freeze({ subscription: true, webSearch: true, imageGen: true, localGen: true, publishSite: true, moderationDefault: 'off', webSearchDailyCap: null }),
   // 08-21 晚用户拍板「所有审查都开到严格」：pro 默认档 loose → strict（admin 仍免审）
   pro: Object.freeze({ subscription: true, webSearch: true, imageGen: true, localGen: true, publishSite: true, moderationDefault: 'strict', webSearchDailyCap: null }),
-  basic: Object.freeze({ subscription: false, webSearch: true, imageGen: false, localGen: false, publishSite: false, moderationDefault: 'strict', webSearchDailyCap: 'env' }),
+  // 08-21 深夜用户拍板：basic 是今后唯一对外分发的档（pro 不再新发，只手动给）；basic 可用 Ox 免费行 + OpenCode Go 付费行 +
+  // 生图（$0.20/张计入同一本账），每人每天 $5 总额度（注册时写 dailyCostLimitUsd，见 basicDefaultDailyUsd）；订阅 Claude / 本地产线 / 发布仍不开
+  basic: Object.freeze({ subscription: false, webSearch: true, imageGen: true, localGen: false, publishSite: false, moderationDefault: 'strict', webSearchDailyCap: 'env' }),
 });
+
+/** basic 档注册时写入的每日总额度（美元）。env NODESIGN_BASIC_DEFAULT_DAILY_USD；0 或非法 = 不写（走全局默认日限） */
+export function basicDefaultDailyUsd(env = process.env) {
+  const raw = env.NODESIGN_BASIC_DEFAULT_DAILY_USD;
+  if (raw === undefined || raw === '') return 5;
+  const v = Number(raw);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
 
 export const CAPABILITY_NAMES = Object.freeze(Object.keys(CAPABILITIES.admin));
 
@@ -84,7 +94,7 @@ export function webSearchDailyCap(user) {
 /**
  * 本地产线（roll_film / paint_still / 演出端点 / 本地模型行）是否真能用：
  * 档位有资格 **且**（admin 或站主逐人批过 allowLocalGen）。
- * 两段分别给不同的拒绝话术：basic 档是"这档不开放"，pro 未批是"找站主开通"。
+ * 两段分别给不同的拒绝话术：basic 档是"这档不开放"，pro 未批是"尚未开通"。
  */
 export function localGenApproved(user) {
   if (!can(user, 'localGen')) return false;
@@ -92,10 +102,12 @@ export function localGenApproved(user) {
 }
 
 /** 统一的拒绝话术（工具返回给 agent 原话转告用户）。 */
+// 口径（08-21 深夜用户拍板）：pro 不再对外分发，拒绝语只说"当前档位不包含"，不给任何"去哪里要资格"的路径（tier.test 有 lint 钉着措辞）
 export const DENIAL = Object.freeze({
-  imageGen: '这个账号是 basic 档（公开注册），不开放生图。原话转告用户，不要重试、不要换别的生图工具。',
-  localGenTier: '这个账号是 basic 档（公开注册），不开放本地产线（生图/视频盒子）。原话转告用户，不要重试。',
-  localGenApproval: '本地产线是批准制 —— 该账号还没被站主开通。原话转告用户，不要重试。',
-  publishSite: '这个账号是 basic 档（公开注册），不能发布站点到公网 —— 想发布可以找站主要邀请码',
-  subscription: '需要邀请码账号（订阅 Claude 额度）',
+  imageGen: '这个账号当前档位不包含生图。原话转告用户，不要重试、不要换别的生图工具。',
+  imageQuota: '今天的额度用完了（生图按 $0.20/张计入每日额度），明天零点刷新。原话转告用户，这轮别再生图。',
+  localGenTier: '这个账号当前档位不包含本地产线（生图/视频盒子）。原话转告用户，不要重试。',
+  localGenApproval: '本地产线是批准制 —— 该账号尚未开通。原话转告用户，不要重试。',
+  publishSite: '这个账号当前档位不包含发布站点到公网',
+  subscription: '仅限 Pro 档（站主的 Claude 订阅），暂未对外开放',
 });

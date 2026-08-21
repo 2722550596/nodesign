@@ -14,6 +14,7 @@ import { getProject } from '../../../projects/store.js';
 import { getUserById } from '../../../auth/users-store.js';
 import { can, webSearchDailyCap, DENIAL } from '../../../auth/tier.js';
 import { makeRateWindow } from '../../../lib/rate-window.js';
+import { checkQuota, imageChargeUsd } from '../../../lib/quota.js';
 
 /** 项目 owner 的用户对象；无主 / 找不到 → null（tier.can(null) 一律 false，fail-closed） */
 export function ownerOfProject(projectId) {
@@ -62,10 +63,34 @@ export function tierDenialForOwner(owner, capability, toolName) {
   return null;
 }
 
-/** 给 SdkMcpToolDefinition 套闸：handler 前先问档位，其余字段原样透传。 */
-export function withTierGate(toolDef, capability, projectId) {
+/**
+ * 给 SdkMcpToolDefinition 套闸：handler 前先问档位，其余字段原样透传。
+ * imageGen（08-21 深夜 basic 开放生图）还多两步：调用前过 owner 的日限（checkQuota，admin 不限）；
+ * 成功出图后 ctx.addToolCharge('generate_image', $0.20) 记进本回合账（quota.usedCostToday 同一本）。
+ */
+export function withTierGate(toolDef, capability, projectId, ctx = null) {
   return {
     ...toolDef,
-    handler: async (args, extra) => tierDenial(projectId, capability, toolDef.name) ?? toolDef.handler(args, extra),
+    handler: async (args, extra) => {
+      const denied = tierDenial(projectId, capability, toolDef.name);
+      if (denied) return denied;
+      if (capability === 'imageGen') {
+        const owner = ownerOfProject(projectId);
+        const q = checkQuota(owner);
+        if (!q.ok) return deny(`${toolDef.name} denied: ${DENIAL.imageQuota}`);
+      }
+      const result = await toolDef.handler(args, extra);
+      if (capability === 'imageGen') chargeForImage(result, ctx);
+      return result;
+    },
   };
+}
+
+/** 出了图才记账（result 非 error 且 content 里有 image 块）；返回记了多少（0 = 没记） */
+export function chargeForImage(result, ctx) {
+  const ok = result && !result.isError && Array.isArray(result.content) && result.content.some((b) => b?.type === 'image');
+  if (!ok) return 0;
+  const usd = imageChargeUsd();
+  ctx?.addToolCharge?.('generate_image', usd);
+  return usd;
 }

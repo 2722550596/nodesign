@@ -78,6 +78,7 @@ export class AgentContext {
       cacheReadTokens: 0,
       cacheCreateTokens: 0,
       modelUsage: null,   // 分模型本 turn 增量（absorbResult 差分产物）
+      toolCharges: {},    // 按件计价的工具花费（08-21 深夜：generate_image $0.20/张），absorbResult 末尾并进 modelUsage
     };
 
     this.startedAt = Date.now();
@@ -213,6 +214,27 @@ export class AgentContext {
       this.counters.cacheCreateTokens = result.usage.cache_creation_input_tokens || 0;
       this.counters.totalCostUsd = result.total_cost_usd ?? this.counters.totalCostUsd;
     }
+    this._foldToolCharges();
+  }
+
+  /** 按件计价的工具花费（generate_image 每张 $0.20）：工具成功后记一笔，结账时并进 modelUsage 同一本账 */
+  addToolCharge(name, usd) {
+    const v = Number(usd);
+    if (!name || !Number.isFinite(v) || v <= 0) return;
+    this.counters.toolCharges[name] = (this.counters.toolCharges[name] || 0) + v;
+  }
+  _foldToolCharges() {
+    const charges = this.counters.toolCharges || {};
+    const names = Object.keys(charges);
+    if (!names.length) return;
+    const usage = this.counters.modelUsage && typeof this.counters.modelUsage === 'object' ? this.counters.modelUsage : {};
+    for (const name of names) {
+      const prev = usage[name] || { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 0 };
+      usage[name] = { ...prev, costUsd: (prev.costUsd || 0) + charges[name] };
+    }
+    this.counters.modelUsage = usage;
+    this.counters.totalCostUsd = Object.values(usage).reduce((s, d) => s + (d.costUsd || 0), 0);
+    this.counters.toolCharges = {};
   }
 
   /**

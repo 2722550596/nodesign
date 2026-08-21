@@ -100,6 +100,12 @@ export function defaultDailyLimit() {
   return Number.isFinite(v) && v > 0 ? v : 15;
 }
 
+/** 生图按张计价（08-21 深夜，basic 开放生图）：每张记 $0.20 进本回合账，跟模型花费同一本、同一把日限尺。env NODESIGN_IMAGE_PRICE_USD */
+export function imageChargeUsd(env = process.env) {
+  const v = Number(env.NODESIGN_IMAGE_PRICE_USD);
+  return Number.isFinite(v) && v >= 0 ? v : 0.2;
+}
+
 /** @returns {number|null} 美元；null = 不限（admin） */
 export function limitFor(user) {
   if (!user || user.role === 'admin') return null;

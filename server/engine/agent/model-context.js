@@ -226,7 +226,8 @@ const MODELS = Object.freeze([
   {
     // 真窗口 1M；用户 08-21 深夜拍板压缩窗口 272k（省钱：携带成本 ≈ 1M 的 1/4、缓存失手最坏 $0.12/轮；近 14 天 649 回合只压缩过 11 次）
     id: 'deepseek-v4-flash-vision', window: 272_000,
-    select: { label: 'DeepSeek V4 Flash · 视觉（Go）', desc: 'OpenCode Go 订阅 · 272k 上下文 · 有视觉 · 快 · 高峰 $0.44/$1.32 缓存 $0.014', gate: 'localGen' },
+    // 08-21 深夜开闸给所有档（含 basic）：basic 的 $5/天日限 + 表价记账管着它；pro/admin 不限
+    select: { label: 'DeepSeek V4 Flash · 视觉', desc: '快 · 有视觉 · 272k 上下文 · 按用量计入每日额度（高峰 $0.44/$1.32 缓存 $0.014）' },
     api: {
       upstream: 'zenGo', wireModel: 'deepseek-v4-flash-vision-exp',
       sdkAlias: 'claude-opus-4-7[1m]',   // kimi 退役腾出来的 1M 名；窗口由 CLAUDE_CODE_AUTO_COMPACT_WINDOW=272k 钉住

@@ -18,7 +18,7 @@
 
 import crypto from 'node:crypto';
 import db from '../engine/runs/store.js';
-import { PLANS } from './tier.js';
+import { PLANS, basicDefaultDailyUsd } from './tier.js';
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -280,7 +280,8 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
   const code = String(inviteCode || '').trim();
   if (!code) {
     if (!openRegistrationEnabled()) throw Object.assign(new Error('邀请码无效'), { code: 'BAD_INVITE' });
-    return createUser({ username, password, role: 'user', inviteCode: null, plan: 'basic' });
+    // basic：每人每天 $5 总额度（Go 付费行按表价 + 生图 $0.20/张 同一本账；Ox 免费行不计）
+    return createUser({ username, password, role: 'user', inviteCode: null, plan: 'basic', dailyCostLimitUsd: basicDefaultDailyUsd() });
   }
   const inv = getInvite(code);
   if (!inv) throw Object.assign(new Error('邀请码无效'), { code: 'BAD_INVITE' });

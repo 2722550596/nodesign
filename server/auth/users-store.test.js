@@ -17,13 +17,13 @@ describe('registerUser', () => {
     expect(openRegistrationEnabled()).toBe(false);
     expect(() => registerUser({ username: uniq('u'), password: 'password123', inviteCode: '' })).toThrow(/邀请码无效/);
   });
-  it('开放注册开着：没邀请码建号，落 basic 档（无订阅/生图/发布资格）', () => {
+  it('开放注册开着：没邀请码建号，落 basic 档（无订阅/发布资格；生图 08-21 深夜起开放、按张计价）', () => {
     process.env.NODESIGN_OPEN_REGISTRATION = '1';
     const u = registerUser({ username: uniq('pub'), password: 'password123', inviteCode: '' });
     expect(u.plan).toBe('basic');
     expect(tierOf(u)).toBe('basic');
     expect(can(u, 'subscription')).toBe(false);
-    expect(can(u, 'imageGen')).toBe(false);
+    expect(can(u, 'imageGen')).toBe(true);
     expect(can(u, 'publishSite')).toBe(false);
     expect(can(u, 'webSearch')).toBe(true);
     expect(u.inviteCode).toBeNull();
@@ -56,9 +56,9 @@ describe('registerUser', () => {
       expect(u.dailyCostLimitUsd).toBe(20);
       expect(u.lifetimeCostLimitUsd).toBeNull();
       expect(u.plan).toBe('pro');
-      // 公开注册号不带日限（免费模型 $0，按轮次闸）
+      // 公开注册号（basic）：每天 $5 总额度（08-21 深夜：Go 付费行 + 生图按张计价都记这本账；Ox 免费行另按轮次闸）
       const pub = registerUser({ username: uniq('pub20'), password: 'password123', inviteCode: '' });
-      expect(pub.dailyCostLimitUsd).toBeNull();
+      expect(pub.dailyCostLimitUsd).toBe(5);
     } finally {
       if (saved === undefined) delete process.env.NODESIGN_INVITE_DEFAULT_DAILY_USD; else process.env.NODESIGN_INVITE_DEFAULT_DAILY_USD = saved;
     }

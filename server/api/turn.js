@@ -183,7 +183,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 解析出来的模型一律过白名单（不只 body.model）：旧覆盖/资格收回/无 select 裸名都在此拦（fable P0）
     if (isModelLockedFor(modelUser, turnModel)) {
       return res.status(403).json({
-        error: `这个模型（${turnModel}）需要邀请码账号（订阅 Claude 额度）。换成免费模型继续，或找站主要邀请码`,
+        error: `这个模型（${turnModel}）仅限 Pro 档，暂未对外开放。换成免费模型继续`,
         code: 'MODEL_LOCKED', model: turnModel,
       });
     }
@@ -620,7 +620,7 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
     if (typeof model === 'string' && model.trim()) {
       const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）
       if (isModelLockedFor(modelUser, model.trim())) {
-        return res.status(403).json({ error: '这个模型需要邀请码账号（订阅 Claude 额度）', code: 'MODEL_LOCKED', model: model.trim() });
+        return res.status(403).json({ error: '这个模型仅限 Pro 档，暂未对外开放', code: 'MODEL_LOCKED', model: model.trim() });
       }
       if (!allowedModelsFor(modelUser).some((m) => m.id === model.trim())) {
         return res.status(400).json({ error: `unknown model: ${model}`, code: 'UNKNOWN_MODEL' });

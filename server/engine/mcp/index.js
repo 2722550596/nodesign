@@ -284,7 +284,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 图片生成（gemini-3.1-flash-image-preview / Nano Banana 2，via NoDesk passthrough）
       // 落档优先 sharedRoot/assets/generated/，fallback workspaceRoot/assets/generated/。
       // 跨 session 共享靠 sessions/<sid>/assets softlink → shared/assets。
-      withTierGate(makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }), 'imageGen', projectId),   // basic 档不开生图
+      withTierGate(makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }), 'imageGen', projectId, ctx),   // 先过日限，出图记 $0.20/张
 
       // 抠图（rembg U²-Net，server 端 spawn .venv-rembg python subprocess）
       // 任何 workspace 里的图都能抠，输出 RGBA PNG 到 assets/generated/<name>.png。

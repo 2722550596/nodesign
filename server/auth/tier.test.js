@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TIERS, PLANS, CAPABILITY_NAMES, tierOf, can, defaultModerationLevel, webSearchDailyCap, localGenApproved, DENIAL } from './tier.js';
+import { TIERS, PLANS, CAPABILITY_NAMES, tierOf, can, defaultModerationLevel, webSearchDailyCap, localGenApproved, DENIAL, basicDefaultDailyUsd } from './tier.js';
 
 const admin = { id: 'a', role: 'admin', plan: 'basic' };   // admin 的 plan 列无意义，role 派生
 const pro = { id: 'p', role: 'user', plan: 'pro' };
@@ -35,14 +35,17 @@ describe('tierOf / can', () => {
     expect(tierOf({ role: 'user', plan: 'vip' })).toBe('basic');
     expect(tierOf(null)).toBeNull();
   });
-  it('能力表：admin/pro 全开；basic 只有 webSearch；null 全关', () => {
+  it('能力表：admin/pro 全开；basic = webSearch + imageGen（08-21 深夜开放，按张计价）；null 全关', () => {
     for (const cap of ['subscription', 'webSearch', 'imageGen', 'localGen', 'publishSite']) {
       expect(can(admin, cap), cap).toBe(true);
       expect(can(pro, cap), cap).toBe(true);
       expect(can(null, cap), cap).toBe(false);
-      expect(can(basic, cap), cap).toBe(cap === 'webSearch');
+      expect(can(basic, cap), cap).toBe(cap === 'webSearch' || cap === 'imageGen');
     }
     expect(CAPABILITY_NAMES).toContain('moderationDefault');
+    expect(basicDefaultDailyUsd({})).toBe(5);
+    expect(basicDefaultDailyUsd({ NODESIGN_BASIC_DEFAULT_DAILY_USD: '8' })).toBe(8);
+    expect(basicDefaultDailyUsd({ NODESIGN_BASIC_DEFAULT_DAILY_USD: '0' })).toBeNull();
   });
   it('未知能力名抛错（拼错不能静默 false/true）', () => {
     expect(() => can(pro, 'imagegen')).toThrow(/unknown capability/);
@@ -73,9 +76,10 @@ describe('tierOf / can', () => {
     expect(localGenApproved(null)).toBe(false);
   });
   it('拒绝话术齐全且是字符串', () => {
-    for (const k of ['imageGen', 'localGenTier', 'localGenApproval', 'publishSite', 'subscription']) {
+    for (const k of ['imageGen', 'imageQuota', 'localGenTier', 'localGenApproval', 'publishSite', 'subscription']) {
       expect(typeof DENIAL[k]).toBe('string');
       expect(DENIAL[k].length).toBeGreaterThan(8);
+      expect(DENIAL[k]).not.toMatch(/邀请码|找站主|找管理员/);   // 口径：不给"去要码"的路径
     }
   });
 });
@@ -138,5 +142,34 @@ describe('lint：权限判断只走 auth/tier.js', () => {
     // 动态 import 只认 `await import(...)` / `= import(...)`；JSDoc 的 `{import('…sdk').Query}` 类型引用不算（active-runs.js 有一堆）
     const re = /import\s*\{[^}]*\bquery\b[^}]*\}\s*from\s*['"]@anthropic-ai\/claude-agent-sdk['"]|import\s*\*\s*as\s+\w+\s*from\s*['"]@anthropic-ai\/claude-agent-sdk['"]|(?:await|=)\s*import\(\s*['"]@anthropic-ai\/claude-agent-sdk['"]\s*\)/;
     expect(fileHits(re, ['engine/agent/session-loop.js', 'api/sessions.js'])).toEqual([]);
+  });
+});
+
+// ── 口径 lint（08-21 深夜用户拍板）：pro 不再对外分发，全站不许再对用户说"找站主要邀请码"之类的话 ──
+describe('lint：用户可见文案不许再引导去要邀请码', () => {
+  const WEB_ROOT = path.resolve(SERVER_ROOT, '..', 'web', 'src');
+  function walkWeb(dir, out = []) {
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith('.') || name === 'node_modules') continue;
+      const p = path.join(dir, name);
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) { if (name !== 'admin') walkWeb(p, out); }   // admin 控制台是站主自己看的，可以提邀请码
+      else if (/\.(js|jsx)$/.test(name) && !/\.test\.jsx?$/.test(name)) out.push(p);
+    }
+    return out;
+  }
+  const BAD = /找站主|找我要码|找管理员开通|要邀请码|邀请码账号|邀请码注册的账号|换正式邀请码|拿到邀请码/;
+  it('server（非 admin/users-store/测试/探针）', () => {
+    const allow = ['api/admin.js', 'auth/users-store.js'];
+    expect(hits(BAD, allow)).toEqual([]);
+  });
+  it('web/src（admin 目录除外；AdminConsole.jsx 的邀请码 UI 除外）', () => {
+    const bad = [];
+    for (const f of walkWeb(WEB_ROOT)) {
+      if (/AdminConsole\.jsx$/.test(f)) continue;
+      readFileSync(f, 'utf8').split('\n').forEach((line, i) => { if (BAD.test(line)) bad.push(`${path.relative(WEB_ROOT, f)}:${i + 1}: ${line.trim().slice(0, 100)}`); });
+    }
+    expect(bad).toEqual([]);
   });
 });

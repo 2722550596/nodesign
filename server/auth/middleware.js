@@ -95,7 +95,7 @@ authRouter.post('/register', (req, res) => {
   const hasInvite = typeof inviteCode === 'string' && inviteCode.trim();
   const perIpLimit = Number(process.env.NODESIGN_REGISTER_PER_IP_PER_DAY) || 5;
   if (!hasInvite && registerWindow.count(ip) >= perIpLimit) {
-    return res.status(429).json({ error: '这个网络今天开的号太多了，明天再来或找站主要邀请码', code: 'REGISTER_RATE_LIMITED' });
+    return res.status(429).json({ error: '这个网络今天开的号太多了，明天再来', code: 'REGISTER_RATE_LIMITED' });
   }
   try {
     const user = registerUser({

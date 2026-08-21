@@ -163,7 +163,7 @@ export default function AuthGate({ children }) {
       <button className="go" type="submit" disabled={busy}>
         {busy ? '核 对 中' : isRegister ? '开 号' : '进 门'}
       </button>
-      <p className="foot">{openReg ? '没有邀请码也能开号，免费模型人人可用；想用 Claude 在 Boss 或者小红书上找我要码。' : '没有邀请码？在 Boss 或者小红书上找我要。'}</p>
+      <p className="foot">{openReg ? '直接开号即可，免费模型人人可用；有邀请码的填进去解锁对应档位。' : '目前仅限受邀开号。'}</p>
     </>
   );
 
