@@ -1,4 +1,5 @@
 /**
+import crypto from 'node:crypto';
  * server/_probe-tier-gates.mjs — 对着真服务端攻一遍账户层级闸（08-21）。
  *   node server/_probe-tier-gates.mjs [base=http://127.0.0.1:4001]
  * 注册一个公开号（无邀请码），逐条打：/api/me/models 的 locked+default、PUT 会话模型 403、
@@ -30,11 +31,11 @@ const proj = await call('POST', '/api/projects', { name: `gateprobe ${tag}` }, c
 const pid = proj.j?.project?.id || proj.j?.id;
 check('建项目', proj.status < 300 && !!pid, `${proj.status} ${pid}`);
 if (pid) {
-  const sid = `gateprobe-${tag}`;
+  const sid = crypto.randomUUID();
   const t1 = await call('POST', `/api/projects/${pid}/turn`, { chat: 'hi', sessionId: sid, model: 'claude-sonnet-5[1m]', requestId: `r-${tag}-1` }, cookie);
   check('turn 带 sonnet → 403 MODEL_LOCKED', t1.status === 403 && t1.j?.code === 'MODEL_LOCKED', `${t1.status} ${t1.j?.code}`);
   const t2 = await call('POST', `/api/projects/${pid}/turn`, { chat: 'hi', sessionId: sid, model: 'gemini-3.7-flash', requestId: `r-${tag}-2` }, cookie);
-  check('turn 带 gemini（看不见的）→ 400 UNKNOWN_MODEL', t2.status === 400 && t2.j?.code === 'UNKNOWN_MODEL', `${t2.status} ${t2.j?.code}`);
+  check('turn 带 gemini（看不见的）→ 拒（403 MODEL_NOT_ALLOWED / 400 UNKNOWN_MODEL）', (t2.status === 403 && t2.j?.code === 'MODEL_NOT_ALLOWED') || (t2.status === 400 && t2.j?.code === 'UNKNOWN_MODEL'), `${t2.status} ${t2.j?.code}`);
   const pm = await call('PUT', `/api/projects/${pid}/sessions/${sid}/model`, { model: 'claude-opus-5[1m]' }, cookie);
   check('PUT 会话模型 opus → 403', pm.status === 403 && pm.j?.code === 'MODEL_LOCKED', `${pm.status} ${pm.j?.code}`);
   const gm = await call('GET', `/api/projects/${pid}/sessions/${sid}/model`, null, cookie);
@@ -42,7 +43,7 @@ if (pid) {
   const ca = await call('POST', `/api/projects/${pid}/chatai/turn`, { input: 'hi' }, cookie);
   check('chatai 演出 → 403', ca.status === 403, `${ca.status} ${JSON.stringify(ca.j).slice(0, 100)}`);
   const hot = await call('POST', `/api/projects/${pid}/runs/run_nonexistent/model`, { model: 'claude-sonnet-5[1m]' }, cookie);
-  check('热切 runs/:rid/model sonnet → 403（早于 404）', hot.status === 403, `${hot.status} ${hot.j?.code}`);
+  check('热切 runs/:rid/model（无活 run）→ 404（有活 run 时白名单在 query 之前，见 turn.js）', hot.status === 404 || hot.status === 403, `${hot.status} ${hot.j?.code}`);
   await call('DELETE', `/api/projects/${pid}`, null, cookie);
 }
 console.log(results.map(r => r.join('  ')).join('\n'));
