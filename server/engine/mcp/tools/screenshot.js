@@ -1,30 +1,11 @@
 /**
- * mcp/tools/screenshot.js — screenshot_canvas MCP tool
+ * mcp/tools/screenshot.js — screenshot_canvas：产物的眼睛（站点页 / deck / docx 页图）
  *
- * 用 playwright headless chromium 截当前 workspace 的 canvas.html，
- * 返回 image content block，agent 可以直接 vision 看自己写的设计。
- *
- * 调用约定（agent 端）：
- *   mcp__nodesign__screenshot_canvas
- *     viewport?: { width, height }   默认按 wrap data-deck-aspect（4 档预设）
- *     fullPage?: boolean              默认 true（完整可滚动页面）
- *     selector?: string               若给则截匹配的第一个元素 bbox（覆盖 fullPage）
- *     pageIndex?: number              若给则截 section[data-page="N"] 整页（覆盖 fullPage）
- *
- * 返回 CallToolResult：
- *   content: [
- *     { type: 'text', text: 'Screenshot of canvas.html ...' },
- *     { type: 'image', data: base64, mimeType: 'image/png' },
- *   ]
- *
- * 错误处理：
- *   - canvas.html 不存在 → 返回 isError: true + 文本提示
- *   - playwright 启动失败 → 返回 isError: true + 错误信息
- *   - 截图失败 → 同上
- *
- * 性能：
- *   每次调用 spawn 新 chromium ~1-2s。P0+ stage 2 上 pool（chromium
- *   常驻 + page.goto 切换）；这次接受。
+ * 页面从 helpers/acquire-page.js 拿（一次性可复现；live:true 对着产物会话页）；
+ * 静帧 / 裁元素 / 整页 / 设备宽 / waitFor / beforeShot / scrollTo 在这里；
+ * 胶片条（frames + trigger/click/scrollBy + 元素探针）的录制器是 helpers/motion-lab.js
+ * + helpers/motion-scroll.js，跟浏览通道的 browser_screenshot 共用一份。
+ * 归一化 / 诊断 / 保真探针在 helpers/shot-pipeline.js。docx 走 screenshot-docx.js。
  */
 
 import path from 'node:path';
@@ -40,6 +21,7 @@ import { SITE_DEVICE_W } from './helpers/perception-page.js';
 import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 import { normalizeShot, detectPaintTransform, attachPageDiagnostics, runWaitFor, runBeforeShot } from './helpers/shot-pipeline.js';
 import { recordMotion, pickNearestFrames, composeSheet, encodeWebm, motionCaptionLines } from './helpers/motion-lab.js';
+import { wheelScroll, elementMotionReport, elementMotionLines } from './helpers/motion-scroll.js';
 
 // 截图光栅倍率：布局按 deck 逻辑尺寸，位图按这个倍率出（vision token 按像素计费）
 const RASTER_SCALE = 0.6;
@@ -110,7 +92,11 @@ starts the move) and you get ONE contact sheet: the same viewport at each of tho
 moments, timestamped. One image = one motion curve — judge attack, overshoot,
 settle and cuts directly. click:"#start" performs a REAL trusted click instead
 (needed for pointer lock / AudioContext / anything gated on a user gesture);
-combine both if the move needs click-then-call. The caption also reports frame
+combine both if the move needs click-then-call. scrollBy:<px> drives REAL wheel
+scrolling spread over the recording (the way to record scroll-driven motion: reveals,
+parallax, snap, sticky), and an ELEMENT PROBE lists which elements moved / faded /
+scaled during the recording, by how much and when (fixed layers, parallax and
+entrances are told apart). The caption also reports frame
 health (fps / p95 / worst frame — catches per-frame decay bugs and jank) and an
 audio event log (every media.play() / bufferSource.start() with its timestamp —
 you cannot hear, but you CAN see when sound was attempted). Pass saveVideo:true
@@ -199,6 +185,10 @@ Do NOT use this tool when:
         .boolean()
         .optional()
         .describe('FILMSTRIP: also encode the full recording as .webm under exports/motion/ (real timing preserved, jank and all). You cannot watch it — use deliver_files to hand it to the user.'),
+      scrollBy: z.number().min(-8000).max(8000).optional()
+        .describe('FILMSTRIP: pixels of REAL wheel scrolling dispatched over the recording window (positive = down). Use this for scroll-driven motion (reveal / parallax / snap / sticky) — it is what a visitor does; trigger/click are for JS-started moves. Can combine with trigger/click.'),
+      elements: z.boolean().optional()
+        .describe('FILMSTRIP: run the element probe (default true): per-frame position/opacity/scale of the elements likely to move, reported as who moved, how much, when. Set false to save a little CPU.'),
       pages: z
         .string()
         .optional()
@@ -209,7 +199,7 @@ Do NOT use this tool when:
         .describe(CANVAS_PATH_DESC),
       live: z.boolean().optional().describe(LIVE_PARAM_DESC),
     },
-    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, frames, trigger, click, saveVideo, path: relPath, live }) => {
+    async ({ viewport, fullPage, selector, pageIndex, detail, device, waitFor, beforeShot, pages, scrollTo, settleMs, console: consoleLevel, frames, trigger, click, saveVideo, scrollBy, elements, path: relPath, live }) => {
       // 任务模型（2026-07-28）：deck 住 tasks/<任务>/canvas.html。寻址统一走
       // canvas-target（显式 path → 本会话当前 deck → cwd/canvas.html → 唯一任务 deck）
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
@@ -364,11 +354,16 @@ Do NOT use this tool when:
             }
           }
 
+          // 真滚轮驱动 + 元素探针（08-21，跟浏览通道的胶片条同一份 motion-scroll）
+          const y0 = await page.evaluate(() => window.scrollY).catch(() => 0);
+          const during = scrollBy ? (p) => wheelScroll(p, { px: scrollBy, durationMs: Math.max(200, durationMs - 100) }) : null;
           const rec = await recordMotion(page, {
-            durationMs, trigger, click,
+            durationMs, trigger, click, during, probeElements: elements !== false,
             shotMaxW: Math.max(320, Math.round(vp.width * rasterScale)),
             shotMaxH: Math.max(240, Math.round(vp.height * rasterScale)),
           });
+          const y1 = await page.evaluate(() => window.scrollY).catch(() => y0);
+          const probe = elements !== false ? elementMotionReport(rec.elems, { scrolledPx: y1 - y0 }) : null;
           if (rec.shots.length === 0) {
             return {
               content: [{
@@ -410,6 +405,7 @@ Do NOT use this tool when:
               + `viewport ${vp.width}x${vp.height} (t=0 = the moment click/trigger fired; labels show requested vs captured time)`,
             cells,
             ...(cropNote ? [cropNote] : []),
+            ...(probe ? elementMotionLines(probe) : []),
             ...motionCaptionLines(rec),
             ...(videoNote ? [videoNote] : []),
             ...(gotoNote ? [gotoNote] : []),

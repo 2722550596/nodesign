@@ -26,6 +26,7 @@ import { degradedNote } from './helpers/perception-page.js';
 import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
 import { runWaitFor, runBeforeShot, attachPageDiagnostics, normalizeShot } from './helpers/shot-pipeline.js';
 import { recordMotion, seriesReport, chartSvg, fmtNum, motionCaptionLines } from './helpers/motion-lab.js';
+import { wheelScroll, elementMotionReport, elementMotionLines } from './helpers/motion-scroll.js';
 import { promises as fs } from 'node:fs';
 
 export function makeTraceMotionTool({ workspaceRoot, projectId, sessionId }) {
@@ -71,6 +72,10 @@ frames:[...] (filmstrip contact sheet).`,
     {
       path: z.string().optional().describe(CANVAS_PATH_DESC),
       live: z.boolean().optional().describe(LIVE_PARAM_DESC),
+      scrollBy: z.number().min(-8000).max(8000).optional()
+        .describe('Pixels of REAL wheel scrolling dispatched over the recording window (positive = down): trace scroll-driven motion (ScrollTrigger scrub, parallax, reveals) the way a visitor triggers it. Can combine with trigger/click.'),
+      elements: z.boolean().optional()
+        .describe('Also run the element probe (default true): which elements moved / faded / scaled during the recording, by how much and when — the no-expression way to see who moves.'),
       expressions: z
         .record(z.string(), z.string())
         .optional()
@@ -106,7 +111,7 @@ frames:[...] (filmstrip contact sheet).`,
         .optional()
         .describe('Browser viewport; defaults to the deck aspect (decks) or 1440x900 (sites).'),
     },
-    async ({ path: relPath, expressions, durationMs, trigger, click, waitFor, beforeShot, viewport, live }) => {
+    async ({ path: relPath, expressions, durationMs, trigger, click, waitFor, beforeShot, viewport, live, scrollBy, elements }) => {
       const target = await resolveCanvasTarget(workspaceRoot, relPath, sessionId);
       if (!target.ok) return { content: [{ type: 'text', text: target.message }], isError: true };
       const guard = requireBrowsable(target);
@@ -144,9 +149,13 @@ frames:[...] (filmstrip contact sheet).`,
         const beforeShotNote = beforeShot ? await runBeforeShot(page, beforeShot) : null;
 
         // 纯数值通道：不开 screencast，jpeg 编码那份 CPU 省给页面本身
+        const y0 = await page.evaluate(() => window.scrollY).catch(() => 0);
+        const during = scrollBy ? (p) => wheelScroll(p, { px: scrollBy, durationMs: Math.max(200, dur - 100) }) : null;
         const rec = await recordMotion(page, {
-          durationMs: dur, trigger, click, expressions, wantShots: false,
+          durationMs: dur, trigger, click, during, expressions, wantShots: false, probeElements: elements !== false,
         });
+        const y1 = await page.evaluate(() => window.scrollY).catch(() => y0);
+        const probe = elements !== false ? elementMotionReport(rec.elems, { scrolledPx: y1 - y0 }) : null;
 
         const lines = [];
         const degraded = degradedNote(opened);
@@ -182,6 +191,7 @@ frames:[...] (filmstrip contact sheet).`,
           lines.push(...bits);
         }
 
+        if (probe) lines.push('', ...elementMotionLines(probe));
         lines.push('', ...motionCaptionLines(rec));
         const diagText = diag.summary();
         if (diagText) lines.push(diagText);
