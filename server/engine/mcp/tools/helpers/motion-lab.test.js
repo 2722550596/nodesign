@@ -28,17 +28,27 @@ describe('pickNearestFrames', () => {
 });
 
 describe('sheetLayout', () => {
-  it('列数阶梯：≤3 一排，≤8 两排，再多三排', () => {
-    expect(sheetLayout(3, 800, 450).cols).toBe(3);
-    expect(sheetLayout(6, 800, 450)).toMatchObject({ cols: 3, rows: 2 });
-    expect(sheetLayout(10, 800, 450)).toMatchObject({ cols: 4, rows: 3 });
+  const within = (L, n) => {
+    expect(L.cellW * L.cellH * n).toBeLessThanOrEqual(2_300_000 * 1.03);   // 总像素预算
+    expect(Math.max(L.sheetW, L.sheetH)).toBeLessThanOrEqual(2000);        // 长边 ≤2000，归一化不再缩
+    expect(L.cols * L.rows).toBeGreaterThanOrEqual(n);
+  };
+  it('≤3 格一排；更多格子在预算内挑面积最大的排法', () => {
+    expect(sheetLayout(3, 800, 450)).toMatchObject({ cols: 3, rows: 1 });
+    for (const n of [4, 6, 10, 16, 24, 30]) within(sheetLayout(n, 1366, 768), n);
   });
-
-  it('总像素被压进预算（normalizeShot 不需要再整体缩糊）', () => {
+  it('每格大小随格数下降但不至于看不清：10 格 ≥20 万像素，16 格 ≥12 万，30 格 ≥6 万', () => {
+    const area = (n) => { const L = sheetLayout(n, 1366, 768); return L.cellW * L.cellH; };
+    expect(area(10)).toBeGreaterThanOrEqual(200_000);
+    expect(area(16)).toBeGreaterThanOrEqual(120_000);
+    expect(area(30)).toBeGreaterThanOrEqual(60_000);
+    expect(area(10)).toBeGreaterThan(area(16));
+    expect(area(16)).toBeGreaterThan(area(30));
+  });
+  it('deck 1920×1080 八格：格宽仍 >400（旧预算下只有 ~360）', () => {
     const L = sheetLayout(8, 1920, 1080);
-    expect(L.cellW * L.cellH * 8).toBeLessThanOrEqual(1_050_000 * 1.02);
-    // 但也别缩没了
-    expect(L.cellW).toBeGreaterThan(200);
+    within(L, 8);
+    expect(L.cellW).toBeGreaterThan(400);
   });
 });
 

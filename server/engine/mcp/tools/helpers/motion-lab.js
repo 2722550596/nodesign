@@ -59,12 +59,31 @@ export function pickNearestFrames(frames, wanted) {
  * n 帧 → 网格布局。目标：总像素 ≤ budget（normalizeShot 反正要压到 1.15MP，
  * 这里先按预算排，免得拼一张 8000px 宽再被整体缩糊）。
  */
-export function sheetLayout(n, frameW, frameH, { maxPixels = 1_050_000, gap = 6 } = {}) {
-  const cols = n <= 3 ? n : (n <= 8 ? Math.ceil(n / 2) : Math.ceil(n / 3));
-  const rows = Math.ceil(n / cols);
-  const scale = Math.min(1, Math.sqrt(maxPixels / (n * frameW * frameH)));
-  const cellW = Math.max(80, Math.round(frameW * scale));
-  const cellH = Math.max(45, Math.round(frameH * scale));
+/**
+ * 拼图布局（08-21 按新视觉档重算）：预算 2.3MP（≈2900 token，旧档 1.05MP 是 07-29 按
+ * 1.15MP 定的）+ **长边 ≤2000**（否则 normalizeShot 又整体缩回去，白给）。列数不再按
+ * 阶梯死规定，而是在两条约束下**挑格子面积最大**的那种排法 —— 格数从 2 到 30 都能拼，
+ * 格数越多每格越小，这是 agent 自己权衡的事（描述里说清）。
+ */
+export function sheetLayout(n, frameW, frameH, { maxPixels = 2_300_000, maxEdge = 2000, gap = 6 } = {}) {
+  let best = null;
+  for (let cols = 1; cols <= n; cols += 1) {
+    const rows = Math.ceil(n / cols);
+    // 三条上限取最严：总像素、横向长边、纵向长边
+    const sPix = Math.sqrt(maxPixels / (n * frameW * frameH));
+    const sW = (maxEdge - (cols + 1) * gap) / (cols * frameW);
+    const sH = (maxEdge - (rows + 1) * gap) / (rows * frameH);
+    const scale = Math.min(1, sPix, sW, sH);
+    const cellW = Math.max(80, Math.round(frameW * scale));
+    const cellH = Math.max(45, Math.round(frameH * scale));
+    const area = cellW * cellH;
+    // 面积相同（都被总像素卡住）时取更方正的排法：阅读顺序更像时间轴
+    const squareness = -Math.abs((cols * cellW) - (rows * cellH));
+    if (!best || area > best.area + 1 || (Math.abs(area - best.area) <= 1 && squareness > best.squareness)) {
+      best = { cols, rows, cellW, cellH, area, squareness };
+    }
+  }
+  const { cols, rows, cellW, cellH } = best;
   return {
     cols, rows, cellW, cellH, gap,
     sheetW: cols * cellW + (cols + 1) * gap,

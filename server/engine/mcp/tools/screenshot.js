@@ -184,9 +184,9 @@ Do NOT use this tool when:
       frames: z
         .array(z.number().min(0).max(15000))
         .min(1)
-        .max(10)
+        .max(30)
         .optional()
-        .describe('FILMSTRIP mode: capture the viewport at these millisecond offsets (t=0 is the moment click/trigger fires) and return ONE timestamped contact sheet. 2-10 offsets; place them where the motion lives (dense during the move, one late frame to confirm settle). Include 0 to see the starting pose. With selector/pageIndex the cells are cropped to that element (it must be inside the viewport).'),
+        .describe('FILMSTRIP mode: capture the viewport at these millisecond offsets (t=0 is the moment click/trigger fires) and return ONE timestamped contact sheet. 2-30 offsets. The sheet has a FIXED pixel budget (~2.3MP, ≈2900 tokens whatever the count), so more cells = smaller cells: 6-10 to read detail, 12-16 for a whole choreography, 20-30 only for long sequences where rhythm matters more than detail (crop with selector/pageIndex or zoom afterwards). Place them where the motion lives (dense during the move, one late frame to confirm settle). Include 0 to see the starting pose. With selector/pageIndex the cells are cropped to that element (it must be inside the viewport).'),
       trigger: z
         .string()
         .optional()
