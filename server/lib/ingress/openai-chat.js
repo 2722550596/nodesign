@@ -21,10 +21,24 @@
  *   usage 在最后一个 chunk（stream_options.include_usage），Anthropic 口径 input 不含 cache 命中
  * - stop_reason：tool_calls→tool_use · stop→end_turn · length→max_tokens；有 tool_calls 但
  *   finish 说 stop 也算 tool_use（CLI 认块不认 stop_reason，但别给它矛盾信号）
+ * - **上游私货 finish_reason**（08-21）：Zen 会吐 `finish_reason:"network_error"`（它到模型
+ *   提供方那一跳断了），实测形态是挂 185 秒或快败 6~9 秒后零 delta 收场。这种值不在
+ *   STOP_MAP 里，以前落 `|| 'end_turn'` = 把上游故障包装成"成功的空回合"，CLI 只能补一句
+ *   "你上一轮没有可见输出"再跑一整轮（真实代价：185s 空转 + 一整轮重来）。现在改成发
+ *   error 事件 —— **假上游实验实测：CLI 收到流中 error 会在 0.2~0.4 秒内原样重发，用户
+ *   全程无感**，所以重试交给它，ingress 不自建（两层重试互不知情，只会让失败会话多占并发槽）
+ * - **refusal 字段**：OpenAI 的拒答走 `delta.refusal` / `message.refusal` 而不是 content，
+ *   我们以前整个没读 = 又一种"零可见输出的假成功"。当文本吐出去即可。
+ *   ⚠️ 别顺手把 content_filter 映射成 Anthropic 的 `refusal` stop_reason（gproxy 那么写）：
+ *   实测 CLI 见到 stop_reason=refusal 会弹「Start a new session」并丢弃随流正文，
+ *   会话直接判死 —— 现有的 content_filter→end_turn 在 Claude Code 语境下才是对的
  */
 import { Transform } from 'node:stream';
 
 const STOP_MAP = { tool_calls: 'tool_use', stop: 'end_turn', length: 'max_tokens', content_filter: 'end_turn', function_call: 'tool_use' };
+
+/** finish_reason 是不是上游私货（不在 STOP_MAP 里）。null/undefined 不算 —— 那是"没给收尾原因"，另有分支 */
+const isAlienFinish = (finish) => Boolean(finish) && !(finish in STOP_MAP);
 
 function textOfBlocks(blocks) {
   if (typeof blocks === 'string') return blocks;
@@ -151,7 +165,12 @@ function parseArgs(s) {
   try { return JSON.parse(s); } catch { return { _raw_arguments: String(s) }; }
 }
 
-/** 非流式：OpenAI chat.completion → Anthropic message。没有 choices（上游 200 但给了错误体/空体）返回 null，调用方回 502 */
+/**
+ * 非流式：OpenAI chat.completion → Anthropic message。
+ * 返回 null = 别包成成功回合，调用方回 502（CLI 会重试）。两种情况返 null：
+ *   ① 没有 choices（上游 200 但给了错误体/空体）
+ *   ② finish_reason 是上游私货且零可见输出（流式那条 `_finish` 的孪生洞，同一张 STOP_MAP）
+ */
 export function fromOpenAIChatResponse(json) {
   if (!json || !Array.isArray(json.choices) || !json.choices.length) return null;
   const choice = json.choices[0] || {};
@@ -159,10 +178,17 @@ export function fromOpenAIChatResponse(json) {
   const content = [];
   if (m.reasoning_content) content.push({ type: 'thinking', thinking: String(m.reasoning_content), signature: '' });
   if (m.content) content.push({ type: 'text', text: String(m.content) });
+  if (m.refusal) content.push({ type: 'text', text: String(m.refusal) });
   for (const c of m.tool_calls || []) {
     content.push({ type: 'tool_use', id: c.id || `call_${content.length}`, name: c.function?.name || '', input: parseArgs(c.function?.arguments) });
   }
   const hasTools = (m.tool_calls || []).length > 0;
+  const hasVisible = hasTools || Boolean(m.content) || Boolean(m.refusal);
+  if (isAlienFinish(choice.finish_reason) && !hasVisible) {
+    console.warn(`[ingress/openai-chat] upstream finish_reason='${choice.finish_reason}' with no visible output — failing the turn (non-stream)`);
+    return null;
+  }
+  if (!hasVisible) console.warn(`[ingress/openai-chat] finish_reason='${choice.finish_reason}' 收尾但零可见输出（thinking-only，非流式）—— CLI 会补一轮催促`);
   const stop_reason = hasTools ? 'tool_use' : (STOP_MAP[choice.finish_reason] || 'end_turn');
   return {
     id: json?.id || `msg_${Date.now()}`,
@@ -233,10 +259,12 @@ export class OpenAIToAnthropicSSE extends Transform {
       if (this.open?.kind !== 'thinking') this._openBlock('thinking', { type: 'thinking', thinking: '', signature: '' });
       this._emit('content_block_delta', { type: 'content_block_delta', index: this.open.index, delta: { type: 'thinking_delta', thinking: String(d.reasoning_content) } });
     }
-    if (d.content) {
+    // content 与 refusal 都是"可见正文"，进同一个 text 块（拒答也是模型说的话，原样吐给用户）
+    for (const piece of [d.content, d.refusal]) {
+      if (!piece) continue;
       this.sawText = true;
       if (this.open?.kind !== 'text') this._openBlock('text', { type: 'text', text: '' });
-      this._emit('content_block_delta', { type: 'content_block_delta', index: this.open.index, delta: { type: 'text_delta', text: String(d.content) } });
+      this._emit('content_block_delta', { type: 'content_block_delta', index: this.open.index, delta: { type: 'text_delta', text: String(piece) } });
     }
     for (const tc of d.tool_calls || []) {
       // 按 index 分块；上游不带 index 时：带 id 的是新调用，否则续上一个
@@ -276,6 +304,19 @@ export class OpenAIToAnthropicSSE extends Transform {
       this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream stream ended before any visible output' } });
       return;
     }
+    // 给了 finish_reason，但那是上游私货（network_error 之类）而且一个可见块都没出：
+    // 同样发 error 让这一轮明确失败，CLI 0.2 秒后自己重发（假上游实测）。有可见输出的
+    // 私货 finish 只记 warn 按 end_turn 收尾 —— 半截答案也是答案，重跑整轮更贵
+    if (isAlienFinish(this.finish) && !this.sawText && !this.sawToolCall) {
+      console.warn(`[ingress/openai-chat] upstream finish_reason='${this.finish}' with no visible output — failing the turn so the CLI retries`);
+      this._closeOpen();
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: `ingress: upstream ended with finish_reason='${this.finish}' and no visible output` } });
+      return;
+    }
+    if (isAlienFinish(this.finish)) console.warn(`[ingress/openai-chat] 未知 finish_reason='${this.finish}'（有可见输出）；按 end_turn 收尾`);
+    // 已知 finish 但零可见块（thinking-only）：行为不变，先只计数。CLI 会补一轮催促，
+    // 跑一周日志看这种情况多不多，再决定要不要一并 fail-loud（08-21 议定）
+    else if (this.finish && !this.sawText && !this.sawToolCall) console.warn(`[ingress/openai-chat] finish_reason='${this.finish}' 收尾但零可见输出（thinking-only）—— CLI 会补一轮催促`);
     if (!this.finish) console.warn('[ingress/openai-chat] upstream stream ended without finish_reason (truncated); closing as end_turn');
     this._closeOpen();
     const stop_reason = this.sawToolCall ? 'tool_use' : (STOP_MAP[this.finish] || 'end_turn');

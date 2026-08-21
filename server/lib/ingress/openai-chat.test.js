@@ -66,6 +66,18 @@ describe('fromOpenAIChatResponse', () => {
     expect(r.stop_reason).toBe('tool_use');
     expect(fromOpenAIChatResponse({ choices: [{ finish_reason: 'length', message: { content: 'x' } }] }).stop_reason).toBe('max_tokens');
   });
+  it('私货 finish_reason + 零可见输出 → null（调用方回 502）；有可见输出就照常收尾', () => {
+    const alien = { choices: [{ finish_reason: 'network_error', message: { role: 'assistant', reasoning_content: '想了一半' } }] };
+    expect(fromOpenAIChatResponse(alien)).toBeNull();
+    const withText = fromOpenAIChatResponse({ choices: [{ finish_reason: 'network_error', message: { content: '半截答案' } }] });
+    expect(withText.content).toEqual([{ type: 'text', text: '半截答案' }]);
+    expect(withText.stop_reason).toBe('end_turn');
+  });
+  it('refusal 当文本读；stop_reason 不改成 refusal（CLI 见到会判死会话）', () => {
+    const r = fromOpenAIChatResponse({ choices: [{ finish_reason: 'content_filter', message: { role: 'assistant', refusal: '这个我没法帮你' } }] });
+    expect(r.content).toEqual([{ type: 'text', text: '这个我没法帮你' }]);
+    expect(r.stop_reason).toBe('end_turn');
+  });
   it('toAnthropicError 按状态分型、拆上游 message', () => {
     expect(toAnthropicError(429, '{"error":{"message":"slow down"}}')).toEqual({ type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } });
     expect(toAnthropicError(500, 'plain').error.type).toBe('api_error');
@@ -133,5 +145,35 @@ describe('OpenAIToAnthropicSSE', () => {
     const events = ev(await collect(new OpenAIToAnthropicSSE(), [`data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: 'stop' }] })}\n\n`]));
     expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');
     expect(events.at(-1).e).toBe('message_stop');
+  });
+  it('私货 finish_reason（network_error）+ 零可见输出 → error 事件，让 CLI 重试', async () => {
+    const events = ev(await collect(new OpenAIToAnthropicSSE(), [
+      `data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { reasoning_content: '想了一半' } }] })}\n\n`,
+      `data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: {}, finish_reason: 'network_error' }] })}\n\n`,
+      'data: [DONE]\n\n',
+    ]));
+    expect(events.at(-1).e).toBe('error');
+    expect(events.at(-1).d.error.message).toMatch(/network_error/);
+    expect(events.some(x => x.e === 'message_delta')).toBe(false);
+  });
+  it('私货 finish_reason 但有可见输出 → 照常 end_turn 收尾（半截答案也是答案）', async () => {
+    const events = ev(await collect(new OpenAIToAnthropicSSE(), [
+      `data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { content: '半截' } }] })}\n\n`,
+      `data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: {}, finish_reason: 'network_error' }] })}\n\n`,
+      'data: [DONE]\n\n',
+    ]));
+    expect(events.some(x => x.e === 'error')).toBe(false);
+    expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');
+  });
+  it('refusal 增量进 text 块，且算可见输出（不再触发 error 分支）', async () => {
+    const events = ev(await collect(new OpenAIToAnthropicSSE(), [
+      `data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { refusal: '这个我没法帮你' } }] })}\n\n`,
+      `data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: {}, finish_reason: 'content_filter' }] })}\n\n`,
+      'data: [DONE]\n\n',
+    ]));
+    expect(events.some(x => x.e === 'error')).toBe(false);
+    expect(events[1].d.content_block).toEqual({ type: 'text', text: '' });
+    expect(events[2].d.delta).toEqual({ type: 'text_delta', text: '这个我没法帮你' });
+    expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');
   });
 });
