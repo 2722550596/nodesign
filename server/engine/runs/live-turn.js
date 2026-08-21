@@ -23,7 +23,6 @@
  *   run.delta.tool_result           → 补 status / output / error（images 不进快照，太大）
  *   run.todo.updated                → todos 覆盖
  *   run.context_usage               → contextUsage 覆盖
- *   run.plan_for_approval           → planForApproval（等待用户审批的 plan 卡）
  *   run.done / error / cancelled    → 标记 ended（保留 GRACE 毫秒，见下），不再折叠
  *   run.query.end                   → 清
  *
@@ -118,7 +117,6 @@ export function getLiveTurnSnapshot(sessionId) {
     messages: st.messages,
     todos: st.todos,
     contextUsage: st.contextUsage,
-    planForApproval: st.planForApproval,
   };
 }
 
@@ -138,7 +136,6 @@ function fold(evt) {
       messages: [],
       todos: [],
       contextUsage: null,
-      planForApproval: null,
       endedAt: null,
       _msgCounter: 0,
     });
@@ -215,9 +212,6 @@ function fold(evt) {
       break;
     case 'run.context_usage':
       if (runMatches) st.contextUsage = evt;
-      break;
-    case 'run.plan_for_approval':
-      if (runMatches) st.planForApproval = { toolUseId: evt.toolUseId, plan: evt.plan };
       break;
     case 'run.done':
     case 'run.error':

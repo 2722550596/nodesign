@@ -132,30 +132,6 @@ export const SessionConfig = {
   patch: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/config`, patch),
 };
 
-// ── Plan（Phase 3.2：SDK 原生 plan mode 审批流）──
-// 用户在 PlanReviewCard 点按钮 → approve 切 SDK permissionMode='default'；
-// reject 走 cancelRun 中断
-export const Plan = {
-  approve: ({ pid, runId, toolUseId, editedPlan }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-approve`,
-      { ...(toolUseId ? { toolUseId } : {}), ...(editedPlan !== undefined ? { editedPlan } : {}) }),
-  reject: ({ pid, runId, toolUseId, reason }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-reject`,
-      { ...(toolUseId ? { toolUseId } : {}), ...(reason ? { reason } : {}) }),
-  // Phase C：agent 调 mcp__nodesign__request_plan_mode → 前端 PlanRequestBanner
-  // 用户点 yes → 调通用 /permission-mode 切到 plan；no 时纯前端 dismiss 不触发后端。
-  // 也用于 ChatComposer 手动 toggle on/off 时同步当前活跃 query 的 permissionMode
-  // （toggle off 时 mode='bypassPermissions' 让 agent 立即脱出 plan mode）。
-  grantViaPermissionMode: ({ pid, runId, mode = 'plan' }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/permission-mode`,
-      { mode }),
-  // Phase C 阻塞态 plan-request：解阻塞 mcp__nodesign__request_plan_mode。
-  // 用户在 PlanRequestBanner 决定后调（approve 完会先调 grantViaPermissionMode 再调这个）。
-  decidePlanRequest: ({ pid, runId, toolUseId, approved }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/plan-request/${toolUseId}/decide`,
-      { approved }),
-};
-
 // 注：Image.approve / regenerate / dismiss 已删除（2026-05-06）。原配 ImageApprovalBanner
 // 走 /image-approval endpoint，但 emit 即返不阻塞 agent 形同装饰。改为 generate_image
 // 已返 image content block 由前端 chat 自动渲染，agent caption 邀请反馈，下一轮 chat 即 gate。
@@ -316,9 +292,7 @@ export const Turn = {
    *   - 不传 → 后端 fallback project.activeSessionId（向后兼容）
    *   - 显式 string → 续约该 session（前端切换 session 走这条）
    *   - 显式 null → 新建 session（用户点"+ 新会话"后第一次发）
-   * permissionMode（Phase 3.2）：
-   *   - 'plan' → 启用 SDK 原生 plan mode（read-only + ExitPlanMode 审批流）
-   *   - 其他/不传 → 默认 bypassPermissions
+   * permissionMode：保留字段兼容，后端已忽略（plan mode 2026-08-21 整体移除，一律 platform 默认）
    */
   send: async ({ pid, chat, attachments = [], skillId, sessionId, permissionMode, requestId, raw, model }) => {
     // Phase A.6（2026-05-07）：requestId 幂等防重发。
@@ -373,13 +347,6 @@ export const Turn = {
   rewind: ({ pid, runId, messageId }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/rewind`, { messageId }),
 
-  /**
-   * SDK Query control: setPermissionMode —— 运行时切权限模式。
-   * mode: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'dontAsk' | 'auto'
-   * Phase 3 plan-mode native 路径必需。
-   */
-  setPermissionMode: ({ pid, runId, mode }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/permission-mode`, { mode }),
 };
 
 // ── Instruction（项目级 .claude/CLAUDE.md 读写）──

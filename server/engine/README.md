@@ -22,7 +22,7 @@ engine/
 │   ├── agent-shared.js          常量 + handleSDKMessage 翻译层（被 session-loop 复用）
 │   ├── hooks.js                 SDK hooks（FileChanged / PreToolUse / PostToolUse 等）
 │   ├── skill.js                 SKILL.md loader（frontmatter + body）+ ensureSkillStarterFiles
-│   ├── prompts/                 nodesign-prelude.md / nodesign-plan-instructions.md
+│   ├── prompts/                 nodesign-prelude.md + tools/*.md（按需注入的胖文案）
 │   └── _smoke.js                烟雾测试（无 key 也能跑非 LLM 部分）
 │
 ├── skills/                      内置 skill 库

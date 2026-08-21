@@ -25,7 +25,7 @@ import { parse as parsePartialJson, Allow as PartialAllow } from 'partial-json';
 
 // SDK base 工具白名单（Options.tools，sdk.d.ts:1216）—— 限定主 agent 可见的
 // **内置工具**集合。MCP 工具（mcp__nodesign__*）由 mcpServers 字段独立暴露，
-// 不需要列在这里；新加内置工具（如 ExitPlanMode）按需追加。
+// 不需要列在这里；新加内置工具按需追加。
 //
 // 设计要点：
 //   - Bash 是必需（git/playwright/zip 都靠它）。沙盒由 OS 级 sandbox 字段保证
@@ -61,7 +61,6 @@ export const DEFAULT_TOOL_ALLOWLIST = [
   'WebFetch',
   'Task',
   'TaskOutput',
-  'ExitPlanMode',
   'Skill',
   // deferred MCP 工具的取 schema 入口（ENABLE_TOOL_SEARCH=true 时生效）。
   // 漏挂 = 延迟加载的工具永远调不到（同 Skill 的可见集陷阱）

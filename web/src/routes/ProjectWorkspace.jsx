@@ -22,8 +22,6 @@ import ProjectActionsMenu from '../components/project/ProjectActionsMenu.jsx';
 import SnapshotModal from '../components/project/SnapshotModal.jsx';
 import UpgradeQuickModal from '../components/project/UpgradeQuickModal.jsx';
 import DirectEditModal from '../components/canvas/DirectEditModal.jsx';
-import PlanReviewCard from '../components/project/PlanReviewCard.jsx';
-import PlanRequestBanner from '../components/project/PlanRequestBanner.jsx';
 import ExportsListModal from '../components/project/ExportsListModal.jsx';
 import ExportPicker from '../components/project/ExportPicker.jsx';
 import SessionListModal from '../components/project/SessionListModal.jsx';
@@ -486,8 +484,6 @@ export default function ProjectWorkspace() {
     setQueueDepth(0);                 // 清 queue depth（切 session 跨 query 不延续）
     setLastEventAt(Date.now());       // 重置事件时间避免切 session 时 header dot 误判"静默"
     setIsTweaksExposed(false);        // 切 session 时清，新 session 待 agent 重 expose
-    useGlobalStore.getState().clearPlanForApproval();  // 清 plan 卡（如果切 session 时还在等 approval）
-    useGlobalStore.getState().clearPlanModeRequest();  // 清 plan request banner（防跨 session 残留 → toggle 锁死）
     // run 状态也要清（丢状态路径 P13）：旧 session 的 runId 留在 currentRunIdRef
     // 会让新 session 的事件全被 stale guard 吞掉。清完由重连后 server 的
     // ws.connected(activeRunId) + ws.live_turn 快照权威恢复（本 session 真在跑时
@@ -747,12 +743,6 @@ export default function ProjectWorkspace() {
         }
         if (Array.isArray(evt.todos) && evt.todos.length > 0) setTodos(evt.todos);
         if (evt.contextUsage) mergeProjectContextUsage(id, evt.contextUsage);
-        if (evt.planForApproval?.toolUseId) {
-          useGlobalStore.getState().setPlanForApproval({
-            toolUseId: evt.planForApproval.toolUseId,
-            plan: evt.planForApproval.plan,
-          });
-        }
         break;
       }
 
@@ -774,9 +764,7 @@ export default function ProjectWorkspace() {
         }
         break;
       case 'run.permission_mode_changed':
-        // 原来用来同步「深度对齐」toggle 的 visual。toggle 已删（2026-07-30），
-        // 前端不再镜像 mode —— plan mode 期间用户看到的是 PlanRequestBanner /
-        // PlanReviewCard，那两个卡本身就是状态显示。事件保留不处理。
+        // 前端不镜像 mode（plan mode 08-21 整体移除后只剩 turn 入口的 mode 校正会发它）。事件保留不处理。
         break;
       case 'run.queue.depth':
         if (isStale) break;
@@ -808,8 +796,6 @@ export default function ProjectWorkspace() {
         setCurrentRunId(null);
         setActiveRun(null);
         setThinkingTokens(null);
-        useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
-        useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 done → toggle 锁死
         // 收尾：清 thinking 流式光标（run 结束后最后一条 thinking 不该一直闪）
         setMessages(prev => clearThinkingStreaming(prev));
         // 双保险：万一 PostToolUse 那一发没到（SDK 边角问题），收尾时补拉一次
@@ -859,8 +845,6 @@ export default function ProjectWorkspace() {
         setCurrentRunId(null);
         setActiveRun(null);
         setThinkingTokens(null);
-        useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
-        useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就 error → toggle 锁死
         setMessages(prev => [...clearThinkingStreaming(prev), {
           id: newId('msg'),
           role: 'assistant',
@@ -880,8 +864,6 @@ export default function ProjectWorkspace() {
         setIsStreaming(false);
         setCurrentRunId(null);
         setActiveRun(null);
-        useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
-        useGlobalStore.getState().clearPlanModeRequest();  // 防 agent 没走到 ExitPlanMode 就被 cancel → toggle 锁死
         setPromptSuggestion(null);
         setAgentProgress(null);
         setMessages(prev => clearThinkingStreaming(prev));
@@ -1244,35 +1226,6 @@ export default function ProjectWorkspace() {
         break;
       }
 
-      case 'run.plan_for_approval': {
-        if (isStale) break;
-        // Phase 3.2：SDK 原生 plan mode — agent 调 ExitPlanMode 提交 plan，
-        // 显示 PlanReviewCard 让用户 approve / edit / reject
-        useGlobalStore.getState().setPlanForApproval({
-          toolUseId: evt.toolUseId,
-          plan: evt.plan,
-        });
-        showToast('设计计划待审批', 'info');
-        break;
-      }
-
-      case 'run.plan_mode_requested': {
-        if (isStale) break;
-        // Phase C：agent 调 mcp__nodesign__request_plan_mode 主动请求进 plan mode。
-        // 阻塞态（2026-05-07）：agent 工具 await 用户决定，前端 banner 处理：
-        //   - yes → POST /permission-mode { mode:'plan' } + POST /plan-request/:tid/decide { approved:true }
-        //   - no  → POST /plan-request/:tid/decide { approved:false }
-        // toolUseId 必带（agent decide endpoint 找 pending Promise 的 key）。
-        useGlobalStore.getState().setPlanModeRequest({
-          toolUseId: evt.toolUseId,
-          reason: evt.reason,
-          estimatedPages: evt.estimatedPages,
-          taskKind: evt.taskKind,
-        });
-        showToast('agent 请求进入 plan 模式（已暂停等你决定）', 'info');
-        break;
-      }
-
       case 'run.image_generated': {
         if (isStale) break;
         // generate_image MCP 工具完成 → toast 提示。
@@ -1526,8 +1479,6 @@ export default function ProjectWorkspace() {
         // run 已结束（race：用户点的瞬间 agent 自然完成）
         setCurrentRunId(null);
         setActiveRun(null);
-        useGlobalStore.getState().clearPlanForApproval();  // Phase 3.2：run 终止时清残留 plan 卡
-        useGlobalStore.getState().clearPlanModeRequest();  // 同上
         setIsStreaming(false);
       } else {
         showToast(`取消失败：${err.message}`, 'error');
@@ -2301,8 +2252,6 @@ export default function ProjectWorkspace() {
           showToast(`已升级为标准项目「${updated.name}」`, 'success');
         }}
       />
-      <PlanReviewCard />
-      <PlanRequestBanner />
 
     </AppShell>
     </PanelManagerProvider>

@@ -12,28 +12,6 @@
 import path from 'node:path';
 
 /**
- * PostToolUse(ExitPlanMode) handler — 当前 noop（保留挂载点）。
- *
- * 历史：原版在这里 emit run.plan_for_approval 给前端弹卡，但 PostToolUse 不阻塞
- * agent 继续 next turn —— 实际表现是"agent 提交 plan 后自动批准，弹窗用户也没法关"。
- *
- * 重构（2026-05-08）：阻塞机制迁到 session-loop.js canUseTool 路径——SDK 在工具
- * 调用**之前**触发 canUseTool，await registerPendingPlanApproval 真阻塞 agent 等
- * 用户审批 PlanReviewCard。host 调 plan-approve / plan-reject 通过
- * providePlanApprovalDecision resolve Promise → canUseTool return allow/deny。
- *
- * 本 hook 现在只在 ExitPlanMode tool 真执行后触发（用户已 approve），是 future
- * extension point（比如未来想在 plan 真落档后做额外 emit / 统计）。当前 noop。
- *
- * input: PostToolUseHookInput (sdk.d.ts:1926)
- */
-export function makePostToolUseExitPlanModeHandler(_deps) {
-  return async (_input, _toolUseId, _options) => {
-    return {};
-  };
-}
-
-/**
  * PostToolUse(screenshot_canvas) handler — agent 截图后引导它做视觉自检。
  *
  * input: PostToolUseHookInput (sdk.d.ts:1926)

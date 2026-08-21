@@ -40,7 +40,6 @@ import {
   setCurrentTurnRunId,
   registerPendingQuestion,
   registerPendingElicitation,
-  registerPendingPlanApproval,
   getSessionPermissionMode,
   getSessionLastActivity,
   closeQuerySession,
@@ -55,7 +54,6 @@ import {
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
 import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isolation.js';
-import { PLAN_MODE_DENY, isReadonlyBashCommand } from './plan-mode-gate.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { assertInitContract } from './init-contract.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -65,7 +63,7 @@ import { getOrStartIngress, registerIngressSession, unregisterIngressSession } f
 import { clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
-import { renderPrelude, NODESIGN_PLAN_INSTRUCTIONS } from './system-prompts.js';
+import { renderPrelude } from './system-prompts.js';
 import {
   DEFAULT_TOOL_ALLOWLIST,
   STREAMING_ENABLED,
@@ -143,10 +141,9 @@ export async function runSession({
 
   const sessionAbortController = new AbortController();
   // initialPermissionMode 落进 active-runs，canUseTool 通过 getSessionPermissionMode 读
-  // 当前 mode 决定要不要 deny 写工具（plan mode 硬约束）。/permission-mode endpoint
-  // 切 mode 时也会同步更新本字段。
-  const initialModeNormalized =
-    initialPermissionMode === 'plan' ? 'plan' : 'bypassPermissions';
+  // 当前 mode（auto 模式升级口按它分流）。turn.js 入口的 mode 校正会同步更新本字段。
+  // （plan mode 08-21 整体移除；这里不再有 'plan' 分支）
+  const initialModeNormalized = 'bypassPermissions';
   // sessionToken：身份证。closeQuerySession 已同步让出 sid 后用户立即重发起新
   // runSession → 新 register 拿到新 token；旧 runSession finally 调 unregister 带
   // 旧 token 比对不匹配 → noop 不误删新 entry。
@@ -412,17 +409,13 @@ export async function runSession({
     // 这个错没有 runId 会被前端 stale guard 吞掉 → 用户看到"完全没反应"。
     // 修：resume 不传 permissionMode 让 SDK 用 JSONL 保存的；运行时切 mode 通过
     // query.setPermissionMode + turn.js POST /turn 入口的 mode 校正路径完成。
-    // 非 plan 的默认模式来自 platform（exp 是 'auto' = 模型分类器判每次调用，
-    // 生产仍是 'bypassPermissions'）。plan 照旧优先。
-    ...(isResume
-      ? {}
-      : { permissionMode: initialPermissionMode === 'plan' ? 'plan' : platform.permissionModeDefault }),
+    // 默认模式来自 platform（exp 是 'auto' = 模型分类器判每次调用，生产仍是 'bypassPermissions'）。
+    ...(isResume ? {} : { permissionMode: platform.permissionModeDefault }),
     // 永远 true：与 permissionMode 正交——只是"允许运行时切 bypassPermissions"的安全
-    // 开关，启动当下的 mode 由 permissionMode 字段定。plan-mode 启动也必须带，否则用户
-    // 批准 plan 后 host 调 query.setPermissionMode('bypassPermissions') 会被 SDK 拒：
+    // 开关，启动当下的 mode 由 permissionMode 字段定。运行时切 mode（turn.js 入口校正）
+    // 必须有它，否则 query.setPermissionMode('bypassPermissions') 会被 SDK 拒：
     // "session was not launched with --dangerously-skip-permissions"。
     allowDangerouslySkipPermissions: true,
-    planModeInstructions: NODESIGN_PLAN_INSTRUCTIONS,
 
     // 通用 permission gate
     //
@@ -430,89 +423,14 @@ export async function runSession({
     // （Zod union 严格验证）；返 `{ behavior: 'allow' }` 缺 updatedInput 会触发
     // ZodError 让工具被拒。'allow' 都要带 updatedInput（不改的话原样透传 input）。
     //
-    // Plan-mode 工具白名单（2026-05-06 增）：用户进 plan mode 后 agent 可以做
-    // brainstorm + 探索 + 候选样张，但**不能动主产物 / 落决策档案**。
-    // - 允许：Read/Grep/Glob/WebFetch/Task/AskUserQuestion，以及
-    //   mcp__nodesign__web_search / mcp__nodesign__generate_image（探索性候选样张）
-    // - 条件允许：Bash —— 只读探索类（ls/find/cat/grep/...）放开，写命令拒绝
-    //   （SDK Glob 不跟 symlink 让 plan 探不到 assets/，必须给 ls 兜底）
-    // - 拒绝：Write/Edit + screenshot_canvas / expose_tweaks /
-    //   record_decision / export_handoff / navigate_to_page / highlight 等动状态工具
-    // 拒绝时 message 解释让 agent 改流程（先 ExitPlanMode 提交 plan 让用户批）。
     canUseTool: async (toolName, input, options) => {
-      // Plan-mode 硬 enforce（model 看的 prompt 是软约束，这里是硬约束兜底）
       const currentMode = getSessionPermissionMode(sessionId);
-      if (currentMode === 'plan' && PLAN_MODE_DENY.has(toolName)) {
-        return {
-          behavior: 'deny',
-          message:
-            `plan mode 不能调 ${toolName}（动主产物 / 决策档案 / 打包都是 generate 阶段的活）。\n`
-            + `当前阶段：用 AskUserQuestion 跟用户逐页对齐 + 必要时用 generate_image 出小样确认方向。\n`
-            + `所有页对齐了 → 调 ExitPlanMode 提交 design-plan.md → 用户批准后 SDK 自动切 default → 那时再做这个。`,
-          interrupt: false,
-        };
-      }
-
-      // Plan-mode Bash 条件放开：只读探索（ls / find / cat / grep / wc / diff / jq +
-      // git 只读子命令）允许，写命令 / 重定向 / 后台拒绝。背景：SDK Glob 走 ripgrep
-      // 默认不跟 symlink，对 assets/（symlink → shared/assets/）返回空让 plan 探
-      // 不到工作区——给 agent 留 ls / find 兜底实地查。详见 isReadonlyBashCommand。
-      if (currentMode === 'plan' && toolName === 'Bash') {
-        const cmd = String(input?.command || '');
-        const check = isReadonlyBashCommand(cmd);
-        if (!check.ok) {
-          return {
-            behavior: 'deny',
-            message:
-              `plan mode Bash 仅放开只读探索类命令；本次拒绝原因：${check.reason}\n`
-              + `允许：ls / find / cat / head / tail / grep / awk / wc / diff / jq + git 只读子命令 (status/log/diff/show/...)\n`
-              + `不允许：rm / mv / cp / mkdir / touch / chmod、输出重定向 (> >>)、后台 (&)、sed -i、git checkout/commit/reset 等。\n`
-              + `要做改动 → 先 ExitPlanMode 提交 plan 让用户批，切回 default 后再动。`,
-            interrupt: false,
-          };
-        }
-        return { behavior: 'allow', updatedInput: input };
-      }
-
-      // ExitPlanMode 阻塞：agent 调 ExitPlanMode 后必须等用户审批 PlanReviewCard
-      // 才能继续。原 PostToolUse hook 只 emit 不阻塞 → agent 直接 next turn ≈
-      // "自动批准"体感（hooks.js:756 旧版只 ctx.emit 不 await）。改用 canUseTool
-      // 拦截：emit + await registerPendingPlanApproval —— 跟 AskUserQuestion 同
-      // 模式。host 调 plan-approve/reject 时通过 providePlanApprovalDecision resolve。
-      if (toolName === 'ExitPlanMode') {
-        const toolUseId = options?.toolUseID;
-        if (!toolUseId) {
-          return { behavior: 'deny', message: 'ExitPlanMode missing toolUseID', interrupt: false };
-        }
-        const plan = String(input?.plan || '').trim();
-        if (!plan) {
-          return { behavior: 'deny', message: 'ExitPlanMode plan content empty', interrupt: false };
-        }
-        sharedCtx.emit({ type: 'run.plan_for_approval', toolUseId, plan });
-        try {
-          const decision = await registerPendingPlanApproval(sessionId, toolUseId);
-          if (decision?.approved) {
-            // 用户 approve（含编辑过的 plan）→ host 已先调 setPermissionMode('default')
-            // 让 SDK 切回；canUseTool 这边 allow + 把 editedPlan 替换原 input.plan 让
-            // ExitPlanMode tool 落档用户实际批准的版本
-            const finalPlan = (typeof decision.editedPlan === 'string' && decision.editedPlan.trim())
-              ? decision.editedPlan
-              : plan;
-            return { behavior: 'allow', updatedInput: { ...input, plan: finalPlan } };
-          }
-          // 用户 reject —— 通常 plan-reject endpoint 已 cancelRun (abort 整个 query)，
-          // 走到这里是兜底：deny 让 agent 重新对齐
-          return { behavior: 'deny', message: '用户希望重新对齐，请基于反馈重新组织 plan', interrupt: true };
-        } catch (err) {
-          return { behavior: 'deny', message: err.message, interrupt: true };
-        }
-      }
 
       // auto 模式的升级口：分类器自己拿不准的调用会落到这里（它自己判定要拦的
       // 不会来，直接就拒了）。第一版**只记账不拦**——先看真实用量里都有谁会
       // 升上来，再决定拦不拦；这期间分类器的硬拒照样生效。
       // NODESIGN_AUTO_MODE_ESCALATION=deny 改成拦。
-      if (platform.autoModeEnabled && currentMode === 'auto' && toolName !== 'ExitPlanMode') {
+      if (platform.autoModeEnabled && currentMode === 'auto') {
         const 因 = options?.decisionReason || options?.title || '(没给原因)';
         console.log(
           `[auto-mode] 升级 sid=${sessionId.slice(0, 8)} tool=${toolName} `

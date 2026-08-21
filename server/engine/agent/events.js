@@ -40,7 +40,6 @@
  *   run.status                 { status }                                  compacting / requesting / null
  *   run.rate_limit             { info }                                    rate limit 变化
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
- *   run.plan_mode_requested    { toolUseId, reason, estimatedPages?, taskKind? }  agent 调 request_plan_mode（阻塞态，前端 banner 决定后 POST /plan-request/:tid/decide 解阻塞）
  *   board.updated              { objectId, zoneId, summary }               pin_to_board 改画布布局（sessionId:null 广播，前端整份重拉 board.json）
  *   project.active_session     { activeSessionId }                         项目级会话指针变更（故意不带 sessionId —— 见构造器注释）
  *
@@ -331,15 +330,6 @@ export const Events = {
     ...(anchor ? { anchor } : {}),
   }),
 
-  // Phase 3.2 ExitPlanMode hook：plan-mode 下 agent 调 ExitPlanMode 工具提交 plan，
-  // host 据此弹 PlanReviewCard 给用户审批。审批通过 → POST /plan-approve 切 mode；
-  // 拒绝 → POST /plan-reject interrupt run。
-  planForApproval: (toolUseId, plan) => ({
-    type: 'run.plan_for_approval',
-    toolUseId,
-    plan,    // markdown 文本，agent 通过 ExitPlanMode input.plan 提交
-  }),
-
   // ── Canvas 焕新 C1（2026-05-02）：MCP 工具反向通道 + tweaks/buffer 通知 ──
 
   // navigate_to_page 工具触发，前端 ProjectWorkspace 收到后切到第 N 页
@@ -423,20 +413,6 @@ export const Events = {
     imageSize: info.imageSize,
     referenceImageCount: info.referenceImageCount || 0,
     ...(info.accompanyText ? { accompanyText: info.accompanyText } : {}),
-  }),
-
-  // ── Plan mode 自决（Phase C，2026-05-06 后段）──
-  // request_plan_mode MCP 工具触发；前端 PlanRequestBanner 监听这条事件弹横幅。
-  // 阻塞态（2026-05-07 起）：工具 await 用户决定后才返回。
-  // - 用户 yes → 前端先 POST /permission-mode { mode:'plan' } 切 SDK
-  //              再 POST /plan-request/:toolUseId/decide { approved:true } 解阻塞
-  // - 用户 no  → 前端 POST /plan-request/:toolUseId/decide { approved:false } 解阻塞
-  planModeRequested: (info) => ({
-    type: 'run.plan_mode_requested',
-    toolUseId: info.toolUseId,
-    reason: info.reason,
-    ...(info.estimatedPages != null ? { estimatedPages: info.estimatedPages } : {}),
-    ...(info.taskKind ? { taskKind: info.taskKind } : {}),
   }),
 
   // appModel: NoDesign 上层真实 model（如 kimi-k2.6）。spoofing 后 SDK 的

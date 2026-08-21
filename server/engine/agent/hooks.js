@@ -82,7 +82,6 @@ import {
 import { makePostToolUseEditWriteTrimHandler } from './hooks/post-trim.js';
 import { makePostToolUseCanvasFocusPageHandler } from './hooks/post-canvas-focus.js';
 import {
-  makePostToolUseExitPlanModeHandler,
   makePostToolUseScreenshotHandler,
   makePostToolUseExportHandler,
   makePostToolUseGenerateImageRegenWatchdog,
@@ -270,14 +269,6 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       {
         matcher: 'Edit|Write',
         hooks: [makePostToolUseCanvasFocusPageHandler({ ctx })],
-      },
-      // Phase 3.2 — SDK plan mode：agent 调 ExitPlanMode 工具提交 plan，
-      // host emit run.plan_for_approval 让前端弹 PlanReviewCard。
-      // SDK 自身在 plan mode 下会停 agent 等待 host 切 mode 才继续，所以本 handler
-      // 不需要返回 hookSpecificOutput.decision='block'，纯 emit 即可。
-      {
-        matcher: 'ExitPlanMode',
-        hooks: [makePostToolUseExitPlanModeHandler({ ctx })],
       },
       {
         matcher: 'mcp__nodesign__screenshot_canvas',

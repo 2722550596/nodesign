@@ -26,10 +26,8 @@ import ModelPicker from './ModelPicker.jsx';
  *
  * 2026-05-07：移除 @引用 + AI brief 建议两个未实装占位 icon，避免点击只 toast
  *           "即将推出"的死交互。
- * 2026-07-30：删掉「深度对齐」toggle —— plan mode 现在只由 agent 自己判断该不该进
- *           （request_plan_mode 工具 → banner → 你点同意），一个常驻的手动开关只是
- *           让用户替 agent 做一个它更清楚的决定。附件收进 [+] 展开菜单，跟上下文
- *           查看和手动压缩放在一起。
+ * 2026-07-30：删掉「深度对齐」toggle（plan mode 随后在 2026-08-21 整体移除）。
+ *           附件收进 [+] 展开菜单，跟上下文查看和手动压缩放在一起。
  */
 export default function ChatComposer({
   onSend, disabled, trayItems, onRemoveTrayItem, onPickFile,

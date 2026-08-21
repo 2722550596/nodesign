@@ -109,30 +109,10 @@ export const useGlobalStore = create((set) => ({
   activeRun: null,
   setActiveRun: (activeRun) => set({ activeRun }),
 
-  // ── Phase 3.2：SDK 原生 plan mode 审批 ──
-  // run.plan_for_approval 事件 → 设 planForApproval state → ProjectWorkspace
-  // 渲染 <PlanReviewCard />。用户 approve/reject 后调 Plan.approve/reject API
-  // 然后清空 state。
-  planForApproval: null,  // { toolUseId, plan }
-  setPlanForApproval: (planForApproval) => set({ planForApproval }),
-  clearPlanForApproval: () => set({ planForApproval: null }),
-
-  // ── Phase C：agent 主动请求进 plan mode ──
-  // run.plan_mode_requested 事件（agent 调 mcp__nodesign__request_plan_mode）→
-  // ProjectWorkspace 设这个 state → 渲染 <PlanRequestBanner />。
-  // 用户 yes → Plan.grantViaPermissionMode → SDK 切 plan → agent 自然进 ExitPlanMode 流程
-  // （之后会触发 run.plan_for_approval，PlanReviewCard 接力）
-  // 用户 no → 单纯清掉 state 不发请求（agent 已被告知"无 mode 通知就继续"）
-  planModeRequest: null,  // { reason, estimatedPages?, taskKind?, ts }
-  setPlanModeRequest: (r) => set({ planModeRequest: r ? { ...r, ts: Date.now() } : null }),
-  clearPlanModeRequest: () => set({ planModeRequest: null }),
-
   // 注：pendingImageApproval state 已删除（2026-05-06）—— 见 ImageApprovalBanner 移除说明。
 
-  // 注：planModeEnabled（「深度对齐」toggle）已删除（2026-07-30）。plan mode 只剩
-  // agent 自己发起那条路：request_plan_mode → PlanRequestBanner → 用户同意 →
-  // Plan.grantViaPermissionMode 切 SDK mode。手动开关连 localStorage 一起删掉了 ——
-  // 留着状态但没有 UI 关它，等于给开过的人留一个永久开启的 plan mode。
+  // 注：plan mode（「深度对齐」toggle → 后来的 request_plan_mode/PlanReviewCard 审批流）
+  // 2026-08-21 整体移除，状态和 API 一起删了。
 
   // ── 模型选择（2026-07-29）──
   // Composer 里的 picker。选择随**新建会话**那条消息的 body.model 下发，服务端

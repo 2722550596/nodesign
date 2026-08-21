@@ -43,7 +43,7 @@ import { readAssetsSummary } from '../projects/assets-summary.js';
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
-  cancelRun, provideAnswer, getQuery, provideElicitation, hasActiveQuerySession, getQuerySession, closeQuerySession, setSessionPermissionMode, getSessionIdByRunId, providePlanRequestDecision, providePlanApprovalDecision,
+  cancelRun, provideAnswer, getQuery, provideElicitation, hasActiveQuerySession, getQuerySession, closeQuerySession, setSessionPermissionMode, getSessionIdByRunId,
 } from '../engine/runs/active-runs.js';
 import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
 import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
@@ -62,17 +62,15 @@ import { composeUserMessage } from './turn-compose.js';
 const router = express.Router();
 
 /**
- * Emit run.permission_mode_changed —— 广播 SDK 实际 permissionMode 的变化。所有
- * mode 切换路径（plan-approve / plan-reject / turn 入口 mode 校正）调完
- * setPermissionMode 后都该 emit 一次。
+ * Emit run.permission_mode_changed —— 广播 SDK 实际 permissionMode 的变化。唯一的
+ * 切换路径（turn 入口 mode 校正）调完 setPermissionMode 后 emit 一次。
  *
- * 前端 2026-07-30 起不再镜像这个事件（「深度对齐」toggle 已删，plan mode 期间的
- * 状态显示由 PlanRequestBanner / PlanReviewCard 承担）。事件保留给多 tab 观测和
- * 排障用 —— mode 是 SDK 真相的一部分，不该只活在服务端日志里。
+ * 前端不镜像这个事件（plan mode 2026-08-21 整体移除后它只剩观测价值）。事件保留给
+ * 多 tab 观测和排障用 —— mode 是 SDK 真相的一部分，不该只活在服务端日志里。
  *
  * @param {string} pid
  * @param {string} sid
- * @param {string} mode  - 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'
+ * @param {string} mode  - 'default' | 'acceptEdits' | 'bypassPermissions' | 'dontAsk' | 'auto'
  */
 export function emitPermissionModeChanged(pid, sid, mode) {
   if (!pid || !sid || !mode) return;
@@ -132,10 +130,9 @@ router.post('/:pid/turn', async (req, res, next) => {
       // 防 promise unhandled rejection 警告：失败时也 attach catch
       p.catch(() => {});
     }
-    // Phase 3.2：前端 plan-mode toggle 传 permissionMode='plan' 启用 SDK 原生 plan mode；
-    // 其他值（含不传）显式走 bypassPermissions（自动化 design agent 默认 — 见 SDK
-    // PermissionMode 定义；不要传 null，行为未定义）。
-    const initialPermissionMode = permissionMode === 'plan' ? 'plan' : platform.permissionModeDefault;
+    // permissionMode 请求字段保留兼容老前端，但不再参与决定（plan mode 08-21 整体移除）：
+    // 启动 mode 一律 platform 默认（生产 bypassPermissions / exp auto）。
+    const initialPermissionMode = platform.permissionModeDefault;
 
     const finalSkillId = (typeof skillId === 'string' && skillId) || project.skillId;
 
@@ -568,10 +565,6 @@ router.post('/:pid/runs/:runId/rewind', async (req, res, next) => {
     res.json({ ok: true, result });
   } catch (err) { next(err); }
 });
-
-// plan mode 那族端点（permission-mode / plan-request decide / plan-approve /
-// plan-reject）2026-08-19 迁去 ./turn-plan.js —— 它们操作的是**已经在跑的 run**，
-// 跟本文件"收消息起会话"的主职责无关。挂载点没变，见 index.js。
 
 /**
  * POST /api/projects/:pid/runs/:runId/model

@@ -30,26 +30,6 @@ export const NODESIGN_PRELUDE = (() => {
   }
 })();
 
-// Phase 3.1：plan-mode workflow instructions（替换 SDK 默认 code-impl phases）
-// SDK 在 permissionMode='plan' 时把这段嵌入到 plan-mode system reminder 里，
-// 自动包 read-only enforcement preamble + ExitPlanMode protocol footer。
-// 内容是 NoDesign 设计场景特化版（设计 plan / 隐喻 / per-page 决策等），
-// 不是 code implementation。
-export const NODESIGN_PLAN_INSTRUCTIONS = (() => {
-  try {
-    return fs.readFileSync(path.join(__dirname, 'prompts/nodesign-plan-instructions.md'), 'utf8').trim();
-  } catch (err) {
-    // FATAL：plan mode 进去后 agent 看不到 workflow 指导，行为完全乱。fail-soft
-    // 仍返回 ''（避免起服务直接挂），但用 console.error 让部署日志能立刻发现。
-    console.error(
-      '[system-prompts] FATAL: nodesign-plan-instructions.md load failed — '
-      + 'plan mode will lack workflow guidance:',
-      err.message,
-    );
-    return '';
-  }
-})();
-
 // 成人段与外审档联动（2026-08-08）：一个旋钮同时管 GPT 外审和提示词口径，
 // 两边永远一致。off=明文允许（站主/获批账号）、loose=原默认、strict=收敛。
 const ADULT_POLICY = {

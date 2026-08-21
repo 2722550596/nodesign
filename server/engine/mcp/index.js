@@ -58,7 +58,6 @@ import { makeGetPendingChangesTool } from './tools/get-pending-changes.js';
 import { makeClearPendingChangesTool } from './tools/clear-pending-changes.js';
 import { makeGenerateImageTool } from './tools/generate-image.js';
 import { makeRemoveBackgroundTool } from './tools/remove-background.js';
-import { makeRequestPlanModeTool } from './tools/request-plan-mode.js';
 import { makePinToBoardTool } from './tools/pin-to-board.js';
 import { makeRelateOnBoardTool } from './tools/relate-on-board.js';
 import { makeReadBoardTool } from './tools/read-board.js';
@@ -82,8 +81,7 @@ import { makeLookupTagsTool } from './tools/lookup-tags.js';
  * @param {string} deps.workspaceRoot       绝对路径，project workspace（sessions/<sid>/）
  * @param {string} [deps.sharedRoot]        project shared/ 根（跨 session 共享 assets / .claude）
  * @param {string} [deps.projectId]
- * @param {string} [deps.sessionId]          NoDesign sessionId — request_plan_mode 等
- *                                           "等用户决定"工具用作 pending Promise key
+ * @param {string} [deps.sessionId]          NoDesign sessionId（活跃产物指针 / 会话级锁 / 出处记账用）
  * @param {import('../agent/context.js').AgentContext} [deps.ctx]  EventBus 入口
  * @returns SDK MCP server config（喂给 query options.mcpServers）
  */
@@ -291,13 +289,6 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 任何 workspace 里的图都能抠，输出 RGBA PNG 到 assets/generated/<name>.png。
       // 跟 generate_image 解耦：generate_image 只生图，想透明叠加单独调本工具。
       makeRemoveBackgroundTool({ workspaceRoot, sharedRoot, projectId, ctx }),
-
-      // Agent in-loop 请求进 SDK plan mode —— emit run.plan_mode_requested
-      // 给前端弹横幅，用户点 yes 走 /permission-mode endpoint 切 mode 后再 POST
-      // /plan-request/:tid/decide 解阻塞。
-      // 工具是**阻塞态** — handler await 用户决定再返回，避免 agent 在等的时候继续动作
-      // （之前非阻塞导致 agent 边请求边写文件，等用户点 yes 时 run 已 done → 切不了）。
-      makeRequestPlanModeTool({ ctx, sessionId }),
 
       // 工作台分区画布（2026-07-27）：agent 协助摆放 —— 把产物/文档/deck 钉进
       // 某 session 的工作区。写 board.json（board-store 单锁）+ 广播 board.updated。

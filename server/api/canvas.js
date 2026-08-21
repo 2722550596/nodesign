@@ -378,10 +378,7 @@ router.get(['/:pid/spec', '/:pid/sessions/:sid/spec'], async (req, res, next) =>
   } catch (err) { next(err); }
 });
 
-// GET /plan endpoint 已删（Phase 4）：业务层 design-plan.md modal 路径下线，
-// 统一走 SDK 原生 plan mode（PlanReviewCard）。design-plan.md 文件作为
-// SDK plan-approve 的产物保留（turn.js 落档），但前端不再有只读 modal。
-// vision-checker 子代理仍可 Read design-plan.md，走子代理的 cwd Read 路径。
+// GET /plan endpoint 已删（Phase 4）；plan mode 整条线 2026-08-21 整体移除。
 
 /**
  * GET /:pid/config —— 读项目级 UI 配置（ui-config.json，#25 从

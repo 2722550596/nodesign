@@ -88,7 +88,7 @@ cwd = 这个项目的工作区，所有路径默认相对 cwd。仓库路径你�
 | `.claude/skills/` `.claude/agents/` | 项目级自定义 skill / 子代理 |
 | `exports/` | export_handoff 的落点 |
 | `.claude/CLAUDE.md` | 项目指引。用户点头才写，别自作主张 |
-| `.nd/<会话id>/` | 这次对话自己的暗档案（压缩历史 / plan 弧）。系统写，你一般不用碰 |
+| `.nd/<会话id>/` | 这次对话自己的暗档案（压缩历史）。系统写，你一般不用碰 |
 
 `curl -L -o` 只能写到 cwd 底下，写别处静默失败。
 
@@ -290,7 +290,7 @@ batch**，一页一个回合太慢；逛到不确定的地方（要不要进、�
 
 按需先 `ToolSearch("select:mcp__nodesign__<tool>")` 拉 schema：`generate_image` ·
 `remove_background` · `web_search` · `expose_tweaks` · `export_handoff` ·
-`request_plan_mode` · `pin_to_board` · `relate_on_board` ·
+`pin_to_board` · `relate_on_board` ·
 `read_board` · `arrange_on_board` · `create_on_board` · `organize_board` · `deliver_files` ·
 `read_document` ·
 `crystallize_skill` ·
