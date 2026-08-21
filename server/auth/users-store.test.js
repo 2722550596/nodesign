@@ -3,7 +3,7 @@
  * 库走 vitest.server.config 里的 DB_PATH（临时库），不碰生产。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { registerUser, createInvite, getUserById, updateUser, openRegistrationEnabled, defaultInviteLifetimeUsd } from './users-store.js';
+import { registerUser, createInvite, getUserById, updateUser, openRegistrationEnabled, defaultInviteDailyUsd } from './users-store.js';
 import { tierOf, can } from './tier.js';
 
 const uniq = (p) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -43,20 +43,24 @@ describe('registerUser', () => {
     expect(can(getUserById(u.id), 'subscription')).toBe(false);
     expect(() => updateUser(u.id, { plan: 'vip' })).toThrow(/plan/);
   });
-  it('带邀请码但码上没写额度：默认 $20 终身（08-21 晚）；env 可调，0 = 不封顶', () => {
+  it('带邀请码：默认每日 $20（08-21 晚）；终身额度只在码上写了才有；env 可调，0 = 不写走全局默认', () => {
     process.env.NODESIGN_OPEN_REGISTRATION = '1';
-    const saved = process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD;
+    const saved = process.env.NODESIGN_INVITE_DEFAULT_DAILY_USD;
     try {
-      delete process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD;
-      expect(defaultInviteLifetimeUsd({})).toBe(20);
-      expect(defaultInviteLifetimeUsd({ NODESIGN_INVITE_DEFAULT_LIFETIME_USD: '35' })).toBe(35);
-      expect(defaultInviteLifetimeUsd({ NODESIGN_INVITE_DEFAULT_LIFETIME_USD: '0' })).toBeNull();
+      delete process.env.NODESIGN_INVITE_DEFAULT_DAILY_USD;
+      expect(defaultInviteDailyUsd({})).toBe(20);
+      expect(defaultInviteDailyUsd({ NODESIGN_INVITE_DEFAULT_DAILY_USD: '35' })).toBe(35);
+      expect(defaultInviteDailyUsd({ NODESIGN_INVITE_DEFAULT_DAILY_USD: '0' })).toBeNull();
       const inv = createInvite({ maxUses: 1 });
       const u = registerUser({ username: uniq('inv20'), password: 'password123', inviteCode: inv.code });
-      expect(u.lifetimeCostLimitUsd).toBe(20);
+      expect(u.dailyCostLimitUsd).toBe(20);
+      expect(u.lifetimeCostLimitUsd).toBeNull();
       expect(u.plan).toBe('pro');
+      // 公开注册号不带日限（免费模型 $0，按轮次闸）
+      const pub = registerUser({ username: uniq('pub20'), password: 'password123', inviteCode: '' });
+      expect(pub.dailyCostLimitUsd).toBeNull();
     } finally {
-      if (saved === undefined) delete process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD; else process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD = saved;
+      if (saved === undefined) delete process.env.NODESIGN_INVITE_DEFAULT_DAILY_USD; else process.env.NODESIGN_INVITE_DEFAULT_DAILY_USD = saved;
     }
   });
 });
