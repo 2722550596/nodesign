@@ -6,6 +6,7 @@ import { Events } from '../events.js';
 import { getQuery } from '../../runs/active-runs.js';
 import { mutateSpecJson } from '../../../projects/workspace.js';
 import { listWorkspaceArtifacts } from '../../../lib/artifact-target.js';
+import { resetTurnMemory } from './turn-state-memory.js';
 
 /**
  * Context usage 警告分档（按真实容量算，kimi=256k）：
@@ -136,9 +137,11 @@ export function makeStopReflectionHandler({ ctx, workspaceRoot }) {
  *
  * 失败 fail-soft：spec.json 写不进去 console.warn 但不抛错（不阻塞 query）。
  */
-export function makePostCompactHandler({ ctx, workspaceRoot }) {
+export function makePostCompactHandler({ ctx, workspaceRoot, sessionId }) {
   return async (input, _toolUseId, _options) => {
     try {
+      // 压缩后上一轮的状态块已经被摘要吞了，"同上轮"没有所指 —— 让下一轮重新全量
+      resetTurnMemory(sessionId);
       if (!workspaceRoot) return {};
       const summary = input?.compact_summary;
       if (!summary || typeof summary !== 'string') return {};

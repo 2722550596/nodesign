@@ -83,7 +83,7 @@ cwd = 这个项目的工作区，所有路径默认相对 cwd。仓库路径你�
 | `./`（cwd 本身）| **就是这张桌面**。产出默认收进文件夹，别随手摊在根上（见下节）。deck = `<名>.html`（每个 .html 一份）；站点**住自己的文件夹**（`<站名>/index.html`，详见站点技术参考）。独立单页放 `_drafts/`、`.ndignore` 控制扫描 |
 | `canvas.template.html` | deck 起手模板，Read 后改写（加载 skill 时自动拷进来）。站点**没有**模板，从骨架和风格名自己写 |
 | `notes/` | 便利贴（见下一节） |
-| `assets/` | 上传素材 + 生成图 |
+| `assets/` | 上传素材 + 生成图；`assets/references/` 是逛站采回来的（palette / fonts / css / skeleton / motion json + 截图，出处在同目录 `.meta/`）。**开工前先看有没有现成的，别重复去搜**；参考图挑关键的一张 Read 看一眼再下笔。每轮开头的状态块首轮列全、之后只报新增 |
 | `.claude/agent-memory/` | `memory.md` 用户偏好档（他说"记住…"就 Read 后 Edit 追加，别覆盖）· `brand/memory.md` 风格档案（锚定风格后写：色号 / 字体链 / 版式语言 / 动效预算）· `auto/` 系统自动记的，**不要碰** |
 | `.claude/skills/` `.claude/agents/` | 项目级自定义 skill / 子代理 |
 | `exports/` | export_handoff 的落点 |

@@ -39,7 +39,6 @@ import {
   validateSessionId,
   getSessionMetaDir,
 } from '../projects/workspace.js';
-import { readAssetsSummary } from '../projects/assets-summary.js';
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
@@ -234,10 +233,9 @@ router.post('/:pid/turn', async (req, res, next) => {
       }
     }
 
-    // 取 sessionRoot + 两类 workspace 主动提示：
+    // 取 sessionRoot + workspace 主动提示：
     //   - pendingSummary（C4）：用户在 chat 间隔做的直接编辑/评论 buffer
-    //   - assetsSummary（C8）：./assets/ 里的参考素材（图/文档），新 session 必报，
-    //     续 session 仅当 buffer/旧素材的存在仍可能影响判断时报（这里简化为"非空就报"）
+    //   （素材摘要 08-21 起由 UserPromptSubmit hook 注入，首轮全量之后只报变化）
     await ensureProjectWorkspace(project.id);
     const sessionRoot = await ensureSessionWorkspace(project.id, sid);
 
@@ -262,12 +260,11 @@ router.post('/:pid/turn', async (req, res, next) => {
     }
 
     const pendingSummary = isNewSession ? { count: 0, summary: '' } : await readPendingSummary(sessionRoot);
-    const assetsSummary = await readAssetsSummary(sessionRoot);
     // raw：纯文本直达 SDK，不加任何装饰块 —— 斜杠命令（/compact 等）要求消息
     // 就是命令本身，多包一层 system 注入就不会被识别
     const { displayText, blocks } = raw === true && chatText.trim()
       ? { displayText: chatText.trim(), blocks: [{ type: 'text', text: chatText.trim() }] }
-      : await composeUserMessage(chatText, attachments, pendingSummary, assetsSummary, sessionRoot);
+      : await composeUserMessage(chatText, attachments, pendingSummary, sessionRoot);
 
     // 上传/附件诊断：NODESIGN_DEBUG_TURN=1 时打印 blocks 概况，定位 image 体积/媒体类型
     // 引发的 400/超 token 类问题（配合 binary-fixup-proxy 的 /tmp dump）

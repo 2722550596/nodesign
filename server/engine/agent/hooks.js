@@ -214,7 +214,7 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
 
     // PostCompact —— compact 后把摘要写入 spec.json 长期记忆
     PostCompact: [{
-      hooks: [makePostCompactHandler({ ctx, workspaceRoot })],
+      hooks: [makePostCompactHandler({ ctx, workspaceRoot, sessionId })],
     }],
 
     // ── Phase 2 升级 ──
@@ -225,9 +225,8 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
       hooks: [makeSessionStartHandler({ ctx })],
     }],
 
-    // UserPromptSubmit —— 每次用户输入前自动注入 spec.json 决策摘要 +
-    // canvas.html 当前页数。把 SKILL.md 软约束（"agent 自己 turn 开头 Read
-    // spec.json"）变成 SDK 硬注入 —— agent 不必每次都自觉，hook 直接喂上下文。
+    // UserPromptSubmit —— 每次用户输入前注入工作区状态（素材 / 决策 / 便利贴 / 关系线 /
+    // 产物 / tweaks）。08-21 起首轮全量、之后只报变化（hooks/turn-state-memory.js）。
     UserPromptSubmit: [{
       hooks: [makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, projectId })],
     }],

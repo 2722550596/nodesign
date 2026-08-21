@@ -34,7 +34,7 @@ const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'imag
  * Anthropic image content block 仅支持 jpeg/png/gif/webp，不支持 svg/heic 等。
  * 不在白名单的 image mime → 按文本路径降级。
  */
-export async function composeUserMessage(chat, attachments, pendingSummary, assetsSummary, sessionRoot) {
+export async function composeUserMessage(chat, attachments, pendingSummary, sessionRoot) {
   const blocks = [];
 
   // C4：用户在过去时段做的 direct edit + comment → prepend system 提示
@@ -46,30 +46,8 @@ export async function composeUserMessage(chat, attachments, pendingSummary, asse
     });
   }
 
-  // C8：assets/ 主动提醒（替代 prelude 硬规则"必先 Glob assets"）—— workspace
-  // 检测到有素材时温和提示 agent，没素材就不注入，agent 不必每个 turn 硬查
-  if (assetsSummary && assetsSummary.count > 0) {
-    // assets/ 是 symlink → shared/assets/，SDK Glob/Grep 走 ripgrep 默认不跟
-    // symlink，所以 `Glob("assets/*")` 会拿 "No files found"。把完整路径列出来
-    // 让 agent 跳过 Glob 直接 Read（plan mode Bash 被 deny 没有 ls 兜底，更需要这条）。
-    const fileList = Array.isArray(assetsSummary.paths) && assetsSummary.paths.length > 0
-      ? `\n完整路径（直接 Read，**别用 Glob/Grep——assets/ 是 symlink，SDK 默认不跟会返回空**）：\n${assetsSummary.paths.map((p) => `- ${p}`).join('\n')}`
-      : '';
-    let hint = '建议挑 1 张关键图 Read 看一眼（你能直接 vision 看到颜色/质感/排版），再决定动手。如果跟用户的 brief 不相关可以先不看。';
-    if (assetsSummary.hasBinaryDocs) {
-      // ⚠️ 这段推荐的每条命令都要在这台机器上真验过再写 —— 08-19 前这里教的是
-      // pdfplumber/PyPDF2/python-docx/openpyxl，四个包环境里一个都没装且 pip 三条路
-      // 全堵（PEP 668 + 只读 site-packages），每个读文档的会话固定吃三次失败（agent 上报实锤）。
-      hint += ' PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包）。用系统自带的工具解（pdfplumber/PyPDF2/python-docx/openpyxl 这些 python 包**没装且装不上**，别试）：'
-        + 'pdf 文本 `pdftotext -layout 文件.pdf -`；pdf 转页图 `pdftoppm -png -r 100 文件.pdf 页前缀` 再 Read 图片；pdf 嵌入图 `pdfimages -png`。'
-        + 'docx/pptx/xlsx 用 `soffice --headless --convert-to txt|csv|pdf --outdir 目录 文件`（xlsx 转 csv；⚠️ soffice 吃不下中文文件名，先拷成 ASCII 名，并加 `-env:UserInstallation=file:///tmp/lo-任意名` 免得和渲染管线抢 profile）；docx/pptx 里的嵌入图直接 `unzip -o 文件 "word/media/*"`（pptx 是 `ppt/media/*`）。'
-        + '**提取出来的不只是文本，通常还包含嵌入图片** —— 提取完一定 Read 看图片（vision 自动渲染），别只看 stdout 文本就以为信息齐了。文档里的图常含关键 brand 元素 / 数据图表 / 案例视觉，跳过看图等于丢了一半内容。';
-    }
-    blocks.push({
-      type: 'text',
-      text: `<system>${assetsSummary.summary}。${hint}${fileList}</system>`,
-    });
-  }
+  // （素材摘要 08-21 搬去 hooks/user-prompt-submit.js 的状态块：首轮全量、之后只报变化；
+  //   这里不再拼进用户消息 —— 两条线两个真相源的病，顺手把"assets 是 symlink"那句假话删了。）
 
   // 空文字块会被 API 直接判 400（text content block 不许为空），所以只发附件的
   // 那条消息这里不能盲推。改成一句交代处境的话 —— agent 得知道"用户没说话"是

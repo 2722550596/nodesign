@@ -64,10 +64,8 @@ export async function readAssetsSummary(sessionRoot) {
       parts.push(`${others.length} 个其他文件`);
     }
 
-    // 完整文件清单（按路径列）—— 让 agent 不用再 Glob/LS 探。assets/ 是 symlink
-    // → shared/assets/，SDK Glob 走 ripgrep 默认不跟 symlink，agent 调
-    // `Glob("assets/*")` 会拿 "No files found" 误判工作区为空（plan mode 还没 Bash
-    // 兜底）。把全名列在这条 system 里，agent 直接 Read assets/<name> 即可。
+    // 完整文件清单（按路径列）—— 让 agent 不用再 Glob/LS 探。
+    // （08-07 扁平化后 assets/ 是真目录，Glob 也能用；08-21 前这里还写着"symlink 别用 Glob"，删了。）
     const allNames = [...images, ...textDocs, ...binaryDocs, ...others];
 
     // 参考素材（2026-08-18）：`assets/references/**` 也要报，否则**没有任何机制
@@ -90,16 +88,13 @@ export async function readAssetsSummary(sessionRoot) {
 
     const refLine = refs.length
       ? `另有 ${refs.length} 件参考素材在 assets/references/ 下（${refs.slice(0, 3).map(r => r.split('/').pop()).join('、')}`
-        + `${refs.length > 3 ? ' 等' : ''}）—— 逛站采回来的调色板/字体/结构 json 就在这儿，`
+        + `${refs.length > 3 ? ' 等' : ''}）—— 逛站采回来的调色板/字体/结构/动效清单 json 就在这儿，`
         + '出处记在同目录的 .meta/<同名>.json 里。**先看有没有现成的，别重复去搜。**'
       : '';
 
-    // ⚠️ `paths` 会被 turn-compose **逐条**打进每个 turn 的 <system> 块。上面那句
-    // 「只报数量和头几个名字（几十个文件全列会把这条 system 撑爆）」只管到了
-    // refLine，**管不到 paths** —— 而 refs 是随每次 browser_capture（一站 5 件）
-    // 和每次参考图下载单调增长的。实测最差 2006 字节 / 约 600-1000 token **每 turn**，
-    // 而且因为 count 现在含 refs，以前根本不注入这块的项目也开始注入了。
-    // 顶层 assets 是用户上传的，数量有限但也给个上限兜底。
+    // ⚠️ `paths` 会被 UserPromptSubmit 首轮全量打进状态块（之后只报变化，见
+    // hooks/user-prompt-submit.js）。refs 随每次 browser_capture 单调增长，首轮也要封顶；
+    // `allPaths` 不封顶，给按项算变化用（不直接打进文案）。
     const REF_CAP = 12;
     const TOP_CAP = 60;
     const refPaths = refs.slice(0, REF_CAP);
@@ -116,8 +111,9 @@ export async function readAssetsSummary(sessionRoot) {
       ].filter(Boolean).join('\n'),
       hasBinaryDocs: binaryDocs.length > 0,
       paths: [...allNames.slice(0, TOP_CAP).map((n) => `assets/${n}`), ...refPaths],
+      allPaths: [...allNames.map((n) => `assets/${n}`), ...refs],
     };
   } catch {
-    return { count: 0, summary: '', hasBinaryDocs: false, paths: [] };
+    return { count: 0, summary: '', hasBinaryDocs: false, paths: [], allPaths: [] };
   }
 }
