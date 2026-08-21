@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
+import EdgeTab, { TAB_LEN } from '../ui/EdgeTab.jsx';
+import { useViewportWidth } from '../../lib/use-media.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -49,6 +51,12 @@ const HIDE_MS = 300;
 /** 卡到屏缘的缝。比热区（10px）窄 —— 召唤成功时卡直接长在指针底下，
  *  pointerenter 立刻接管，自动收的兜底计时器基本用不上。 */
 const EDGE_GAP = 8;
+/**
+ * 留给贴纸的那一条（2026-08-21）。卡再宽也不许吃掉它 —— 手机上卡是铺满的，
+ * 不留这一条贴纸就被卡压出屏外，用户既看不见"这层是从哪拉出来的"，也没地方点收起。
+ * 顺带这一条也是「点外面收起」的落点。8 缝 + 15 贴纸 + 15 富余。
+ */
+const TAB_LANE = 38;
 
 /**
  * 配置版本（2026-08-17）。
@@ -99,6 +107,16 @@ export default function ChatDock({
   cfgRef.current = cfg;
   const draggingRef = useRef(false);
   draggingRef.current = dragging;
+  /**
+   * 这一次是**贴边召唤**出来的吗（2026-08-21）。
+   * 召唤出来的卡要留一条兜底：万一鼠标没进卡，1.2s 后自己收回去（不然一次误召唤会永远开着）。
+   * 但**点贴纸打开**和**程序化唤出**是明确动作，不能被那条兜底收走 —— 触屏上指针永远不会
+   * "进卡"，不分开的话点一下贴纸，卡 1.2 秒后自己没了。
+   */
+  const summonedRef = useRef(false);
+
+  /** 视口宽：窄屏上卡要铺满（留出贴纸那一条），所以要的是真像素不是一个布尔 */
+  const vw = useViewportWidth();
 
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch { /* 隐私模式 */ }
@@ -111,10 +129,20 @@ export default function ChatDock({
   //   首帧不触发：计数器是全局的，换项目再挂载时残值不该把卡弹出来。
   const openTick = useGlobalStore(s => s.chatDockOpenTick);
   const focusTick = useGlobalStore(s => s.composerFocusTick);
-  const ticksSeen = useRef(false);
+  /**
+   * 记住的是**上一次的计数值**，不是"跑过没有"的布尔。
+   * ⛔ 布尔版会被 StrictMode 打穿：开发模式下 effect 是 mount→unmount→mount 跑两遍，
+   * 而 ref 跨这次假重挂是**留着的** —— 第二遍进来 `已跑过` 已是 true，于是每次进项目
+   * 卡都自己弹出来。以前没人发现是因为 1.2s 兜底计时器又把它收了回去（08-21 把兜底
+   * 收窄成"只管贴边召唤"之后，这个老毛病当场露出来）。比值就没这问题。
+   */
+  const seenTicks = useRef(null);
   useEffect(() => {
-    if (!ticksSeen.current) { ticksSeen.current = true; return; }
+    const sig = `${openTick}:${focusTick}`;
+    if (seenTicks.current === null || seenTicks.current === sig) { seenTicks.current = sig; return; }
+    seenTicks.current = sig;
     clearHide();
+    summonedRef.current = false;   // 明确动作，不吃 1.2s 兜底
     setOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTick, focusTick]);
@@ -131,6 +159,9 @@ export default function ChatDock({
         raf = 0;
         // 按着键的移动是拖拽（拖卡、圈选、画涂鸦）—— 手滑到屏缘不是在召唤
         if (e.buttons !== 0 || e.clientY < HOT_TOP_GUARD) { cancelDwell(); return; }
+        // 贴纸自己那一段不召唤：它是**点**的目标，路过就自动打开的话，接下来那一下
+        // 点击反而把卡关了
+        if (e.target?.closest?.('[data-edge-tab]')) { cancelDwell(); return; }
         const nearRight = window.innerWidth - e.clientX <= HOT_W;
         const nearLeft = e.clientX <= HOT_W;
         if (nearRight || nearLeft) {
@@ -139,6 +170,7 @@ export default function ChatDock({
             dwell = setTimeout(() => {
               dwell = null;
               setCfg(c => (c.side === side ? c : { ...c, side }));
+              summonedRef.current = true;
               setOpen(true);
             }, DWELL_MS);
           }
@@ -178,8 +210,9 @@ export default function ChatDock({
 
   useEffect(() => {
     if (!open || cfg.pinned) return undefined;
-    // 触发源 2：召唤成功但鼠标一直没进卡
-    armHide(1200);
+    // 触发源 2：**贴边召唤**成功但鼠标一直没进卡。点贴纸/程序化打开的不算 ——
+    // 触屏上指针永远不会"进卡"，一视同仁的话点一下贴纸卡就 1.2 秒后自己没了
+    if (summonedRef.current) armHide(1200);
     // 触发源 3：点外面
     const onDown = (e) => {
       if (rootRef.current && !rootRef.current.contains(e.target)) armHide();
@@ -206,8 +239,13 @@ export default function ChatDock({
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
   }, [dragging]);
 
-  const { side, width, pinned } = cfg;
+  const { side, pinned } = cfg;
   const togglePin = () => setCfg(c => ({ ...c, pinned: !c.pinned }));
+  /**
+   * 真正落地的宽度：窄屏上按视口铺满，但**永远给贴纸留出 TAB_LANE 那一条**。
+   * 用户拖出来的 cfg.width 原样存着（换回宽屏还是他调的那个数），这里只钳显示值。
+   */
+  const width = Math.min(cfg.width, Math.max(240, vw - TAB_LANE));
 
   // 收起 ≠ 卸载：草稿在 ChatComposer 的本地 state 里（滚动位置、子代理 tab
   // 同理），卸载 = 用户没发出去的话被吹掉。所以关着的时候是**平移出屏**：
@@ -216,57 +254,83 @@ export default function ChatDock({
   const OFF = width + EDGE_GAP + 30;   // +30 让影子也完全出屏
 
   return (
-    <div
-      ref={rootRef}
-      onPointerEnter={clearHide}
-      onPointerLeave={() => armHide()}
-      style={{
-        position: 'absolute',
-        top: 14, bottom: 14, [side]: EDGE_GAP, width,
-        display: 'flex', flexDirection: 'column',
-        background: PAPER.paper,
-        backgroundImage: GRAIN,
-        // 固定 = 钉在板上（mid，贴得平）；悬浮 = 刚拿起来的纸（浮得高）
-        boxShadow: pinned ? PAPER_SHADOW.mid : PAPER_SHADOW.near,
-        borderRadius: 0,
-        zIndex: 120,
-        transform: open ? 'none' : `translateX(${side === 'right' ? OFF : -OFF}px)`,
-        opacity: open ? 1 : 0,
-        visibility: open ? 'visible' : 'hidden',
-        pointerEvents: open ? 'auto' : 'none',
-        transition: open
-          ? 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms, visibility 0s'
-          : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms 60ms, visibility 0s 220ms',
-      }}
-    >
-
-      {/* 钉纽扣：只在固定态出现 —— 钉住的纸才有钉子（同产物窗/首页卡那枚：
-          同一段渐变、同一个光向）。纯装饰不吃事件；固定/取消在 header 的图钉按钮。 */}
-      {pinned && (
-        <span aria-hidden style={{
-          position: 'absolute', left: '50%', top: 6, marginLeft: -4.5,
-          width: 9, height: 9, borderRadius: '50%', pointerEvents: 'none', zIndex: 3,
-          background: 'radial-gradient(circle at 35% 30%, #8a7a62, #453a2c 65%)',
-          boxShadow: '-1px 2px 3px rgba(43,33,23,0.45)',
-        }} />
-      )}
-
-      {/* 宽度把手：贴内侧缘的一条 6px 热区（卡在右就在左缘，反之亦然） */}
-      <div
-        data-no-pan
-        onPointerDown={(e) => { e.preventDefault(); setDragging(true); }}
+    <>
+      {/* 贴纸：合着时贴在屏缘，拉开后长在卡的内沿上。位移跟卡同一条曲线、同一个
+          时长，看起来才是"被卡带出来的"而不是两个东西各走各的。
+          它是卡的**兄弟节点**：卡关着的时候整张纸 pointerEvents:none 且平移出屏，
+          贴纸长在里面就跟着一起没了。 */}
+      <EdgeTab
+        edge={side}
+        open={open}
+        label="对话"
+        title={open ? '收起对话' : '打开对话'}
+        onClick={() => {
+          clearHide();
+          summonedRef.current = false;
+          setOpen(o => !o);
+        }}
         style={{
-          position: 'absolute', [side === 'right' ? 'left' : 'right']: -3,
-          top: 0, bottom: 0, width: 6,
-          cursor: 'col-resize', zIndex: 2,
-          background: dragging ? PAPER.kraft : 'transparent',
+          top: '50%', [side]: 0, marginTop: -TAB_LEN / 2, zIndex: 121,
+          transform: open
+            ? `translateX(${side === 'right' ? -(width + EDGE_GAP) : width + EDGE_GAP}px)`
+            : 'none',
+          transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
       />
-      {/* 不自己画标题栏 —— ChatPanel 的 header 已经有会话标题和那排按钮，
-          收起/图钉作为动作也属于那排。render prop 把控制递进去。 */}
-      {typeof children === 'function'
-        ? children({ collapse: () => setOpen(false), pinned, onTogglePin: togglePin })
-        : children}
-    </div>
+      <div
+        ref={rootRef}
+        onPointerEnter={clearHide}
+        // 只认鼠标：触屏的 pointerleave 在**手指抬起**时也会发，一视同仁的话
+        // 在卡里划一下消息就把卡收了
+        onPointerLeave={(e) => { if (e.pointerType === 'mouse') armHide(); }}
+        style={{
+          position: 'absolute',
+          top: 14, bottom: 14, [side]: EDGE_GAP, width,
+          display: 'flex', flexDirection: 'column',
+          background: PAPER.paper,
+          backgroundImage: GRAIN,
+          // 固定 = 钉在板上（mid，贴得平）；悬浮 = 刚拿起来的纸（浮得高）
+          boxShadow: pinned ? PAPER_SHADOW.mid : PAPER_SHADOW.near,
+          borderRadius: 0,
+          zIndex: 120,
+          transform: open ? 'none' : `translateX(${side === 'right' ? OFF : -OFF}px)`,
+          opacity: open ? 1 : 0,
+          visibility: open ? 'visible' : 'hidden',
+          pointerEvents: open ? 'auto' : 'none',
+          transition: open
+            ? 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms, visibility 0s'
+            : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 160ms 60ms, visibility 0s 220ms',
+        }}
+      >
+
+        {/* 钉纽扣：只在固定态出现 —— 钉住的纸才有钉子（同产物窗/首页卡那枚：
+            同一段渐变、同一个光向）。纯装饰不吃事件；固定/取消在 header 的图钉按钮。 */}
+        {pinned && (
+          <span aria-hidden style={{
+            position: 'absolute', left: '50%', top: 6, marginLeft: -4.5,
+            width: 9, height: 9, borderRadius: '50%', pointerEvents: 'none', zIndex: 3,
+            background: 'radial-gradient(circle at 35% 30%, #8a7a62, #453a2c 65%)',
+            boxShadow: '-1px 2px 3px rgba(43,33,23,0.45)',
+          }} />
+        )}
+
+        {/* 宽度把手：贴内侧缘的一条 6px 热区（卡在右就在左缘，反之亦然） */}
+        <div
+          data-no-pan
+          onPointerDown={(e) => { e.preventDefault(); setDragging(true); }}
+          style={{
+            position: 'absolute', [side === 'right' ? 'left' : 'right']: -3,
+            top: 0, bottom: 0, width: 6,
+            cursor: 'col-resize', zIndex: 2,
+            background: dragging ? PAPER.kraft : 'transparent',
+          }}
+        />
+        {/* 不自己画标题栏 —— ChatPanel 的 header 已经有会话标题和那排按钮，
+            收起/图钉作为动作也属于那排。render prop 把控制递进去。 */}
+        {typeof children === 'function'
+          ? children({ collapse: () => setOpen(false), pinned, onTogglePin: togglePin })
+          : children}
+      </div>
+    </>
   );
 }

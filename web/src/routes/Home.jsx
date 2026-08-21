@@ -11,6 +11,7 @@ import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 import { Sessions, Assets, Projects } from '../lib/api.js';
 import { timeAgo } from '../lib/helpers.js';
+import { useMedia, NARROW } from '../lib/use-media.js';
 import dTangle from '../assets/login-wall/doodles/tangle.webp';
 
 /**
@@ -90,15 +91,22 @@ export default function Home() {
   }, []);
 
   const openCreate = () => setCreateOpen(true);
+  const narrow = useMedia(NARROW);
 
   return (
     <AppShell
       actions={
         <>
-          <Link to="/gallery" style={iconBtnStyle}><LayoutTemplate size={14} /> 橱窗</Link>
-          <Link to="/skills" style={iconBtnStyle}><Wrench size={14} /> Skill</Link>
-          <button style={primaryBtnStyle} onClick={openCreate}>
-            <Plus size={14} /> 新建项目
+          {/* 窄屏只留图标（2026-08-21）：三个动作 + 头像 + 字标在 393 的屏上排不下，
+              带字的话「新建项目」会被挤成两行。次要的两个退成图标，主动作留一个短词。 */}
+          <Link to="/gallery" title="橱窗" style={iconBtnStyle}>
+            <LayoutTemplate size={14} />{narrow ? null : ' 橱窗'}
+          </Link>
+          <Link to="/skills" title="Skill" style={iconBtnStyle}>
+            <Wrench size={14} />{narrow ? null : ' Skill'}
+          </Link>
+          <button style={primaryBtnStyle} onClick={openCreate} title="新建项目">
+            <Plus size={14} /> {narrow ? '新建' : '新建项目'}
           </button>
         </>
       }

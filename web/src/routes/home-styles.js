@@ -263,4 +263,27 @@ export const CSS = `
   letter-spacing: 0.24em; text-indent: 0.24em;
   background: var(--ink); color: #F5F0E4; border: none; border-radius: 2px; cursor: pointer; }
 .ndd-quiet { padding: 60px 0; text-align: center; font: 13.5px var(--kai); color: var(--pencil); }
+
+/* ═════════ 窄屏（2026-08-21 移动端适配）═════════
+   只动**尺寸**，不动结构：三栏里两侧的板上笔记 1320 以下本来就收掉了，
+   剩下的问题全是"照着 1440 的留白排在 393 的屏上"。
+   ⚠️ textarea 的 min/max-height 一个都别在这儿改 —— 它们必须是 29 的整数倍
+   （见上面横线那一段），改了最后一格会被切一半，而 lint 只看基础规则。 */
+@media (max-width: 640px) {
+  .ndd { padding: 20px 12px 64px; }
+  .ndd-greet { font-size: 21px; letter-spacing: 0.03em; margin-bottom: 14px; }
+  /* 纸：左边那条页边留白按比例收，红线跟着挪，不然线压在字上 */
+  .ndd-pad { padding: 20px 14px 12px 40px; }
+  .ndd-pad::before { left: 26px; }
+  /* 工具栏一行排不下就折行；「开工」始终自己占右边 */
+  .ndd-pad .bar { flex-wrap: wrap; gap: 8px; padding-top: 12px; }
+  .ndd-pad .go { padding: 8px 18px; letter-spacing: 0.22em; text-indent: 0.22em; }
+  .ndd-pad .model > button { padding: 4px 8px !important; }
+  .ndd-head { margin: 32px 0 18px; }
+  .ndd-head h2 { font-size: 18px; }
+  .ndd-grid { grid-template-columns: 1fr; gap: 26px; }
+  .ndd-rows a { padding: 12px 14px; }
+  .ndd-sheet { padding: 26px 18px; }
+  .ndd-sheet .chips { gap: 8px; }
+}
 `;

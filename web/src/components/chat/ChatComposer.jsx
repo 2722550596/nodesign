@@ -5,6 +5,7 @@ import { PAPER, GRAIN, PAPER_SHADOW } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { useDropzone } from '../../lib/useDropzone.js';
 import { isImeEnter } from '../../lib/helpers.js';
+import { useMedia, COARSE } from '../../lib/use-media.js';
 import ComposerTray from './ComposerTray.jsx';
 import SuggestionChip from './SuggestionChip.jsx';
 import ComposerMenu from './ComposerMenu.jsx';
@@ -45,6 +46,7 @@ export default function ChatComposer({
   sessionId = null,
 }) {
   const [text, setText] = useState('');
+  const coarse = useMedia(COARSE);
   const ref = useRef(null);
   const fileInputRef = useRef(null);
   const chatDraft = useGlobalStore(s => s.chatDraft);
@@ -105,9 +107,14 @@ export default function ChatComposer({
     setText('');
   };
 
+  /**
+   * 手指设备上回车 = 换行（2026-08-21，跟首页那张纸同一条规矩）。
+   * 软键盘没有 Shift，回车一律被判成发送 —— 手机上就写不出第二段了。发送有按钮。
+   */
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (isImeEnter(e)) return;
+      if (coarse) return;
       e.preventDefault();
       // streamInput 模式下 Enter 始终 = submit（追加排队）；停止走专门按钮
       submit();

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { COLOR } from '../../lib/theme.js';
+import EdgeTab, { TAB_LEN } from '../ui/EdgeTab.jsx';
 import TopBar from './TopBar.jsx';
 
 /**
@@ -54,6 +55,15 @@ export default function AppShell({
   topRightSafe = false,
 }) {
   const [revealed, setRevealed] = useState(true);
+  /**
+   * 小舌头钉住的（2026-08-21）。
+   *
+   * 顶栏原来只认 hover 屏顶 10px —— 触屏上没有 hover，等于面包屑/导出/登出/换项目
+   * 全都够不着（真机档实测：怎么点都不出来）。于是顶缘正中长一枚同族的贴纸，
+   * 点一下把顶栏拉下来。**必须是独立的一个状态**：只把 revealed 置 true 的话，
+   * 600ms 的自动收计时器立刻把它收回去，点了等于没点。
+   */
+  const [stuck, setStuck] = useState(false);
   const hostRef = useRef(null);
   const timerRef = useRef(null);
 
@@ -111,11 +121,19 @@ export default function AppShell({
     );
   }
 
+  const shown = !topSuppressed && (revealed || stuck);
+
   return (
     <div ref={hostRef} style={{ position: 'relative', height: '100vh', background: COLOR.bg, overflow: 'hidden' }}>
       {/* 内容吃满整屏。顶栏来去不改它一个像素 —— 这是整件事的重点 */}
       <div style={{ position: 'absolute', inset: 0 }}>{children}</div>
 
+      {/*
+        外层只做**位移**，透明度和吃不吃指针交给两个孩子各自声明。
+        这样小舌头才能挂在 `top:100%` 上：外层平移 -100%（= 顶栏高度）时，
+        舌头正好落在 y=0 贴着屏顶；顶栏落下来它就跟着长在顶栏下沿。
+        ⭐ 一个数都不用量 —— 顶栏多高，舌头就跟着走多远。
+      */}
       <div
         data-top-bar
         onPointerEnter={() => setRevealed(true)}
@@ -124,20 +142,35 @@ export default function AppShell({
           // 顶栏之上还有浮窗层（聊天栏 z≈120）；顶栏要压得住它，
           // 否则唤出来的顶栏被聊天栏盖掉一半
           zIndex: 900,
-          opacity: revealed ? 1 : 0,
-          transform: revealed ? 'translateY(0)' : 'translateY(-100%)',
-          // 收起时整条不吃指针，否则画布顶部一条永远点不到
-          pointerEvents: revealed ? 'auto' : 'none',
-          transition: 'opacity 220ms ease, transform 260ms cubic-bezier(0.32,0.72,0,1)',
+          transform: shown ? 'translateY(0)' : 'translateY(-100%)',
+          pointerEvents: 'none',
+          transition: 'transform 260ms cubic-bezier(0.32,0.72,0,1)',
         }}
       >
-        <TopBar breadcrumb={breadcrumb} actions={actions} />
+        <div style={{
+          opacity: shown ? 1 : 0,
+          // 收起时整条不吃指针，否则画布顶部一条永远点不到
+          pointerEvents: shown ? 'auto' : 'none',
+          transition: 'opacity 220ms ease',
+        }}>
+          <TopBar breadcrumb={breadcrumb} actions={actions} />
+        </div>
+        {!topSuppressed && (
+          <EdgeTab
+            edge="top"
+            open={shown}
+            label="菜单"
+            title={shown ? '收起顶栏' : '打开顶栏'}
+            onClick={() => setStuck(s => !s)}
+            style={{ top: '100%', left: '50%', marginLeft: -TAB_LEN / 2, pointerEvents: 'auto' }}
+          />
+        )}
       </div>
 
       {/* 收起时贴顶的一条感应带：鼠标扫到就唤出（pointermove 已经能唤，
           这层是给"从窗口外面直接滑进来"那种不产生 move 事件的情况兜底）。
           右端跟 onMove 一样让开关闭钮那一段，否则这层会把让路绕过去。 */}
-      {!revealed && !topSuppressed && (
+      {!shown && !topSuppressed && (
         <div
           onPointerEnter={() => setRevealed(true)}
           style={{

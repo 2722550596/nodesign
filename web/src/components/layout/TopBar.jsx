@@ -4,6 +4,7 @@ import { LogOut, LayoutDashboard } from 'lucide-react';
 import { COLOR, CHROME, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_KAI } from '../../lib/theme.js';
 import { GRAIN } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
+import { useMedia, NARROW } from '../../lib/use-media.js';
 
 /**
  * 用户角标（2026-07-30 多用户内测；07-30 晚收成头像）
@@ -164,7 +165,7 @@ const menuItem = {
  *   都没有    当前位置，纯文本
  * 前两种带 hover 底色 + 手型，明确"这里可以按"。
  */
-function Crumb({ item, last }) {
+function Crumb({ item, last, maxW = 280 }) {
   const interactive = !!(item.to || item.onClick);
   const base = {
     display: 'inline-flex', alignItems: 'center', gap: 5,
@@ -177,7 +178,7 @@ function Crumb({ item, last }) {
     fontWeight: interactive ? 400 : 700,
     textDecoration: 'none',
     cursor: interactive ? 'pointer' : 'default',
-    maxWidth: 280,
+    maxWidth: maxW,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     transition: 'background 0.15s, color 0.15s',
   };
@@ -212,6 +213,11 @@ function Crumb({ item, last }) {
 }
 
 export default function TopBar({ breadcrumb = [], actions }) {
+  /**
+   * 窄屏收紧（2026-08-21）。顶栏全是内联样式 —— media query 够不着它，
+   * 手机上照着 1440 的 padding/gap 排，「新建项目」会被挤成两行还切掉半截。
+   */
+  const narrow = useMedia(NARROW);
   return (
     <header data-top-bar style={{
       height: 56,
@@ -223,8 +229,11 @@ export default function TopBar({ breadcrumb = [], actions }) {
       borderBottom: `1px solid ${CHROME.border}`,
       display: 'flex',
       alignItems: 'center',
-      padding: `0 ${GAP.xl}px`,
-      gap: GAP.lg,
+      padding: `0 ${narrow ? 12 : GAP.xl}px`,
+      gap: narrow ? 10 : GAP.lg,
+      // 一行排不下让各自缩，**不许折行** —— 折了就把 56px 的条撑爆（手机上真见过）
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
       boxShadow: '0 1px 4px rgba(93,74,44,0.10)',
       position: 'relative',
       zIndex: 3,
@@ -235,8 +244,9 @@ export default function TopBar({ breadcrumb = [], actions }) {
         display: 'flex',
         alignItems: 'center',
         fontFamily: FONT_KAI,
-        fontSize: 19,
+        fontSize: narrow ? 17 : 19,
         fontWeight: 700,
+        flexShrink: 0,
         color: CHROME.ink,
         letterSpacing: '0.06em',
       }}>
@@ -251,7 +261,7 @@ export default function TopBar({ breadcrumb = [], actions }) {
             {breadcrumb.map((item, i) => (
               <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.sm, minWidth: 0 }}>
                 {i > 0 && <span style={{ color: COLOR.dim }}>/</span>}
-                <Crumb item={item} last={i === breadcrumb.length - 1} />
+                <Crumb item={item} last={i === breadcrumb.length - 1} maxW={narrow ? 120 : 280} />
               </span>
             ))}
           </nav>
@@ -264,7 +274,7 @@ export default function TopBar({ breadcrumb = [], actions }) {
       {/* Actions */}
       {/* 字体挂在容器上：各路由自己拼 actions，逐个去改必然漏一个。
           按钮只要不显式指定 fontFamily 就跟着顶栏走 */}
-      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: GAP.md, fontFamily: FONT_KAI }}>{actions}</div>}
+      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 6 : GAP.md, fontFamily: FONT_KAI, flexShrink: 0 }}>{actions}</div>}
 
       {/* 用户角标（用户名 · 今日用量 · 登出）*/}
       <UserBadge />

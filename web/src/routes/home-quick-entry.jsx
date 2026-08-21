@@ -15,6 +15,7 @@ import { Plus } from 'lucide-react';
 import ComposerTray from '../components/chat/ComposerTray.jsx';
 import ModelPicker from '../components/chat/ModelPicker.jsx';
 import { isImeEnter } from '../lib/helpers.js';
+import { useMedia, COARSE } from '../lib/use-media.js';
 import { Clip } from '../components/PaperBits.jsx';
 import { useProjectStore } from '../stores/projectStore.js';
 import { useGlobalStore } from '../stores/globalStore.js';
@@ -78,6 +79,7 @@ export default function QuickEntry({ prefill }) {
   const [submitting, setSubmitting] = useState(false);
   const [greeting] = useState(pickGreeting);  // mount 时挑一次，刷新换一个
   const [placeholder] = useState(pickPlaceholder);
+  const coarse = useMedia(COARSE);
   // 暂存附件（QuickEntry 阶段还没 project，只能存 File 对象，submit 时再 createProject + 上传）
   // chip 形态：path/error 都 undefined → ComposerTray 显示 "上传中…"（实际是"待上传"，hover 看 title）
   const [attachments, setAttachments] = useState([]);
@@ -223,9 +225,16 @@ export default function QuickEntry({ prefill }) {
     }
   };
 
+  /**
+   * 手指设备上**回车就是换行**（2026-08-21）。
+   * 手机软键盘没有 Shift，回车一律被判成"发送"，于是在手机上根本写不出第二段；
+   * 而这张纸恰恰是让人把想法多写几句的地方。发送交给「开工」——它一直在那儿。
+   * 判据用 (pointer: coarse) 不是屏幕宽度：平板是宽屏但一样没有 Shift+Enter。
+   */
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (isImeEnter(e)) return;
+      if (coarse) return;
       e.preventDefault();
       submit();
     }
@@ -302,7 +311,8 @@ export default function QuickEntry({ prefill }) {
               （进了会话之后模型的真相在服务端，这颗按钮改的是本地偏好）。
               往下开：这张纸贴着页顶，往上开会顶出视口。 */}
           <ModelPicker className="model" menuPlacement="down" disabled={submitting} />
-          <span className="tip">Enter 发送 · Shift + Enter 换行</span>
+          {/* 手指设备上这句是错的（没有 Shift+Enter，回车也不发送），不如不说 */}
+          {!coarse && <span className="tip">Enter 发送 · Shift + Enter 换行</span>}
           <input
             ref={fileInputRef}
             type="file"
