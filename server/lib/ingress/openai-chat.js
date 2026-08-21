@@ -79,7 +79,8 @@ export function toOpenAIChatRequest(parsed, opts = {}) {
           else if (b?.type === 'thinking' && b.thinking) thoughts.push(b.thinking);
           else if (b?.type === 'tool_use') calls.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } });
         }
-        m.content = texts.join('\n');
+        // 只有 thinking（被打断的回合）时 content 为空且无 tool_calls，部分 OpenAI 兼容后端会 400 —— 补个占位
+        m.content = texts.join('\n') || (calls.length ? '' : '(no text)');
         if (thoughts.length) m.reasoning_content = thoughts.join('\n');
         if (calls.length) m.tool_calls = calls;
       }
@@ -127,8 +128,9 @@ export function toOpenAIChatRequest(parsed, opts = {}) {
   if (typeof parsed.top_p === 'number') out.top_p = parsed.top_p;
   if (Array.isArray(parsed.stop_sequences) && parsed.stop_sequences.length) out.stop = parsed.stop_sequences.slice(0, 4);
   if (parsed.stream) { out.stream = true; out.stream_options = { include_usage: true }; }
-  const th = parsed.thinking;
-  if (th && th.type !== 'disabled' && opts.reasoningEffort) out.reasoning_effort = opts.reasoningEffort;
+  // 档位只看行内 reasoningEffort：Anthropic 的 thinking 字段在进到这里之前已被 transformForUpstream
+  // 按行内 thinking:'strip' 删掉（fable 评审抓的：以前以它存在为前提，档位从没发出去过）
+  if (opts.reasoningEffort && parsed.thinking?.type !== 'disabled') out.reasoning_effort = opts.reasoningEffort;
   return out;
 }
 
@@ -149,9 +151,10 @@ function parseArgs(s) {
   try { return JSON.parse(s); } catch { return { _raw_arguments: String(s) }; }
 }
 
-/** 非流式：OpenAI chat.completion → Anthropic message */
+/** 非流式：OpenAI chat.completion → Anthropic message。没有 choices（上游 200 但给了错误体/空体）返回 null，调用方回 502 */
 export function fromOpenAIChatResponse(json) {
-  const choice = json?.choices?.[0] || {};
+  if (!json || !Array.isArray(json.choices) || !json.choices.length) return null;
+  const choice = json.choices[0] || {};
   const m = choice.message || {};
   const content = [];
   if (m.reasoning_content) content.push({ type: 'thinking', thinking: String(m.reasoning_content), signature: '' });
@@ -234,7 +237,9 @@ export class OpenAIToAnthropicSSE extends Transform {
       this._emit('content_block_delta', { type: 'content_block_delta', index: this.open.index, delta: { type: 'text_delta', text: String(d.content) } });
     }
     for (const tc of d.tool_calls || []) {
-      const key = tc.index ?? 0;
+      // 按 index 分块；上游不带 index 时：带 id 的是新调用，否则续上一个
+      const key = tc.index ?? (tc.id ? `id:${tc.id}` : this.lastToolKey);
+      this.lastToolKey = key;
       this.sawToolCall = true;
       if (!this.toolBlocks.has(key)) {
         const idx = this._openBlock('tool', { type: 'tool_use', id: tc.id || `call_${key}`, name: tc.function?.name || '', input: {} });
@@ -252,7 +257,13 @@ export class OpenAIToAnthropicSSE extends Transform {
   _finish() {
     if (this.done) return;
     this.done = true;
-    this._ensureStart(null);
+    // 一个 chunk 都没来（200 但非 SSE 体 / 首字节前断连）或一个块都没开且没有收尾原因：
+    // 别包装成"成功的空消息"让 CLI 当正常结束 —— 发 error 事件（fable 评审 P2）
+    if (!this.started || (this.blockIndex < 0 && !this.finish)) {
+      this._ensureStart(null);
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream returned an empty response' } });
+      return;
+    }
     this._closeOpen();
     const stop_reason = this.sawToolCall ? 'tool_use' : (STOP_MAP[this.finish] || 'end_turn');
     this._emit('message_delta', { type: 'message_delta', delta: { stop_reason, stop_sequence: null }, usage: usageFromOpenAI(this.usage) });

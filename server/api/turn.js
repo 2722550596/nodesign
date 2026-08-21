@@ -47,9 +47,9 @@ import {
 import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
 import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
 import { lruGet, lruPut, inflightTurns, INFLIGHT_RETENTION_MS } from './turn-inflight.js';
-import { selectableModelsFor } from '../engine/agent/model-context.js';
+import { allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, resolveSdkSpoofModel, hasSubscriptionAccess, crossLaneSwitchReason } from '../engine/agent/model-context.js';
 import { AsyncQueue } from '../lib/async-queue.js';
-import { checkQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
+import { checkQuota, checkFreeQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
 import { getProjectBus } from '../ws/broker.js';
 import { Events } from '../engine/agent/events.js';
@@ -172,7 +172,33 @@ router.post('/:pid/turn', async (req, res, next) => {
     //
     // 07-31 起只剩这一道：分模型限额撤了，因为金额天然让 opus 烧得更快，
     // 不需要第二个数字表达同一个意图。
-    const quota = checkQuota(req.user);
+    // 模型解析提前到配额之前（08-21，配额按是否免费分岔）：body.model > 会话覆盖 > 默认（defaultModelFor）
+    const requestedModelEarly = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : null;
+    const sessionModelEarly = await resolveSessionModel(getSessionMetaDir(project.id, sid));
+    // 老用户没覆盖的老会话保持全局默认，不静默切 Ox；新会话/公开号 → defaultModelFor
+    const keepLegacyDefault = !isNewSession && !sessionModelEarly.override && hasSubscriptionAccess(req.user);
+    const turnModel = requestedModelEarly || sessionModelEarly.override
+      || (keepLegacyDefault ? sessionModelEarly.model : defaultModelFor(req.user)) || sessionModelEarly.model;
+    // 解析出来的模型一律过白名单（不只 body.model）：旧覆盖/资格收回/无 select 裸名都在此拦（fable P0）
+    if (isModelLockedFor(req.user, turnModel)) {
+      return res.status(403).json({
+        error: `这个模型（${turnModel}）需要邀请码账号（订阅 Claude 额度）。换成免费模型继续，或找站主要邀请码`,
+        code: 'MODEL_LOCKED', model: turnModel,
+      });
+    }
+    if (!allowedModelsFor(req.user).some((m) => m.id === turnModel)) {
+      return res.status(403).json({ error: `这个会话指向的模型（${turnModel}）现在不可用，请在模型选择器里换一个`, code: 'MODEL_NOT_ALLOWED', model: turnModel });
+    }
+    if (requestedModelEarly && sessionModelEarly.override && crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly)) {
+      return res.status(409).json({ error: crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly), code: 'LANE_SWITCH' });
+    }
+    if (modelIsFree(turnModel)) {
+      const fq = checkFreeQuota(req.user);
+      if (!fq.ok) {
+        return res.status(429).json({ error: `今天的免费轮次用完了（${fq.used} / ${fq.limit}），明天零点刷新`, code: 'QUOTA_EXCEEDED', kind: fq.kind, used: fq.used, limit: fq.limit });
+      }
+    }
+    const quota = modelIsFree(turnModel) ? { ok: true } : checkQuota(req.user);
     if (!quota.ok) {
       return res.status(429).json({
         // 试用号（终身口径）没有"明天刷新"可许诺，文案不能骗人
@@ -205,10 +231,6 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 这条消息会落在哪个模型上：新会话带 body.model 就是它（白名单校验在下面那段，
     // 这里只是读；非法名最终会 400），否则读该会话的 session-config（新会话没文件
     // → 全局默认）。只读不写 —— 模型持久化仍在外审之后，拦下的消息不该改会话配置。
-    const requestedModelForGate = typeof req.body?.model === 'string' && req.body.model.trim()
-      ? req.body.model.trim() : null;
-    const turnModel = requestedModelForGate
-      || (await resolveSessionModel(getSessionMetaDir(project.id, sid))).model;
     if (shouldModerate(req.user, turnModel) && chatText.trim()) {
       const verdict = await moderateText(chatText, levelFor(req.user, turnModel));
       if (!verdict.ok) {
@@ -246,14 +268,14 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 这里之所以不再无脑接受 body.model：前端每条消息都带偏好的话，在另一台机器上
     // 为这个会话选的模型会被本机的旧偏好悄悄改回去 —— 一次发消息顺带改配置，
     // 用户完全看不见。
-    const requestedModel = typeof req.body?.model === 'string' && req.body.model.trim()
-      ? req.body.model.trim() : null;
+    // 没带 body.model 且会话无覆盖 → 默认模型写进会话（否则 session-loop 吃 NODESIGN_MODEL，对公开号是锁着的订阅行）
+    const requestedModel = requestedModelEarly || ((!sessionModelEarly.override && !keepLegacyDefault) ? turnModel : null);
     if (requestedModel) {
       // 与 PUT /sessions/:sid/model 同一道闸（2026-08-19 评审抓的洞）：这条路
       // 以前不校验，等于绕过 picker 白名单的后门 —— model-ingress 上线后表里
       // 有带真钥匙的 API 模型（gemini），裸 POST 就能替会话选中它烧上游的钱。
-      // 未来给 admin/获批用户开 API 模型时，闸门在这两处一起放，别只放一处。
-      if (!selectableModelsFor(req.user).some((m) => m.id === requestedModel)) {
+      // 校验用 allowedModelsFor（不含 locked）—— locked 的在上面已经 403 过了。
+      if (!allowedModelsFor(req.user).some((m) => m.id === requestedModel)) {
         return res.status(400).json({ error: `unknown model: ${requestedModel}`, code: 'UNKNOWN_MODEL' });
       }
       await applySessionModel(sid, getSessionMetaDir(project.id, sid), requestedModel, 'turn');
@@ -592,6 +614,22 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
       return res.status(400).json({ error: 'model must be string or null' });
     }
 
+    // 08-21：热切路以前不过白名单（任意字符串直达 SDK）。与 PUT /sessions/:sid/model 同口径
+    if (typeof model === 'string' && model.trim()) {
+      if (isModelLockedFor(req.user, model.trim())) {
+        return res.status(403).json({ error: '这个模型需要邀请码账号（订阅 Claude 额度）', code: 'MODEL_LOCKED', model: model.trim() });
+      }
+      if (!allowedModelsFor(req.user).some((m) => m.id === model.trim())) {
+        return res.status(400).json({ error: `unknown model: ${model}`, code: 'UNKNOWN_MODEL' });
+      }
+      const sidForLane = getSessionIdByRunId(runId);
+      if (sidForLane) {
+        const cur = await resolveSessionModel(getSessionMetaDir(project.id, sidForLane));
+        const why = crossLaneSwitchReason(cur.model, model.trim());
+        if (why) return res.status(409).json({ error: why, code: 'LANE_SWITCH' });
+      }
+    }
+
     const query = getQuery(runId);
     if (!query) {
       return res.status(404).json({
@@ -607,7 +645,8 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
     }
 
     const sid = getSessionIdByRunId(runId);
-    await query.setModel(model || undefined);
+    // API 行喂 SDK 的是 spoof 名（session-loop 同款），appModel 本身 binary 不认识
+    await query.setModel(model ? resolveSdkSpoofModel(model.trim()) : undefined);
     // 运行时切完再落盘：setModel 失败就不该留下"配置说切了"的假象
     let persisted = null;
     if (sid) {

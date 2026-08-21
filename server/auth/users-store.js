@@ -79,6 +79,13 @@ if (!userCols.has('local_gen')) {
   db.exec('ALTER TABLE users ADD COLUMN local_gen INTEGER NOT NULL DEFAULT 0');
   console.log('[users-store] users.local_gen column added');
 }
+// 08-21 经营态转向：订阅 Claude 资格按账号发。新列默认 0（公开注册号只能用免费模型），
+// **迁移时把已有用户全部置 1**（老号保留，用户说他手动关）；邀请码注册的号拿 1。
+if (!userCols.has('allow_subscription')) {
+  db.exec('ALTER TABLE users ADD COLUMN allow_subscription INTEGER NOT NULL DEFAULT 0');
+  const n = db.prepare('UPDATE users SET allow_subscription = 1').run().changes;
+  console.log(`[users-store] users.allow_subscription column added（存量 ${n} 个账号置 1）`);
+}
 
 const inviteCols = new Set(db.prepare('PRAGMA table_info(invites)').all().map(c => c.name));
 if (!inviteCols.has('grant_lifetime_usd')) {
@@ -132,6 +139,7 @@ function rowToUser(row) {
     moderationLevel: row.moderation_level ?? null,    // 订阅模型的外审档；null = 跟随默认档
     moderationLevelApi: row.moderation_level_api ?? null,  // 本地 qwen / 中转站的外审档；null = 跟随默认档
     allowLocalGen: !!row.local_gen,                   // 本地产线批准（admin 免批）
+    allowSubscription: !!row.allow_subscription,      // 订阅 Claude 资格（admin 免批；公开注册号 0）
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
     createdAt: row.created_at,
@@ -161,10 +169,10 @@ export function getCredential(username) {
   return row ? { id: row.id, passwordHash: row.password_hash, disabled: !!row.disabled } : null;
 }
 
-export function createUser({ username, password, role = 'user', inviteCode = null, lifetimeCostLimitUsd = null }) {
+export function createUser({ username, password, role = 'user', inviteCode = null, lifetimeCostLimitUsd = null, allowSubscription = false }) {
   const id = newUserId();
-  db.prepare(`INSERT INTO users (id, username, password_hash, role, invite_code, lifetime_cost_limit_usd) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(id, username, hashPassword(password), role, inviteCode, lifetimeCostLimitUsd);
+  db.prepare(`INSERT INTO users (id, username, password_hash, role, invite_code, lifetime_cost_limit_usd, allow_subscription) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, username, hashPassword(password), role, inviteCode, lifetimeCostLimitUsd, allowSubscription ? 1 : 0);
   return getUserById(id);
 }
 
@@ -172,13 +180,14 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, moderationLevelApi, localGen } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, moderationLevelApi, localGen, allowSubscription } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
   if (moderationLevel !== undefined) { sets.push('moderation_level = ?'); args.push(moderationLevel ?? null); }
   if (moderationLevelApi !== undefined) { sets.push('moderation_level_api = ?'); args.push(moderationLevelApi ?? null); }
   if (localGen !== undefined) { sets.push('local_gen = ?'); args.push(localGen ? 1 : 0); }
+  if (allowSubscription !== undefined) { sets.push('allow_subscription = ?'); args.push(allowSubscription ? 1 : 0); }
   if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
   if (lifetimeCostLimitUsd !== undefined) { sets.push('lifetime_cost_limit_usd = ?'); args.push(lifetimeCostLimitUsd ?? null); }
   if (dailyTokenLimit !== undefined) { sets.push('daily_token_limit = ?'); args.push(dailyTokenLimit ?? null); }
@@ -224,9 +233,16 @@ export function listInvites() {
   return db.prepare('SELECT * FROM invites ORDER BY created_at DESC').all();
 }
 
+/** 开放注册开关（.env NODESIGN_OPEN_REGISTRATION=1）。关着时没邀请码照旧拒 */
+export function openRegistrationEnabled() {
+  return /^(1|true|yes)$/i.test(String(process.env.NODESIGN_OPEN_REGISTRATION || ''));
+}
+
 /**
- * 注册主流程：校验邀请码 + 建用户，单事务（used_count+1 与 INSERT 原子，
- * 两人同抢最后一个名额只有一个成）。失败抛带 .code 的 Error。
+ * 注册主流程（08-21 起两条路）：
+ *   - 带邀请码：校验 + 消耗 + 建用户，**拿订阅资格**（allow_subscription=1）+ 码上的终身额度
+ *   - 不带邀请码：开放注册开着才放行，建的是**只能用免费模型**的号（allow_subscription=0）
+ * 单事务（used_count+1 与 INSERT 原子，两人同抢最后一个名额只有一个成）。失败抛带 .code 的 Error。
  */
 export const registerUser = db.transaction(({ username, password, inviteCode }) => {
   if (!validUsername(username)) {
@@ -238,7 +254,12 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
   if (getUserByUsername(username)) {
     throw Object.assign(new Error('用户名已被使用'), { code: 'USERNAME_TAKEN' });
   }
-  const inv = getInvite(String(inviteCode || ''));
+  const code = String(inviteCode || '').trim();
+  if (!code) {
+    if (!openRegistrationEnabled()) throw Object.assign(new Error('邀请码无效'), { code: 'BAD_INVITE' });
+    return createUser({ username, password, role: 'user', inviteCode: null, allowSubscription: false });
+  }
+  const inv = getInvite(code);
   if (!inv) throw Object.assign(new Error('邀请码无效'), { code: 'BAD_INVITE' });
   if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) {
     throw Object.assign(new Error('邀请码已过期'), { code: 'INVITE_EXPIRED' });
@@ -250,6 +271,7 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
   return createUser({
     username, password, role: 'user', inviteCode: inv.code,
     lifetimeCostLimitUsd: inv.grant_lifetime_usd ?? null,
+    allowSubscription: true,
   });
 });
 

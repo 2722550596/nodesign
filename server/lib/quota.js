@@ -137,6 +137,28 @@ export function checkQuota(user, now = Date.now()) {
   return { ok: usedToday < limit, kind: 'daily', used: usedToday, limit, usedToday };
 }
 
+/**
+ * 免费模型的闸（08-21）：金额对 $0 的模型没有意义，免费档按**当日轮次**封顶 + 并发闸
+ * （checkConcurrency 不变）。数据源 runs.created_at（同 usedCostToday 的日界）。
+ * 口径：数的是该账号今天**所有**轮次，不按模型分 —— 公开注册号只能跑免费模型，
+ * 邀请码号跑免费模型时也照这个数（订阅额度是另一把尺，互不抵扣）。
+ * 上限 .env NODESIGN_FREE_DAILY_TURNS，默认 300；admin 不限。
+ */
+export function freeDailyTurnLimit() {
+  const v = Number(process.env.NODESIGN_FREE_DAILY_TURNS);
+  return Number.isFinite(v) && v > 0 ? v : 300;
+}
+export function usedTurnsToday(userId, now = Date.now()) {
+  const row = db.prepare('SELECT COUNT(*) AS n FROM runs WHERE user_id = ? AND created_at >= ?').get(userId, dayStartUtcSql(now));
+  return row.n;
+}
+export function checkFreeQuota(user, now = Date.now()) {
+  const used = usedTurnsToday(user?.id, now);
+  if (!user || user.role === 'admin') return { ok: true, kind: 'unlimited', used, limit: null };
+  const limit = freeDailyTurnLimit();
+  return { ok: used < limit, kind: 'free-turns', used, limit };
+}
+
 // ── 分模型明细（2026-07-31）──
 //
 // **只用于展示，不再是独立闸门。** 改成金额口径之后，分模型限额失去了理由：

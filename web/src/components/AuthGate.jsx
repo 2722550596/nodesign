@@ -40,12 +40,14 @@ export default function AuthGate({ children }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  const [openReg, setOpenReg] = useState(false);   // 服务端 /api/auth/status 的 openRegistration：没邀请码也能开号（08-21）
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [narrow, setNarrow] = useState(false);
   const rootRef = useRef(null);
 
   const applyStatus = (s) => {
+    setOpenReg(!!s.openRegistration);
     if (!s.required || s.authed) {
       useGlobalStore.getState().setAuthUser?.(s.user || null);
       setPhase('ok');
@@ -94,7 +96,7 @@ export default function AuthGate({ children }) {
   async function submit(e) {
     e.preventDefault();
     if (busy || !username || !password) return;
-    if (mode === 'register' && !inviteCode) return;
+    if (mode === 'register' && !inviteCode && !openReg) return;
     setBusy(true);
     setError('');
     try {
@@ -127,7 +129,7 @@ export default function AuthGate({ children }) {
   const form = (
     <>
       <h2>来访登记</h2>
-      <div className="m">小范围内测中</div>
+      <div className="m">{openReg ? '免费开放中 · 邀请码可解锁 Claude' : '小范围内测中'}</div>
       <div className="ndw-tabs">
         <button type="button" className={isRegister ? '' : 'on'}
           onClick={() => { setMode('login'); setError(''); }}>
@@ -135,7 +137,7 @@ export default function AuthGate({ children }) {
         </button>
         <button type="button" className={isRegister ? 'on' : ''}
           onClick={() => { setMode('register'); setError(''); }}>
-          邀请码注册{isRegister && <Underline />}
+          {openReg ? '注册' : '邀请码注册'}{isRegister && <Underline />}
         </button>
       </div>
       <div className="ndw-field">
@@ -152,8 +154,8 @@ export default function AuthGate({ children }) {
       </div>
       {isRegister && (
         <div className="ndw-field">
-          <label htmlFor="ndw-i">邀请码 · INVITE</label>
-          <input id="ndw-i" value={inviteCode} placeholder="nd-xxxxxxxx"
+          <label htmlFor="ndw-i">邀请码 · INVITE{openReg ? '（可选）' : ''}</label>
+          <input id="ndw-i" value={inviteCode} placeholder={openReg ? '有就填，解锁 Claude 订阅模型' : 'nd-xxxxxxxx'}
             onChange={(e) => setInviteCode(e.target.value)} />
         </div>
       )}
@@ -161,7 +163,7 @@ export default function AuthGate({ children }) {
       <button className="go" type="submit" disabled={busy}>
         {busy ? '核 对 中' : isRegister ? '开 号' : '进 门'}
       </button>
-      <p className="foot">没有邀请码？在 Boss 或者小红书上找我要。</p>
+      <p className="foot">{openReg ? '没有邀请码也能开号，免费模型人人可用；想用 Claude 在 Boss 或者小红书上找我要码。' : '没有邀请码？在 Boss 或者小红书上找我要。'}</p>
     </>
   );
 

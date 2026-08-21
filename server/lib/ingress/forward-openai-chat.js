@@ -58,9 +58,16 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
     proxyRes.on('data', (c) => chunks.push(c));
     proxyRes.on('end', () => {
       let out;
-      try { out = fromOpenAIChatResponse(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+      let upstreamJson;
+      try { upstreamJson = JSON.parse(Buffer.concat(chunks).toString('utf8')); out = fromOpenAIChatResponse(upstreamJson); }
       catch (err) {
         const errBody = JSON.stringify(toAnthropicError(502, `ingress: upstream JSON unreadable (${err.message})`));
+        res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(errBody); return;
+      }
+      if (!out) {   // 200 但没有 choices：错误体或空体，别包成成功
+        const msg = upstreamJson?.error?.message || 'upstream returned no choices';
+        console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} 200-but-empty model=${wire.wireModel} ${String(msg).slice(0, 160)}`);
+        const errBody = JSON.stringify(toAnthropicError(502, String(msg)));
         res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(errBody); return;
       }
       const respBody = JSON.stringify(out);

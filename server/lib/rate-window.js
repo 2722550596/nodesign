@@ -9,6 +9,10 @@
 export function makeRateWindow({ limit, windowMs }) {
   const hits = new Map();   // key → 命中时间戳数组（只留窗口内的）
   return {
+    /** 窗口内已命中几次（只看不扣；注册这类"先判再做、做成了才扣"的场景用） */
+    count(key, now = Date.now()) {
+      return (hits.get(key) || []).filter(t => now - t < windowMs).length;
+    },
     /** @returns {{ok: true} | {ok: false, retryAfterMs: number}} */
     take(key, now = Date.now()) {
       const arr = (hits.get(key) || []).filter(t => now - t < windowMs);

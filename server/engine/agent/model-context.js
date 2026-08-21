@@ -111,11 +111,11 @@ const MODELS = Object.freeze([
   // ── 订阅通路（Claude 真名，零注入）──
   {
     id: 'claude-sonnet-5[1m]', window: 1_000_000,
-    select: { label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用' },
+    select: { label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用', gate: 'subscription' },
   },
   {
     id: 'claude-opus-5[1m]', window: 1_000_000,
-    select: { label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开' },
+    select: { label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开', gate: 'subscription' },
   },
   { id: 'claude-sonnet-5',       window: 200_000 },
   { id: 'claude-opus-5',         window: 200_000 },
@@ -250,15 +250,19 @@ const MODELS = Object.freeze([
   // 上线顺序：先 gate localGen 给 admin 试跑真任务，过关再开闸并设为全员默认。
   {
     id: 'ox-alpha', window: 1_000_000,
-    select: { label: 'Ox Alpha（免费 · 限时）', desc: 'OpenCode Zen 免费 stealth 模型 · 1M 上下文 · 有视觉', gate: 'localGen' },
+    // 08-21 经营态拍板：全员默认模型（default: true），公开注册号只能用它这类免费行。
+    select: { label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用', default: true },
     api: {
       upstream: 'zen', wireModel: 'x-preview-f-free',
       sdkAlias: 'claude-opus-4-8[1m]',
       fastModel: 'ox-alpha',
       thinking: 'strip',              // 出口不带 Anthropic thinking 字段；转换层按 reasoningEffort 发 reasoning_effort
-      reasoningEffort: 'high',        // Ox 三档 low|high|max
+      // Ox 三档 low|high|max。08-21 实测同一题 reasoning_tokens：不传≈27、low=0、high=3、max=27 ——
+      // 'high' 反而几乎不想；设计活要它想，显式 'max'（= 不传的默认强度）
+      reasoningEffort: 'max',
       maxOutput: 131_072,
-      liftImages: true,               // tool 角色消息里放图上游挂死 120s（转换层也会兜，双保险）
+      // 不设 liftImages：openai-chat 转换层本身就把 tool_result 里的图搬进随后的 user 消息
+      // （OpenAI 的 tool 角色消息装不下图，上游放了会挂死 120s）。同一件事只留一条路。
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
   },
@@ -309,16 +313,72 @@ export const SELECTABLE_MODELS = Object.freeze(
 );
 
 /**
- * 按用户过滤可选模型。`gate: 'localGen'` 的行只对 admin / 已批准本地产线的账号
- * 露出（同 roll_film / paint_still 那套批准制）。
+ * 按用户过滤可选模型。两种闸不同语义（08-21）：
+ *   - `gate: 'localGen'`：**看不见**。只对 admin / 已批准本地产线的账号露出（同 roll_film 那套批准制）
+ *   - `gate: 'subscription'`：**看得见选不了**。订阅 Claude 行对没有订阅资格的账号
+ *     （users.allow_subscription=0：公开注册号）仍在清单里，但带 `locked: true`；
+ *     用户拍板「选择器依旧在，无配额账户无法请求，并且弹框提示」—— 让人知道有更强的档、
+ *     怎么拿到（邀请码），而不是当它不存在
  *
- * ⚠️ 三处消费方必须都走它：GET /model 的清单、PUT /model 的校验、turn.js 的
- * body.model 校验。少一处就是一个绕过闸门的后门 —— 2026-08-19 的独立评审
- * 正是在 turn.js 抓到过这种漏校验。
+ * ⚠️ 三处消费方必须都走它/allowedModelsFor：GET /model 的清单、PUT /model 的校验、
+ * turn.js 的模型校验。少一处就是一个绕过闸门的后门 —— 2026-08-19 的独立评审正是在
+ * turn.js 抓到过这种漏校验。校验用 allowedModelsFor（不含 locked），清单用本函数。
  */
+export const SUBSCRIPTION_LOCK_REASON = '需要邀请码账号（订阅 Claude 额度）';
+
+export function hasSubscriptionAccess(user) {
+  return user?.role === 'admin' || !!user?.allowSubscription;
+}
+
 export function selectableModelsFor(user) {
   const approved = user?.role === 'admin' || !!user?.allowLocalGen;
-  return SELECTABLE_MODELS.filter((m) => !m.gate || (m.gate === 'localGen' && approved));
+  const subscribed = hasSubscriptionAccess(user);
+  const out = [];
+  for (const m of SELECTABLE_MODELS) {
+    if (m.gate === 'localGen') { if (approved) out.push(m); continue; }
+    if (m.gate === 'subscription' && !subscribed) { out.push({ ...m, locked: true, lockReason: SUBSCRIPTION_LOCK_REASON }); continue; }
+    out.push(m);
+  }
+  return out;
+}
+
+/** 真能请求的（不含 locked）。PUT /model 与 turn.js 校验用这份 */
+export function allowedModelsFor(user) {
+  return selectableModelsFor(user).filter((m) => !m.locked);
+}
+
+/** 这个模型对这个用户是「看得见选不了」吗（在清单里且 locked）。turn 拒绝时据此回 403 而不是 400 */
+export function isModelLockedFor(user, appModel) {
+  return selectableModelsFor(user).some((m) => m.id === appModel && m.locked);
+}
+
+/**
+ * 这个用户没选过时用哪个：表里标 `default: true` 的行（08-21 = ox-alpha），它对该用户
+ * 不可选时退到第一个可选的。前端 picker 与新会话的兜底都问这条，不再各自硬编码。
+ */
+export function defaultModelFor(user) {
+  const allowed = allowedModelsFor(user);
+  return (allowed.find((m) => m.default) || allowed[0])?.id || null;
+}
+
+/**
+ * 会话中途从 openai-chat 行（Ox）切到别的通路要拦（08-21 fable 评审 P3）：转换层合成的 thinking 块
+ * 没有 signature，CLI 会把它们原样回传给 Anthropic → 400 invalid signature。返回拒绝理由或 null。
+ */
+export function crossLaneSwitchReason(fromModel, toModel) {
+  if (!fromModel || !toModel || fromModel === toModel) return null;
+  const from = resolveWireModel(fromModel);
+  const to = resolveWireModel(toModel);
+  if (from?.protocol === 'openai-chat' && to?.protocol !== 'openai-chat') {
+    return '这个会话是在 Ox（免费）上开的，它的思考记录换到 Claude 会被拒收。想用 Claude 请新开一个会话';
+  }
+  return null;
+}
+
+/** 免费行（API 行且四价全 0）：金额配额对它无意义，turn.js 改走按轮次的免费闸 */
+export function modelIsFree(appModel) {
+  const p = BY_ID.get(appModel)?.api?.prices;
+  return !!p && ['input', 'output', 'cacheRead', 'cacheWrite'].every((k) => Number(p[k]) === 0);
 }
 
 /**

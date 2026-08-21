@@ -13,6 +13,7 @@ import {
   resolveWireModel,
   repriceUsageDeltas,
   selectableModelsFor,
+  allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, crossLaneSwitchReason,
   UPSTREAMS,
 } from './model-context.js';
 
@@ -48,6 +49,29 @@ describe('派生导出（旧签名不变）', () => {
     const anon = selectableModelsFor(null).map((m) => m.id);
     expect(anon).not.toContain('qwen3.8-27b');
     expect(anon).not.toContain('gemini-3.7-flash');
+  });
+
+  it('订阅闸（08-21）：没订阅资格的账号看得见 Claude 行但 locked；邀请码号/admin 正常；默认模型=ox-alpha', () => {
+    const pub = { role: 'user', allowSubscription: false };
+    const sub = { role: 'user', allowSubscription: true };
+    const pubSel = selectableModelsFor(pub);
+    expect(pubSel.find((m) => m.id === 'claude-sonnet-5[1m]')?.locked).toBe(true);
+    expect(pubSel.find((m) => m.id === 'ox-alpha')?.locked).toBeUndefined();
+    expect(allowedModelsFor(pub).map((m) => m.id)).not.toContain('claude-sonnet-5[1m]');
+    expect(allowedModelsFor(pub).map((m) => m.id)).toContain('ox-alpha');
+    expect(isModelLockedFor(pub, 'claude-opus-5[1m]')).toBe(true);
+    expect(isModelLockedFor(sub, 'claude-opus-5[1m]')).toBe(false);
+    expect(isModelLockedFor(pub, 'gemini-3.7-flash')).toBe(false);   // 看不见的不是 locked，是不存在
+    expect(selectableModelsFor(sub).some((m) => m.locked)).toBe(false);
+    expect(selectableModelsFor({ role: 'admin' }).some((m) => m.locked)).toBe(false);
+    for (const u of [pub, sub, { role: 'admin' }, null]) expect(defaultModelFor(u)).toBe('ox-alpha');
+    expect(modelIsFree('ox-alpha')).toBe(true);
+    expect(modelIsFree('claude-sonnet-5[1m]')).toBe(false);
+    expect(modelIsFree('gemini-3.7-flash')).toBe(false);
+    // 会话中途 Ox → Claude 拦（空签名 thinking 回传会 400）；其它方向放行
+    expect(crossLaneSwitchReason('ox-alpha', 'claude-sonnet-5[1m]')).toMatch(/新开一个会话/);
+    expect(crossLaneSwitchReason('claude-sonnet-5[1m]', 'ox-alpha')).toBeNull();
+    expect(crossLaneSwitchReason('ox-alpha', 'ox-alpha')).toBeNull();
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {

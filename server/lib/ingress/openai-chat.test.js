@@ -109,6 +109,16 @@ describe('OpenAIToAnthropicSSE', () => {
     expect(events[12].d.delta.stop_reason).toBe('tool_use');
     expect(events[12].d.usage).toEqual({ input_tokens: 200, output_tokens: 28, cache_read_input_tokens: 34, cache_creation_input_tokens: 0 });
   });
+  it('档位只看 reasoningEffort（thinking 字段已在 ingress 被 strip）；disabled 才不发', () => {
+    expect(toOpenAIChatRequest({ model: 'x', max_tokens: 10, messages: [] }, { reasoningEffort: 'high' }).reasoning_effort).toBe('high');
+    expect(toOpenAIChatRequest({ model: 'x', max_tokens: 10, messages: [], thinking: { type: 'disabled' } }, { reasoningEffort: 'high' }).reasoning_effort).toBeUndefined();
+    expect(fromOpenAIChatResponse({ error: { message: 'x' } })).toBeNull();
+    expect(fromOpenAIChatResponse({ choices: [] })).toBeNull();
+  });
+  it('一个 chunk 都没来 → error 事件而不是空的 end_turn', async () => {
+    const events = ev(await collect(new OpenAIToAnthropicSSE(), ['\n']));
+    expect(events.map(x => x.e)).toEqual(['message_start', 'error']);
+  });
   it('上游断流没给 [DONE] 也能收尾（flush）；无 tool 时 stop→end_turn', async () => {
     const events = ev(await collect(new OpenAIToAnthropicSSE(), [`data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: 'stop' }] })}\n\n`]));
     expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');

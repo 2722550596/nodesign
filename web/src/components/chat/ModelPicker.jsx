@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, Loader2, Lock } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions, Me } from '../../lib/api.js';
@@ -74,6 +74,7 @@ export default function ModelPicker({
   const modelPref = useGlobalStore(s => s.modelPref);
   const setModelPref = useGlobalStore(s => s.setModelPref);
   const showToast = useGlobalStore(s => s.showToast);
+  const confirmDialog = useGlobalStore(s => s.confirm);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   // 服务端口径：{ model, override, default, options }。没有会话时为 null
@@ -119,7 +120,7 @@ export default function ModelPicker({
    */
   useEffect(() => {
     if (hasSession) return;
-    if (isModelPrefStale(modelPref, remote?.options)) setModelPref(remote.options[0].id);
+    if (isModelPrefStale(modelPref, remote?.options)) setModelPref(remote.default || remote.options.find(o => !o.locked)?.id || remote.options[0].id);
   }, [hasSession, remote, modelPref, setModelPref]);
   /**
    * 现在跑的是哪个。两条路都保证是个具体模型：有会话看服务端（`remote.model`
@@ -134,6 +135,16 @@ export default function ModelPicker({
 
   const select = useCallback(async (id) => {
     setOpen(false);
+    // 看得见选不了的订阅行（08-21 公开注册号）：弹框说清楚怎么拿到，不发请求
+    const lockedOpt = options.find(o => o.id === id && o.locked);
+    if (lockedOpt) {
+      await confirmDialog({
+        title: '这个模型需要邀请码账号',
+        message: `${lockedOpt.label} 跑在站主的 Claude 订阅上，只对邀请码注册的账号开放。免费模型人人可用；想用 Claude 找站主要一个邀请码，注册时填进去就解锁。`,
+        confirmLabel: '知道了', cancelLabel: '关闭',
+      });
+      return;
+    }
     if (!hasSession) { setModelPref(id); return; }
     // 点的就是正在跑的那个 → 什么也不做。别拿"覆盖字段是不是空"当判据：override
     // 为 null 时写一次会让 changed=true，服务端顺手把空闲的 query 关掉重开，
@@ -165,7 +176,7 @@ export default function ModelPicker({
     } finally {
       setSaving(false);
     }
-  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens]);
+  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens, options, confirmDialog]);
 
   const label = shortLabel(effective, options);
   const busy = disabled || saving;
@@ -229,7 +240,8 @@ export default function ModelPicker({
               key={o.id}
               active={effective === o.id}
               label={o.label}
-              desc={o.desc}
+              desc={o.locked ? `${o.lockReason || '需要邀请码账号'} · ${o.desc}` : o.desc}
+              locked={!!o.locked}
               onClick={() => select(o.id)}
             />
           ))}
@@ -249,7 +261,7 @@ export default function ModelPicker({
   );
 }
 
-function Option({ active, label, desc, onClick }) {
+function Option({ active, label, desc, locked = false, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -265,9 +277,10 @@ function Option({ active, label, desc, onClick }) {
     >
       <span style={{ width: 13, flexShrink: 0, marginTop: GAP.xxs }}>
         {active && <Check size={12} color={COLOR.text} />}
+        {!active && locked && <Lock size={11} color={COLOR.sub} />}
       </span>
       <span style={{ flex: 1 }}>
-        <span style={{ display: 'block', fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>
+        <span style={{ display: 'block', fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: locked ? COLOR.sub : COLOR.text }}>
           {label}
         </span>
         <span style={{ display: 'block', fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>

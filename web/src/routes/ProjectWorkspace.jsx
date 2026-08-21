@@ -1394,7 +1394,16 @@ export default function ProjectWorkspace() {
     } catch (err) {
       // 429（额度用完 / 并发已满）和 451（内容外审拦截）不是故障，
       // 服务端的话术已经很白话，别再包一层"失败"
-      const politeLimit = err.code === 'QUOTA_EXCEEDED' || err.code === 'BUSY' || err.code === 'MODERATION_BLOCKED';
+      const politeLimit = ['QUOTA_EXCEEDED', 'BUSY', 'MODERATION_BLOCKED', 'MODEL_LOCKED', 'MODEL_NOT_ALLOWED', 'LANE_SWITCH'].includes(err.code);
+      // 403 MODEL_LOCKED（08-21）：选了只对邀请码账号开放的订阅模型 —— 弹框说清楚，并把偏好退回默认免费模型
+      if (err.code === 'MODEL_LOCKED') {
+        useGlobalStore.getState().setModelPref?.(null);
+        useGlobalStore.getState().confirm?.({
+          title: '这个模型需要邀请码账号',
+          message: `${err.message}\n\n模型选择器里带锁的那几档跑在站主的 Claude 订阅上；免费模型人人可用。`,
+          confirmLabel: '知道了', cancelLabel: '关闭',
+        });
+      }
       setMessages(ms => [...ms, {
         id: newId('msg'),
         role: 'assistant',

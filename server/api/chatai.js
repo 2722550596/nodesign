@@ -34,6 +34,7 @@ import {
 import { readLog, readSummary, SUMMARY_FILE } from '../engine/chatai/chat-log.js';
 import { modelCatalog } from '../engine/chatai/index.js';
 import { checkQuota, fmtUsd } from '../lib/quota.js';
+import { hasSubscriptionAccess } from '../engine/agent/model-context.js';
 import { makeRateWindow } from '../lib/rate-window.js';
 import {
   createRun, markRunStarted, markRunSucceeded, markRunFailed,
@@ -241,6 +242,10 @@ router.post('/:pid/chatai/turn', async (req, res, next) => {
       return res.status(422).json({ error: `input 超长（上限 ${MAX_INPUT_CHARS} 字符）` });
     }
 
+    // 08-21 经营态：演出通路烧的是带钥匙的 API 钱，公开注册号（免费档）不开 —— 跟订阅 Claude 同一把资格
+    if (!hasSubscriptionAccess(req.user)) {
+      return res.status(403).json({ error: '演出模式目前只对邀请码账号开放；免费档先用设计会话，想开通找站主要邀请码', code: 'MODEL_LOCKED' });
+    }
     const quota = checkQuota(req.user);
     if (!quota.ok) {
       const word = quota.kind === 'lifetime' ? '试用额度' : '今日额度';

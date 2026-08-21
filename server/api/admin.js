@@ -89,6 +89,9 @@ router.patch('/users/:id', (req, res) => {
   if ('localGen' in (req.body || {})) {
     patch.localGen = !!req.body.localGen;
   }
+  if ('allowSubscription' in (req.body || {})) {
+    patch.allowSubscription = !!req.body.allowSubscription;   // 08-21：订阅 Claude 资格（老号迁移时全置 1，站主手动收）
+  }
   // 07-31 起限额单位是美元。老字段 dailyTokenLimit 仍收（存量数据能改回去），
   // 但它已经不参与闸门判断了 —— 真正生效的是 dailyCostLimitUsd。
   for (const [key, label] of [['dailyCostLimitUsd', '美元'], ['lifetimeCostLimitUsd', '美元'], ['dailyTokenLimit', 'token']]) {

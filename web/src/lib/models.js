@@ -17,14 +17,14 @@
  */
 
 /**
- * 没有会话、也没选过时用哪个（2026-08-17 用户拍板：就指定 Sonnet）。
+ * 没有会话、也没选过、**也拿不到服务端清单**时用哪个。
  *
- * 这不是"跟随服务端默认"—— 它是**明写下去**的。以前这里是 null，意思是
- * 第一条消息不带 model 字段、由 `NODESIGN_MODEL` 决定；那样按钮上写的和实际
- * 跑的是两条独立的链，环境变量一改按钮就开始说谎（这个文件的老毛病，见
- * ModelPicker 顶上那段）。现在按钮显示什么、消息里带什么，是同一个常量。
+ * 08-21 起默认模型的真相在服务端（model-context.js 表里 `default: true` 的行，
+ * `GET /api/me/models` 的 `default` 字段按用户算好给前端）—— 这里的常量只是接口挂了时
+ * 的最后一道兜底，跟 FALLBACK_MODELS 同级。改服务端默认时顺手核一眼这里。
+ * （08-17 到 08-21 之间这里是 Sonnet 并且是一等真相；经营态转向后全员默认免费的 Ox。）
  */
-export const DEFAULT_MODEL_ID = 'claude-sonnet-5[1m]';
+export const DEFAULT_MODEL_ID = 'ox-alpha';
 
 /**
  * 本地偏好过期了吗 —— 它指向的模型**已经不在服务端清单里**（模型下架了）。
@@ -44,11 +44,14 @@ export const DEFAULT_MODEL_ID = 'claude-sonnet-5[1m]';
  */
 export function isModelPrefStale(pref, serverOptions) {
   if (!pref || !serverOptions?.length) return false;
-  return !serverOptions.some((o) => o?.id === pref);
+  // locked（看得见选不了的订阅行，08-21）也算过期：公开注册号浏览器里存着 Sonnet 偏好
+  // 照发就是 403，自净成该用户的默认模型
+  return !serverOptions.some((o) => o?.id === pref && !o.locked);
 }
 
 /** 服务端拿不到时的兜底清单（离线 / 接口挂了也别让按钮变成死的） */
 export const FALLBACK_MODELS = [
-  { id: DEFAULT_MODEL_ID, label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用' },
+  { id: DEFAULT_MODEL_ID, label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用' },
+  { id: 'claude-sonnet-5[1m]', label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用' },
   { id: 'claude-opus-5[1m]', label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开' },
 ];

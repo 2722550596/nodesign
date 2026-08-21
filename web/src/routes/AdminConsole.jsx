@@ -210,6 +210,7 @@ function UserRow({ u, reload }) {
             </span>
             {isAdmin && <Chip color={COLOR.gold}>admin</Chip>}
             {trial && <Chip color={COLOR.blue}>试用 {usd(u.lifetimeCostLimitUsd)}</Chip>}
+            {u.role !== 'admin' && !u.allowSubscription && <Chip color={COLOR.sub}>免费档</Chip>}
             {u.disabled && <Chip color={COLOR.error}>已停用</Chip>}
             {u.flagsCount > 0 && <Chip color={COLOR.error}>违规 ×{u.flagsCount}</Chip>}
             <ModLevelChip u={u} />

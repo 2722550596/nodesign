@@ -15,17 +15,24 @@ import express from 'express';
 import {
   authEnabled, mintToken, requestUser, cookieSerialize, cookieClear,
 } from './session.js';
-import { getCredential, verifyPassword, getUserById, registerUser } from './users-store.js';
+import { getCredential, verifyPassword, getUserById, registerUser, openRegistrationEnabled } from './users-store.js';
+import { makeRateWindow } from '../lib/rate-window.js';
 
 const MAX_FAILS = 10;
 const LOCK_MS = 15 * 60 * 1000;
 /** ip → { fails, lockedUntil } */
 const failures = new Map();
+// 开放注册后每个 IP 一天最多建几个号（防脚本批量开号吃共享钥匙的限流）。内存窗口，重启清零无所谓
+const registerWindow = makeRateWindow({ limit: Number(process.env.NODESIGN_REGISTER_PER_IP_PER_DAY) || 5, windowMs: 24 * 60 * 60 * 1000 });
 
 function clientIp(req) {
-  // 直连 + nginx/CF 反代两种形态；多级代理取最初的那跳
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim();
+  // ⛔ 不看 X-Forwarded-For：它的第一跳是客户端自报的（CF/nginx 都是追加不是覆盖），
+  // 随机填一个就绕过注册限流和登录锁（08-21 fable 评审）。可信顺序：CF 的 cf-connecting-ip
+  // → nginx 写的 X-Real-IP（$remote_addr，是对端不是自报）→ socket
+  const cf = req.headers['cf-connecting-ip'];
+  if (typeof cf === 'string' && cf.trim()) return cf.trim();
+  const real = req.headers['x-real-ip'];
+  if (typeof real === 'string' && real.trim()) return real.trim();
   return req.socket?.remoteAddress || 'unknown';
 }
 
@@ -54,7 +61,7 @@ export const authRouter = express.Router();
 
 authRouter.get('/status', (req, res) => {
   const user = requestUser(req);
-  res.json({ required: authEnabled(), authed: !!user, user: publicUser(user) });
+  res.json({ required: authEnabled(), authed: !!user, user: publicUser(user), openRegistration: openRegistrationEnabled() });
 });
 
 authRouter.post('/login', (req, res) => {
@@ -85,6 +92,11 @@ authRouter.post('/register', (req, res) => {
   if (waitMin) return res.status(429).json({ error: `尝试次数过多，${waitMin} 分钟后再试` });
 
   const { username, password, inviteCode } = req.body || {};
+  const hasInvite = typeof inviteCode === 'string' && inviteCode.trim();
+  const perIpLimit = Number(process.env.NODESIGN_REGISTER_PER_IP_PER_DAY) || 5;
+  if (!hasInvite && registerWindow.count(ip) >= perIpLimit) {
+    return res.status(429).json({ error: '这个网络今天开的号太多了，明天再来或找站主要邀请码', code: 'REGISTER_RATE_LIMITED' });
+  }
   try {
     const user = registerUser({
       username: typeof username === 'string' ? username.trim() : '',
@@ -92,6 +104,7 @@ authRouter.post('/register', (req, res) => {
       inviteCode: typeof inviteCode === 'string' ? inviteCode.trim() : '',
     });
     failures.delete(ip);
+    if (!hasInvite) registerWindow.take(ip);   // 做成了才扣名额（用户名撞车不算）
     res.setHeader('Set-Cookie', cookieSerialize(mintToken(user.id), req));
     res.status(201).json({ ok: true, user: publicUser(user) });
   } catch (err) {

@@ -43,6 +43,7 @@ export function LimitEditor({ u, onDone, onCancel }) {
   const [level, setLevel] = useState(u.moderationLevel ?? '');
   const [levelApi, setLevelApi] = useState(u.moderationLevelApi ?? '');
   const [localGen, setLocalGen] = useState(u.allowLocalGen ? '1' : '0');
+  const [allowSub, setAllowSub] = useState(u.allowSubscription ? '1' : '0');   // 订阅 Claude 资格（08-21）
   const [saving, setSaving] = useState(false);
   const isAdmin = u.role === 'admin';
 
@@ -61,6 +62,7 @@ export function LimitEditor({ u, onDone, onCancel }) {
       if (!isAdmin) {
         patch.dailyCostLimitUsd = num(daily); patch.lifetimeCostLimitUsd = num(lifetime);
         patch.localGen = localGen === '1';
+        patch.allowSubscription = allowSub === '1';
       }
       await Admin.patchUser(u.id, patch);
       showToast(`已更新 ${u.username}`, 'success');
@@ -96,6 +98,13 @@ export function LimitEditor({ u, onDone, onCancel }) {
           ['', '跟随默认'], ['off', '关闭'], ['loose', '宽松'], ['strict', '严格'],
         ]} />
       </Field>
+      {!isAdmin && (
+        <Field label="订阅 Claude（Sonnet/Opus）">
+          <Segmented value={allowSub} onChange={setAllowSub} options={[
+            ['0', '免费档'], ['1', '开通'],
+          ]} />
+        </Field>
+      )}
       {!isAdmin && (
         <Field label="本地产线（生图/视频盒子）">
           <Segmented value={localGen} onChange={setLocalGen} options={[

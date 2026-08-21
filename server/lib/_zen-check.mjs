@@ -31,5 +31,14 @@ if (which === 'all' || which === 'stream') {
   console.log('events:', evs.join(' '));
   for (const l of r.text.split('\n')) if (/tool_use|stop_reason|usage/.test(l)) console.log(' ', l.slice(0, 260));
 }
+if (which === 'all' || which === 'parallel') {
+  const T2 = [...T, { name: 'get_time', description: 'Get local time', input_schema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] } }];
+  const r = await post({ model: MODEL, max_tokens: 800, stream: true, tools: T2, messages: [{ role: 'user', content: TXT('I need BOTH the weather and the local time in Tokyo. Call both tools in parallel in one go.') }] });
+  const starts = r.text.split('\n').filter(l => l.includes('content_block_start') && l.includes('tool_use'));
+  const deltas = r.text.split('\n').filter(l => l.includes('input_json_delta'));
+  console.log(`\n### parallel tools → ${r.status} (${r.dt}ms) tool_use blocks=${starts.length} json deltas=${deltas.length}`);
+  for (const l of starts) console.log(' ', l.slice(0, 200));
+  for (const l of deltas) console.log(' ', l.slice(0, 160));
+}
 if (which === 'all' || which === 'count') show('count_tokens', await post({ model: MODEL, messages: [{ role: 'user', content: 'hello world' }] }).then(r => r));
 await stopIngress();

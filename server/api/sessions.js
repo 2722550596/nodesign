@@ -46,7 +46,7 @@ import { getProjectBus } from '../ws/broker.js';
 import { getLastContextUsage } from '../engine/runs/live-turn.js';
 import { Events } from '../engine/agent/events.js';
 import { resolveSessionModel, applySessionModel } from '../engine/agent/session-model.js';
-import { selectableModelsFor } from '../engine/agent/model-context.js';
+import { selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, crossLaneSwitchReason } from '../engine/agent/model-context.js';
 
 /**
  * 进行中的 rewind 操作 sid 集合 —— 供 turn.js startNewRunSession 守卫使用，
@@ -214,7 +214,9 @@ router.get('/:pid/sessions/:sid/model', async (req, res, next) => {
     const { model, override, fallback } = await resolveSessionModel(
       getSessionMetaDir(req.params.pid, req.params.sid),
     );
-    res.json({ model, override, default: fallback, options: selectableModelsFor(req.user) });
+    // default 按用户算（08-21）：公开注册号的默认不是环境变量里的订阅行；没覆盖时按钮上显示的就是它
+    const userDefault = defaultModelFor(req.user) || fallback;
+    res.json({ model: override || userDefault, override, default: userDefault, options: selectableModelsFor(req.user) });
   } catch (err) { next(err); }
 });
 
@@ -230,14 +232,21 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     }
     // 只收清单里的 id：随手传个拼错的 model 进去，SDK 会自己 fallback、真实容量
     // 查不到，两处都不报错，事后只能从"怎么变慢了"倒推
-    if (typeof raw === 'string' && !selectableModelsFor(req.user).some((m) => m.id === raw)) {
+    if (raw !== null && isModelLockedFor(req.user, raw)) {
+      return res.status(403).json({ error: '这个模型需要邀请码账号（订阅 Claude 额度）', code: 'MODEL_LOCKED', model: raw });
+    }
+    if (typeof raw === 'string' && !allowedModelsFor(req.user).some((m) => m.id === raw)) {
       return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
     }
 
     await ensureSessionWorkspace(req.params.pid, req.params.sid);
     const metaDir = getSessionMetaDir(req.params.pid, req.params.sid);
     const result = await applySessionModel(req.params.sid, metaDir, raw, 'picker');
-    const { fallback } = await resolveSessionModel(metaDir);
+    const { fallback, model: currentModel } = await resolveSessionModel(metaDir);
+    if (raw !== null) {
+      const why = crossLaneSwitchReason(currentModel, raw);
+      if (why) return res.status(409).json({ error: why, code: 'LANE_SWITCH' });
+    }
     res.json({
       model: result.model,
       override: result.override,

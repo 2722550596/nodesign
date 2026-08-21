@@ -18,7 +18,7 @@ import { listEntries, getEntry, removeEntry } from '../lib/showcase-store.js';
 import { getArtifactCover } from '../lib/cover.js';
 import { getSharedDir } from '../projects/workspace.js';
 import { getProject } from '../projects/store.js';
-import { selectableModelsFor } from '../engine/agent/model-context.js';
+import { selectableModelsFor, defaultModelFor } from '../engine/agent/model-context.js';
 
 const router = express.Router();
 
@@ -33,7 +33,7 @@ const router = express.Router();
  * 会话里能选、首页选不了，同一颗按钮两种清单。兜底清单从此只在这条接口也挂了时用。
  */
 router.get('/models', (req, res) => {
-  res.json({ options: selectableModelsFor(req.user) });
+  res.json({ options: selectableModelsFor(req.user), default: defaultModelFor(req.user) });
 });
 
 /**
