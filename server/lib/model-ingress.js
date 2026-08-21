@@ -233,15 +233,17 @@ async function handleRequest(req, res, bodyBuf) {
   // 会话连续失败上限（upstream-fail-streak.js，僵尸 run 案）：上游持续死时 CLI 对 5xx 无上限退避重试，
   // 一个回合能挂一小时。到上限就回 400（CLI 不重试、回合以 is_error 收场、文案到用户、会话不死），
   // 计数归零让用户下次再发有新机会。count_tokens 不参与（它不是循环的燃料）。
-  if (!isCountTokens && failStreaks.exhausted(sessionTag)) {
-    const { n, reason } = failStreaks.consume(sessionTag);
+  // 计数按 sid+角色分桶：helper（标题/分类器）一次成功不能把主行攒的计数清零（08-21 评审抓的洞）
+  const streakKey = sessionTag ? `${sessionTag}:${routed.role || 'main'}` : null;
+  if (!isCountTokens && failStreaks.exhausted(streakKey)) {
+    const { n, reason } = failStreaks.consume(streakKey);
     const body = JSON.stringify(exhaustedErrorBody({ label: wire.upstream?.label || wire.upstreamId, n, reason }));
-    console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} 连续失败 ${n} 次（${reason}）→ 400 止损，计数归零`);
+    console.warn(`[model-ingress] sid=${sidShort} role=${routed.role} upstream=${wire.upstreamId} 连续失败 ${n} 次（${reason}）→ 400 止损，计数归零`);
     res.writeHead(400, { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) });
     res.end(body);
     return;
   }
-  const noteOutcome = (ok, reason) => { if (!isCountTokens) failStreaks.note(sessionTag, ok, reason); };
+  const noteOutcome = (ok, reason) => { if (!isCountTokens) failStreaks.note(streakKey, ok, reason); };
 
   // count_tokens：上游没有该端点 → 本地估算短路（SDK 内部窗口计数要有数，
   // 否则 ContextUsageBar 永远"等待"、80% 预警从不触发 —— DMXAPI 时代真踩过）

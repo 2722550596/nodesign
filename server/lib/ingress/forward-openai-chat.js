@@ -53,7 +53,7 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
     }
     if (wantStream) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-      const xf = new OpenAIToAnthropicSSE({ model: parsed.model });
+      const xf = new OpenAIToAnthropicSSE({ model: parsed.model, label: wire.upstream?.label || wire.upstreamId });
       xf.on('error', (err) => { console.error(`[model-ingress] sse transform error: ${err.message}`); onOutcome(false, `transform: ${err.message}`); try { res.end(); } catch { /* ignore */ } });
       // 转换层以 error 事件收场（私货 finish / 早断流 / 空体）→ 算一次失败；正常收尾算成功
       xf.on('end', () => onOutcome(!xf.failReason, xf.failReason || ''));
@@ -72,8 +72,11 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
       }
       if (!out) {   // 200 但没有 choices / 私货 finish_reason 且零可见输出：别包成成功
         const alienFinish = upstreamJson?.choices?.[0]?.finish_reason;
+        const label = wire.upstream?.label || wire.upstreamId;
         const msg = upstreamJson?.error?.message
-          || (alienFinish ? `upstream ended with finish_reason='${alienFinish}' and no visible output` : 'upstream returned no choices');
+          || (alienFinish
+            ? `${label}以 ${alienFinish} 结束了这次请求，没有输出任何正文 —— 上游自己的链路出错，已自动重试仍失败；稍后再发，或换个模型（upstream ended with finish_reason='${alienFinish}' and no visible output）`
+            : `${label}返回了空响应，一个字都没有 —— 上游问题，已自动重试仍失败；稍后再发，或换个模型（upstream returned no choices）`);
         console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} 200-but-empty model=${wire.wireModel} ${String(msg).slice(0, 160)}`);
         onOutcome(false, String(msg).slice(0, 120));
         const errBody = JSON.stringify(toAnthropicError(502, String(msg)));

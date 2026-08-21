@@ -214,9 +214,10 @@ export function toAnthropicError(status, bodyText) {
  * 状态机：当前打开的块（thinking/text/tool_use 之一）+ tool_calls 按 index 映射到块号。
  */
 export class OpenAIToAnthropicSSE extends Transform {
-  constructor({ model = '' } = {}) {
+  constructor({ model = '', label = '上游' } = {}) {
     super();
     this.model = model;
+    this.label = label;        // 上游的人话名字（错误文案用；CLI 会把 message 原样显示给用户）
     this.buf = '';
     this.started = false;
     this.done = false;
@@ -293,7 +294,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     if (!this.started || (this.blockIndex < 0 && !this.finish)) {
       this._ensureStart(null);
       this.failReason = 'empty response';
-      this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream returned an empty response' } });
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: `${this.label}返回了空响应，一个字都没有 —— 上游问题，已自动重试仍失败；稍后再发，或换个模型（upstream returned an empty response）` } });
       return;
     }
     // 没给 finish_reason 就断了、而且一个字/一个工具调用都没出（只有 thinking）：
@@ -304,7 +305,7 @@ export class OpenAIToAnthropicSSE extends Transform {
       console.warn('[ingress/openai-chat] upstream stream ended without finish_reason and without visible output (thinking-only)');
       this._closeOpen();
       this.failReason = 'stream ended before any visible output';
-      this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream stream ended before any visible output' } });
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: `${this.label}在模型还在思考、还没输出正文时就结束了响应 —— 上游问题，已自动重试仍失败；稍后再发，或换个模型/思考档（upstream stream ended before any visible output）` } });
       return;
     }
     // 给了 finish_reason，但那是上游私货（network_error 之类）而且一个可见块都没出：
@@ -314,7 +315,7 @@ export class OpenAIToAnthropicSSE extends Transform {
       console.warn(`[ingress/openai-chat] upstream finish_reason='${this.finish}' with no visible output — failing the turn so the CLI retries`);
       this._closeOpen();
       this.failReason = `finish_reason='${this.finish}' with no visible output`;
-      this._emit('error', { type: 'error', error: { type: 'api_error', message: `ingress: upstream ended with finish_reason='${this.finish}' and no visible output` } });
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: `${this.label}以 ${this.finish} 结束了这次请求，没有输出任何正文 —— 上游自己的链路出错，已自动重试仍失败；稍后再发，或换个模型（upstream ended with finish_reason='${this.finish}' and no visible output）` } });
       return;
     }
     if (isAlienFinish(this.finish)) console.warn(`[ingress/openai-chat] 未知 finish_reason='${this.finish}'（有可见输出）；按 end_turn 收尾`);
