@@ -50,6 +50,9 @@ async function main() {
   const sessionPromise = runSession({
     sessionId,
     projectId,
+    // 08-21 晚：订阅通路按 owner 档位断言（auth/tier.js），无主 fail-closed。探针项目是假的，
+    // 跑订阅模型时给个 admin/pro 的真用户 id：PROBE_OWNER_ID=u_xxx node --env-file=.env server/_probe-session-loop.js
+    ownerId: process.env.PROBE_OWNER_ID || null,
     sessionWorkspaceRoot: sessionRoot,
     eventBus: bus,
     inputQueue,
