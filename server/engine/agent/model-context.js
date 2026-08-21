@@ -257,9 +257,10 @@ const MODELS = Object.freeze([
       sdkAlias: 'claude-opus-4-8[1m]',
       fastModel: 'ox-alpha',
       thinking: 'strip',              // 出口不带 Anthropic thinking 字段；转换层按 reasoningEffort 发 reasoning_effort
-      // Ox 三档 low|high|max。08-21 实测同一题 reasoning_tokens：不传≈27、low=0、high=3、max=27 ——
-      // 'high' 反而几乎不想；设计活要它想，显式 'max'（= 不传的默认强度）
-      reasoningEffort: 'max',
+      // Ox 三档 low|high|max。08-21 小题实测 reasoning_tokens：不传≈27、low=0、high=3、max=27；
+      // 但上生产后 'max' 在真会话里想了 28,930 字 / 4 分 20 秒才出第一个字（用户看到的是
+      // "只有绿点没有回复"）。改 'high'：还想，但不把一轮耗在想上
+      reasoningEffort: 'high',
       maxOutput: 131_072,
       // 不设 liftImages：openai-chat 转换层本身就把 tool_result 里的图搬进随后的 user 消息
       // （OpenAI 的 tool 角色消息装不下图，上游放了会挂死 120s）。同一件事只留一条路。

@@ -119,6 +119,16 @@ describe('OpenAIToAnthropicSSE', () => {
     const events = ev(await collect(new OpenAIToAnthropicSSE(), ['\n']));
     expect(events.map(x => x.e)).toEqual(['message_start', 'error']);
   });
+  it('早断流：只有 thinking、没 finish_reason 没 [DONE] → error 而不是 end_turn', async () => {
+    const events = ev(await collect(new OpenAIToAnthropicSSE(), [`data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { reasoning_content: '想想…' } }] })}\n\n`]));
+    expect(events.at(-1).e).toBe('error');
+    expect(events.at(-1).d.error.message).toMatch(/before any visible output/);
+    expect(events.some(x => x.e === 'message_delta')).toBe(false);
+  });
+  it('有正文但没 finish_reason 就断 → 仍 end_turn 收尾（截断不重跑）', async () => {
+    const events = ev(await collect(new OpenAIToAnthropicSSE(), [`data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { content: '半截' } }] })}\n\n`]));
+    expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');
+  });
   it('上游断流没给 [DONE] 也能收尾（flush）；无 tool 时 stop→end_turn', async () => {
     const events = ev(await collect(new OpenAIToAnthropicSSE(), [`data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: 'stop' }] })}\n\n`]));
     expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');

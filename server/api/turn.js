@@ -213,9 +213,9 @@ router.post('/:pid/turn', async (req, res, next) => {
       });
     }
     // 并发：只拦"会立刻开跑"的 turn；session 正忙时这条消息进排队（既有串行语义，
-    // 不产生新并发）
+    // 不产生新并发）。免费行不受全局固定数限制，只受内存闸（quota.js）
     if (!getQuerySession(sid)?.currentRunId) {
-      const gate = checkConcurrency(req.user);
+      const gate = checkConcurrency(req.user, { free: modelIsFree(turnModel) });
       if (!gate.ok) {
         return res.status(429).json({ error: gate.message, code: gate.code });
       }

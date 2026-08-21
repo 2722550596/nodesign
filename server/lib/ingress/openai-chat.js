@@ -201,6 +201,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     this.usage = null;
     this.id = null;
     this.sawToolCall = false;
+    this.sawText = false;      // 有过可见正文（区分"只想没说"的早断流）
   }
   _emit(event, data) { this.push(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
   _ensureStart(chunk) {
@@ -233,6 +234,7 @@ export class OpenAIToAnthropicSSE extends Transform {
       this._emit('content_block_delta', { type: 'content_block_delta', index: this.open.index, delta: { type: 'thinking_delta', thinking: String(d.reasoning_content) } });
     }
     if (d.content) {
+      this.sawText = true;
       if (this.open?.kind !== 'text') this._openBlock('text', { type: 'text', text: '' });
       this._emit('content_block_delta', { type: 'content_block_delta', index: this.open.index, delta: { type: 'text_delta', text: String(d.content) } });
     }
@@ -264,6 +266,17 @@ export class OpenAIToAnthropicSSE extends Transform {
       this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream returned an empty response' } });
       return;
     }
+    // 没给 finish_reason 就断了、而且一个字/一个工具调用都没出（只有 thinking）：
+    // 这是上游早断流（Zen 08-21 真发生过），包装成 end_turn 会让 CLI 进"你上一轮没有
+    // 可见输出"的催促循环。发 error 让这一轮明确失败。有正文但没 finish_reason 的
+    // 算截断，仍按 end_turn 收尾只记 warn（重跑整轮的代价比半截答案更贵）
+    if (!this.finish && !this.sawText && !this.sawToolCall) {
+      console.warn('[ingress/openai-chat] upstream stream ended without finish_reason and without visible output (thinking-only)');
+      this._closeOpen();
+      this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream stream ended before any visible output' } });
+      return;
+    }
+    if (!this.finish) console.warn('[ingress/openai-chat] upstream stream ended without finish_reason (truncated); closing as end_turn');
     this._closeOpen();
     const stop_reason = this.sawToolCall ? 'tool_use' : (STOP_MAP[this.finish] || 'end_turn');
     this._emit('message_delta', { type: 'message_delta', delta: { stop_reason, stop_sequence: null }, usage: usageFromOpenAI(this.usage) });

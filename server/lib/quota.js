@@ -37,6 +37,7 @@
  * （默认 $5）。admin 不限。按 Asia/Shanghai 日界滚动现算，没有定时任务。
  */
 
+import { readFileSync } from 'node:fs';
 import db, { getRun } from '../engine/runs/store.js';
 import { countRunningTurns, listRunningTurnRunIds } from '../engine/runs/active-runs.js';
 
@@ -212,24 +213,52 @@ export function usedTodayByFamily(userId, now = Date.now()) {
 // ── 并发闸门 ──
 // 语义是"拒绝返 429"而不是"排队 await"：turn.js 是 202 fire-and-forget，
 // 闸门必须在 202 之前同步判。同 session 追加消息走既有排队语义不经这里。
+//
+// 08-21 经营态转向后分两档：
+// - 订阅行（花站主的订阅）：全局固定数 NODESIGN_MAX_CONCURRENT_RUNS（默认 3）
+// - 免费行（Ox 这类零价模型）：不受全局固定数限制。它的约束只剩机器本身 ——
+//   每个 claude CLI 进程 350MB~1GB、机器 1 vCPU/8G 无 swap，所以改成**内存闸**：
+//   MemAvailable 低于 NODESIGN_MIN_FREE_MEM_MB（默认 700）就拒，外加一个防失控的
+//   上限 NODESIGN_FREE_MAX_CONCURRENT_RUNS（默认 12）。内存闸对两档都生效（订阅行
+//   的固定数 3 本来就是按内存拍的，内存先见底时固定数也救不了）
+// - 每用户同时 1 个（admin 免）两档都一样：这是公平性不是资源
 
-export function checkConcurrency(user) {
-  const globalMax = Number(process.env.NODESIGN_MAX_CONCURRENT_RUNS) || 3;
-  const running = countRunningTurns();
+export function memAvailableMb() {
+  try {
+    const m = /MemAvailable:\s+(\d+) kB/.exec(readFileSync('/proc/meminfo', 'utf8'));
+    return m ? Math.floor(Number(m[1]) / 1024) : null;
+  } catch { return null; }   // 非 Linux / 读不到 → 不以内存拒
+}
+
+/** 纯决策：输入全是数，方便测 */
+export function decideConcurrency({ running, mine, isAdmin, free, memMb, env = process.env }) {
+  const minMem = Number(env.NODESIGN_MIN_FREE_MEM_MB) || 700;
+  if (memMb != null && memMb < minMem) {
+    return { ok: false, code: 'BUSY', message: `机器内存快满了（${running} 个任务在跑），稍等一会儿再发` };
+  }
+  const globalMax = free
+    ? (Number(env.NODESIGN_FREE_MAX_CONCURRENT_RUNS) || 12)
+    : (Number(env.NODESIGN_MAX_CONCURRENT_RUNS) || 3);
   if (running >= globalMax) {
     return { ok: false, code: 'BUSY', message: `现在有点挤（${running} 个任务在跑），稍等一会儿再发` };
   }
-  if (user?.role !== 'admin') {
-    const perUser = Number(process.env.NODESIGN_USER_CONCURRENT_RUNS) || 1;
-    // running turn → user 归属：runId 查 runs.user_id（不给 session 注册表加
-    // userId 字段 —— 正在跑的 turn 就几个，查表成本可忽略）
-    let mine = 0;
-    for (const rid of listRunningTurnRunIds()) {
-      if (getRun(rid)?.userId === user?.id) mine += 1;
-    }
+  if (!isAdmin) {
+    const perUser = Number(env.NODESIGN_USER_CONCURRENT_RUNS) || 1;
     if (mine >= perUser) {
       return { ok: false, code: 'BUSY', message: '你有任务正在跑，等它完成再开下一个（同一对话里追加消息不受限）' };
     }
   }
   return { ok: true };
+}
+
+export function checkConcurrency(user, { free = false } = {}) {
+  // running turn → user 归属：runId 查 runs.user_id（不给 session 注册表加
+  // userId 字段 —— 正在跑的 turn 就几个，查表成本可忽略）
+  let mine = 0;
+  if (user?.role !== 'admin') {
+    for (const rid of listRunningTurnRunIds()) {
+      if (getRun(rid)?.userId === user?.id) mine += 1;
+    }
+  }
+  return decideConcurrency({ running: countRunningTurns(), mine, isAdmin: user?.role === 'admin', free, memMb: memAvailableMb() });
 }
