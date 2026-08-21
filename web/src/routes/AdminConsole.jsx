@@ -209,8 +209,8 @@ function UserRow({ u, reload }) {
               {u.username}
             </span>
             {isAdmin && <Chip color={COLOR.gold}>admin</Chip>}
-            {trial && <Chip color={COLOR.blue}>试用 {usd(u.lifetimeCostLimitUsd)}</Chip>}
-            {u.role !== 'admin' && !u.allowSubscription && <Chip color={COLOR.sub}>免费档</Chip>}
+            {!isAdmin && <Chip color={u.tier === 'pro' ? COLOR.gold : COLOR.sub}>{u.tier === 'pro' ? 'pro' : 'basic'}</Chip>}
+            {trial && <Chip color={COLOR.blue}>终身额度 {usd(u.lifetimeCostLimitUsd)}</Chip>}
             {u.disabled && <Chip color={COLOR.error}>已停用</Chip>}
             {u.flagsCount > 0 && <Chip color={COLOR.error}>违规 ×{u.flagsCount}</Chip>}
             <ModLevelChip u={u} />

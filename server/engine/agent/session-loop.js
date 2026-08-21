@@ -77,6 +77,7 @@ import { autoNameProjectFromSession } from '../../projects/auto-name.js';
 import { commitTaskWorkspace, commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { taskManifest } from '../../lib/artifact-target.js';
 import { getUserById } from '../../auth/users-store.js';
+import { can, defaultModerationLevel } from '../../auth/tier.js';
 import { levelFor } from '../../lib/moderation.js';
 
 /**
@@ -116,6 +117,7 @@ function isBackgroundTurnOpener(message) {
 export async function runSession({
   sessionId,
   projectId,
+  ownerId = null,   // 项目 owner；订阅通路在 OAuth 决策那一行按 auth/tier.js 断言资格（见下）
   sessionWorkspaceRoot,
   eventBus,
   inputQueue,
@@ -244,6 +246,15 @@ export async function runSession({
       // 涨到超过上游 n_ctx 再炸。实测规律见 resolveModelRoute 注释。
       compactWindow = route.window;
     } else {
+      // ⭐ 订阅通路的资格断言就放在做 OAuth 决策的这一行（08-21 晚）。API 边界（turn.js /
+      // sessions.js 的 allowedModelsFor）是第一道闸；这里是第二道：runSession 以前不认识
+      // 用户，只看会话模型决定走不走 ~/.claude 的 OAuth —— quick-summary 那次泄漏（写死
+      // haiku 起独立 SDK 会话，08-19 拆）正是这个形状。现在 owner 没资格就 init 失败，
+      // 而不是静默烧站主的订阅。owner 为空（无主项目；生产 08-21 实查 0 个）也 fail-closed。
+      const owner = ownerId ? getUserById(ownerId) : null;
+      if (!can(owner, 'subscription')) {
+        throw new Error(`订阅通路资格不足：项目 owner=${ownerId || '(无)'} 档位不含 subscription，模型=${model}`);
+      }
       baseUrlForBinary = process.env.ANTHROPIC_BASE_URL;
       apiKeyForBinary = process.env.ANTHROPIC_API_KEY;
       fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
@@ -385,7 +396,8 @@ export async function runSession({
       append: (() => {
         const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
         // 档位按模型通路取旋钮（08-20 两旋钮：订阅 / 本地与中转），model 是上面已解析的会话模型
-        return renderPrelude(owner ? levelFor(owner, model) : 'loose', {
+        // 无主项目 fail-closed 到 tier.js 的默认（strict），别落 loose（生产 08-21 实查 0 个无主项目）
+        return renderPrelude(owner ? levelFor(owner, model) : defaultModerationLevel(null), {
           uncensored: isUncensoredModel(model),
         });
       })(),

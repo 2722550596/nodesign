@@ -50,13 +50,21 @@ function UserBadge() {
   const pct = usage?.capped ? (usage.pct || 0) : 0;
   const nearCap = pct >= 75;
   const initial = (authUser.username || '?').trim().slice(0, 1).toUpperCase();
+  // 档位标识（08-21，/api/me/usage.tier）：pro/admin 头像右下角一个朱砂点（盖过章的语法，不用金环——
+  // 纸+暖墨的版面里金色是唯一会发光的东西）；basic 无点，hover 给一句解锁提示当转化入口。
+  const tier = usage?.tier || null;
+  const sealed = tier === 'pro' || tier === 'admin';
+  const title = tier === 'basic'
+    ? `${authUser.username} · basic 档 —— 拿到邀请码可解锁 Claude / 生图 / 发布`
+    : authUser.username;
 
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
       <button
         onClick={() => setOpen(v => !v)}
-        title={authUser.username}
+        title={title}
         style={{
+          position: 'relative',
           width: 26, height: 26, borderRadius: 13,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           fontFamily: FONT_KAI, fontSize: FONT_SIZE.lg, fontWeight: 700,
@@ -66,7 +74,17 @@ function UserBadge() {
           cursor: 'pointer',
           padding: 0,
         }}
-      >{initial}</button>
+      >
+        {initial}
+        {sealed && (
+          <span aria-label={tier} style={{
+            position: 'absolute', right: -1, bottom: -1,
+            width: 7, height: 7, borderRadius: 4,
+            background: COLOR.error,                 // = PAPER.red（朱砂）
+            boxShadow: `0 0 0 1.5px ${CHROME.bg}`,  // 跟底色隔一丝白，不是描边
+          }} />
+        )}
+      </button>
 
       {open && (
         <div style={{
@@ -85,6 +103,11 @@ function UserBadge() {
             fontFamily: FONT_KAI, fontSize: FONT_SIZE.base, color: CHROME.ink,
           }}>
             {authUser.username}
+            {sealed && (
+              <span style={{ marginLeft: 6, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.error, letterSpacing: 0.5 }}>
+                {tier}
+              </span>
+            )}
             {usage && (
               <div style={{
                 marginTop: 3, fontSize: FONT_SIZE.xs,

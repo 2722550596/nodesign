@@ -107,6 +107,8 @@ export const UPSTREAMS = Object.freeze({
  *     prices     每 1M token 的 USD {input, output, cacheRead, cacheWrite}；
  *                没填 = 沿用 SDK 按 alias 算的虚价（接真流量前先填）
  */
+import { can, localGenApproved, DENIAL } from '../../auth/tier.js';
+
 const MODELS = Object.freeze([
   // ── 订阅通路（Claude 真名，零注入）──
   {
@@ -350,7 +352,7 @@ export const SELECTABLE_MODELS = Object.freeze(
  * 按用户过滤可选模型。两种闸不同语义（08-21）：
  *   - `gate: 'localGen'`：**看不见**。只对 admin / 已批准本地产线的账号露出（同 roll_film 那套批准制）
  *   - `gate: 'subscription'`：**看得见选不了**。订阅 Claude 行对没有订阅资格的账号
- *     （users.allow_subscription=0：公开注册号）仍在清单里，但带 `locked: true`；
+ *     （auth/tier.js can(user,'subscription')=false：basic 档/公开注册号）仍在清单里，但带 `locked: true`；
  *     用户拍板「选择器依旧在，无配额账户无法请求，并且弹框提示」—— 让人知道有更强的档、
  *     怎么拿到（邀请码），而不是当它不存在
  *
@@ -358,14 +360,15 @@ export const SELECTABLE_MODELS = Object.freeze(
  * turn.js 的模型校验。少一处就是一个绕过闸门的后门 —— 2026-08-19 的独立评审正是在
  * turn.js 抓到过这种漏校验。校验用 allowedModelsFor（不含 locked），清单用本函数。
  */
-export const SUBSCRIPTION_LOCK_REASON = '需要邀请码账号（订阅 Claude 额度）';
+export const SUBSCRIPTION_LOCK_REASON = DENIAL.subscription;
 
+/** 订阅 Claude 资格 = 账号档位能力（auth/tier.js：admin/pro 有，basic 无）。薄封装只为调用点读着顺。 */
 export function hasSubscriptionAccess(user) {
-  return user?.role === 'admin' || !!user?.allowSubscription;
+  return can(user, 'subscription');
 }
 
 export function selectableModelsFor(user) {
-  const approved = user?.role === 'admin' || !!user?.allowLocalGen;
+  const approved = localGenApproved(user);   // 档位 + 逐人批准，同 paint_still / roll_film / 演出端点一把尺
   const subscribed = hasSubscriptionAccess(user);
   const out = [];
   for (const m of SELECTABLE_MODELS) {

@@ -18,7 +18,8 @@ export function makeRateWindow({ limit, windowMs }) {
       const arr = (hits.get(key) || []).filter(t => now - t < windowMs);
       if (arr.length >= limit) {
         hits.set(key, arr);
-        return { ok: false, retryAfterMs: windowMs - (now - arr[0]) };
+        // limit=0（闸门关死）时窗口里没有命中记录，arr[0] 是 undefined → NaN；按整窗算
+        return { ok: false, retryAfterMs: arr.length ? windowMs - (now - arr[0]) : windowMs };
       }
       arr.push(now);
       hits.set(key, arr);

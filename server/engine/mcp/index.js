@@ -34,6 +34,7 @@ import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
 import { makeExportHandoffTool } from './tools/export-handoff.js';
 import { makeRecordDecisionTool } from './tools/record-decision.js';
 import { makeWebSearchTool } from './tools/web-search.js';
+import { withTierGate } from './tools/tier-gate.js';   // 档位闸包装器（auth/tier.js；按项目 owner）
 import { makeReadPageTool } from './tools/read-page.js';
 import { makeListPagesTool } from './tools/list-pages.js';
 import { makeQueryElementsTool } from './tools/query-elements.js';
@@ -212,7 +213,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。
       // WebFetch 不在这里 — 用 SDK 内置（session-loop.js DEFAULT_TOOL_ALLOWLIST 启用），
       // 它自带 LLM summarize 能控制上下文，不需要自实现。
-      makeWebSearchTool({ workspaceRoot, sharedRoot, ctx }),
+      withTierGate(makeWebSearchTool({ workspaceRoot, sharedRoot, ctx }), 'webSearch', projectId),   // basic 档有日上限
 
       // S1c canvas 焕新升级 — read_page 让 agent 精确读 canvas.html 任意页
       // （`<section data-page="N">` 一段），不必 Read 整文件 + Grep + offset/limit。
@@ -283,7 +284,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 图片生成（gemini-3.1-flash-image-preview / Nano Banana 2，via NoDesk passthrough）
       // 落档优先 sharedRoot/assets/generated/，fallback workspaceRoot/assets/generated/。
       // 跨 session 共享靠 sessions/<sid>/assets softlink → shared/assets。
-      makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }),
+      withTierGate(makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }), 'imageGen', projectId),   // basic 档不开生图
 
       // 抠图（rembg U²-Net，server 端 spawn .venv-rembg python subprocess）
       // 任何 workspace 里的图都能抠，输出 RGBA PNG 到 assets/generated/<name>.png。

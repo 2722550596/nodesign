@@ -32,7 +32,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
-import { guardProject, guardRunInProject } from './_guard.js';
+import { guardProject, guardRunInProject, modelUserFor } from './_guard.js';
 import {
   ensureProjectWorkspace,
   ensureSessionWorkspace,
@@ -175,18 +175,19 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 模型解析提前到配额之前（08-21，配额按是否免费分岔）：body.model > 会话覆盖 > 默认（defaultModelFor）
     const requestedModelEarly = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : null;
     const sessionModelEarly = await resolveSessionModel(getSessionMetaDir(project.id, sid));
+    const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）：admin 代看 basic 项目时老会话不许落回订阅行，否则 202 后 INIT_FAILED
     // 老用户没覆盖的老会话保持全局默认，不静默切 Ox；新会话/公开号 → defaultModelFor
-    const keepLegacyDefault = !isNewSession && !sessionModelEarly.override && hasSubscriptionAccess(req.user);
+    const keepLegacyDefault = !isNewSession && !sessionModelEarly.override && hasSubscriptionAccess(modelUser);
     const turnModel = requestedModelEarly || sessionModelEarly.override
-      || (keepLegacyDefault ? sessionModelEarly.model : defaultModelFor(req.user)) || sessionModelEarly.model;
+      || (keepLegacyDefault ? sessionModelEarly.model : defaultModelFor(modelUser)) || sessionModelEarly.model;
     // 解析出来的模型一律过白名单（不只 body.model）：旧覆盖/资格收回/无 select 裸名都在此拦（fable P0）
-    if (isModelLockedFor(req.user, turnModel)) {
+    if (isModelLockedFor(modelUser, turnModel)) {
       return res.status(403).json({
         error: `这个模型（${turnModel}）需要邀请码账号（订阅 Claude 额度）。换成免费模型继续，或找站主要邀请码`,
         code: 'MODEL_LOCKED', model: turnModel,
       });
     }
-    if (!allowedModelsFor(req.user).some((m) => m.id === turnModel)) {
+    if (!allowedModelsFor(modelUser).some((m) => m.id === turnModel)) {
       return res.status(403).json({ error: `这个会话指向的模型（${turnModel}）现在不可用，请在模型选择器里换一个`, code: 'MODEL_NOT_ALLOWED', model: turnModel });
     }
     if (requestedModelEarly && sessionModelEarly.override && crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly)) {
@@ -275,7 +276,7 @@ router.post('/:pid/turn', async (req, res, next) => {
       // 以前不校验，等于绕过 picker 白名单的后门 —— model-ingress 上线后表里
       // 有带真钥匙的 API 模型（gemini），裸 POST 就能替会话选中它烧上游的钱。
       // 校验用 allowedModelsFor（不含 locked）—— locked 的在上面已经 403 过了。
-      if (!allowedModelsFor(req.user).some((m) => m.id === requestedModel)) {
+      if (!allowedModelsFor(modelUserFor(req, project)).some((m) => m.id === requestedModel)) {
         return res.status(400).json({ error: `unknown model: ${requestedModel}`, code: 'UNKNOWN_MODEL' });
       }
       await applySessionModel(sid, getSessionMetaDir(project.id, sid), requestedModel, 'turn');
@@ -402,6 +403,7 @@ function startNewRunSession({ runId, sid, sessionRoot, blocks, eventBus, project
   runSession({
     sessionId: sid,
     projectId: project.id,
+    ownerId: project.ownerId,   // 订阅通路的资格断言在 session-loop 做 OAuth 决策那一行（auth/tier.js）
     sessionWorkspaceRoot: sessionRoot,
     eventBus,
     inputQueue,
@@ -616,10 +618,11 @@ router.post('/:pid/runs/:runId/model', async (req, res, next) => {
 
     // 08-21：热切路以前不过白名单（任意字符串直达 SDK）。与 PUT /sessions/:sid/model 同口径
     if (typeof model === 'string' && model.trim()) {
-      if (isModelLockedFor(req.user, model.trim())) {
+      const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）
+      if (isModelLockedFor(modelUser, model.trim())) {
         return res.status(403).json({ error: '这个模型需要邀请码账号（订阅 Claude 额度）', code: 'MODEL_LOCKED', model: model.trim() });
       }
-      if (!allowedModelsFor(req.user).some((m) => m.id === model.trim())) {
+      if (!allowedModelsFor(modelUser).some((m) => m.id === model.trim())) {
         return res.status(400).json({ error: `unknown model: ${model}`, code: 'UNKNOWN_MODEL' });
       }
       const sidForLane = getSessionIdByRunId(runId);

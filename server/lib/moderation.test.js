@@ -9,7 +9,7 @@ import { levelFor, moderationKnobFor } from './moderation.js';
 const SUB = 'claude-sonnet-5[1m]';
 const QWEN = 'qwen3.8-27b';
 const GEMINI = 'gemini-3.1-pro';
-const user = (o = {}) => ({ id: 'u1', role: 'user', lifetimeCostLimitUsd: null, moderationLevel: null, moderationLevelApi: null, ...o });
+const user = (o = {}) => ({ id: 'u1', role: 'user', plan: 'pro', lifetimeCostLimitUsd: null, moderationLevel: null, moderationLevelApi: null, ...o });
 
 describe('moderationKnobFor', () => {
   it('订阅行 / 未知名 / 空 → subscription；API 行 → api', () => {
@@ -40,10 +40,11 @@ describe('levelFor(user, appModel)', () => {
     expect(levelFor(u, SUB)).toBe('strict');
     expect(levelFor(u, QWEN)).toBe('off');
   });
-  it('默认档推导两边相同：admin off / 试用 strict / 正式 loose', () => {
+  it('默认档推导两边相同（按档位，auth/tier.js）：admin off / basic strict / pro loose；终身额度不参与', () => {
     for (const m of [SUB, QWEN]) {
       expect(levelFor(user({ role: 'admin' }), m)).toBe('off');
-      expect(levelFor(user({ lifetimeCostLimitUsd: 5 }), m)).toBe('strict');
+      expect(levelFor(user({ plan: 'basic' }), m)).toBe('strict');
+      expect(levelFor(user({ lifetimeCostLimitUsd: 5 }), m)).toBe('loose');   // 试用码 = pro 带花费上限，档位不变
       expect(levelFor(user(), m)).toBe('loose');
     }
   });

@@ -18,6 +18,7 @@
 
 import crypto from 'node:crypto';
 import db from '../engine/runs/store.js';
+import { PLANS } from './tier.js';
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -86,6 +87,15 @@ if (!userCols.has('allow_subscription')) {
   const n = db.prepare('UPDATE users SET allow_subscription = 1').run().changes;
   console.log(`[users-store] users.allow_subscription column added（存量 ${n} 个账号置 1）`);
 }
+// 08-21 晚 账号档位真相源（auth/tier.js）：users.plan ∈ 'pro' | 'basic'，admin 由 role 派生。
+// 取代 allow_subscription 那个单能力布尔 —— 订阅资格、生图、发布、外审默认档全从档位派生，
+// 消费方问能力不问字段。迁移口径一比一复制（allow_subscription=1 → pro，0 → basic），
+// 迁移当天谁的行为都不变。allow_subscription 列**退役**：不读不写，留着只是 SQLite 不爱删列。
+if (!userCols.has('plan')) {
+  db.exec("ALTER TABLE users ADD COLUMN plan TEXT NOT NULL DEFAULT 'basic'");
+  const n = db.prepare("UPDATE users SET plan = 'pro' WHERE allow_subscription = 1").run().changes;
+  console.log(`[users-store] users.plan column added（${n} 个账号按 allow_subscription 迁成 pro，其余 basic）`);
+}
 
 const inviteCols = new Set(db.prepare('PRAGMA table_info(invites)').all().map(c => c.name));
 if (!inviteCols.has('grant_lifetime_usd')) {
@@ -138,8 +148,8 @@ function rowToUser(row) {
     dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
     moderationLevel: row.moderation_level ?? null,    // 订阅模型的外审档；null = 跟随默认档
     moderationLevelApi: row.moderation_level_api ?? null,  // 本地 qwen / 中转站的外审档；null = 跟随默认档
-    allowLocalGen: !!row.local_gen,                   // 本地产线批准（admin 免批）
-    allowSubscription: !!row.allow_subscription,      // 订阅 Claude 资格（admin 免批；公开注册号 0）
+    allowLocalGen: !!row.local_gen,                   // 本地产线逐人批准（叠在档位之上；见 auth/tier.js localGenApproved）
+    plan: row.plan === 'pro' ? 'pro' : 'basic',       // 档位真相源：pro（邀请码）| basic（公开注册）；admin 看 role。能力问 auth/tier.js
     disabled: !!row.disabled,
     inviteCode: row.invite_code || null,
     createdAt: row.created_at,
@@ -169,10 +179,11 @@ export function getCredential(username) {
   return row ? { id: row.id, passwordHash: row.password_hash, disabled: !!row.disabled } : null;
 }
 
-export function createUser({ username, password, role = 'user', inviteCode = null, lifetimeCostLimitUsd = null, allowSubscription = false }) {
+export function createUser({ username, password, role = 'user', inviteCode = null, lifetimeCostLimitUsd = null, plan = 'basic' }) {
+  if (!PLANS.includes(plan)) throw new Error(`createUser: plan 需为 ${PLANS.join('/')}，收到 '${plan}'`);
   const id = newUserId();
-  db.prepare(`INSERT INTO users (id, username, password_hash, role, invite_code, lifetime_cost_limit_usd, allow_subscription) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, username, hashPassword(password), role, inviteCode, lifetimeCostLimitUsd, allowSubscription ? 1 : 0);
+  db.prepare(`INSERT INTO users (id, username, password_hash, role, invite_code, lifetime_cost_limit_usd, plan) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, username, hashPassword(password), role, inviteCode, lifetimeCostLimitUsd, plan);
   return getUserById(id);
 }
 
@@ -180,14 +191,17 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, moderationLevelApi, localGen, allowSubscription } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, moderationLevelApi, localGen, plan } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
   if (moderationLevel !== undefined) { sets.push('moderation_level = ?'); args.push(moderationLevel ?? null); }
   if (moderationLevelApi !== undefined) { sets.push('moderation_level_api = ?'); args.push(moderationLevelApi ?? null); }
   if (localGen !== undefined) { sets.push('local_gen = ?'); args.push(localGen ? 1 : 0); }
-  if (allowSubscription !== undefined) { sets.push('allow_subscription = ?'); args.push(allowSubscription ? 1 : 0); }
+  if (plan !== undefined) {
+    if (!PLANS.includes(plan)) throw new Error(`updateUser: plan 需为 ${PLANS.join('/')}，收到 '${plan}'`);
+    sets.push('plan = ?'); args.push(plan);
+  }
   if (dailyCostLimitUsd !== undefined) { sets.push('daily_cost_limit_usd = ?'); args.push(dailyCostLimitUsd ?? null); }
   if (lifetimeCostLimitUsd !== undefined) { sets.push('lifetime_cost_limit_usd = ?'); args.push(lifetimeCostLimitUsd ?? null); }
   if (dailyTokenLimit !== undefined) { sets.push('daily_token_limit = ?'); args.push(dailyTokenLimit ?? null); }
@@ -240,8 +254,9 @@ export function openRegistrationEnabled() {
 
 /**
  * 注册主流程（08-21 起两条路）：
- *   - 带邀请码：校验 + 消耗 + 建用户，**拿订阅资格**（allow_subscription=1）+ 码上的终身额度
- *   - 不带邀请码：开放注册开着才放行，建的是**只能用免费模型**的号（allow_subscription=0）
+ *   - 带邀请码：校验 + 消耗 + 建用户，落 **pro 档**（plan='pro'）+ 码上的终身额度（花费上限）
+ *   - 不带邀请码：开放注册开着才放行，落 **basic 档**（plan='basic'：只能用免费模型/搜索，
+ *     不开生图、不开发布；能力表在 auth/tier.js）
  * 单事务（used_count+1 与 INSERT 原子，两人同抢最后一个名额只有一个成）。失败抛带 .code 的 Error。
  */
 export const registerUser = db.transaction(({ username, password, inviteCode }) => {
@@ -257,7 +272,7 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
   const code = String(inviteCode || '').trim();
   if (!code) {
     if (!openRegistrationEnabled()) throw Object.assign(new Error('邀请码无效'), { code: 'BAD_INVITE' });
-    return createUser({ username, password, role: 'user', inviteCode: null, allowSubscription: false });
+    return createUser({ username, password, role: 'user', inviteCode: null, plan: 'basic' });
   }
   const inv = getInvite(code);
   if (!inv) throw Object.assign(new Error('邀请码无效'), { code: 'BAD_INVITE' });
@@ -270,8 +285,8 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
   db.prepare('UPDATE invites SET used_count = used_count + 1 WHERE code = ?').run(inv.code);
   return createUser({
     username, password, role: 'user', inviteCode: inv.code,
-    lifetimeCostLimitUsd: inv.grant_lifetime_usd ?? null,
-    allowSubscription: true,
+    lifetimeCostLimitUsd: inv.grant_lifetime_usd ?? null,   // 花费上限（试用码），不是档位
+    plan: 'pro',
   });
 });
 

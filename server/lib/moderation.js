@@ -35,6 +35,7 @@
 
 import db from '../engine/runs/store.js';
 import { updateUser } from '../auth/users-store.js';
+import { defaultModerationLevel } from '../auth/tier.js';
 import { resolveModelRoute } from '../engine/agent/model-context.js';
 
 db.exec(`
@@ -93,8 +94,9 @@ export function levelForKnob(user, knob) {
   if (!user) return 'off';
   const explicit = knob === 'api' ? user.moderationLevelApi : user.moderationLevel;
   if (LEVELS.includes(explicit)) return explicit;
-  if (user.role === 'admin') return 'off';
-  return user.lifetimeCostLimitUsd != null ? 'strict' : 'loose';   // 试用号严，正式号宽
+  // 默认档按账号档位（auth/tier.js 能力表）：admin off / pro loose / basic strict。
+  // 08-21 前这里猜的是 lifetimeCostLimitUsd（试用码 ⇒ strict），开放注册号该字段为 null 被当成正式号拿 loose。
+  return defaultModerationLevel(user);
 }
 
 export function shouldModerate(user, appModel = null) {

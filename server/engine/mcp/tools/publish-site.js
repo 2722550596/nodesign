@@ -3,7 +3,7 @@
  *
  * agent 版的「一键上线」：把任务里的目录站点发到 Cloudflare Pages 公网。
  * 与站点窗的上线按钮共用 lib/site-publish.js 的全部闸门 —— 额度和权限按
- * **项目 owner** 算（试用号不能发、正式号每人 2 个），不是"谁触发算谁"。
+ * **项目 owner** 算（basic 档不能发、pro 档每人 2 个；档位见 auth/tier.js），不是"谁触发算谁"。
  *
  * 发到公网是外发动作：工具描述里写死"用户明确要求才调"。
  */
@@ -51,8 +51,8 @@ now waits for it and tells you whether it is ready. Also note Cloudflare Pages
 serves the site's own 404.html for unknown paths — an HTTP 200 does NOT prove a
 path exists, check the content type and body.
 
-The user's publish quota and permissions apply (trial accounts cannot publish;
-regular accounts have a per-user site limit). If the tool returns a quota or
+The user's publish quota and permissions apply (basic-tier accounts cannot publish;
+pro accounts have a per-user site limit). If the tool returns a quota or
 permission error, relay it as-is — do not retry.`,
     {
       task: z.string().describe(

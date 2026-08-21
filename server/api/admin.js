@@ -17,6 +17,7 @@
 import express from 'express';
 import { adminGuard } from '../auth/middleware.js';
 import { createInvite, listInvites, getInvite, updateInvite, listUsers, getUserById, updateUser } from '../auth/users-store.js';
+import { tierOf, PLANS } from '../auth/tier.js';
 import { usedCostToday, usedCostTotal, usedTokensToday, limitFor } from '../lib/quota.js';
 import { listIssues, setIssueStatus, removeIssue, issueStats } from '../lib/issues-store.js';
 import { createNotice, listNotices, getActiveNotice, retireNotice, retireAllNotices } from '../lib/notice-store.js';
@@ -60,6 +61,7 @@ router.get('/users', (_req, res) => {
   const flags = flagCounts();                 // 内容外审标记（lib/moderation.js）
   const users = listUsers().map(u => ({
     ...u,
+    tier: tierOf(u),                          // admin | pro | basic（auth/tier.js 派生；前端章只认这个）
     costToday: usedCostToday(u.id),           // 美元，闸门真口径
     costTotal: usedCostTotal(u.id),           // 全史；试用号（lifetimeCostLimitUsd 非空）拿它对限额
     tokensToday: usedTokensToday(u.id),       // 参考
@@ -76,7 +78,7 @@ router.patch('/users/:id', (req, res) => {
   if (!user) return res.status(404).json({ error: 'user not found' });
   const patch = {};
   if (typeof req.body?.disabled === 'boolean') patch.disabled = req.body.disabled;
-  // 外审强度：null = 跟随默认档（试用 strict / 正式 loose / admin off）
+  // 外审强度：null = 跟随默认档（按档位：basic strict / pro loose / admin off，auth/tier.js）
   // 两个旋钮（08-20）：订阅模型 / 本地与中转（见 lib/moderation.js 文件头）
   for (const key of ['moderationLevel', 'moderationLevelApi']) {
     if (!(key in (req.body || {}))) continue;
@@ -89,8 +91,11 @@ router.patch('/users/:id', (req, res) => {
   if ('localGen' in (req.body || {})) {
     patch.localGen = !!req.body.localGen;
   }
-  if ('allowSubscription' in (req.body || {})) {
-    patch.allowSubscription = !!req.body.allowSubscription;   // 08-21：订阅 Claude 资格（老号迁移时全置 1，站主手动收）
+  if ('plan' in (req.body || {})) {
+    // 08-21 晚：档位真相源（auth/tier.js）。订阅/生图/发布/外审默认档全从它派生；admin 的 plan 不可改（role 派生）
+    if (user.role === 'admin') return res.status(400).json({ error: 'admin 的档位由 role 派生，不可改' });
+    if (!PLANS.includes(req.body.plan)) return res.status(400).json({ error: `plan 需为 ${PLANS.join('/')}` });
+    patch.plan = req.body.plan;
   }
   // 07-31 起限额单位是美元。老字段 dailyTokenLimit 仍收（存量数据能改回去），
   // 但它已经不参与闸门判断了 —— 真正生效的是 dailyCostLimitUsd。

@@ -14,6 +14,19 @@
 
 import { validateProjectId, getProject } from '../projects/store.js';
 import { getRun } from '../engine/runs/store.js';
+import { getUserById } from '../auth/users-store.js';
+
+/**
+ * 模型资格按谁算：**项目 owner**（08-21 晚）。非 admin 只能进自己的项目（guardProject），
+ * 所以对他们 owner 就是自己；差别只在 admin 代看别人的项目 —— 那时选模型/默认模型/锁行
+ * 都得按 owner 的档位（auth/tier.js），否则 admin 选了订阅 Claude 行、session-loop 按 owner
+ * 断言 OAuth 资格时再打回 INIT_FAILED。owner 查不到时退回请求者（不放大权限：admin 本就全开）。
+ */
+export function modelUserFor(req, project) {
+  const ownerId = project?.ownerId;
+  if (!ownerId || ownerId === req.user?.id) return req.user;
+  return getUserById(ownerId) || req.user;
+}
 
 /**
  * @returns {object|null} project；null 时响应已发出，caller 直接 return

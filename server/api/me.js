@@ -19,6 +19,7 @@ import { getArtifactCover } from '../lib/cover.js';
 import { getSharedDir } from '../projects/workspace.js';
 import { getProject } from '../projects/store.js';
 import { selectableModelsFor, defaultModelFor } from '../engine/agent/model-context.js';
+import { tierOf } from '../auth/tier.js';
 
 const router = express.Router();
 
@@ -72,6 +73,7 @@ router.get('/usage', (req, res) => {
     notice: getActiveNotice(),
     username: req.user.username,
     role: req.user.role,
+    tier: tierOf(req.user),                  // admin | pro | basic（auth/tier.js）：顶栏朱砂点 / pro 标签 / basic 解锁提示用
   });
 });
 

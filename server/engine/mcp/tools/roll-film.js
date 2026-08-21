@@ -19,6 +19,7 @@ import { z } from 'zod';
 import { Events } from '../../agent/events.js';
 import { getProject } from '../../../projects/store.js';
 import { getUserById } from '../../../auth/users-store.js';
+import { can, localGenApproved, DENIAL } from '../../../auth/tier.js';
 import { boxConfig, runBox, sshArgs, scpArgs, localBoxEnabled, BOX_OFF_MSG } from './h3box-ssh.js';
 
 const H3_REPO = process.env.NODESIGN_H3_REPO || '/home/wangang-dev/projects/minimax-h3-modal';
@@ -100,12 +101,9 @@ export async function rollFilm(
     if (!project) return asText('错误：项目不存在', true);
     const owner = project.ownerId ? getUserById(project.ownerId) : null;
     if (!owner) return asText('错误：找不到项目归属用户', true);
-    if (owner.lifetimeCostLimitUsd != null) {
-      return asText('试用账号不能使用自部署视频产线 —— 想用可以找站主换正式邀请码。原话转告用户，不要重试。', true);
-    }
-    if (owner.role !== 'admin' && !owner.allowLocalGen) {
-      return asText('本地视频产线是批准制 —— 该账号还没被站主开通。原话转告用户，不要重试。', true);
-    }
+    // 档位闸 + 逐人批准（auth/tier.js）：basic 档不开本地产线；pro 档还要被站主批过
+    if (!can(owner, 'localGen')) return asText(DENIAL.localGenTier, true);
+    if (!localGenApproved(owner)) return asText(DENIAL.localGenApproval, true);
 
     // 全批先验完再花钱：帧域 + 关键帧存在性 + 名字唯一
     const names = new Set();

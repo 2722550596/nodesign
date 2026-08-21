@@ -43,7 +43,7 @@ export function LimitEditor({ u, onDone, onCancel }) {
   const [level, setLevel] = useState(u.moderationLevel ?? '');
   const [levelApi, setLevelApi] = useState(u.moderationLevelApi ?? '');
   const [localGen, setLocalGen] = useState(u.allowLocalGen ? '1' : '0');
-  const [allowSub, setAllowSub] = useState(u.allowSubscription ? '1' : '0');   // 订阅 Claude 资格（08-21）
+  const [plan, setPlan] = useState(u.plan === 'pro' ? 'pro' : 'basic');   // 档位真相源（08-21 晚，auth/tier.js）：订阅/生图/发布/外审默认档全从它派生
   const [saving, setSaving] = useState(false);
   const isAdmin = u.role === 'admin';
 
@@ -62,7 +62,7 @@ export function LimitEditor({ u, onDone, onCancel }) {
       if (!isAdmin) {
         patch.dailyCostLimitUsd = num(daily); patch.lifetimeCostLimitUsd = num(lifetime);
         patch.localGen = localGen === '1';
-        patch.allowSubscription = allowSub === '1';
+        patch.plan = plan;
       }
       await Admin.patchUser(u.id, patch);
       showToast(`已更新 ${u.username}`, 'success');
@@ -99,9 +99,9 @@ export function LimitEditor({ u, onDone, onCancel }) {
         ]} />
       </Field>
       {!isAdmin && (
-        <Field label="订阅 Claude（Sonnet/Opus）">
-          <Segmented value={allowSub} onChange={setAllowSub} options={[
-            ['0', '免费档'], ['1', '开通'],
+        <Field label="账号档位（订阅 Claude / 生图 / 发布 / 外审默认档 全由它派生）">
+          <Segmented value={plan} onChange={setPlan} options={[
+            ['basic', 'basic（公开注册）'], ['pro', 'pro（邀请码）'],
           ]} />
         </Field>
       )}
@@ -113,9 +113,10 @@ export function LimitEditor({ u, onDone, onCancel }) {
         </Field>
       )}
       <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, flex: 1, minWidth: 220, lineHeight: 1.5 }}>
-        {!isAdmin && <>终身额度非空即生效且取代日限：对全史花费封顶、不刷新（试用口径）。<br /></>}
-        两个旋钮按模型通路各自生效（订阅模型跑在站主账号上，本地/中转只花电费或 API 钱），互不牵连。
-        外审默认档两边相同：试用号严格 / 正式号宽松 / admin 关闭。宽松只拦硬违规
+        {!isAdmin && <>终身额度非空即生效且取代日限：对全史花费封顶、不刷新（试用码口径）—— 它只是花费上限，不决定档位。<br /></>}
+        档位：basic = 免费模型 + 联网搜索（每天有上限），不开生图/发布/订阅 Claude；pro = 全开（本地产线另需下方单独批准）。<br />
+        两个外审旋钮按模型通路各自生效（订阅模型跑在站主账号上，本地/中转只花电费或 API 钱），互不牵连。
+        外审默认档两边相同：basic 严格 / pro 宽松 / admin 关闭。宽松只拦硬违规
         （未成年人色情、恐怖主义、武器毒品、犯罪教程、恶意软件、教唆自残、人肉），
         虚构里的暴力与成人向情节放行；严格再加色情、美化暴力、群体仇恨。
       </div>

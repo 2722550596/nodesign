@@ -25,7 +25,7 @@ import {
   query,
 } from '@anthropic-ai/claude-agent-sdk';
 import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
-import { guardProject } from './_guard.js';
+import { guardProject, modelUserFor } from './_guard.js';
 import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
 import {
   getProjectWorkspace,
@@ -214,9 +214,11 @@ router.get('/:pid/sessions/:sid/model', async (req, res, next) => {
     const { model, override, fallback } = await resolveSessionModel(
       getSessionMetaDir(req.params.pid, req.params.sid),
     );
-    // default 按用户算（08-21）：公开注册号的默认不是环境变量里的订阅行；没覆盖时按钮上显示的就是它
-    const userDefault = defaultModelFor(req.user) || fallback;
-    res.json({ model: override || userDefault, override, default: userDefault, options: selectableModelsFor(req.user) });
+    // default 按**项目 owner** 算（08-21；_guard.modelUserFor）：公开注册号的默认不是环境变量里的订阅行；
+    // 没覆盖时按钮上显示的就是它。admin 代看 basic 项目时清单也按 owner（订阅行 locked），跟 turn.js 一致
+    const modelUser = modelUserFor(req, project);
+    const userDefault = defaultModelFor(modelUser) || fallback;
+    res.json({ model: override || userDefault, override, default: userDefault, options: selectableModelsFor(modelUser) });
   } catch (err) { next(err); }
 });
 
@@ -232,10 +234,11 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     }
     // 只收清单里的 id：随手传个拼错的 model 进去，SDK 会自己 fallback、真实容量
     // 查不到，两处都不报错，事后只能从"怎么变慢了"倒推
-    if (raw !== null && isModelLockedFor(req.user, raw)) {
+    const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）
+    if (raw !== null && isModelLockedFor(modelUser, raw)) {
       return res.status(403).json({ error: '这个模型需要邀请码账号（订阅 Claude 额度）', code: 'MODEL_LOCKED', model: raw });
     }
-    if (typeof raw === 'string' && !allowedModelsFor(req.user).some((m) => m.id === raw)) {
+    if (typeof raw === 'string' && !allowedModelsFor(modelUser).some((m) => m.id === raw)) {
       return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
     }
 

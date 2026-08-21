@@ -170,7 +170,7 @@ export default function ComposerMenu({
  * 不需要第二个数字重复表达同一个意图。
  */
 function AccountUsage({ account }) {
-  const { pct = 0, capped = false, kind = 'daily', tokensToday = 0, usedToday = 0, used = null, limit = null, username, role, models = [] } = account;
+  const { pct = 0, capped = false, kind = 'daily', tokensToday = 0, usedToday = 0, used = null, limit = null, username, role, tier = null, models = [] } = account;
   // 试用号（简历码注册）走终身口径：额度行显示全史花费对终身上限，不写"今日"
   const trial = kind === 'lifetime';
   const gateUsed = used ?? usedToday;
@@ -211,7 +211,7 @@ function AccountUsage({ account }) {
       </div>
       {username && (
         <div style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>
-          {username}{role === 'admin' && username !== 'admin' ? ' · admin' : ''}
+          {username}{role === 'admin' && username !== 'admin' ? ' · admin' : tier === 'pro' ? ' · pro' : ''}
         </div>
       )}
     </div>

@@ -39,7 +39,7 @@ describe('派生导出（旧签名不变）', () => {
     expect(plain).not.toContain('gemini-3.7-flash');
     expect(plain).toContain('claude-sonnet-5[1m]');          // 无闸门的照常在
 
-    for (const u of [{ role: 'admin' }, { role: 'user', allowLocalGen: true }]) {
+    for (const u of [{ role: 'admin' }, { role: 'user', plan: 'pro', allowLocalGen: true }]) {
       const ids = selectableModelsFor(u).map((m) => m.id);
       expect(ids).toContain('gemini-3.7-flash');
       // 摘了牌的行，连 admin 也选不到（gate 是"谁能看见"，select 是"在不在牌上"）
@@ -52,8 +52,8 @@ describe('派生导出（旧签名不变）', () => {
   });
 
   it('订阅闸（08-21）：没订阅资格的账号看得见 Claude 行但 locked；邀请码号/admin 正常；默认模型=ox-alpha', () => {
-    const pub = { role: 'user', allowSubscription: false };
-    const sub = { role: 'user', allowSubscription: true };
+    const pub = { role: 'user', plan: 'basic' };
+    const sub = { role: 'user', plan: 'pro' };
     const pubSel = selectableModelsFor(pub);
     expect(pubSel.find((m) => m.id === 'claude-sonnet-5[1m]')?.locked).toBe(true);
     expect(pubSel.find((m) => m.id === 'ox-alpha')?.locked).toBeUndefined();

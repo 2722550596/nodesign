@@ -30,6 +30,7 @@ import sharp from 'sharp';
 import { Events } from '../../agent/events.js';
 import { getProject } from '../../../projects/store.js';
 import { getUserById } from '../../../auth/users-store.js';
+import { can, localGenApproved, DENIAL } from '../../../auth/tier.js';
 import {
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, enqueueWarm, warmSpecsFor,
 } from '../../../lib/image-variant.js';
@@ -185,12 +186,9 @@ export async function paintStills(
     const project = getProject(projectId);
     if (!project) return asText('错误：项目不存在', true);
     const owner = project.ownerId ? getUserById(project.ownerId) : null;
-    if (owner?.lifetimeCostLimitUsd != null) {
-      return asText('试用账号不能使用本地生图盒子 —— 改用 generate_image。', true);
-    }
-    if (owner?.role !== 'admin' && !owner?.allowLocalGen) {
-      return asText('本地生图盒子是批准制 —— 该账号还没被站主开通，改用 generate_image。', true);
-    }
+    // 档位闸 + 逐人批准（auth/tier.js）：basic 档不开任何生图；pro 档还要被站主批过本地产线
+    if (!can(owner, 'localGen')) return asText(DENIAL.localGenTier, true);
+    if (!localGenApproved(owner)) return asText(`${DENIAL.localGenApproval} 改用 generate_image。`, true);
 
     const outDir = path.join(sharedRoot || workspaceRoot, 'assets', 'generated');
     await fs.mkdir(outDir, { recursive: true });

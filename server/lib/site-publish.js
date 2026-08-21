@@ -18,6 +18,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
+import { can, DENIAL } from '../auth/tier.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getSharedDir } from '../projects/workspace.js';
@@ -339,9 +340,9 @@ export async function publishSite({ projectId, task, root, slug, user }) {
   if (slug != null && slug !== '' && !SLUG_RE.test(String(slug))) {
     throw fail(400, `slug 只能是小写字母开头的 3-32 位小写字母/数字/连字符，收到的是「${slug}」`);
   }
-  if (user?.lifetimeCostLimitUsd != null) {
-    throw fail(403, '试用账号不能发布站点到公网 —— 想发布可以找站主换正式邀请码');
-  }
+  // 档位闸（auth/tier.js）：basic 档（公开注册）不开发布；无主（user 为空）fail-closed。
+  // 08-21 前这里猜的是 lifetimeCostLimitUsd（试用码），开放注册号那字段是 null 被放行了。
+  if (!can(user, 'publishSite')) throw fail(403, DENIAL.publishSite);
 
   // ⭐ 2026-08-18 身份收敛：**先寻址，再定 key**。
   // 以前 key 直接用调用方传的 `task`，而 task 在扁平化之后既不参与寻址、也没有

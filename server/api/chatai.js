@@ -8,7 +8,7 @@
  * 任何文件，出格也只是文本；审查只存在于 agent 侧。但不过审 ≠ 不设闸，四道闸
  * 全钉在这一个口上：
  *
- *   1. 通路批准制 —— admin / allowLocalGen 获批账号（同 roll_film 那套）。
+ *   1. 通路批准制 —— auth/tier.js localGenApproved：档位有资格（admin/pro）且被站主逐人批过（同 roll_film 那套）；basic 档不开。
  *      中转站计量单位不明，问清之前不对全量内测用户开。
  *   2. 金额闸门 —— checkQuota 同一个 USD 池：每轮花费按我们的单价表记进
  *      runs + run_model_usage（skill_id='chatai'），跟 agent 会话共享日限/终身额度。
@@ -34,7 +34,7 @@ import {
 import { readLog, readSummary, SUMMARY_FILE } from '../engine/chatai/chat-log.js';
 import { modelCatalog } from '../engine/chatai/index.js';
 import { checkQuota, fmtUsd } from '../lib/quota.js';
-import { hasSubscriptionAccess } from '../engine/agent/model-context.js';
+import { can, localGenApproved } from '../auth/tier.js';
 import { makeRateWindow } from '../lib/rate-window.js';
 import {
   createRun, markRunStarted, markRunSucceeded, markRunFailed,
@@ -55,8 +55,8 @@ const rate = makeRateWindow({
 const playing = new Set();
 
 function gateApproved(req, res) {
-  const u = req.user;
-  if (u?.role === 'admin' || u?.allowLocalGen) return true;
+  // 档位 + 逐人批准（auth/tier.js localGenApproved）：basic 档不开，pro 档要被站主批过
+  if (localGenApproved(req.user)) return true;
   res.status(403).json({ error: '演出通路还没对这个账号开放，找管理员开通' });
   return false;
 }
@@ -243,8 +243,8 @@ router.post('/:pid/chatai/turn', async (req, res, next) => {
     }
 
     // 08-21 经营态：演出通路烧的是带钥匙的 API 钱，公开注册号（免费档）不开 —— 跟订阅 Claude 同一把资格
-    if (!hasSubscriptionAccess(req.user)) {
-      return res.status(403).json({ error: '演出模式目前只对邀请码账号开放；免费档先用设计会话，想开通找站主要邀请码', code: 'MODEL_LOCKED' });
+    if (!can(req.user, 'subscription')) {
+      return res.status(403).json({ error: '演出模式目前只对邀请码账号开放；basic 档先用设计会话，想开通找站主要邀请码', code: 'MODEL_LOCKED' });
     }
     const quota = checkQuota(req.user);
     if (!quota.ok) {
