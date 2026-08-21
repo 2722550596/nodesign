@@ -72,6 +72,13 @@ describe('派生导出（旧签名不变）', () => {
     expect(crossLaneSwitchReason('ox-alpha', 'claude-sonnet-5[1m]')).toMatch(/新开一个会话/);
     expect(crossLaneSwitchReason('claude-sonnet-5[1m]', 'ox-alpha')).toBeNull();
     expect(crossLaneSwitchReason('ox-alpha', 'ox-alpha')).toBeNull();
+    // 08-21 晚：高/深想两行同是 Ox，互切不算跨线；深想行也是免费行但不是默认
+    expect(crossLaneSwitchReason('ox-alpha', 'ox-alpha-max')).toBeNull();
+    expect(crossLaneSwitchReason('ox-alpha-max', 'claude-opus-5[1m]')).toMatch(/新开一个会话/);
+    expect(modelIsFree('ox-alpha-max')).toBe(true);
+    expect(pubSel.find((m) => m.id === 'ox-alpha-max')?.locked).toBeUndefined();
+    expect(resolveWireModel('ox-alpha-max')?.reasoningEffort).toBe('max');
+    expect(resolveWireModel('ox-alpha')?.reasoningEffort).toBe('high');
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {

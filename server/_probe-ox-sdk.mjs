@@ -8,7 +8,7 @@ import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import { getOrStartIngress, registerIngressSession, stopIngress } from './lib/model-ingress.js';
 import { resolveModelRoute, pickThinkingConfig } from './engine/agent/model-context.js';
 
-const APP = 'ox-alpha';
+const APP = process.argv[2] || 'ox-alpha';
 const route = resolveModelRoute(APP);
 const { baseUrl } = await getOrStartIngress();
 const SID = `oxprobe-${Date.now()}`;

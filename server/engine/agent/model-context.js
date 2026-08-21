@@ -129,6 +129,8 @@ const MODELS = Object.freeze([
   { id: 'claude-opus-4-6[1m]',   window: 1_000_000 },
   // 同上，给 ox-alpha 行做 spoof（08-21）
   { id: 'claude-opus-4-8[1m]',   window: 1_000_000 },
+  // 同上，七个里最后一个空着的，给 ox-alpha-max 行做 spoof（08-21 晚）
+  { id: 'claude-sonnet-4-5-20250929[1m]', window: 1_000_000 },
 
   // ── API 通路 ──
   // kimi-k2 已删：与 k2.6 共用 alias 是历史遗留，反查表容不下撞车，且 NoDesk
@@ -251,7 +253,7 @@ const MODELS = Object.freeze([
   {
     id: 'ox-alpha', window: 1_000_000,
     // 08-21 经营态拍板：全员默认模型（default: true），公开注册号只能用它这类免费行。
-    select: { label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用', default: true },
+    select: { label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用 · 思考档 high', default: true },
     api: {
       upstream: 'zen', wireModel: 'x-preview-f-free',
       sdkAlias: 'claude-opus-4-8[1m]',
@@ -264,6 +266,21 @@ const MODELS = Object.freeze([
       maxOutput: 131_072,
       // 不设 liftImages：openai-chat 转换层本身就把 tool_result 里的图搬进随后的 user 消息
       // （OpenAI 的 tool 角色消息装不下图，上游放了会挂死 120s）。同一件事只留一条路。
+      prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  },
+  {
+    // 同一个 Ox，思考档 max：真会话里 max 想过 28,930 字 / 4 分 20 秒才出首字，所以不做默认、
+    // 单独一行给愿意等的人。两行 protocol 同为 openai-chat，会话中途互切不触发 LANE_SWITCH
+    id: 'ox-alpha-max', window: 1_000_000,
+    select: { label: 'Ox Alpha · 深想（免费）', desc: '同一个 Ox · 思考档 max · 想得久，首字可能等几分钟 · 重活再开' },
+    api: {
+      upstream: 'zen', wireModel: 'x-preview-f-free',
+      sdkAlias: 'claude-sonnet-4-5-20250929[1m]',
+      fastModel: 'ox-alpha',          // helper/子代理用 high 档那行，不必跟着深想
+      thinking: 'strip',
+      reasoningEffort: 'max',
+      maxOutput: 131_072,
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
   },
