@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { UpstreamTruncation } from './upstream-truncation.js';
 import { truncationReason, truncationOfChatResponse, OpenAIToAnthropicSSE } from './openai-chat.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { resolveWireModel } from '../../engine/agent/model-context.js';
 
 describe('truncationReason —— 什么算「说到一半被掐」', () => {
   it('有正文 + 没有 finish_reason = 半截', () => {
@@ -146,5 +150,30 @@ describe('OpenAIToAnthropicSSE.verdict —— 哪一发该原地重发', () => {
     expect(text.match(/event: message_start/g)).toHaveLength(1);
     expect(text.match(/event: message_stop/g)).toHaveLength(1);
     expect(text).toMatch(/"index":0[\s\S]*"index":1/);   // 思考块 0，重发后的正文块 1
+  });
+});
+
+describe('就地重发额度按行配（08-21 深夜：这是模型体质问题，不是协议问题）', () => {
+  it('Ox 两个主行放宽到 6 次 / 360 秒 —— 而且是**经 resolveWireModel 到 forward** 的那条路（不是写了没人读）', () => {
+    for (const id of ['ox-alpha', 'ox-alpha-max']) {
+      const wire = resolveWireModel(id);
+      expect(wire.emptyRetries, `${id} 该放宽`).toBe(6);
+      expect(wire.retryBudgetMs, `${id} 该放宽`).toBe(360_000);
+    }
+  });
+
+  it('helper 不放宽（一句话的活，重发只是白占上游）；没配的行走全局默认', () => {
+    expect(resolveWireModel('ox-alpha-helper').emptyRetries).toBeNull();
+    expect(resolveWireModel('deepseek-v4-flash-vision').emptyRetries).toBeNull();
+    expect(resolveWireModel('deepseek-v4-flash-vision').retryBudgetMs).toBeNull();
+  });
+
+  it('⛔ 任何行的预算 + 单发最长挂起都必须留在 CLI 流式请求的 600 秒总超时之内（实测单发最长挂 185 秒）', () => {
+    const WORST_ATTEMPT_MS = 185_000;
+    const CLI_REQUEST_TIMEOUT_MS = 600_000;   // SDK 客户端 timeout 默认值（binary 实查）
+    const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '../../engine/agent/model-context.js'), 'utf8');
+    const budgets = [...src.matchAll(/retryBudgetMs:\s*([0-9_]+)/g)].map((m) => Number(m[1].replace(/_/g, '')));
+    expect(budgets.length, '表里该有配过预算的行').toBeGreaterThan(0);
+    for (const b of budgets) expect(b + WORST_ATTEMPT_MS).toBeLessThan(CLI_REQUEST_TIMEOUT_MS);
   });
 });

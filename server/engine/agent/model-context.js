@@ -265,6 +265,7 @@ const MODELS = Object.freeze([
     select: { label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用 · 思考档 high', default: true },
     api: {
       upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
+      emptyRetries: 6, retryBudgetMs: 360_000,   // 就地重发放宽，理由见 resolveWireModel 的 emptyRetries 注释
       sdkAlias: 'claude-opus-4-8[1m]',
       fastModel: 'ox-alpha-helper',   // helper 走独立行才分得出 role（会话 env SMALL_FAST_MODEL 发的是 app id）
       thinking: 'strip',              // 出口不带 Anthropic thinking 字段；转换层按 reasoningEffort 发 reasoning_effort
@@ -285,6 +286,7 @@ const MODELS = Object.freeze([
     select: { label: 'Ox Alpha · 深想（免费）', desc: '同一个 Ox · 思考档 max · 想得久，首字可能等几分钟 · 重活再开' },
     api: {
       upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
+      emptyRetries: 6, retryBudgetMs: 360_000,   // 就地重发放宽，理由见 resolveWireModel 的 emptyRetries 注释
       sdkAlias: 'claude-sonnet-4-5-20250929[1m]',
       fastModel: 'ox-alpha-helper',   // helper 一句话的活用 low 档那行，不跟着深想
       thinking: 'strip',
@@ -301,6 +303,8 @@ const MODELS = Object.freeze([
     id: 'ox-alpha-helper', window: 1_000_000, brand: 'opencode',
     api: {
       upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
+      // helper 不放宽重发（走全局默认 2 次）：它就是标题/分类器一句话的活，
+      // 接不上无所谓，多打几发只是白占上游并发。
       sdkAlias: 'claude-haiku-4-5',
       fastModel: 'ox-alpha-helper',
       thinking: 'strip',
@@ -533,6 +537,14 @@ export function resolveWireModel(bodyModel) {
     // 主 agent 想多少是主行的事，helper 一句话的活不该跟着 high/max 想几分钟
     helperReasoningEffort: row.api.helperReasoningEffort || (row.api.reasoningEffort ? 'low' : null),
     maxOutput: row.api.maxOutput || null,
+    // 「只想了没说」的就地重发额度（lib/ingress/forward-openai-chat.js）。**按行配**而不是全局：
+    // 这是某个模型的体质问题不是协议的 —— 08-21 深夜实测当天 4 次全在 Ox 两个主行上（它吐第一个字前
+    // 要想很久，深想档一发约 45 秒，Zen 掐流的窗口就长），所以那两行放宽到 6 次 / 360 秒，别的行走
+    // 全局默认（env / 2 次 / 120 秒）；helper 不放宽（一句话的活，重发只是白占上游）。
+    // ⭐天花板由 CLI 定：流式请求走 SDK 客户端 timeout 600 秒，而预算是**开新一发之前**查的 →
+    // 预算 + 单发最长挂起（实测 185 秒）必须 < 600 秒（配了断言，见 upstream-truncation.test.js）。
+    emptyRetries: Number.isFinite(row.api.emptyRetries) ? row.api.emptyRetries : null,
+    retryBudgetMs: Number.isFinite(row.api.retryBudgetMs) ? row.api.retryBudgetMs : null,
   };
 }
 

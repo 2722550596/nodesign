@@ -199,7 +199,8 @@ if (MODE === 'thinkrst') {
   ];
 } else if (MODE === 'thinkforever') {
   checks = [
-    ['重发额度用完就停：1 + 2 = 3 发', mainCalls === 3],
+    // Ox 主行放宽到 6 次重发（行内配置，见 model-context）→ 1 + 6 = 7 发
+    ['重发额度用完就停：1 + 6 = 7 发', mainCalls === 7],
     ['最终以错误收场（不是假装成功的空回合）', /没有输出任何正文|还没输出正文|空响应/.test(finalText) || runRow?.status === 'failed'],
     ['没有无限重发（回合 120s 内收场）', ms < 118000],
   ];

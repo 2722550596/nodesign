@@ -95,6 +95,10 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
   // ── 流式：一条 SSE，可能跨多发上游 ──
   if (wantStream) {
     const xf = new OpenAIToAnthropicSSE({ model: parsed.model, label });
+    // 每一发 pipe 进来都会在 xf 上挂一组监听器（drain/error/close/finish/unpipe）。放宽重发次数后
+    // 会顶到 Node 默认的 10 个上限刷 MaxListeners 告警 —— 收尾时 unpipe（见 attemptOver）是正解，
+    // 这条只是保险，别让告警刷屏盖住真问题。
+    xf.setMaxListeners(64);
     let pingTimer = null;
     let streaming = false;     // 已经 writeHead(200) 并把 xf 接到 res 上了吗
     let dead = false;          // 客户端走了（点了停止 / 关了页面）：立刻停手，别再打上游
@@ -164,12 +168,17 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
       xf.failWith(toAnthropicError(status, msg).error.message, reason);   // 走 failWith：置 done，_flush 不会再补第二条 error
       xf.end();
     };
+    // 额度按**行**取（model-context 的 api.emptyRetries / api.retryBudgetMs），行内没写才走全局默认。
+    // 这是模型体质问题不是协议问题：Ox 两个主行放宽到 6 次 / 360 秒，别的行照旧 2 次 / 120 秒。
+    const maxRetries = Number.isFinite(wire.emptyRetries) ? wire.emptyRetries : emptyRetryLimit();
+    const budgetMs = Number.isFinite(wire.retryBudgetMs) ? wire.retryBudgetMs : retryBudgetMs();
     /** 重发额度还够吗（次数 + 墙钟预算 + 客户端还在） */
-    const canRetry = () => !dead && (xf.attempts - 1) < emptyRetryLimit() && (Date.now() - t0) < retryBudgetMs();
+    const canRetry = () => !dead && (xf.attempts - 1) < maxRetries && (Date.now() - t0) < budgetMs;
 
     const runAttempt = () => {
       if (dead) return;
       let over = false;
+      let proxyRes = null;
       /**
        * 这一发结束（干净 EOF / RST / 连不上都走这里 —— res 的收尾权只有它一个主人）。
        * @param {string|null} why  非空 = 异常收场的原因
@@ -180,6 +189,7 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
         over = true;
         currentReq = null;
         if (why) console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} 这一发异常收场（${why}）`);
+        try { proxyRes?.unpipe?.(xf); } catch { /* 已经断了就算了 */ }   // 解开这一发的 pipe，别让监听器一发发攒着
         const verdict = xf.attemptEnd();
         if (verdict.kind !== 'empty') { finish(verdict); return; }
         if (!canRetry()) {
@@ -194,7 +204,8 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
         retryTimer = setTimeout(() => { retryTimer = null; if (dead) return; xf.beginAttempt(); runAttempt(); }, RETRY_DELAY_MS);
       };
 
-      currentReq = request((proxyRes) => {
+      currentReq = request((incoming) => {
+        proxyRes = incoming;
         const status = proxyRes.statusCode || 502;
         if (status >= 400) {
           const chunks = [];
