@@ -232,8 +232,11 @@ export default function TopBar({ breadcrumb = [], actions }) {
       padding: `0 ${narrow ? 12 : GAP.xl}px`,
       gap: narrow ? 10 : GAP.lg,
       // 窄屏：一行排不下让各自缩，**不许折行** —— 折了就把 56px 的条撑爆（手机上真见过）。
-      // 桌面本来就不会折，不加这两条，免得动到已经好好的东西
-      ...(narrow ? { whiteSpace: 'nowrap', overflow: 'hidden' } : null),
+      // 桌面本来就不会折，不加这条，免得动到已经好好的东西。
+      // ⛔ 这里**绝对不能加 overflow: hidden**：顶栏上所有下拉（头像菜单、导出、⋯）
+      //    都是绝对定位挂在这条 header 里的，一裁就整条看不见 —— 08-21 加过一次，
+      //    手机上表现为"点了没反应"。宽度靠 nowrap + 各自 flexShrink 兜，量过 320/393 都不溢出。
+      ...(narrow ? { whiteSpace: 'nowrap' } : null),
       boxShadow: '0 1px 4px rgba(93,74,44,0.10)',
       position: 'relative',
       zIndex: 3,

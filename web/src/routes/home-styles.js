@@ -283,9 +283,24 @@ export const CSS = `
   .ndd-pad textarea { min-height: 87px; }
   .ndd-head { margin: 32px 0 18px; }
   .ndd-head h2 { font-size: 18px; }
-  /* 手机上项目卡**单列**（08-21 用户拍板；中间试过双列，卡太小）。
-     平板不进这个断点，照旧 auto-fill。 */
-  .ndd-grid { grid-template-columns: 1fr; gap: 26px; }
+  /* 手机上项目卡**单列** + 换成橱窗那种平卡（08-21 用户拍板；中间试过双列，卡太小）。
+     平板不进这个断点，照旧是钉在板上的歪纸。
+     为什么手机上换掉"钉在板上"那套：歪斜 + 图钉是**一墙纸片**的语言，靠彼此的错落
+     成立；一列窄卡从上往下排的时候，歪斜只剩边缘毛糙，图钉变成每张卡头上一个黑点。
+     橱窗那张卡是**一件作品的展台**：封面比例统一、卡面平、字在下面 —— 一列排下来
+     每张一样高，一眼扫得完。 */
+  .ndd-grid { grid-template-columns: 1fr; gap: 22px; }
+  .ndd-card > a,
+  .ndd-card:hover > a { transform: none; padding: 0 0 14px; }
+  .ndd-card .pin { display: none; }
+  /* ⚠️ 封面的比例是 JS 按真实图算出来写在**内联样式**上的（Home.jsx 的 ThumbnailBox），
+     这里要覆盖它只能 !important —— 手机上统一 16:10，卡才会一样高。 */
+  .ndd-shot { aspect-ratio: 16 / 10 !important;
+    box-shadow: none; border-bottom: 1px solid rgba(43,33,23,0.09); }
+  .ndd-card .t { margin-top: 11px; padding: 0 14px; }
+  .ndd-card .m { padding: 0 14px; }
+  /* 「接着做」收进封面里，别挂在卡外面（窄屏上它会顶到屏幕边） */
+  .ndd-card .last { top: 8px; right: 8px; transform: rotate(2deg); }
   .ndd-rows a { padding: 12px 14px; }
   .ndd-sheet { padding: 26px 18px; }
   .ndd-sheet .chips { gap: 8px; }
