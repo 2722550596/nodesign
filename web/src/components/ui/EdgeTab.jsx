@@ -24,9 +24,8 @@ import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
  * （08-21 第一版是"便签黄 + 虚线撕口 + 毛边 + 竖排两个字"，真机上看下来两处都被否了：
  * 那么小一片纸堆三种花样读出来是脏；竖排文字在 15px 宽里挤成一条。现在只剩一枚记号。）
  *
- * 记号取的是**地线符号**的样子：一根柄 + 三道渐短的横杠，柄那头朝屏缘 ——
- * 指着"那一层是从这边出来的"。三个方向共用同一组 path，靠 rotate 转过去，
- * 不各画一份（各画一份必然有一版跟别的对不齐）。
+ * 记号就是**两条横杠**。三个方向共用同一枚、不跟着转 —— 它不指方向，只说"这儿能按"。
+ * （中间试过地线符号那样的"柄 + 三道渐短横杠"，用户看了真机之后要更简单的。）
  *
  * 它属于全站「纸的物理」：合着的时候贴在屏缘上（mid 影子，浮着），拉开之后**长在那张卡的
  * 内沿上**、影子压平成 far —— 位置由调用方给，用跟卡完全一样的曲线做位移，
@@ -57,29 +56,20 @@ function tabClip(edge) {
   return `polygon(0 0, 100% 0, 100% calc(100% - ${CUT}px), calc(100% - ${CUT + 1}px) 100%, ${CUT + 1}px 100%, 0 calc(100% - ${CUT}px))`;
 }
 
-/**
- * 记号：地线符号（一根柄 + 三道渐短的横杠）。柄那头永远朝着屏缘。
- * 标准朝向画成"朝下"（柄在上），另外两个方向靠 rotate —— SVG 里 y 朝下，
- * 正角度是顺时针，所以朝右的那枚要转 +90（朝下 → 朝左），贴右缘的舌头用它。
- */
-function TabMark({ edge }) {
-  const deg = edge === 'right' ? 90 : edge === 'left' ? -90 : 0;
+/** 记号：两条横杠。不随边缘旋转 —— 它不指方向，只是个"这儿能按"的把手。 */
+function TabMark() {
   return (
-    <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"
-      style={{ display: 'block', overflow: 'visible' }}>
-      <g transform={`rotate(${deg} 6 6)`} stroke={PAPER.ink2} strokeWidth="1.05"
-        strokeLinecap="round" fill="none">
-        <path d="M6 1.4V4.1" />
-        <path d="M1.6 4.9H10.4" />
-        <path d="M3.3 7.4H8.7" />
-        <path d="M5 9.9H7" />
+    <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true" style={{ display: 'block' }}>
+      <g stroke={PAPER.ink2} strokeWidth="1.15" strokeLinecap="round" fill="none">
+        <path d="M2 4.6H10" />
+        <path d="M2 7.4H10" />
       </g>
     </svg>
   );
 }
 
 /**
- * @param {'left'|'right'|'top'} edge 贴在哪条边（决定朝向与撕口那一侧）
+ * @param {'left'|'right'|'top'} edge 贴在哪条边（决定切角朝内的是哪一侧）
  * @param {boolean} open 那一层开着没有（只影响影子档：开着=躺在卡上，压平）
  * @param {object} style 位置与位移动画由调用方给 —— 贴纸只管自己长什么样
  */
@@ -119,7 +109,7 @@ export default function EdgeTab({ edge = 'right', open = false, title, onClick, 
           transition: 'box-shadow 200ms',
         }}
       >
-        <TabMark edge={edge} />
+        <TabMark />
       </span>
     </button>
   );

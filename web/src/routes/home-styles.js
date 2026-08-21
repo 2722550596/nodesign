@@ -283,14 +283,9 @@ export const CSS = `
   .ndd-pad textarea { min-height: 87px; }
   .ndd-head { margin: 32px 0 18px; }
   .ndd-head h2 { font-size: 18px; }
-  /* 项目卡改双列：单列一张卡就占掉 42% 屏高，翻两下才看见第三个项目。
-     卡上那点 ±1.1deg 的歪斜在 12px 沟里不会打架（量过）。 */
-  .ndd-grid { grid-template-columns: repeat(2, 1fr); gap: 22px 12px; }
-  .ndd-card > a { padding: 9px 8px 8px; }
-  .ndd-card .t { margin-top: 8px; font-size: 13.5px; }
-  .ndd-card .m { margin-top: 3px; font-size: 10.5px; gap: 6px; }
-  .ndd-card .last { top: -8px; right: -5px; padding: 1px 6px; font-size: 10.5px; }
-  .ndd-card .more { top: 6px; right: 6px; width: 22px; height: 22px; }
+  /* 手机上项目卡**单列**（08-21 用户拍板；中间试过双列，卡太小）。
+     平板不进这个断点，照旧 auto-fill。 */
+  .ndd-grid { grid-template-columns: 1fr; gap: 26px; }
   .ndd-rows a { padding: 12px 14px; }
   .ndd-sheet { padding: 26px 18px; }
   .ndd-sheet .chips { gap: 8px; }
