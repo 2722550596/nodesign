@@ -46,6 +46,12 @@ try {
         if (b.type === 'tool_use') console.log(`    tool_use → ${b.name}`);
       }
     } else if (m.type === 'result') resultMsg = m;
+    // 仪表 vs 真 usage：CLI 的 getContextUsage 在「最近一条有 usage」时用真数，否则退回按字符估算
+    // （图片 base64/4 → 一张 200KB 图估成 5 万 token）。这里每条 assistant 后读一次对照
+    if (m.type === 'assistant' && process.env.PROBE_CTX && typeof q.getContextUsage === 'function') {
+      try { const cu = await q.getContextUsage(); console.log(`  [ctx] meter total=${cu.totalTokens} toolResult=${cu.messageBreakdown?.toolResultTokens} | real usage=${JSON.stringify(m.message?.usage || {})} | pngB64=${pngB64.length}`); }
+      catch (e) { console.log('  [ctx] n/a', e.message); }
+    }
     else if (m.type === 'system' && m.subtype === 'init') console.log(`  [init] model=${m.model} tools=${(m.tools || []).length}`);
     else console.log(`  [${m.type}${m.subtype ? '/' + m.subtype : ''}]`);
   }

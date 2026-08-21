@@ -41,7 +41,9 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
       proxyRes.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} ${status} model=${wire.wireModel} body=${text.slice(0, 200).replace(/\s+/g, ' ')}`);
-        const errBody = JSON.stringify(toAnthropicError(status, text));
+        // 空体的 5xx（Zen 08-21 连回三个 503 body 空）：给用户一句能懂的话，别让 CLI 只显示 "HTTP 503"
+        const msg = text.trim() ? text : `${wire.upstream?.label || wire.upstreamId} 上游返回 ${status}（模型暂时不可用，稍后再发一次）`;
+        const errBody = JSON.stringify(toAnthropicError(status, msg));
         res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(errBody)) });
         res.end(errBody);
       });
