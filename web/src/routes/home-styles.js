@@ -279,9 +279,18 @@ export const CSS = `
   .ndd-pad .bar { flex-wrap: wrap; gap: 8px; padding-top: 12px; }
   .ndd-pad .go { padding: 8px 18px; letter-spacing: 0.22em; text-indent: 0.22em; }
   .ndd-pad .model > button { padding: 4px 8px !important; }
+  /* 便签本收成 3 格（29 的整数倍，别写别的数）—— 手机上 4 格加工具栏要吃掉三分之一屏 */
+  .ndd-pad textarea { min-height: 87px; }
   .ndd-head { margin: 32px 0 18px; }
   .ndd-head h2 { font-size: 18px; }
-  .ndd-grid { grid-template-columns: 1fr; gap: 26px; }
+  /* 项目卡改双列：单列一张卡就占掉 42% 屏高，翻两下才看见第三个项目。
+     卡上那点 ±1.1deg 的歪斜在 12px 沟里不会打架（量过）。 */
+  .ndd-grid { grid-template-columns: repeat(2, 1fr); gap: 22px 12px; }
+  .ndd-card > a { padding: 9px 8px 8px; }
+  .ndd-card .t { margin-top: 8px; font-size: 13.5px; }
+  .ndd-card .m { margin-top: 3px; font-size: 10.5px; gap: 6px; }
+  .ndd-card .last { top: -8px; right: -5px; padding: 1px 6px; font-size: 10.5px; }
+  .ndd-card .more { top: 6px; right: 6px; width: 22px; height: 22px; }
   .ndd-rows a { padding: 12px 14px; }
   .ndd-sheet { padding: 26px 18px; }
   .ndd-sheet .chips { gap: 8px; }

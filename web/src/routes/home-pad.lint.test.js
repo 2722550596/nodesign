@@ -64,6 +64,17 @@ describe('首页便签纸的横线与光标', () => {
     expect(capInJs, `home-quick-entry.jsx 里撑高的上限 ${capInJs} 跟 CSS 的 max-height ${maxH} 不一致`).toBe(maxH);
   });
 
+  it('**每一处** textarea 的 min/max-height 都是格高的整数倍（含 @media 里的覆盖）', () => {
+    const cell = num(ta, 'line-height');
+    // 窄屏那一段又写了一个 min-height —— 上面那条只看基础规则，看不见它
+    const found = [...CSS.matchAll(/\.ndd-pad textarea[^{]*\{([^}]*)\}/g)]
+      .flatMap((m) => [...m[1].replace(/\/\*[\s\S]*?\*\//g, ' ').matchAll(/(min|max)-height:\s*([\d.]+)px/g)])
+      .map((m) => ({ prop: `${m[1]}-height`, v: Number(m[2]) }));
+    expect(found.length, '一处都没找到？选择器改名了，这条 lint 要跟着改').toBeGreaterThanOrEqual(3);
+    const bad = found.filter((f) => f.v % cell !== 0);
+    expect(bad, `这些高度不是 ${cell} 的整数倍，最后一格会被切一半：${JSON.stringify(bad)}`).toEqual([]);
+  });
+
   it('红光标的高度两边对得上（判"滚出视野了没有"要用它）', () => {
     const cssH = num(rule('.ndd-pad .caret '), 'height');
     const jsH = Number(ENTRY.match(/const CARET_H = (\d+);/)?.[1]);

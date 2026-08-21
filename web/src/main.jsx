@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
 import AuthGate from './components/AuthGate.jsx';
 import './styles/globals.css';
+import { lockZoom } from './lib/lock-zoom.js';
 
 /**
  * 分片拉不动 → 自动刷一次（2026-08-03）
@@ -42,6 +43,9 @@ window.addEventListener('unhandledrejection', (e) => {
     if (recoverFromStaleChunk(msg)) e.preventDefault();
   }
 });
+
+// 手机上关掉整页缩放（桌面无效果，见 lib/lock-zoom.js）
+lockZoom();
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

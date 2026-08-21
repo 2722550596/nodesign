@@ -2,7 +2,7 @@ import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
 import { FONT_KAI } from '../../lib/theme.js';
 
 /**
- * 边缘贴纸 —— 贴在屏缘上的一小片便签，点一下把那一层拉出来（2026-08-21）。
+ * 边缘书签舌头 —— 贴在屏缘上的一小片纸，点一下把那一层拉出来（2026-08-21）。
  *
  * ## 为什么要有它
  *
@@ -21,9 +21,18 @@ import { FONT_KAI } from '../../lib/theme.js';
  *
  * ## 形
  *
- * 便签黄的一小片纸，靠内那条是虚线撕口 + 毛边（像是能撕下来的那种）。它属于全站「纸的
- * 物理」：合着的时候贴在屏缘上（mid 影子，浮着），拉开之后**长在那张卡的内沿上**、
- * 影子压平成 far —— 位置由调用方给，用跟卡完全一样的曲线做位移，看起来才是"被卡带出来的"。
+ * 本子侧面那种索引舌头：干净的一小片纸，朝内那两个角切掉一点。
+ * （08-21 第一版做的是"便签黄 + 虚线撕口 + 毛边"，用户看了真机之后否掉了 —— 那么小一片纸上
+ * 堆三种花样，读出来是脏不是精致。这一版只靠位置和两个字说话。）
+ *
+ * 它属于全站「纸的物理」：合着的时候贴在屏缘上（mid 影子，浮着），拉开之后**长在那张卡的
+ * 内沿上**、影子压平成 far —— 位置由调用方给，用跟卡完全一样的曲线做位移，
+ * 看起来才是"被卡带出来的"。
+ *
+ * ## 只在手指设备上出现
+ *
+ * 桌面维持 2026-08-13 定下的那条：「边缘不该有任何常驻遮挡」，鼠标贴边就能唤出来，
+ * 不需要一个常驻的小块。渲不渲染由调用方按 (pointer: coarse) 决定。
  */
 
 /** 命中区：短边 28、长边 76。可见区比它小一圈（见文件头规矩 1）。 */
@@ -31,40 +40,18 @@ export const TAB_HIT = 28;
 export const TAB_LEN = 76;
 const PAPER_W = 15;
 const PAPER_L = 66;
-/** 撕口锯齿的段数与齿深（px）。齿太深会像一串三角旗，2px 刚好读成"毛边"。 */
-const TEETH = 12;
-const TOOTH = 2;
+/** 朝内那两个角切掉多少（px）。切得比这深就不像纸了，像一块牌子。 */
+const CUT = 4;
 
-/**
- * 内缘那条毛边。外缘走完之后**从远端往回走**内缘 —— 方向反了多边形会自交，
- * 渲染出来是一堆碎三角。
- */
-function tearClip(edge) {
-  const d = (i) => (i % 2 ? TOOTH : 0);
-  const pts = [];
-  for (let i = 0; i <= TEETH; i++) {
-    const t = (i * 100) / TEETH;
-    if (edge === 'right') pts.push(`${d(i)}px ${100 - t}%`);
-    else if (edge === 'left') pts.push(`calc(100% - ${d(i)}px) ${100 - t}%`);
-    else pts.push(`${100 - t}% calc(100% - ${d(i)}px)`);
+/** 索引舌头的外形：外缘是直的（贴着屏缘），朝内那两个角各切一刀 */
+function tabClip(edge) {
+  if (edge === 'right') {
+    return `polygon(100% 0, 100% 100%, ${CUT}px 100%, 0 calc(100% - ${CUT + 1}px), 0 ${CUT + 1}px, ${CUT}px 0)`;
   }
-  const outer = edge === 'right' ? ['100% 0', '100% 100%']
-    : edge === 'left' ? ['0 0', '0 100%']
-      : ['0 0', '100% 0'];
-  return `polygon(${[...outer, ...pts].join(',')})`;
-}
-
-/** 虚线撕口：贴着内缘 4px 的一条 1px 虚线 */
-function perforation(edge) {
-  const vertical = edge !== 'top';
-  return {
-    backgroundImage: `repeating-linear-gradient(${vertical ? 180 : 90}deg,`
-      + ' rgba(43,33,23,0.30) 0 3px, transparent 3px 7px),'
-      + ` ${GRAIN}`,
-    backgroundSize: `${vertical ? '1px 100%' : '100% 1px'}, 140px 140px`,
-    backgroundPosition: `${edge === 'right' ? 'left 4px top' : edge === 'left' ? 'right 4px top' : 'left bottom 4px'}, 0 0`,
-    backgroundRepeat: 'no-repeat, repeat',
-  };
+  if (edge === 'left') {
+    return `polygon(0 0, 0 100%, calc(100% - ${CUT}px) 100%, 100% calc(100% - ${CUT + 1}px), 100% ${CUT + 1}px, calc(100% - ${CUT}px) 0)`;
+  }
+  return `polygon(0 0, 100% 0, 100% calc(100% - ${CUT}px), calc(100% - ${CUT + 1}px) 100%, ${CUT + 1}px 100%, 0 calc(100% - ${CUT}px))`;
 }
 
 /**
@@ -102,9 +89,9 @@ export default function EdgeTab({ edge = 'right', open = false, label, title, on
           width: vertical ? PAPER_W : PAPER_L,
           height: vertical ? PAPER_L : PAPER_W,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          backgroundColor: PAPER.sticky,
-          ...perforation(edge),
-          clipPath: tearClip(edge),
+          backgroundColor: PAPER.paper,
+          backgroundImage: GRAIN,
+          clipPath: tabClip(edge),
           boxShadow: open ? PAPER_SHADOW.far : PAPER_SHADOW.mid,
           transition: 'box-shadow 200ms',
         }}

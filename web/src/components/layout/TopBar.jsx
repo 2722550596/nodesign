@@ -231,9 +231,9 @@ export default function TopBar({ breadcrumb = [], actions }) {
       alignItems: 'center',
       padding: `0 ${narrow ? 12 : GAP.xl}px`,
       gap: narrow ? 10 : GAP.lg,
-      // 一行排不下让各自缩，**不许折行** —— 折了就把 56px 的条撑爆（手机上真见过）
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
+      // 窄屏：一行排不下让各自缩，**不许折行** —— 折了就把 56px 的条撑爆（手机上真见过）。
+      // 桌面本来就不会折，不加这两条，免得动到已经好好的东西
+      ...(narrow ? { whiteSpace: 'nowrap', overflow: 'hidden' } : null),
       boxShadow: '0 1px 4px rgba(93,74,44,0.10)',
       position: 'relative',
       zIndex: 3,
@@ -246,7 +246,7 @@ export default function TopBar({ breadcrumb = [], actions }) {
         fontFamily: FONT_KAI,
         fontSize: narrow ? 17 : 19,
         fontWeight: 700,
-        flexShrink: 0,
+        ...(narrow ? { flexShrink: 0 } : null),
         color: CHROME.ink,
         letterSpacing: '0.06em',
       }}>
@@ -274,7 +274,7 @@ export default function TopBar({ breadcrumb = [], actions }) {
       {/* Actions */}
       {/* 字体挂在容器上：各路由自己拼 actions，逐个去改必然漏一个。
           按钮只要不显式指定 fontFamily 就跟着顶栏走 */}
-      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 6 : GAP.md, fontFamily: FONT_KAI, flexShrink: 0 }}>{actions}</div>}
+      {actions && <div style={{ display: 'flex', alignItems: 'center', gap: narrow ? 6 : GAP.md, fontFamily: FONT_KAI, ...(narrow ? { flexShrink: 0 } : null) }}>{actions}</div>}
 
       {/* 用户角标（用户名 · 今日用量 · 登出）*/}
       <UserBadge />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { COLOR } from '../../lib/theme.js';
 import EdgeTab, { TAB_LEN } from '../ui/EdgeTab.jsx';
+import { useMedia, COARSE } from '../../lib/use-media.js';
 import TopBar from './TopBar.jsx';
 
 /**
@@ -64,6 +65,8 @@ export default function AppShell({
    * 600ms 的自动收计时器立刻把它收回去，点了等于没点。
    */
   const [stuck, setStuck] = useState(false);
+  /** 小舌头只长在手指设备上：桌面 hover 屏顶就出来，不需要一个常驻小块 */
+  const coarse = useMedia(COARSE);
   const hostRef = useRef(null);
   const timerRef = useRef(null);
 
@@ -155,7 +158,7 @@ export default function AppShell({
         }}>
           <TopBar breadcrumb={breadcrumb} actions={actions} />
         </div>
-        {!topSuppressed && (
+        {coarse && !topSuppressed && (
           <EdgeTab
             edge="top"
             open={shown}

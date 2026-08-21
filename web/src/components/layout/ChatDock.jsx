@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PAPER, PAPER_SHADOW, GRAIN } from '../../lib/paper.js';
 import EdgeTab, { TAB_LEN } from '../ui/EdgeTab.jsx';
-import { useViewportWidth } from '../../lib/use-media.js';
+import { useViewportWidth, useMedia, COARSE } from '../../lib/use-media.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -115,8 +115,13 @@ export default function ChatDock({
    */
   const summonedRef = useRef(false);
 
-  /** 视口宽：窄屏上卡要铺满（留出贴纸那一条），所以要的是真像素不是一个布尔 */
+  /** 视口宽：窄屏上卡要铺满（留出舌头那一条），所以要的是真像素不是一个布尔 */
   const vw = useViewportWidth();
+  /**
+   * 舌头**只长在手指设备上**。桌面维持 2026-08-13 那条：「边缘不该有任何常驻遮挡」，
+   * 鼠标贴边停 150ms 就能唤出来，不需要一个常驻的小块占着屏缘。
+   */
+  const coarse = useMedia(COARSE);
 
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(cfg)); } catch { /* 隐私模式 */ }
@@ -245,7 +250,7 @@ export default function ChatDock({
    * 真正落地的宽度：窄屏上按视口铺满，但**永远给贴纸留出 TAB_LANE 那一条**。
    * 用户拖出来的 cfg.width 原样存着（换回宽屏还是他调的那个数），这里只钳显示值。
    */
-  const width = Math.min(cfg.width, Math.max(240, vw - TAB_LANE));
+  const width = Math.min(cfg.width, Math.max(240, vw - (coarse ? TAB_LANE : EDGE_GAP * 2)));
 
   // 收起 ≠ 卸载：草稿在 ChatComposer 的本地 state 里（滚动位置、子代理 tab
   // 同理），卸载 = 用户没发出去的话被吹掉。所以关着的时候是**平移出屏**：
@@ -255,11 +260,11 @@ export default function ChatDock({
 
   return (
     <>
-      {/* 贴纸：合着时贴在屏缘，拉开后长在卡的内沿上。位移跟卡同一条曲线、同一个
+      {/* 舌头：合着时贴在屏缘，拉开后长在卡的内沿上。位移跟卡同一条曲线、同一个
           时长，看起来才是"被卡带出来的"而不是两个东西各走各的。
           它是卡的**兄弟节点**：卡关着的时候整张纸 pointerEvents:none 且平移出屏，
-          贴纸长在里面就跟着一起没了。 */}
-      <EdgeTab
+          舌头长在里面就跟着一起没了。 */}
+      {coarse && <EdgeTab
         edge={side}
         open={open}
         label="对话"
@@ -276,7 +281,7 @@ export default function ChatDock({
             : 'none',
           transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
         }}
-      />
+      />}
       <div
         ref={rootRef}
         onPointerEnter={clearHide}
