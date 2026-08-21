@@ -66,6 +66,10 @@ function pickPlaceholder() {
   return PLACEHOLDER_EXAMPLES[Math.floor(Math.random() * PLACEHOLDER_EXAMPLES.length)];
 }
 
+/** 红光标的高度。跟 home-styles.js 里 `.ndd-pad .caret` 的 height 是同一个数
+ *  （判"插入点滚出视野了没有"要用它）—— 两边对不上由 home-pad.lint.test.js 拦。 */
+const CARET_H = 20;
+
 export default function QuickEntry({ prefill }) {
   const navigate = useNavigate();
   const createProject = useProjectStore(s => s.createProject);
@@ -92,17 +96,42 @@ export default function QuickEntry({ prefill }) {
    * value 和 selectionStart 都在跳，自己画只会抖；而且 IME 的候选框本来就跟着
    * 原生 caret 走，抢过来反而错位。
    */
-  const [caretAt, setCaretAt] = useState({ x: 0, y: 0 });
+  const [caretAt, setCaretAt] = useState({ x: 0, y: 0, off: false });
   const [focused, setFocused] = useState(false);
   const [composing, setComposing] = useState(false);
   const syncCaret = useCallback(() => {
     const ta = ref.current;
     if (!ta) return;
     const { x, y } = measureCaret(ta);
-    setCaretAt(c => (c.x === x && c.y === y ? c : { x, y }));
+    // 插入点滚出视野时**不画**。这一层没有裁剪（也不能加 overflow:hidden —— 那会让
+    // .lines 变成滚动容器，浏览器有机会把整个输入框顶上去），红线画出去就是飘在
+    // 底下那排工具按钮上。粘一段长文再往回滚，一滚就能看见。（2026-08-21）
+    // clientHeight 为 0 = 还没排版（首帧 / 测试环境），这时候一律当"在视野里"，
+    // 否则空框那根邀请用的红线会在第一帧就被判出局
+    const h = ta.clientHeight;
+    const off = h > 0 && (y < 0 || y + CARET_H > h);
+    setCaretAt(c => (c.x === x && c.y === y && c.off === off ? c : { x, y, off }));
   }, []);
   // 文字变了要在 DOM 更新之后量（useLayoutEffect），不然量到的是上一帧
   useLayoutEffect(() => { syncCaret(); }, [text, syncCaret]);
+  /**
+   * 插入点变化的兜底同步（2026-08-21）。
+   *
+   * React 的 `onSelect` 有一处漏发：**点在已有选区里面**的时候。Chrome 是在 mouseup
+   * 的默认动作里才把选区折叠成插入点，而 React 恰好在 mouseup 的处理器里读选区 ——
+   * 读到的还是旧的那一片，跟上次一样于是不发事件。结果红线停在原地：用户点了空行，
+   * 却看不见光标（如果旧位置还滚出了视野，那就是一根都没有）。
+   * 实测三条路径都栽在这儿：拖选后点选区内 / Ctrl+A 后点 / 三击选行后点。
+   *
+   * `selectionchange` 是折叠**之后**才发的，补得上。onSelect 照旧留着当跨浏览器的
+   * 底线（Firefox 的 selectionchange 未必送到 document），两边调的是同一个幂等函数。
+   */
+  useEffect(() => {
+    if (!focused) return undefined;
+    const onSel = () => { if (document.activeElement === ref.current) syncCaret(); };
+    document.addEventListener('selectionchange', onSel);
+    return () => document.removeEventListener('selectionchange', onSel);
+  }, [focused, syncCaret]);
   // 视口宽度变了 → 折行位置变了 → 光标跟着变。框自己会变宽（width:100%），
   // 所以盯的是框不是 window
   useEffect(() => {
@@ -214,7 +243,16 @@ export default function QuickEntry({ prefill }) {
         onMouseDown={(e) => {
           if (e.target.closest('button, textarea, input, a')) return;
           e.preventDefault();
-          ref.current?.focus();
+          const ta = ref.current;
+          if (!ta) return;
+          ta.focus();
+          // 从纸面进来时把插入点滚回视野（2026-08-21）。focus() 本身不管滚动，而长文里
+          // 插入点很可能停在看不见的地方 —— 那就是"点了纸却没有光标"，用户会以为这纸点不动。
+          const h = ta.clientHeight;
+          if (!h) return;
+          const { y } = measureCaret(ta);
+          if (y < 0) ta.scrollTop += y;
+          else if (y + CARET_H > h) ta.scrollTop += y + CARET_H - h;
         }}
       >
         <Clip cx="14%" />
@@ -224,8 +262,9 @@ export default function QuickEntry({ prefill }) {
               原生 caret 全程让位（见 .ndd-pad textarea 的 caret-color），只有
               输入法组字那几百毫秒交还回去。
               placeholder 前面的 en space 是给它腾的位，第一个字落下来不横跳。
-              不聚焦又有字时不画 —— 那时候没人在编辑，一根闪的线是噪音。 */}
-          {!composing && (!text || focused) && (
+              不聚焦又有字时不画 —— 那时候没人在编辑，一根闪的线是噪音。
+              插入点滚出视野时也不画（caretAt.off），否则红线会飘到框外面去。 */}
+          {!composing && (!text || focused) && !caretAt.off && (
             <span className="caret" aria-hidden="true"
               style={{ transform: `translate(${caretAt.x}px, ${caretAt.y}px)` }} />
           )}

@@ -84,14 +84,9 @@ export const CSS = `
   background: rgba(168,54,43,0.34); }
 .ndd-pad .clip { position: absolute; top: -14px; left: var(--cx, 18%); width: 18px; z-index: 4;
   filter: drop-shadow(-1px 2px 2px rgba(43,33,23,0.3)); }
-/* 横线画在紧贴 textarea 的这一层上，不画在纸上：
-   纸的高度是内容加起来的，横线铺满纸就必然在上下两头各切出半格。
-   这一层的高度恒等于 textarea 的高度，而 textarea 去掉了 padding、行高锁死
-   29px，高度永远是 29 的整数倍 —— 于是每一格都是完整的，最后一格的线正好
-   落在这一层的下边缘。 */
-.ndd-pad .lines { position: relative;
-  background-image: linear-gradient(180deg, transparent 0 28px, rgba(43,33,23,0.17) 28px 29px);
-  background-size: 100% 29px; background-position: 0 0; }
+/* 这一层只剩一个用处：给红光标当定位参照（它的高度恒等于 textarea 的高度）。
+   横线本身 2026-08-21 挪到 textarea 自己身上去了，理由见下面那条注释。 */
+.ndd-pad .lines { position: relative; }
 /* 红笔光标（2026-08-15 加，2026-08-17 补上打字时那一半）。
 
    原生 caret 是 1px 的线，落在米色纸上根本找不着，而且没聚焦时压根没有 ——
@@ -110,19 +105,27 @@ export const CSS = `
   background: var(--red); pointer-events: none;
   animation: nddCaret 1.06s steps(1, end) infinite; }
 @keyframes nddCaret { 0%, 49.9% { opacity: 1; } 50%, 100% { opacity: 0; } }
-.ndd-pad textarea { width: 100%; background: transparent; border: none; outline: none;
+.ndd-pad textarea { width: 100%; background-color: transparent; border: none; outline: none;
   resize: none; display: block;
   font: 16.5px var(--kai); line-height: 29px; color: var(--ink);
   /* 原生 caret 全程让位给上面那根自己画的（唯一例外是组字期间） */
   caret-color: transparent;
-  padding: 0; max-height: 290px; min-height: 116px; overflow: auto; }
+  padding: 0; max-height: 290px; min-height: 116px; overflow: auto;
+  /* 横线画在 textarea **自己身上**，靠 background-attachment: local 跟着内容一起滚
+     （2026-08-21）。原来画在外层 .lines 上：那一层不滚，于是粘一段长文之后随便滚一下
+     滚动量就不是 29 的整数倍，横线当场横穿字面 —— 用户报的"横线浮在文字上方"就是它。
+     ⚠️ 上面必须写 background-color 而不是 background 简写：简写会把 attachment 重置回
+     scroll，横线又不跟着滚了，而且这种回退不报错、只在滚起来之后才看得见。
+     ⚠️ 29px 这个格高跟 line-height 是同一个数，改一个必须改另一个。 */
+  background-image: linear-gradient(180deg, transparent 0 28px, rgba(43,33,23,0.17) 28px 29px);
+  background-size: 100% 29px; background-position: 0 0; background-attachment: local; }
 .ndd-pad textarea.composing { caret-color: var(--red); }
 .ndd-pad textarea::placeholder { color: var(--pencil); }
 /* 光标之外还得有个状态信号：整张纸没有边框，光靠一根闪的竖线判断"进没进输入态"
    太吃力。聚焦时纸抬起来一档、横线加深、红边线变实 —— 三样一起动，看不错。 */
 .ndd-pad:focus-within { box-shadow: ${PAPER_SHADOW.near}; }
 .ndd-pad:focus-within::before { background: rgba(168,54,43,0.6); }
-.ndd-pad:focus-within .lines {
+.ndd-pad:focus-within textarea {
   background-image: linear-gradient(180deg, transparent 0 28px, rgba(43,33,23,0.24) 28px 29px); }
 .ndd-pad .bar { display: flex; align-items: center; gap: 10px; padding-top: 14px; }
 .ndd-pad .tip { font: 11px var(--kai); color: var(--pencil); letter-spacing: 0.02em; }
