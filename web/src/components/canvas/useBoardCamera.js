@@ -4,6 +4,7 @@ import {
   constrainCamera, zoomAtScreenPoint, stepZoom, fitBox, boxExpand, screenToWorld,
 } from '../../lib/board-camera.js';
 import { onBlankCanvas, onChrome } from '../../lib/board-hit.js';
+import { useTouchGestures } from './useTouchGestures.js';
 
 /**
  * useBoardCamera —— 画布相机的状态、输入与动画（2026-08-07）
@@ -18,6 +19,9 @@ import { onBlankCanvas, onChrome } from '../../lib/board-hit.js';
  * - 拖空白背景            → 平移
  * - 中键拖                → 平移（任何位置，包括压在卡片上）
  * - 按住空格拖            → 平移（任何位置；"画面塞满找不到空地"时用这条）
+ * - **双指捏合 / 双指拖** → 缩放 / 平移（触屏，2026-08-21；实现在 useTouchGestures.js）
+ *   上面五条在手机上一条都用不上（没滚轮、没中键、没键盘），双指那两条是手指版的
+ *   "空格 + 拖"。
  *
  * **抓手工具 2026-08-17 退役**（2026-08-08 加的）。当初加它是因为「平移」只有
  * 空白背景这一个常驻入口，画布越满空白越少；工具化还能把"我在挪镜头还是挪
@@ -65,6 +69,12 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true }) {
    * ref 而不是 state：shouldPan 要在 pointerdown 那一刻读最新值，不进依赖数组。
    */
   const spaceRef = useRef(false);
+  /**
+   * 手指按在屏幕上（2026-08-21）。并进抓手态一起看 —— 触屏上"拖卡"这条路整条撤掉：
+   * 手指按在哪儿都是推画面。拖卡 / 工作区手势 / 相机三方本来就都在问 isHandMode()，
+   * 所以这一个开关就够，不用各改各的。
+   */
+  const touchRef = useRef(false);
   // 键盘 effect 挂在最上面、动作定义在下面，用 ref 转一手：
   // 直接依赖那几个 useCallback 会让监听每次重挂，按键在重挂的缝里会丢。
   const zoomToFitRef = useRef(null);
@@ -102,10 +112,15 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true }) {
     setCam(prev => constrainCamera(next, prev, constrainOpts()));
   }, [constrainOpts]);
 
+
   const noteTakeover = useCallback(() => {
     holdUntilRef.current = Date.now() + TAKEOVER_MS;
     if (flyRef.current) { cancelAnimationFrame(flyRef.current.raf); flyRef.current = null; }
   }, []);
+  // 触屏手势（双指捏合缩放 / 双指平移）。挂在捕获阶段的原生监听上 —— 理由见那个文件。
+  // ⚠️ 这四个参数必须都是**稳定引用**：每渲染换一个新函数，原生监听就每渲染重挂一次，
+  // 手势状态（那张手指表）跟着被清空，捏到一半就断。
+  useTouchGestures({ paneRef, camRef, apply, noteTakeover, handRef: touchRef, enabled });
 
   // ── 视口尺寸 ──
   useEffect(() => {
@@ -202,9 +217,9 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true }) {
     if (!enabled) return false;
     if (e.button === 1) return true;                    // 中键：任何位置
     if (e.button !== 0) return false;
-    // 空格抓手：任何位置都平移，**但仍要躲开界面控件** —— 按着空格点工具栏，
+    // 空格抓手 / 手指：任何位置都平移，**但仍要躲开界面控件** —— 按着空格点工具栏，
     // 按钮会被当成画布抢走指针捕获（board-hit.js 顶上记的第 1 个坑）。
-    if (spaceRef.current) return !onChrome(e);
+    if (spaceRef.current || touchRef.current) return !onChrome(e);
     return onBlankCanvas(e);
   }, [enabled]);
 
@@ -348,7 +363,8 @@ export function useBoardCamera({ paneRef, contentBox, enabled = true }) {
 
   return {
     cam, camRef, viewport, panning, bounds,
-    isHandMode: () => spaceRef.current,   // 按住空格中（抓手工具 08-17 已退役）
+    // 按住空格中，或者手指正按在屏幕上（抓手工具 08-17 已退役）
+    isHandMode: () => spaceRef.current || touchRef.current,
     noteTakeover,
     onPointerDown, onPointerMove, onPointerUp,
     flyTo, flyToBox, flyToPoint, jumpToPoint, zoomToFit, zoomBy, zoomTo, toWorld,

@@ -267,7 +267,6 @@ export default function ChatDock({
       {coarse && <EdgeTab
         edge={side}
         open={open}
-        label="对话"
         title={open ? '收起对话' : '打开对话'}
         onClick={() => {
           clearHide();

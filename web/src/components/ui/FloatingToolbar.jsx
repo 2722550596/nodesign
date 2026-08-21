@@ -4,6 +4,7 @@ import { INK_SURFACE } from '../../lib/paper.js';
 import ToolbarButton from './ToolbarButton.jsx';
 import { FONT_SANS, FONT_SIZE, GAP } from '../../lib/theme.js';
 import { usePanelState } from '../layout/PanelManager.jsx';
+import { useMedia, NARROW, COARSE } from '../../lib/use-media.js';
 
 /**
  * FloatingToolbar —— 浮在内容之上、可拖动的工具条（2026-08-07）
@@ -192,7 +193,15 @@ export default function FloatingToolbar({
       return next;
     });
   }, [id]);
-  const effAutoHide = autoHide && !pinned;
+  /**
+   * 手机/平板上**不自动收**（2026-08-21）。自动收的唯一唤回路是"指针贴近底缘
+   * 96px 那条带"，而触屏根本没有 hover：手指不按下去就没有 pointermove，
+   * 于是工具栏在 1.8 秒之后消失、再也叫不回来 —— 等于工具全没了。
+   */
+  const coarse = useMedia(COARSE);
+  /** 窄屏（手机）：一行 420px 排不进 393 的屏，右边直接被切掉。平板宽度够，不用管。 */
+  const narrow = useMedia(NARROW);
+  const effAutoHide = autoHide && !pinned && !coarse;
 
   const [revealed, setRevealed] = useState(!effAutoHide);
   const hoverRef = useRef(false);
@@ -342,6 +351,9 @@ export default function FloatingToolbar({
         position: 'absolute', left: pos.x, top: pos.y,
         zIndex: zIndex ?? (panel?.zIndex || 400),
         display: 'flex', flexDirection: stack, alignItems: 'center', gap: GAP.xs,
+        // 窄屏折行：**不给横向滚动**（整站在手机上只该上下滑），排不下就换一行。
+        // 按钮一律不缩 —— 触屏上 30px 已经是下限，再小就点不准了。
+        ...(narrow ? { flexWrap: 'wrap', justifyContent: 'center', maxWidth: `calc(100% - ${DOCK_INSET * 2}px)` } : null),
         cursor: dock ? 'default' : (dragging ? 'grabbing' : 'grab'),
         userSelect: 'none', touchAction: 'none',
         // 拖拽中略透，让底下的内容还看得见落点
@@ -362,7 +374,8 @@ export default function FloatingToolbar({
       ))}
       {/* 图钉：跟其他组同一种墨面容器，永远排在最末 —— 它管的是这条工具栏
           自己，不跟内容组抢位置 */}
-      {pinnable && autoHide && (
+      {/* 触屏上本来就不自动收，图钉没有意义，还白占一格（手机上格外贵） */}
+      {pinnable && autoHide && !coarse && (
         <ToolGroup group={{
           id: '_pin',
           variant: 'plain',

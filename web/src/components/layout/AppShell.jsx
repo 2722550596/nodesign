@@ -162,7 +162,6 @@ export default function AppShell({
           <EdgeTab
             edge="top"
             open={shown}
-            label="菜单"
             title={shown ? '收起顶栏' : '打开顶栏'}
             onClick={() => setStuck(s => !s)}
             style={{ top: '100%', left: '50%', marginLeft: -TAB_LEN / 2, pointerEvents: 'auto' }}
