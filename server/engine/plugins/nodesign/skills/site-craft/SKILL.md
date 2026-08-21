@@ -221,8 +221,9 @@ CDN 库随便拉（gsap / lenis / three / alpine / htmx），但动效是调味�
 ## 工程形态
 
 **站点住自己的文件夹**（按站名起，别把 index.html 直接放工作区根 ——
-根是整个项目的桌面）。夹里一份 `index.html` + 一份 `style.css` 起步，
-多页同目录加 `.html`。简单站点这样就够，别为它们引工程。构建道（React /
+根是整个项目的桌面）。夹里**唯一硬要求是产物根上有 `index.html`**；多页同目录
+加 `.html`，样式怎么组织你定（手写道常见全站一份 `style.css`，构建道是 `dist/`
+里的分片）。简单站点这样就够，别为它们引工程。构建道（React /
 打包器 / 生成脚本）什么时候值得上、怎么配才不跟平台打架（`base: './'`、
 页=html 入口、build 节奏），配方在 `patterns/build-lane.md` —— **动手搭
 package.json 之前先 Read 它**。硬约束不变：**产物必须是纯静态文件**
@@ -307,8 +308,8 @@ Read `patterns/page-transitions.md` —— **动手写第一个转场之前先�
 
 ---
 
-> 起手：没有模板，`index.html` + `style.css` 自己从骨架和风格名写起（模板会把
-> 每个站同化成同一副样子，08-21 撤了）。两条让预览出错的硬规则 —— `<meta name="viewport">`
+> 起手：没有模板，从骨架和风格名自己写起（模板会把每个站同化成同一副样子，
+> 08-21 撤了）。硬要求只有产物根上的 `index.html`；样式文件的拆法和名字按站定。两条让预览出错的硬规则 —— `<meta name="viewport">`
 > 必须有、站内链接一律相对路径 —— 系统在你每次写站点页后自动 lint，违反会提醒。
 > 目录约定、产物根、`_drafts/`、导出交付在站点技术参考（首次写站点 html 时注入）。
 > 抠图叠层配方按需 Read 本 skill 目录下的 `patterns/cutout-collage.md`。

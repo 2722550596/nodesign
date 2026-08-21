@@ -54,9 +54,10 @@ const RASTER_SCALE = 0.6;
 export function makeScreenshotCanvasTool({ workspaceRoot, projectId, sessionId, ctx }) {
   return tool(
     'screenshot_canvas',
-    `Take a screenshot of the artifact you are working on — a site page
-(<site>/index.html and its other pages, with their style.css), a deck (.html),
-or a .docx (rendered to page images) — and return it as an image. Use this to
+    `Take a screenshot of the artifact you are working on — a site page (any
+.html inside a site folder; the folder's artifact root is whatever holds its
+index.html — hand-written pages or a build output dir), a deck (.html), or a
+.docx (rendered to page images) — and return it as an image. Use this to
 visually inspect what you wrote: spacing, contrast, hierarchy, layout, alignment.
 
 The tool detects the artifact kind from the path. Each call is a FRESH load
