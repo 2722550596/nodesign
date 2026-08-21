@@ -112,30 +112,43 @@ export const UPSTREAMS = Object.freeze({
  */
 import { can, localGenApproved, DENIAL } from '../../auth/tier.js';
 
+/**
+ * 模型出自谁家 —— 前端据此画身份标（picker 图标 / 画布精灵 / 舞台徽记）。
+ *
+ * **声明，不推断**：不许前端按 id 前缀猜（`/^claude-/` 那种），下一个模型名一变就全错。
+ * 每行必须写 brand，加载时断言（下面的派生循环），拼错当场炸。
+ * 新增一家 = 这里加一个名字 + 前端 ui/ModelMark.jsx 加一枚标；两边由
+ * web/src/components/ui/ModelMark.lint.test.js 对账（它直接读本文件的 BRANDS）。
+ *
+ * 口径（08-21 用户拍板）：有自己标的用自己的（deepseek 蓝鲸、gemini 星），
+ * **隐身/神秘的免费行一律用供应商 OpenCode 的方块标**（Ox 这类不公开身份的模型）。
+ */
+export const BRANDS = Object.freeze(['claude', 'deepseek', 'opencode', 'gemini', 'qwen']);
+
 const MODELS = Object.freeze([
   // ── 订阅通路（Claude 真名，零注入）──
   {
-    id: 'claude-sonnet-5[1m]', window: 1_000_000,
+    id: 'claude-sonnet-5[1m]', window: 1_000_000, brand: 'claude',
     select: { label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用', gate: 'subscription' },
   },
   {
-    id: 'claude-opus-5[1m]', window: 1_000_000,
+    id: 'claude-opus-5[1m]', window: 1_000_000, brand: 'claude',
     select: { label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开', gate: 'subscription' },
   },
-  { id: 'claude-sonnet-5',       window: 200_000 },
-  { id: 'claude-opus-5',         window: 200_000 },
-  { id: 'claude-opus-4-7[1m]',   window: 1_000_000 },
-  { id: 'claude-sonnet-4-6[1m]', window: 1_000_000 },
-  { id: 'claude-opus-4-7',       window: 200_000 },
-  { id: 'claude-sonnet-4-6',     window: 200_000 },
-  { id: 'claude-haiku-4-5',      window: 200_000 },
+  { id: 'claude-sonnet-5',       window: 200_000, brand: 'claude' },
+  { id: 'claude-opus-5',         window: 200_000, brand: 'claude' },
+  { id: 'claude-opus-4-7[1m]',   window: 1_000_000, brand: 'claude' },
+  { id: 'claude-sonnet-4-6[1m]', window: 1_000_000, brand: 'claude' },
+  { id: 'claude-opus-4-7',       window: 200_000, brand: 'claude' },
+  { id: 'claude-sonnet-4-6',     window: 200_000, brand: 'claude' },
+  { id: 'claude-haiku-4-5',      window: 200_000, brand: 'claude' },
   // 只当 alias 用的订阅名（08-20）：SDK 二进制认识的 1M 名里还空着的一个（strings 扫过：
   // opus-4-6/4-7/4-8/5、sonnet-4-5-20250929/4-6/5 七个 [1m]），给 gemini-3.7-flash 行做 spoof。
-  { id: 'claude-opus-4-6[1m]',   window: 1_000_000 },
+  { id: 'claude-opus-4-6[1m]',   window: 1_000_000, brand: 'claude' },
   // 同上，给 ox-alpha 行做 spoof（08-21）
-  { id: 'claude-opus-4-8[1m]',   window: 1_000_000 },
+  { id: 'claude-opus-4-8[1m]',   window: 1_000_000, brand: 'claude' },
   // 同上，七个里最后一个空着的，给 ox-alpha-max 行做 spoof（08-21 晚）
-  { id: 'claude-sonnet-4-5-20250929[1m]', window: 1_000_000 },
+  { id: 'claude-sonnet-4-5-20250929[1m]', window: 1_000_000, brand: 'claude' },
   // alias 池现状（08-21 深夜清槽后）：opus-4-6[1m]→gemini-3.7-flash、opus-4-7[1m]→deepseek-v4-flash-vision、opus-4-8[1m]→ox-alpha、
   // opus-5[1m]→qwen、sonnet-4-5-20250929[1m]→ox-alpha-max、haiku-4-5→ox-alpha-helper；**sonnet-4-6[1m] 空着备用**；sonnet-5[1m] 是订阅默认行不许被路由
 
@@ -155,7 +168,7 @@ const MODELS = Object.freeze([
     // 在 auto-compact 之前先撞上游 400。08-20 起盒子是 RTX 5090 32G：OrcaRouter Q5_K_M +
     // 视觉 + MTP 投机 + 1 槽 × 131072，再留 ~5G 给同卡的 ComfyUI（noobai）。换回 96G 盒子
     // 就是 262_144 × 3 槽。盒上配置住 ops/qwen-box/（serve-prod.sh），两边要一起改。
-    id: 'qwen3.8-27b', window: 131_072,
+    id: 'qwen3.8-27b', window: 131_072, brand: 'qwen',
     // ⏸ **08-20 用户拍板从 picker 摘牌**（盒子按小时租，已关机）。删掉 `select` 一处，
     // 三个消费方一起拒：GET /api/me/models 的清单、PUT /model 的校验、turn.js 的
     // body.model 校验（都走 selectableModelsFor —— 所以摘牌不会留后门）。
@@ -200,7 +213,7 @@ const MODELS = Object.freeze([
   // gemini-3.1-pro 行（中转-gemini-3.1-pro-preview，alias claude-sonnet-4-6[1m]）08-21 深夜清掉：退了 picker 后只做体检对照，
   // 对照改用 3.7 Flash 行；sonnet-4-6[1m] 这个 alias 名腾出来备用。中转站 thinking 参数零效果的结论见 08-20 记录。
   {
-    id: 'gemini-3.7-flash', window: 1_000_000,
+    id: 'gemini-3.7-flash', window: 1_000_000, brand: 'gemini',
     // 08-20 用户拍板：要 3.7 Flash，先用中转站 + lift shim 顶着。它只在中转站的「反重力-」
     // 通道上有（转卖 Antigravity OAuth 额度），今天体检 6/9：文本/视觉/非流式 tool_use/
     // prompt cache 真命中（cache_read 8162）都好；流式 stop_reason 恒=end_turn（假上游实验证明
@@ -225,7 +238,7 @@ const MODELS = Object.freeze([
   // （context.applyUpstreamBilling）。探针：文本/图(webp)/工具/流式全通，首字 ~450ms，reasoning_effort 收；DeepSeek ZDR。先 gate localGen 试跑，过关改 'subscription'
   {
     // 真窗口 1M；用户 08-21 深夜拍板压缩窗口 272k（省钱：携带成本 ≈ 1M 的 1/4、缓存失手最坏 $0.12/轮；近 14 天 649 回合只压缩过 11 次）
-    id: 'deepseek-v4-flash-vision', window: 272_000,
+    id: 'deepseek-v4-flash-vision', window: 272_000, brand: 'deepseek',
     // 08-21 深夜开闸给所有档（含 basic）：basic 的 $5/天日限 + 表价记账管着它；pro/admin 不限
     select: { label: 'DeepSeek V4 Flash · 视觉', desc: '快 · 有视觉 · 272k 上下文 · 按用量计入每日额度（高峰 $0.44/$1.32 缓存 $0.014）' },
     api: {
@@ -245,7 +258,7 @@ const MODELS = Object.freeze([
   // 社区指纹）。⚠️ 一周后要么变付费 GLM 要么下架 —— 这行是插件，闸和转换层才是耐久资产。
   // 上线顺序：先 gate localGen 给 admin 试跑真任务，过关再开闸并设为全员默认。
   {
-    id: 'ox-alpha', window: 1_000_000,
+    id: 'ox-alpha', window: 1_000_000, brand: 'opencode',
     // 08-21 经营态拍板：全员默认模型（default: true），公开注册号只能用它这类免费行。
     select: { label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用 · 思考档 high', default: true },
     api: {
@@ -266,7 +279,7 @@ const MODELS = Object.freeze([
   {
     // 同一个 Ox，思考档 max：真会话里 max 想过 28,930 字 / 4 分 20 秒才出首字，所以不做默认、
     // 单独一行给愿意等的人。两行 protocol 同为 openai-chat，会话中途互切不触发 LANE_SWITCH
-    id: 'ox-alpha-max', window: 1_000_000,
+    id: 'ox-alpha-max', window: 1_000_000, brand: 'opencode',
     select: { label: 'Ox Alpha · 深想（免费）', desc: '同一个 Ox · 思考档 max · 想得久，首字可能等几分钟 · 重活再开' },
     api: {
       upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
@@ -283,7 +296,7 @@ const MODELS = Object.freeze([
     // 为什么要单独一行：session-loop 给 CLI 的 ANTHROPIC_SMALL_FAST_MODEL 是 app id，
     // ox-alpha 主行自己当 fast 时 helper 请求和主请求同名，ingress 分不出 role、helper
     // 也跟着 high 想。独立行 + alias haiku（表内空着的订阅名，helper 不需要 1M 窗）。
-    id: 'ox-alpha-helper', window: 1_000_000,
+    id: 'ox-alpha-helper', window: 1_000_000, brand: 'opencode',
     api: {
       upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
       sdkAlias: 'claude-haiku-4-5',
@@ -304,6 +317,7 @@ const WIRE_LOOKUP = new Map();
 
 for (const row of MODELS) {
   if (BY_ID.has(row.id)) throw new Error(`[model-context] 模型 id 重复：${row.id}`);
+  if (!BRANDS.includes(row.brand)) throw new Error(`[model-context] ${row.id} 的 brand 必须是 BRANDS 之一：${row.brand}`);
   BY_ID.set(row.id, row);
 }
 for (const row of MODELS) {
@@ -337,8 +351,13 @@ for (const row of MODELS) {
  * 「表里哪些行可选」的唯一真相，闸门只是在它上面过滤。
  */
 export const SELECTABLE_MODELS = Object.freeze(
-  MODELS.filter((m) => m.select).map((m) => Object.freeze({ id: m.id, ...m.select })),
+  MODELS.filter((m) => m.select).map((m) => Object.freeze({ id: m.id, brand: m.brand, ...m.select })),
 );
+
+/** 这个 appModel 出自谁家（BRANDS 之一）。不认识的 id → null，调用方自己决定兜底，别猜。 */
+export function brandOfModel(appModel) {
+  return BY_ID.get(appModel)?.brand || null;
+}
 
 /**
  * 按用户过滤可选模型。两种闸不同语义（08-21）：

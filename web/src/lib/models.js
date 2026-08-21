@@ -27,6 +27,13 @@
 export const DEFAULT_MODEL_ID = 'ox-alpha';
 
 /**
+ * `DEFAULT_MODEL_ID` 出自谁家（ui/ModelMark.jsx 的 brand）。⚠️ 跟上面那行**必须同时改** ——
+ * 它是画布精灵在"还没有任何一轮跑过、服务端也没说过话"时的身份兜底。
+ * Ox 是隐身模型，按 08-21 的口径用供应商 OpenCode 的标。
+ */
+export const DEFAULT_BRAND = 'opencode';
+
+/**
  * 本地偏好过期了吗 —— 它指向的模型**已经不在服务端清单里**（模型下架了）。
  *
  * 为什么需要：偏好存在 localStorage，而下架是服务端单方面发生的事。08-20 摘掉
@@ -51,7 +58,7 @@ export function isModelPrefStale(pref, serverOptions) {
 
 /** 服务端拿不到时的兜底清单（离线 / 接口挂了也别让按钮变成死的） */
 export const FALLBACK_MODELS = [
-  { id: DEFAULT_MODEL_ID, label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用' },
-  { id: 'claude-sonnet-5[1m]', label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用' },
-  { id: 'claude-opus-5[1m]', label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开' },
+  { id: DEFAULT_MODEL_ID, label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用', brand: DEFAULT_BRAND },
+  { id: 'claude-sonnet-5[1m]', label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用', brand: 'claude' },
+  { id: 'claude-opus-5[1m]', label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开', brand: 'claude' },
 ];

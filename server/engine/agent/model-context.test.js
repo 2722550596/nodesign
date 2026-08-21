@@ -14,7 +14,7 @@ import {
   repriceUsageDeltas,
   selectableModelsFor,
   allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, crossLaneSwitchReason,
-  UPSTREAMS,
+  UPSTREAMS, BRANDS, brandOfModel,
 } from './model-context.js';
 
 describe('派生导出（旧签名不变）', () => {
@@ -107,6 +107,30 @@ describe('派生导出（旧签名不变）', () => {
     expect(pickThinkingConfig('gemini-3.7-flash')).toEqual({ type: 'enabled', budgetTokens: 8192 });
     expect(pickThinkingConfig('deepseek-v4-flash-vision')).toEqual({ type: 'enabled', budgetTokens: 8192 });
     expect(pickThinkingConfig('claude-haiku-4-5')).toEqual({ type: 'enabled', budgetTokens: 8192 });
+  });
+});
+
+describe('brand（模型出自谁家，08-21）', () => {
+  it('每个可选模型都带 brand，且是 BRANDS 之一 —— 前端据此画身份标，漏一个就静默不画图标', () => {
+    for (const m of SELECTABLE_MODELS) {
+      expect(BRANDS, m.id).toContain(m.brand);
+    }
+  });
+
+  it('brandOfModel：认识的按表回答，不认识的回 null（调用方自己兜底，不猜）', () => {
+    expect(brandOfModel('deepseek-v4-flash-vision')).toBe('deepseek');
+    expect(brandOfModel('ox-alpha')).toBe('opencode');          // 隐身免费行画供应商的标
+    expect(brandOfModel('ox-alpha-max')).toBe('opencode');
+    expect(brandOfModel('claude-opus-5[1m]')).toBe('claude');
+    expect(brandOfModel('gemini-3.7-flash')).toBe('gemini');
+    expect(brandOfModel('没有这个模型')).toBeNull();
+    expect(brandOfModel(undefined)).toBeNull();
+  });
+
+  it('⚠️ 别拿 sdkAlias 认牌子：DeepSeek 行 spoof 成 Claude 名，照 alias 认会把鲸画成星芒', () => {
+    expect(resolveSdkSpoofModel('deepseek-v4-flash-vision')).toMatch(/^claude-/);
+    expect(brandOfModel('deepseek-v4-flash-vision')).toBe('deepseek');
+    expect(brandOfModel(resolveSdkSpoofModel('deepseek-v4-flash-vision'))).toBe('claude');
   });
 });
 

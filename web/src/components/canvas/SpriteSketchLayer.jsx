@@ -3,7 +3,8 @@ import { PAPER } from '../../lib/paper.js';
 import { STAGE_CARD_W } from '../../lib/board-geometry.js';
 import { TEXT_FONT_CSS } from '../../lib/text-fonts.js';
 import { isImeEnter } from '../../lib/helpers.js';
-import { CLAUDE_BRAND, CLAUDE_PATH } from '../ui/ClaudeMark.jsx';
+import { SpriteFigure, FIGURE_KEYFRAMES, MARK_DRAW_MS, figureWidth } from './sprite-figures.jsx';
+import { useCurrentModelBrand } from '../../lib/model-brand.js';
 import { MAIN_AGENT_ID } from '../../lib/board-presence.js';
 
 /**
@@ -26,168 +27,10 @@ import { MAIN_AGENT_ID } from '../../lib/board-presence.js';
  * 没有底、没有框、没有影 —— 它不是 UI 控件，是画在纸上的一笔。
  */
 
+/** 手写字显影用的那条 —— 身体那几条在 sprite-figures.jsx（谁的动画归谁管） */
 const KEYFRAMES = `
-  @keyframes ndSketchDraw { to { stroke-dashoffset: 0; } }
-  @keyframes ndSketchFill { to { opacity: 0.94; } }
-  @keyframes ndInkIn      { to { opacity: 1; } }
-  @keyframes ndRayPulse {
-    0%   { transform: scale(1);    animation-timing-function: cubic-bezier(0.2, 0.65, 0.45, 1); }
-    11%  { transform: scale(0.74); animation-timing-function: linear; }
-    16%  { transform: scale(0.74); animation-timing-function: cubic-bezier(0.3, 2.2, 0.4, 1); }
-    34%  { transform: scale(1); }
-    100% { transform: scale(1); }
-  }
-  @keyframes ndCoreBreath {
-    0%   { transform: scale(1); }
-    50%  { transform: scale(1.1); }
-    100% { transform: scale(1); }
-  }
+  @keyframes ndInkIn { to { opacity: 1; } }
 `;
-
-/** 描线用时（手写文字的起笔时刻拿它当 delay，字总在图标成形后才落） */
-const MARK_DRAW_MS = 760;
-
-/**
- * 手绘矢量版星芒（2026-08-14 五版，用户拍板"整个用我们自己的手绘版，操作
- * 空间大"）：12 个触点 + 中心毂是**独立形状**，从官方轮廓按谷点解剖出来
- * （scratchpad/claude-rays2.mjs：触点尖=半径极大、谷=相邻尖之间半径极小，
- * 谷到谷的轮廓段闭合成一根触点，谷点连成 12 边形毂）。480px 逐像素 diff=0
- * —— 拼回去就是官方图，拆开每根都能自由动。
- * ox/oy = 谷弦中点 = 这根触点的"根"：挤压绕根缩，根钉在毂缘上永不开缝，
- * 前一版的 clip 裁切和圆片补丁整套退役。
- */
-const HUB = 'M9.57 11.63L9.4 8.81L12.08 9.16L13.82 8.46L16.49 10.53L15.83 12.8L15.74 13.91L15.7 16.19L13.24 16.02L11.92 15.29L10.53 14.44L9.51 13.08Z';
-const RAYS = [
-  { d: 'M12.08 9.16L12.24 9.16L12.24 9.01L12.36 7.3L12.6 5.21L12.83 2.51L12.91 1.75L13.29 0.84L14.03 0.35L14.62 0.63L15.1 1.32L15.03 1.76L14.74 3.61L14.19 6.51L13.82 8.46Z', ox: 12.95, oy: 8.81 },  // tip 280°
-  { d: 'M13.82 8.46L14.03 8.46L14.28 8.21L15.26 6.91L16.91 4.84L17.64 4.03L18.49 3.12L19.04 2.69L20.07 2.69L20.83 3.82L20.49 4.98L19.43 6.33L18.54 7.47L17.28 9.17L16.49 10.53Z', ox: 15.16, oy: 9.5 },  // tip 311°
-  { d: 'M16.49 10.53L16.57 10.64L16.75 10.62L19.61 10.02L21.15 9.74L22.99 9.42L23.82 9.81L23.91 10.21L23.58 11.01L21.62 11.5L19.31 11.96L15.87 12.77L15.83 12.8Z', ox: 16.16, oy: 11.67 },  // tip 351°
-  { d: 'M15.83 12.8L15.88 12.87L17.43 13.01L18.09 13.05L19.71 13.05L22.73 13.27L23.52 13.79L23.99 14.43L23.91 14.92L22.7 15.54L21.06 15.15L17.23 14.24L15.92 13.91L15.74 13.91Z', ox: 15.79, oy: 13.36 },  // tip 14°
-  { d: 'M15.74 13.91L15.74 14.02L16.83 15.09L18.84 16.9L21.34 19.23L21.47 19.8L21.15 20.26L20.81 20.21L18.61 18.55L17.76 17.81L15.83 16.19L15.7 16.19Z', ox: 15.72, oy: 15.05 },  // tip 42°
-  { d: 'M15.7 16.19L15.7 16.36L16.15 17.01L18.49 20.53L18.61 21.61L18.44 21.96L17.83 22.17L17.17 22.05L15.79 20.13L14.38 17.96L13.24 16.02Z', ox: 14.47, oy: 16.1 },  // tip 57°
-  { d: 'M13.24 16.02L13.1 16.1L12.42 23.35L12.11 23.72L11.38 24L10.77 23.54L10.45 22.79L10.77 21.32L11.16 19.39L11.48 17.86L11.76 15.96L11.93 15.33L11.92 15.29Z', ox: 12.58, oy: 15.65 },  // tip 93°
-  { d: 'M11.92 15.29L11.78 15.31L10.35 17.27L8.17 20.22L6.44 22.06L6.03 22.23L5.32 21.86L5.38 21.2L5.78 20.61L8.17 17.57L9.61 15.69L10.54 14.6L10.53 14.44Z', ox: 11.23, oy: 14.87 },  // tip 124°
-  { d: 'M10.53 14.44L10.48 14.44L4.14 18.56L3.01 18.71L2.52 18.25L2.58 17.5L2.81 17.26L4.72 15.95L4.71 15.96L9.43 13.31L9.51 13.08Z', ox: 10.02, oy: 13.76 },  // tip 147°
-  { d: 'M9.51 13.08L9.43 12.95L9.2 12.95L8.41 12.9L5.72 12.83L3.38 12.73L1.11 12.61L0.54 12.49L0.01 11.78L0.06 11.43L0.54 11.11L1.23 11.17L2.75 11.27L5.02 11.43L6.68 11.53L9.12 11.78L9.51 11.78L9.57 11.63Z', ox: 9.54, oy: 12.35 },  // tip 181°
-  { d: 'M9.57 11.63L9.43 11.53L9.33 11.43L6.97 9.84L4.42 8.15L3.09 7.18L2.36 6.68L2 6.22L1.84 5.22L2.5 4.49L3.38 4.55L3.6 4.61L4.5 5.3L6.4 6.78L8.89 8.61L9.26 8.91L9.4 8.81Z', ox: 9.48, oy: 10.22 },  // tip 214°
-  { d: 'M9.4 8.81L9.42 8.74L9.26 8.46L7.9 6.02L6.46 3.53L5.81 2.5L5.64 1.88L5.62 1.78L5.6 1.69L5.58 1.6L5.57 1.51L5.56 1.43L5.55 1.34L5.54 1.24L5.54 1.15L6.29 0.13L6.7 0L7.7 0.13L8.11 0.5L8.73 1.91L9.74 4.14L11.29 7.17L11.74 8.07L11.99 8.9L12.08 9.16Z', ox: 10.74, oy: 8.98 },  // tip 244°
-];
-/**
- * 每个触点相对前一个的起拍间隔；一整圈 = 12 × 85ms ≈ 1.0s（转速旋钮就是
- * 这个数：70 被判"太快"、100 被判"太慢"，85 是二分出来的）。
- *
- * 脉冲三段 = 挤压 → 蓄压 → 释放（用户点名的感觉，三版定案）：
- *   收（0→11%）：减速压进去（ease-out 形）—— 越压阻力越大，不是砸下去；
- *   憋（11→16%）：在 0.74 停一拍 —— 压力握在手里的那一瞬；
- *   放（16→34%）：back-out 回弹缓动一口气释放，冲过 1 一点再落定 ——
- *     过冲由**曲线**自己完成，不是关键帧硬跳。
- * ⚠️ 这一段不能用 step-end：定格跳帧表达不了弹性（二版失败的根因 ——
- * 三四个瞬移帧看起来是抖动不是弹簧）。描线/显影那些照旧定格。
- */
-const RAY_STEP_MS = 85;
-
-/**
- * 活跃态：**星芒自己的触点**顺时针逐个挤压-释放，中心毂随行波呼吸。
- * 形状来自上面的手绘解剖（HUB + RAYS），动画曲线见 RAY_STEP_MS 注释。
- * 版本史：手搓等距射线（判丑：官方触点不等距才是手绘感）→ 外挂转轮
- * （没动到图标本身）→ 楔形 clip 裁官方 path（裂缝要圆片补丁，且只能绕
- * 图心缩）→ 手绘解剖版（本版：根钉毂缘零裂缝，逐根自由变换）。
- */
-function SpinnerMark({ size }) {
-  const period = RAYS.length * RAY_STEP_MS;
-  // 同色描边 0.3：独立形状在共享边上各自抗锯齿，拼缝会透出底色成一圈细线
-  // （480px 实测可见）—— 描边让相邻形状彼此搭 0.15，缝就没了；顺带把尖角
-  // 磨圆一点，更像笔画的。透明度仍只放 svg 根（同色叠画不叠深）。
-  const inkProps = {
-    fill: CLAUDE_BRAND, stroke: CLAUDE_BRAND,
-    strokeWidth: 0.3, strokeLinejoin: 'round', strokeLinecap: 'round',
-  };
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"
-      style={{ display: 'block', flexShrink: 0, overflow: 'visible', opacity: 0.95 }}>
-      {/* 中心毂：随行波呼吸。只向外鼓（scale ≥ 1）—— 触点的根都钉在毂缘上，
-          向内缩就把接缝拉开了 */}
-      <path
-        d={HUB} {...inkProps}
-        style={{
-          transformOrigin: '12px 12px', transformBox: 'view-box',
-          animation: `ndCoreBreath ${period}ms ease-in-out infinite`,
-        }}
-      />
-      {RAYS.map((r, i) => (
-        <path
-          key={i} d={r.d} {...inkProps}
-          style={{
-            // 每根绕自己的根挤压（不是绕图心）—— "往里挤"的方向就是各自的轴向
-            transformOrigin: `${r.ox}px ${r.oy}px`, transformBox: 'view-box',
-            animation: `ndRayPulse ${period}ms linear infinite`,
-            animationDelay: `${i * RAY_STEP_MS - period}ms`,
-          }}
-        />
-      ))}
-    </svg>
-  );
-}
-
-/**
- * 星芒本体。idle = 铅笔描线成形 + 橙显影；active = 放射条脉冲。
- * onClick 给了就可点（对话通道）：按下先来一记"收缩回弹"（Web Animations API
- * 直接在节点上放动画 —— CSS 类名重触发要靠 remount，会把描线动画一起重播）。
- * 动作放在 pointerdown：画布容器的手势会 setPointerCapture，click 根本不生成
- * （BindingLayer 2026-08-14 踩过的同一个坑）。
- */
-function SketchMark({ size = 44, active = false, onClick }) {
-  const wrapRef = useRef(null);
-  const pressable = typeof onClick === 'function';
-  const press = (e) => {
-    if (e.button !== 0) return;
-    e.stopPropagation(); e.preventDefault();
-    try {
-      wrapRef.current?.animate([
-        { transform: 'scale(1)' },
-        { transform: 'scale(0.72)', offset: 0.35 },
-        { transform: 'scale(1.1)', offset: 0.7 },
-        { transform: 'scale(1)' },
-      ], { duration: 260, easing: 'ease' });
-    } catch { /* 老浏览器没有 WAAPI：没动画也得能点 */ }
-    onClick(e);
-  };
-  return (
-    <span
-      ref={wrapRef}
-      onPointerDown={pressable ? press : undefined}
-      title={pressable ? '写一句给 Claude' : undefined}
-      style={{
-        display: 'block', flexShrink: 0,
-        // 命中垫：镜头拉远星芒只剩十几像素，裸命中区点不中很沮丧
-        padding: 8, margin: -8,
-        pointerEvents: pressable ? 'auto' : 'none',
-        cursor: pressable ? 'pointer' : undefined,
-      }}
-    >
-      {active ? <SpinnerMark size={size} /> : (
-        <svg
-          width={size} height={size} viewBox="0 0 24 24"
-          aria-hidden="true" style={{ display: 'block', overflow: 'visible' }}
-        >
-          {/* 铅笔稿：描完不撤 —— 橙色显影后底下透出一点铅笔线，正是手绘的破绽感 */}
-          <path
-            d={CLAUDE_PATH} pathLength="1"
-            fill="none" stroke={PAPER.ink2} strokeWidth={0.55}
-            strokeLinecap="round"
-            style={{
-              strokeDasharray: 1, strokeDashoffset: 1,
-              animation: `ndSketchDraw ${MARK_DRAW_MS}ms steps(14, end) forwards`,
-            }}
-          />
-          <path
-            d={CLAUDE_PATH} fill={CLAUDE_BRAND}
-            style={{ opacity: 0, animation: 'ndSketchFill 420ms steps(6, end) 640ms forwards' }}
-          />
-        </svg>
-      )}
-    </span>
-  );
-}
 
 /**
  * 逐字显影。笔迹用**画布手写那套栈**（TEXT_FONT_CSS.pen：拉丁走 Caveat、
@@ -226,14 +69,16 @@ function Handwriting({ text, delay = MARK_DRAW_MS, size = 26, maxWidth = 340 }) 
  * 精灵本体：图标 + 手写行。`drawKey` 变化 = 整体重画（换了地方/重新出场）；
  * 只有 `text` 变 = 图标原地不动、那行字重写 —— 像在同一页上划掉重写。
  */
-export function SpriteSketch({ drawKey = 0, text, size = 44, maxWidth = 340, active = false, quiet = false, onMarkClick }) {
+export function SpriteSketch({ brand, drawKey = 0, text, size = 44, maxWidth = 340, active = false, quiet = false, onMarkClick }) {
   return (
     // ⚠️ width 必须显式给：世界容器是零宽的变换锚点（大家都显式传宽，BindingLayer
     // 的 width/height、舞台卡的 STAGE_CARD_W 同理），绝对定位 + auto 宽在里面会
     // 按 min-content 收缩 —— 真机症状是手写行竖排成一字一列（2026-08-14 踩到）
-    <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: size + 10 + maxWidth, pointerEvents: 'none' }}>
-      <style>{KEYFRAMES}</style>
-      <SketchMark size={size} active={active} onClick={onMarkClick} />
+    // 宽度按**这枚身体**的实际外框算：各家标的比例不同（星芒是方的、鲸是横的、方块是竖的），
+    // 一律拿 size 当宽会让横的那枚把手写行挤出去
+    <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: figureWidth(brand, size) + 10 + maxWidth, pointerEvents: 'none' }}>
+      <style>{KEYFRAMES + FIGURE_KEYFRAMES}</style>
+      <SpriteFigure brand={brand} size={size} active={active} onClick={onMarkClick} />
       {/* quiet = 用户正往输入行里写字：精灵的话让位（病例是当年 recap 长文
           盖住输入行；recap 已退役，但闲时问候一样会挡，而且"它闭嘴听你说"
           本来就是对的礼节） */}
@@ -262,7 +107,7 @@ export function SpriteAskInput({ x, y, width = 350, onSubmit, onClose }) {
     >
       <input
         ref={ref}
-        placeholder="写一句给 Claude…"
+        placeholder="写一句给它…"
         style={{
           width: '100%', border: 0, outline: 'none', background: 'transparent',
           borderBottom: `1.5px dashed ${PAPER.pencil}`,
@@ -391,6 +236,9 @@ export function findFrameSpot(at, obstacles) {
  *     **活跃与否不影响这条链** —— 活跃只换图标（转轮）和台词。
  */
 export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam, viewport, obstacles, text, quiet = false, onAsk, frameCards = [], renderFrameCard }) {
+  // 身份跟着会话模型走（08-21）：跑 DeepSeek 就是鲸，跑 Ox 就是 OpenCode 方块。
+  // 画布不传这个 prop —— 它自己就住在项目路由里，见 lib/model-brand.js
+  const brand = useCurrentModelBrand();
   const [slot, setSlot] = useState(null);      // 世界坐标
   const [drawKey, setDrawKey] = useState(0);
   const stateRef = useRef({});
@@ -463,7 +311,7 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
         transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
       }}>
         <SpriteSketch
-          drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
+          brand={brand} drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
           // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
           // 从**当前落点**算 —— 长文遮挡输入行的病由 quiet 让位治）
           onMarkClick={onAsk ? () => onAsk({ x: box.x + 54, y: box.y + 50 }) : undefined}

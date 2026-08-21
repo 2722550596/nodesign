@@ -4,7 +4,7 @@ import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions, Me } from '../../lib/api.js';
 import { FALLBACK_MODELS, isModelPrefStale } from '../../lib/models.js';
-import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
+import ModelMark from '../ui/ModelMark.jsx';
 
 /**
  * 模型选择 —— Composer 工具栏里的小 picker。
@@ -188,6 +188,11 @@ export default function ModelPicker({
    * 换成"这一档烧得快"之后按钮才在说一件有用的事：Opus 一眼认得出来。
    */
   const heavy = isHeavy(effective);
+  /** 这一档出自谁家。清单里查不到（本地偏好指向已下架模型之类）就不画标，不猜 */
+  const brand = options.find((o) => o.id === effective)?.brand;
+  // 转发给画布精灵：它跟这颗按钮说的必须是同一个模型，而它离得太远、也不该自己再问一遍接口
+  const setSessionBrand = useGlobalStore(s => s.setSessionBrand);
+  useEffect(() => { if (brand) setSessionBrand(brand); }, [brand, setSessionBrand]);
 
   return (
     <div ref={ref} className={className} style={{ position: 'relative' }}>
@@ -214,12 +219,12 @@ export default function ModelPicker({
           transition: 'all 0.15s',
         }}
       >
-        {/* 图标用 Claude 的星芒，不用通用的 CPU 图标 —— 这颗按钮选的就是 Claude
-            的哪一档，跟精灵、输出框那边同一个身份标（ui/ClaudeMark.jsx）。
-            实心态底色是墨块，品牌橙压不住，那一档跟着文字走。 */}
+        {/* 图标是**这个模型出自谁家**的标（ui/ModelMark.jsx），不是通用 CPU 图标：接了
+            Claude 以外的模型之后，跑 DeepSeek 的会话画星芒就是张冠李戴。brand 由服务端
+            随清单下发，前端不按 id 猜。实心态底色是墨块，品牌色压不住，那一档跟着文字走。 */}
         {saving
           ? <Loader2 size={11} style={{ animation: 'nd-model-spin 0.9s linear infinite' }} />
-          : <ClaudeMark size={12} color={heavy ? COLOR.btnText : CLAUDE_BRAND} />}
+          : <ModelMark brand={brand} size={12} color={heavy ? COLOR.btnText : undefined} />}
         {label}
       </button>
 

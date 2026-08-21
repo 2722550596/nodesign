@@ -134,6 +134,13 @@ export const useGlobalStore = create((set) => ({
     set({ modelPref: model || DEFAULT_MODEL_ID });
   },
 
+  // 当前会话跑在**谁家**的模型上（ui/ModelMark.jsx 的 brand）。picker 一问到清单就写这里，
+  // 画布精灵读它换身份 —— 精灵和 picker 隔着整棵树，又不该各自去问一遍接口。
+  // ⚠️ 只是个显示用的转发，不是模型的真相源：真相在服务端 session-config，
+  // 谁要改模型走 PUT /model，别改这个值。
+  sessionBrand: null,
+  setSessionBrand: (brand) => set((s) => (s.sessionBrand === brand ? s : { sessionBrand: brand })),
+
   // ── Phase B 批次 3：用户主动 recall project memory 到下一轮 chat ──
   // MemoryCard 点"📎 加到下条消息"会 push 一项到这里；ChatComposer 提交时
   // pendingMemoryRecalls 拼到 chat 字段头部（<memory-recall> 包裹），

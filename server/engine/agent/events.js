@@ -49,7 +49,7 @@
  *   - 内存测试：buffer.push(evt) 然后断言
  */
 
-import { resolveModelContextWindow } from './model-context.js';
+import { resolveModelContextWindow, brandOfModel } from './model-context.js';
 
 /**
  * Replay buffer 容量：单 project bus 保留最近 N 条事件供 WS 重连回放。
@@ -441,6 +441,9 @@ export const Events = {
     autoCompactThreshold: usage.autoCompactThreshold,
     isAutoCompactEnabled: usage.isAutoCompactEnabled,
     model: appModel || usage.model,
+    // 出自谁家（BRANDS 之一）——画布精灵据此换身份标。⚠️ 不能让前端读 SDK 的 usage.model 去认牌子：
+    // spoofing 之后那是 alias（DeepSeek 行报 claude-opus-4-7[1m]），照它认牌子会把鲸画成星芒
+    brand: appModel ? brandOfModel(appModel) : null,
     // 轻量化 breakdown — 前端 hover/expand 能看到细节，不渲细节时不占空间
     messageBreakdown: usage.messageBreakdown ? {
       toolCallTokens: usage.messageBreakdown.toolCallTokens,

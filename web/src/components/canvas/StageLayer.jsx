@@ -5,7 +5,8 @@ import { stageKindOf, resolveObjectId, zoneOfObjectId, fileNameOf, chipHintOf, t
 import { ZONE, STAGE_CARD_W, POP_IN } from '../../lib/board-geometry.js';
 import { sizeOf } from '../../lib/board-kinds.js';
 import { AskUserQuestionView } from '../chat/Message.jsx';
-import ClaudeMark, { CLAUDE_BRAND } from '../ui/ClaudeMark.jsx';
+import ModelMark, { brandColor } from '../ui/ModelMark.jsx';
+import { useCurrentModelBrand } from '../../lib/model-brand.js';
 
 // （生图占位 2026-08-14 迁出：shimmer 从舞台层搬进纸面层的幻影物件
 //   （PhantomLayer.jsx，幻影入座+座位过户）。舞台状态机仍然维护 image 条目
@@ -400,7 +401,9 @@ export function StageCardBody({ card, scale = 1, onDismiss }) {
   void scale;   // 位移拖拽随子代理便利贴一起退役（2026-08-18），参数保留兼容调用方
   const running = card.status === 'running';
   const isTerm = card.kind === 'terminal';
-  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : alpha(CLAUDE_BRAND, 0.7);
+  // 身份跟着会话模型走（08-21）：边色和徽记都是"谁在写这段代码"，跑 DeepSeek 就不该是 Claude 的橙
+  const brand = useCurrentModelBrand();
+  const border = card.status === 'fail' ? '#b0554f' : card.status === 'ok' ? '#4f8f5b' : alpha(brandColor(brand) || '#D97757', 0.7);
   const label = card.tool === 'Edit' ? '修改' : card.tool === 'Write' ? '写入' : toolLabelOf(card.tool);
   return (
     <div
@@ -414,7 +417,8 @@ export function StageCardBody({ card, scale = 1, onDismiss }) {
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.base}px`, background: 'rgba(255,255,255,0.06)' }}>
-        <ClaudeMark size={12} />
+        {/* 深色终端面：铅笔稿在这儿是看不见的（它是给纸面画的），关掉；OpenCode 那枚换 onDark 档 */}
+        <ModelMark brand={brand} size={12} pencil={false} dark />
         {isTerm ? <Terminal size={10} color="#c8b98c" /> : <PencilLine size={10} color="#c8b98c" />}
         <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: TERM.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
           {isTerm ? (card.command || 'bash') : `${label} · ${fileNameOf(card.filePath) || '…'}`}
