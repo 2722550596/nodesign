@@ -60,6 +60,7 @@ import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensoredModel } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { getOrStartIngress, registerIngressSession, unregisterIngressSession } from '../../lib/model-ingress.js';
+import { takeUpstreamBilling } from '../../lib/ingress/upstream-billing.js';
 import { clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
@@ -826,6 +827,8 @@ export async function runSession({
         // 本 turn 真增量，从前直接丢弃 → runs 表 token counters 常年全 0。
         // cancelled 也吸收 —— 取消掉的 turn 已经烧了 token，配额要计
         sharedCtx.absorbResult(message);
+        // 上游自报费用（/zen/go 的 cost）覆盖 SDK/表价算出来的数：取走 ingress 本轮累计（没报就 null，不动）
+        sharedCtx.applyUpstreamBilling(takeUpstreamBilling(sessionId));
         const isCancelled = message.terminal_reason === 'aborted_streaming'
           || message.terminal_reason === 'aborted_tools';
 

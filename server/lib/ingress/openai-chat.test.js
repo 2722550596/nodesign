@@ -177,3 +177,25 @@ describe('OpenAIToAnthropicSSE', () => {
     expect(events.at(-2).d.delta.stop_reason).toBe('end_turn');
   });
 });
+
+describe('OpenAIToAnthropicSSE · /zen/go 的 cost（08-21 晚）', () => {
+  it('[DONE] 之后补的 {"choices":[],"cost":"0.0042"} 被接住；收尾仍是 message_delta + message_stop；label 进错误文案', async () => {
+    const xf = new OpenAIToAnthropicSSE({ model: 'alias', label: 'Zen Go' });
+    const out = await collect(xf, [
+      `data: ${JSON.stringify({ id: 'g', choices: [{ index: 0, delta: { role: 'assistant', content: '你好' } }] })}\n\n`,
+      `data: ${JSON.stringify({ id: 'g', choices: [{ index: 0, finish_reason: 'stop', delta: { content: '' } }], usage: { prompt_tokens: 92, completion_tokens: 40, prompt_tokens_details: { cached_tokens: 64 } } })}\n\n`,
+      'data: [DONE]\n\n',
+      'data: {"choices":[],"cost":"0.0042"}\n\n',
+    ]);
+    const events = ev(out);
+    expect(events.map(x => x.e).slice(-2)).toEqual(['message_delta', 'message_stop']);
+    expect(xf.cost).toBe(0.0042);
+    expect(xf.usage?.prompt_tokens).toBe(92);
+    expect(xf.failReason).toBeNull();
+    // 思考中断流的人话文案带上游名字
+    const xf2 = new OpenAIToAnthropicSSE({ label: 'Zen Go' });
+    const ev2 = ev(await collect(xf2, [`data: ${JSON.stringify({ id: 'z', choices: [{ index: 0, delta: { reasoning_content: '想想…' } }] })}\n\n`]));
+    expect(ev2.at(-1).d.error.message).toMatch(/^Zen Go在模型还在思考/);
+    expect(xf2.failReason).toMatch(/before any visible output/);
+  });
+});

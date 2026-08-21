@@ -230,6 +230,8 @@ export class OpenAIToAnthropicSSE extends Transform {
     this.sawToolCall = false;
     this.sawText = false;      // 有过可见正文（区分"只想没说"的早断流）
     this.failReason = null;    // 本次以 error 事件收场的原因（forward 层据此记会话失败计数；null = 正常收尾）
+    this.cost = null;          // 上游报的本次费用（美元，/zen/go 在 [DONE] 后补的 cost 字段；null = 上游没报）
+    this.doneSeen = false;     // 见过 [DONE]：之后只收 cost，收尾等 _flush
   }
   _emit(event, data) { this.push(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
   _ensureStart(chunk) {
@@ -254,6 +256,7 @@ export class OpenAIToAnthropicSSE extends Transform {
   _handleChunk(chunk) {
     this._ensureStart(chunk);
     if (chunk.usage) this.usage = chunk.usage;
+    if (chunk.cost != null) this.cost = Number(chunk.cost);
     const choice = chunk.choices?.[0];
     if (!choice) return;
     const d = choice.delta || {};
@@ -337,10 +340,12 @@ export class OpenAIToAnthropicSSE extends Transform {
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
       if (!payload) continue;
-      if (payload === '[DONE]') { this._finish(); continue; }
-      if (this.done) continue;          // Zen 在 [DONE] 后还补一条 {"choices":[],"cost":"0"}，忽略
+      // [DONE] 不立刻收尾：Zen（/zen/go 入口）在 [DONE] **之后**还补一条 {"choices":[],"cost":"0.00123"}，
+      // 那是上游报的真实费用（记账要它）。[DONE] 后只认 cost，别的都忽略；真正收尾在 _flush（上游关流）
+      if (payload === '[DONE]') { this.doneSeen = true; continue; }
       let j;
       try { j = JSON.parse(payload); } catch { continue; }
+      if (this.doneSeen || this.done) { if (j && j.cost != null) this.cost = Number(j.cost); continue; }
       if (j?.error) {   // 流中途的错误体：转成 Anthropic error 事件
         this._ensureStart(j);
         this._emit('error', { type: 'error', error: { type: 'api_error', message: String(j.error.message || j.error) } });

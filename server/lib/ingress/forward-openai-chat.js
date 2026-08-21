@@ -13,9 +13,10 @@ import { toOpenAIChatRequest, fromOpenAIChatResponse, toAnthropicError, OpenAITo
  * ⚠️ 不转发 binary 带来的任何请求头（anthropic-version/beta 头对它无意义，UA 要自己给：
  * Cloudflare 对某些默认 UA 回 1010）。
  */
-export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, path, agent, onOutcome = () => {} }) {
+export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, path, agent, onOutcome = () => {}, onBilling = () => {} }) {
   const wantStream = !!parsed.stream;
   // onOutcome(ok, reason)：每次往返报一次结果，model-ingress 据此记会话连续失败计数（upstream-fail-streak.js）
+  // onBilling({ costUsd, usage })：上游自报的费用/用量（/zen/go 的 cost 字段），model-ingress 按会话累加给记账（upstream-billing.js）
   const body = toOpenAIChatRequest(parsed, { reasoningEffort: wire.reasoningEffort, maxOutput: wire.maxOutput });
   const outBody = Buffer.from(JSON.stringify(body), 'utf8');
   const useHttps = target.protocol === 'https:';
@@ -56,7 +57,10 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
       const xf = new OpenAIToAnthropicSSE({ model: parsed.model, label: wire.upstream?.label || wire.upstreamId });
       xf.on('error', (err) => { console.error(`[model-ingress] sse transform error: ${err.message}`); onOutcome(false, `transform: ${err.message}`); try { res.end(); } catch { /* ignore */ } });
       // 转换层以 error 事件收场（私货 finish / 早断流 / 空体）→ 算一次失败；正常收尾算成功
-      xf.on('end', () => onOutcome(!xf.failReason, xf.failReason || ''));
+      xf.on('end', () => {
+        onOutcome(!xf.failReason, xf.failReason || '');
+        if (xf.cost != null || xf.usage) onBilling({ costUsd: xf.cost, usage: xf.usage });
+      });
       proxyRes.pipe(xf).pipe(res);
       return;
     }
@@ -83,6 +87,7 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
         res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(errBody); return;
       }
       onOutcome(true);
+      if (upstreamJson.cost != null || upstreamJson.usage) onBilling({ costUsd: upstreamJson.cost ?? null, usage: upstreamJson.usage || null });
       const respBody = JSON.stringify(out);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(respBody)) });
       res.end(respBody);

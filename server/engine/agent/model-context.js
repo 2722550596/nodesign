@@ -86,6 +86,18 @@ export const UPSTREAMS = Object.freeze({
     protocol: 'openai-chat',
     countTokens: false,   // 08-21 探针：404
   }),
+  // 08-21 晚：Zen 的第二个入口 /zen/go（用户给的）。同一把钥匙；模型目录**不同**（Ox 在这儿叫
+  // ox-alpha-free，主入口的 x-preview-f-free 它回 401 not supported）；每个响应自带 `cost`（美元字符串，
+  // 流式在 [DONE] 之后补一条 {"choices":[],"cost":"…"}）和 usage.cached_tokens —— 记账直接读它
+  // （lib/ingress/upstream-billing.js），不再按表价算。Ox 三行切到这儿跑对照；主入口那行留着随时切回。
+  zenGo: Object.freeze({
+    label: 'OpenCode Zen Go',
+    baseUrl: 'https://opencode.ai/zen/go/v1',
+    keyEnv: 'NODESIGN_UPSTREAM_ZEN_KEY',
+    authStyle: 'bearer',
+    protocol: 'openai-chat',
+    countTokens: false,
+  }),
 });
 
 /**
@@ -257,7 +269,7 @@ const MODELS = Object.freeze([
     // 08-21 经营态拍板：全员默认模型（default: true），公开注册号只能用它这类免费行。
     select: { label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用 · 思考档 high', default: true },
     api: {
-      upstream: 'zen', wireModel: 'x-preview-f-free',
+      upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
       sdkAlias: 'claude-opus-4-8[1m]',
       fastModel: 'ox-alpha-helper',   // helper 走独立行才分得出 role（会话 env SMALL_FAST_MODEL 发的是 app id）
       thinking: 'strip',              // 出口不带 Anthropic thinking 字段；转换层按 reasoningEffort 发 reasoning_effort
@@ -277,7 +289,7 @@ const MODELS = Object.freeze([
     id: 'ox-alpha-max', window: 1_000_000,
     select: { label: 'Ox Alpha · 深想（免费）', desc: '同一个 Ox · 思考档 max · 想得久，首字可能等几分钟 · 重活再开' },
     api: {
-      upstream: 'zen', wireModel: 'x-preview-f-free',
+      upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
       sdkAlias: 'claude-sonnet-4-5-20250929[1m]',
       fastModel: 'ox-alpha-helper',   // helper 一句话的活用 low 档那行，不跟着深想
       thinking: 'strip',
@@ -293,7 +305,7 @@ const MODELS = Object.freeze([
     // 也跟着 high 想。独立行 + alias haiku（表内空着的订阅名，helper 不需要 1M 窗）。
     id: 'ox-alpha-helper', window: 1_000_000,
     api: {
-      upstream: 'zen', wireModel: 'x-preview-f-free',
+      upstream: 'zenGo', wireModel: 'ox-alpha-free',   // 08-21 晚切 /zen/go 入口（主入口名 x-preview-f-free，upstream 'zen'）
       sdkAlias: 'claude-haiku-4-5',
       fastModel: 'ox-alpha-helper',
       thinking: 'strip',

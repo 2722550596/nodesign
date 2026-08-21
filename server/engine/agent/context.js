@@ -216,6 +216,32 @@ export class AgentContext {
   }
 
   /**
+   * 上游自报的费用覆盖（08-21 晚，lib/ingress/upstream-billing.js）。
+   * billing = { appModel → { costUsd, responses, promptTokens, completionTokens, cachedTokens } }，
+   * 是 ingress 在本轮累加、session-loop 结账前取走的。规则：
+   *   - 上游报了 cost（非 null）→ 覆盖 modelUsage[appModel].costUsd；token 数仍信 SDK 差分（口径不同）
+   *   - SDK 没有该模型条目（CLI 失败 / 估算没覆盖到的 helper）→ 用上游 token 数补一条
+   *   - 上游没报 cost → 不动（假数据比没有更坏）
+   * 覆盖后重算 totalCostUsd。记 counters.costSource='upstream' 供日志/排障。
+   */
+  applyUpstreamBilling(billing) {
+    if (!billing || typeof billing !== 'object') return;
+    let touched = false;
+    const usage = this.counters.modelUsage && typeof this.counters.modelUsage === 'object' ? this.counters.modelUsage : {};
+    for (const [appModel, acc] of Object.entries(billing)) {
+      if (!acc || acc.costUsd == null) continue;
+      const prev = usage[appModel];
+      if (prev) usage[appModel] = { ...prev, costUsd: acc.costUsd };
+      else usage[appModel] = { inputTokens: acc.promptTokens || 0, outputTokens: acc.completionTokens || 0, cacheReadTokens: acc.cachedTokens || 0, cacheCreateTokens: 0, costUsd: acc.costUsd };
+      touched = true;
+    }
+    if (!touched) return;
+    this.counters.modelUsage = usage;
+    this.counters.totalCostUsd = Object.values(usage).reduce((s, d) => s + (d.costUsd || 0), 0);
+    this.counters.costSource = 'upstream';
+  }
+
+  /**
    * 会话累计的 modelUsage → 本 turn 增量。返回 null 表示"没有可用的 modelUsage"
    * （调用方退回 usage 兜底）；返回 {}（空对象）表示"有 modelUsage 但本 turn
    * 没有任何新消耗"，此时主字段照常清零是正确语义。

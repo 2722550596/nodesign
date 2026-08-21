@@ -38,6 +38,7 @@ import sharp from 'sharp';
 import { resolveWireModel, resolveModelRoute, UPSTREAMS } from '../engine/agent/model-context.js';
 import { forwardOpenAIChat } from './ingress/forward-openai-chat.js';
 import { failStreaks, exhaustedErrorBody } from './ingress/upstream-fail-streak.js';
+import { noteUpstreamBilling } from './ingress/upstream-billing.js';
 
 // ── 出站连接池 ──
 // ⛔ 08-20 生产真踩：本地盒子（authStyle 'none' = 环回 SSH 隧道）走 Node 默认
@@ -263,7 +264,9 @@ async function handleRequest(req, res, bodyBuf) {
     const target = new URL(wire.upstream.baseUrl);
     // helper 请求降档：主行想多少归主行，helper 一句话的活用 helperReasoningEffort（默认 low）
     const wireFwd = routed.role === 'helper' && wire.helperReasoningEffort ? { ...wire, reasoningEffort: wire.helperReasoningEffort } : wire;
-    forwardOpenAIChat({ parsed, wire: wireFwd, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:'), onOutcome: noteOutcome });
+    forwardOpenAIChat({ parsed, wire: wireFwd, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:'), onOutcome: noteOutcome,
+      // 上游自报费用按会话 × appModel 累加（helper 请求记到 helper 行头上），session-loop 结账时取走
+      onBilling: (info) => noteUpstreamBilling(sessionTag, wireFwd.appModel, info) });
     return;
   }
   const outBody = Buffer.from(JSON.stringify(parsed), 'utf8');
