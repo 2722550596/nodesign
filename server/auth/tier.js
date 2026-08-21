@@ -40,7 +40,8 @@ export const PLANS = Object.freeze(['pro', 'basic']);
  */
 const CAPABILITIES = Object.freeze({
   admin: Object.freeze({ subscription: true, webSearch: true, imageGen: true, localGen: true, publishSite: true, moderationDefault: 'off', webSearchDailyCap: null }),
-  pro: Object.freeze({ subscription: true, webSearch: true, imageGen: true, localGen: true, publishSite: true, moderationDefault: 'loose', webSearchDailyCap: null }),
+  // 08-21 晚用户拍板「所有审查都开到严格」：pro 默认档 loose → strict（admin 仍免审）
+  pro: Object.freeze({ subscription: true, webSearch: true, imageGen: true, localGen: true, publishSite: true, moderationDefault: 'strict', webSearchDailyCap: null }),
   basic: Object.freeze({ subscription: false, webSearch: true, imageGen: false, localGen: false, publishSite: false, moderationDefault: 'strict', webSearchDailyCap: 'env' }),
 });
 

@@ -3,7 +3,7 @@
  * 库走 vitest.server.config 里的 DB_PATH（临时库），不碰生产。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { registerUser, createInvite, getUserById, updateUser, openRegistrationEnabled } from './users-store.js';
+import { registerUser, createInvite, getUserById, updateUser, openRegistrationEnabled, defaultInviteLifetimeUsd } from './users-store.js';
 import { tierOf, can } from './tier.js';
 
 const uniq = (p) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -42,5 +42,21 @@ describe('registerUser', () => {
     expect(getUserById(u.id).plan).toBe('basic');
     expect(can(getUserById(u.id), 'subscription')).toBe(false);
     expect(() => updateUser(u.id, { plan: 'vip' })).toThrow(/plan/);
+  });
+  it('带邀请码但码上没写额度：默认 $20 终身（08-21 晚）；env 可调，0 = 不封顶', () => {
+    process.env.NODESIGN_OPEN_REGISTRATION = '1';
+    const saved = process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD;
+    try {
+      delete process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD;
+      expect(defaultInviteLifetimeUsd({})).toBe(20);
+      expect(defaultInviteLifetimeUsd({ NODESIGN_INVITE_DEFAULT_LIFETIME_USD: '35' })).toBe(35);
+      expect(defaultInviteLifetimeUsd({ NODESIGN_INVITE_DEFAULT_LIFETIME_USD: '0' })).toBeNull();
+      const inv = createInvite({ maxUses: 1 });
+      const u = registerUser({ username: uniq('inv20'), password: 'password123', inviteCode: inv.code });
+      expect(u.lifetimeCostLimitUsd).toBe(20);
+      expect(u.plan).toBe('pro');
+    } finally {
+      if (saved === undefined) delete process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD; else process.env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD = saved;
+    }
   });
 });

@@ -47,9 +47,9 @@ describe('tierOf / can', () => {
   it('未知能力名抛错（拼错不能静默 false/true）', () => {
     expect(() => can(pro, 'imagegen')).toThrow(/unknown capability/);
   });
-  it('外审默认档：admin off / pro loose / basic strict', () => {
+  it('外审默认档：admin off / pro strict / basic strict（08-21 晚「所有审查开到严格」）', () => {
     expect(defaultModerationLevel(admin)).toBe('off');
-    expect(defaultModerationLevel(pro)).toBe('loose');
+    expect(defaultModerationLevel(pro)).toBe('strict');
     expect(defaultModerationLevel(basic)).toBe('strict');
     expect(defaultModerationLevel(null)).toBe('strict');
   });

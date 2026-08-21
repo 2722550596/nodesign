@@ -336,7 +336,7 @@ function InvitesTab({ invites, users, reload, copy }) {
             <NumInput value={days} onChange={setDays} placeholder="—" />
           </Field>
           <Field label="试用赠予 $（留空 = 普通码）">
-            <NumInput value={grant} onChange={setGrant} placeholder="—" />
+            <NumInput value={grant} onChange={setGrant} placeholder="默认 20" />
           </Field>
           <PrimaryBtn onClick={mint} disabled={minting}>{minting ? '生成中…' : '生成邀请码'}</PrimaryBtn>
         </div>

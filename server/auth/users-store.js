@@ -252,9 +252,17 @@ export function openRegistrationEnabled() {
   return /^(1|true|yes)$/i.test(String(process.env.NODESIGN_OPEN_REGISTRATION || ''));
 }
 
+/** 邀请码没写额度时给的默认终身额度（美元）。env NODESIGN_INVITE_DEFAULT_LIFETIME_USD；0 或非法 = 不封顶（老口径） */
+export function defaultInviteLifetimeUsd(env = process.env) {
+  const raw = env.NODESIGN_INVITE_DEFAULT_LIFETIME_USD;
+  if (raw === undefined || raw === '') return 20;
+  const v = Number(raw);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
 /**
  * 注册主流程（08-21 起两条路）：
- *   - 带邀请码：校验 + 消耗 + 建用户，落 **pro 档**（plan='pro'）+ 码上的终身额度（花费上限）
+ *   - 带邀请码：校验 + 消耗 + 建用户，落 **pro 档**（plan='pro'）+ 终身额度（码上的，没写默认 $20）
  *   - 不带邀请码：开放注册开着才放行，落 **basic 档**（plan='basic'：只能用免费模型/搜索，
  *     不开生图、不开发布；能力表在 auth/tier.js）
  * 单事务（used_count+1 与 INSERT 原子，两人同抢最后一个名额只有一个成）。失败抛带 .code 的 Error。
@@ -285,7 +293,8 @@ export const registerUser = db.transaction(({ username, password, inviteCode }) 
   db.prepare('UPDATE invites SET used_count = used_count + 1 WHERE code = ?').run(inv.code);
   return createUser({
     username, password, role: 'user', inviteCode: inv.code,
-    lifetimeCostLimitUsd: inv.grant_lifetime_usd ?? null,   // 花费上限（试用码），不是档位
+    // 花费上限（不是档位）：码上写了额度用码上的；没写的 08-21 晚起默认 $20 终身（以前是无上限走日限）
+    lifetimeCostLimitUsd: inv.grant_lifetime_usd ?? defaultInviteLifetimeUsd(),
     plan: 'pro',
   });
 });
