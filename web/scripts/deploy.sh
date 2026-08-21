@@ -25,7 +25,8 @@ BUILD_DIR="dist-build"
 LIVE_DIR="dist"
 
 echo "==> 构建到 $BUILD_DIR"
-npx vite build --outDir "$BUILD_DIR" --emptyOutDir
+# nice：这台是 1 vCPU 生产机，构建/测试吃满核会让线上会话首字延迟几十秒（08-21 实测 69s）
+nice -n 15 npx vite build --outDir "$BUILD_DIR" --emptyOutDir
 
 if [ ! -f "$BUILD_DIR/index.html" ]; then
   echo "!! 构建没产出 index.html，中止（线上保持原样）" >&2
