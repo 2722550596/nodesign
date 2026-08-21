@@ -831,6 +831,11 @@ export async function runSession({
 
         if (isCancelled) {
           await finishTurn('cancelled', { reason: message.terminal_reason });
+        } else if (message.subtype === 'success' && message.is_error) {
+          // 08-21 晚：API 层以 4xx 收场（如 ingress 连续失败止损回的 400）时，SDK 给的是
+          // subtype=success + is_error=true + result=错误文案（假上游实测）。以前走下一分支当成功，
+          // run 标 succeeded、错误文案当最终回答。现在按 error 结账，文案原样给用户。
+          await finishTurn('error', { message: message.result || 'API error', code: 'API_ERROR' });
         } else if (message.subtype === 'success') {
           await finishTurn('success', { finalText: message.result || '' });
         } else {

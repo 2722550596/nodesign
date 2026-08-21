@@ -228,6 +228,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     this.id = null;
     this.sawToolCall = false;
     this.sawText = false;      // 有过可见正文（区分"只想没说"的早断流）
+    this.failReason = null;    // 本次以 error 事件收场的原因（forward 层据此记会话失败计数；null = 正常收尾）
   }
   _emit(event, data) { this.push(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
   _ensureStart(chunk) {
@@ -291,6 +292,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     // 别包装成"成功的空消息"让 CLI 当正常结束 —— 发 error 事件（fable 评审 P2）
     if (!this.started || (this.blockIndex < 0 && !this.finish)) {
       this._ensureStart(null);
+      this.failReason = 'empty response';
       this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream returned an empty response' } });
       return;
     }
@@ -301,6 +303,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     if (!this.finish && !this.sawText && !this.sawToolCall) {
       console.warn('[ingress/openai-chat] upstream stream ended without finish_reason and without visible output (thinking-only)');
       this._closeOpen();
+      this.failReason = 'stream ended before any visible output';
       this._emit('error', { type: 'error', error: { type: 'api_error', message: 'ingress: upstream stream ended before any visible output' } });
       return;
     }
@@ -310,6 +313,7 @@ export class OpenAIToAnthropicSSE extends Transform {
     if (isAlienFinish(this.finish) && !this.sawText && !this.sawToolCall) {
       console.warn(`[ingress/openai-chat] upstream finish_reason='${this.finish}' with no visible output — failing the turn so the CLI retries`);
       this._closeOpen();
+      this.failReason = `finish_reason='${this.finish}' with no visible output`;
       this._emit('error', { type: 'error', error: { type: 'api_error', message: `ingress: upstream ended with finish_reason='${this.finish}' and no visible output` } });
       return;
     }

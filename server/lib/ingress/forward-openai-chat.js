@@ -13,8 +13,9 @@ import { toOpenAIChatRequest, fromOpenAIChatResponse, toAnthropicError, OpenAITo
  * ⚠️ 不转发 binary 带来的任何请求头（anthropic-version/beta 头对它无意义，UA 要自己给：
  * Cloudflare 对某些默认 UA 回 1010）。
  */
-export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, path, agent }) {
+export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, path, agent, onOutcome = () => {} }) {
   const wantStream = !!parsed.stream;
+  // onOutcome(ok, reason)：每次往返报一次结果，model-ingress 据此记会话连续失败计数（upstream-fail-streak.js）
   const body = toOpenAIChatRequest(parsed, { reasoningEffort: wire.reasoningEffort, maxOutput: wire.maxOutput });
   const outBody = Buffer.from(JSON.stringify(body), 'utf8');
   const useHttps = target.protocol === 'https:';
@@ -43,6 +44,7 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
         console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} ${status} model=${wire.wireModel} body=${text.slice(0, 200).replace(/\s+/g, ' ')}`);
         // 空体的 5xx（Zen 08-21 连回三个 503 body 空）：给用户一句能懂的话，别让 CLI 只显示 "HTTP 503"
         const msg = text.trim() ? text : `${wire.upstream?.label || wire.upstreamId} 上游返回 ${status}（模型暂时不可用，稍后再发一次）`;
+        onOutcome(false, `HTTP ${status}`);
         const errBody = JSON.stringify(toAnthropicError(status, msg));
         res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(errBody)) });
         res.end(errBody);
@@ -52,7 +54,9 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
     if (wantStream) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       const xf = new OpenAIToAnthropicSSE({ model: parsed.model });
-      xf.on('error', (err) => { console.error(`[model-ingress] sse transform error: ${err.message}`); try { res.end(); } catch { /* ignore */ } });
+      xf.on('error', (err) => { console.error(`[model-ingress] sse transform error: ${err.message}`); onOutcome(false, `transform: ${err.message}`); try { res.end(); } catch { /* ignore */ } });
+      // 转换层以 error 事件收场（私货 finish / 早断流 / 空体）→ 算一次失败；正常收尾算成功
+      xf.on('end', () => onOutcome(!xf.failReason, xf.failReason || ''));
       proxyRes.pipe(xf).pipe(res);
       return;
     }
@@ -71,9 +75,11 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
         const msg = upstreamJson?.error?.message
           || (alienFinish ? `upstream ended with finish_reason='${alienFinish}' and no visible output` : 'upstream returned no choices');
         console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} 200-but-empty model=${wire.wireModel} ${String(msg).slice(0, 160)}`);
+        onOutcome(false, String(msg).slice(0, 120));
         const errBody = JSON.stringify(toAnthropicError(502, String(msg)));
         res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(errBody); return;
       }
+      onOutcome(true);
       const respBody = JSON.stringify(out);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(respBody)) });
       res.end(respBody);
@@ -82,6 +88,7 @@ export function forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, pa
   proxyReq.on('error', (err) => {
     const detail = err.code ? `${err.code}: ${err.message}` : err.message;
     console.error(`[model-ingress] forward error (${wire.upstreamId}): ${detail}`);
+    onOutcome(false, `forward: ${detail}`);
     try { res.writeHead(502); res.end(`ingress forward error: ${detail}`); } catch { /* ignore */ }
   });
   proxyReq.write(outBody);

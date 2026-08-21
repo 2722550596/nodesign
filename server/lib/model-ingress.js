@@ -37,6 +37,7 @@ import https from 'node:https';
 import sharp from 'sharp';
 import { resolveWireModel, resolveModelRoute, UPSTREAMS } from '../engine/agent/model-context.js';
 import { forwardOpenAIChat } from './ingress/forward-openai-chat.js';
+import { failStreaks, exhaustedErrorBody } from './ingress/upstream-fail-streak.js';
 
 // ── 出站连接池 ──
 // ⛔ 08-20 生产真踩：本地盒子（authStyle 'none' = 环回 SSH 隧道）走 Node 默认
@@ -227,9 +228,23 @@ async function handleRequest(req, res, bodyBuf) {
     return;
   }
 
+  const isCountTokens = /^\/v1\/messages\/count_tokens\b/.test(origPath);
+
+  // 会话连续失败上限（upstream-fail-streak.js，僵尸 run 案）：上游持续死时 CLI 对 5xx 无上限退避重试，
+  // 一个回合能挂一小时。到上限就回 400（CLI 不重试、回合以 is_error 收场、文案到用户、会话不死），
+  // 计数归零让用户下次再发有新机会。count_tokens 不参与（它不是循环的燃料）。
+  if (!isCountTokens && failStreaks.exhausted(sessionTag)) {
+    const { n, reason } = failStreaks.consume(sessionTag);
+    const body = JSON.stringify(exhaustedErrorBody({ label: wire.upstream?.label || wire.upstreamId, n, reason }));
+    console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} 连续失败 ${n} 次（${reason}）→ 400 止损，计数归零`);
+    res.writeHead(400, { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) });
+    res.end(body);
+    return;
+  }
+  const noteOutcome = (ok, reason) => { if (!isCountTokens) failStreaks.note(sessionTag, ok, reason); };
+
   // count_tokens：上游没有该端点 → 本地估算短路（SDK 内部窗口计数要有数，
   // 否则 ContextUsageBar 永远"等待"、80% 预警从不触发 —— DMXAPI 时代真踩过）
-  const isCountTokens = /^\/v1\/messages\/count_tokens\b/.test(origPath);
   const upstreamHasCount = wire.upstream.countTokens !== false && !countTokensDead.has(wire.upstreamId);
   if (isCountTokens && !upstreamHasCount) {
     const respBody = JSON.stringify({ input_tokens: estimateInputTokens(parsed) });
@@ -246,7 +261,7 @@ async function handleRequest(req, res, bodyBuf) {
     const target = new URL(wire.upstream.baseUrl);
     // helper 请求降档：主行想多少归主行，helper 一句话的活用 helperReasoningEffort（默认 low）
     const wireFwd = routed.role === 'helper' && wire.helperReasoningEffort ? { ...wire, reasoningEffort: wire.helperReasoningEffort } : wire;
-    forwardOpenAIChat({ parsed, wire: wireFwd, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:') });
+    forwardOpenAIChat({ parsed, wire: wireFwd, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:'), onOutcome: noteOutcome });
     return;
   }
   const outBody = Buffer.from(JSON.stringify(parsed), 'utf8');
@@ -287,6 +302,10 @@ async function handleRequest(req, res, bodyBuf) {
         const preview = Buffer.concat(respChunks).slice(0, 200).toString('utf8').replace(/\s+/g, ' ');
         console.warn(`[model-ingress] sid=${sidShort} upstream=${wire.upstreamId} ${proxyRes.statusCode} model=${wire.wireModel} body=${preview}`);
       });
+      // 透传路：5xx 记一次失败（4xx 是请求本身的问题，CLI 不重试，不记）；2xx 算成功
+      if (proxyRes.statusCode >= 500) noteOutcome(false, `HTTP ${proxyRes.statusCode}`);
+    } else {
+      noteOutcome(true);
     }
     res.writeHead(proxyRes.statusCode, proxyRes.headers);
     proxyRes.pipe(res);
@@ -295,6 +314,7 @@ async function handleRequest(req, res, bodyBuf) {
   proxyReq.on('error', (err) => {
     const detail = err.code ? `${err.code}: ${err.message}` : err.message;
     console.error(`[model-ingress] forward error (${wire.upstreamId}): ${detail}`);
+    noteOutcome(false, `forward: ${detail}`);
     try { res.writeHead(502); res.end(`ingress forward error: ${detail}`); } catch { /* ignore */ }
   });
 
