@@ -105,7 +105,7 @@ to also read your own console.log output from the page (grouped, capped).
 
 FILMSTRIP — the eye for ANIMATION. A single still cannot show easing, overshoot,
 hard cuts between tweens, or "the whole move played off-screen". Pass
-frames:[0,120,240,400,700] (ms offsets) + trigger:"window.game.reload()" (JS that
+frames (2-30 ms offsets, e.g. [0,120,240,400,700]) + trigger:"window.game.reload()" (JS that
 starts the move) and you get ONE contact sheet: the same viewport at each of those
 moments, timestamped. One image = one motion curve — judge attack, overshoot,
 settle and cuts directly. click:"#start" performs a REAL trusted click instead

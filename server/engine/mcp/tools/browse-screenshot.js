@@ -56,7 +56,8 @@ region use browser_computer zoom.
 
 FILMSTRIP — the eye for the site's MOTION. A still cannot show how a hero
 reveals, how cards stagger in, how parallax layers slide, whether scrolling is
-hijacked into a smooth-scroll. Pass frames:[0,150,300,600,1000] (ms offsets) and
+hijacked into a smooth-scroll. Pass frames (2-30 ms offsets, e.g. [0,150,300,600,1000]
+for one move, 12-30 spread over a long scroll) and
 ONE of: scrollBy (px of REAL wheel scrolling spread over the recording — use
 this for scroll-driven motion, it is what a visitor does), trigger (JS that
 starts a move), or click (a CSS selector, a real trusted click). You get ONE

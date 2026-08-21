@@ -90,7 +90,8 @@ description: NoDesign 站点设计方法论 —— 静态站点（手写起步�
    这站靠什么在动 —— @keyframes / transition / CSS 滚动驱动动画 / scroll-snap /
    sticky / GSAP+ScrollTrigger 每个 trigger 的 start·end·scrub / Lenis 劫持 /
    哪些元素是滚动入场、哪些随滚动走）。想看它**动起来的样子**用
-   `browser_screenshot { frames:[0,150,300,600,1000], scrollBy: 900 }`：一张按时刻拼的
+   `browser_screenshot { frames:[…], scrollBy: … }`（格数 2~30 自己定：6~10 看细节、
+   12~16 看整段、20~30 看长滚动的节奏；scrollBy 按要看的那段滚动量给）：一张按时刻拼的
    胶片条 + 元素探针（谁在动、位移多少、什么时候）。"看全"一个参考站 = 版面（截图）
    + 用料（palette/fonts/css）+ 骨架（skeleton）+ 动效（motion + 胶片条），四样齐了再下手。
    ⭐ 采 token 是**多页多步**的活：从摘要里挑好两三个内页后，**一趟 `browser_batch`**

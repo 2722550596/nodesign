@@ -466,7 +466,7 @@ about why they were taken is landfill.`,
           if (r.data.css) lines.push('', `CSS：${r.data.css.length} 条命中规则已写进 json`);
           if (r.data.motion) {
             lines.push('', '动效清单（这站靠什么在动）：', ...formatMotionInventory(r.data.motion).map(l => `  ${l}`));
-            lines.push('  → 想看它动起来的样子：browser_screenshot { frames:[0,150,300,600,1000], scrollBy: 900 }');
+            lines.push('  → 想看它动起来的样子：browser_screenshot { frames:[…2~30 个时刻], scrollBy:<要看的那段滚动量 px> }（格数越多每格越小，长序列 12~30 格）');
           }
           if (r.failed?.length) {
             lines.push('', `⚠️ 有 ${r.failed.length} 种没采到（其余的已经落盘了）：`,

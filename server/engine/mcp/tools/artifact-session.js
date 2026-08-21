@@ -239,7 +239,7 @@ For how the motion LOOKS use screenshot_canvas frames; for numbers use trace_mot
           `motion inventory — ${target.relPath} @ ${acq.viewport.width}x${acq.viewport.height}`,
           degradedNote(acq), acq.liveNote, acq.gotoNote, '',
           ...formatMotionInventory(inv),
-          '', '→ to SEE it: screenshot_canvas { frames:[0,150,300,600,1000], scrollTo/beforeShot or live:true }; to MEASURE a curve: trace_motion.',
+          '', '→ to SEE it: screenshot_canvas { frames:[2-30 ms offsets], trigger/click or live:true }; to MEASURE a curve: trace_motion.',
         ].filter(l => l != null);
         return asText(lines.join('\n'));
       } catch (err) {
