@@ -394,9 +394,19 @@ export async function capture({
       failed.push(`css: ${err.message.split('\n')[0]}`);
     }
   }
+  // motion 档（08-21）：引擎在 engine/motion/inventory.js（对页面无知，产物会话也能用）。
+  // 排在截图之后 —— 它会真滚一遍页面（做完滚回顶），别把滚动痕迹截进 screenshot 档。
+  if (kinds.includes('motion')) {
+    try {
+      const { collectMotionInventory } = await import('../motion/inventory.js');
+      bundle.motion = await collectMotionInventory(page);
+    } catch (err) {
+      failed.push(`motion: ${err.message.split('\n')[0]}`);
+    }
+  }
   // 一档一文件。写盘也各自 try —— 一档写不下去不该把别的档带走
   // （跟上面「每一种单独 try」同一条理由，只是这次是磁盘不是页面）。
-  for (const [key, suffix] of [['palette', '.palette.json'], ['fonts', '.fonts.json'], ['skeleton', '.skeleton.json']]) {
+  for (const [key, suffix] of [['palette', '.palette.json'], ['fonts', '.fonts.json'], ['skeleton', '.skeleton.json'], ['motion', '.motion.json']]) {
     if (bundle[key] == null) continue;
     try { await writeJson(suffix, { [key]: bundle[key] }, key); }
     catch (err) { failed.push(`${key}: 写盘失败 ${err.message}`); }

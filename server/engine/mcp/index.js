@@ -41,9 +41,10 @@ import { makeProfileScrollTool } from './tools/profile-scroll.js';
 import { makeExplainStyleTool } from './tools/explain-style.js';
 import { makeTraceMotionTool } from './tools/trace-motion.js';
 import {
-  makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool, makeBrowserScreenshotTool,
+  makeBrowserNavigateTool, makeBrowserReadTool, makeBrowserClickTool,
   makeBrowserRequestHelpTool, makeBrowserCaptureTool,
 } from './tools/browse.js';
+import { makeBrowserScreenshotTool } from './tools/browse-screenshot.js';
 import { makeBrowserComputerTool } from './tools/browse-computer.js';
 import { makeBrowserFindTool, makeBrowserBatchTool } from './tools/browse-find-batch.js';
 import { makeArtifactOpenTool, makeArtifactComputerTool, makeArtifactFindTool, makeArtifactBatchTool } from './tools/artifact-session.js';
@@ -132,7 +133,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     makeBrowserNavigateTool({ projectId, ctx }),
     makeBrowserReadTool({ projectId }),
     makeBrowserClickTool({ projectId }),
-    makeBrowserScreenshotTool({ projectId }),
+    makeBrowserScreenshotTool({ projectId, workspaceRoot }),
     // 采集：把可复用的东西（调色板/字体/CSS/结构骨架/截图）落进
     // assets/references/web/ + 出处 sidecar —— 下个会话还在
     makeBrowserCaptureTool({ projectId, workspaceRoot, sessionId, ctx }),

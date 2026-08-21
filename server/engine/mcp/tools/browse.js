@@ -34,7 +34,8 @@ import { listPublishedByProject } from '../../../lib/publish-store.js';
 import { normalizeShot } from './helpers/shot-pipeline.js';
 import { capture } from '../../browse/capture.js';
 import { collectPage, formatPage } from '../../browse/page-digest.js';
-import { recordVisit, saveFrame } from '../../browse/state.js';
+import { recordVisit } from '../../browse/state.js';
+import { formatMotionInventory } from '../../motion/inventory.js';
 
 const NAV_TIMEOUT = _limits.NAV_TIMEOUT_MS;
 const asText = (text, isError = false) => ({ content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
@@ -319,70 +320,7 @@ the URL directly instead.`,
   );
 }
 
-export function makeBrowserScreenshotTool({ projectId }) {
-  return tool(
-    'browser_screenshot',
-    `Screenshot the current page in the browser session.
-
-This is what makes browsing useful for design work: read tells you what a page
-says, this tells you what it looks like — the layout rhythm, how the type is
-set, where the whitespace is, how an opening screen is composed.
-
-Default is the viewport (${_limits.VIEWPORT.width}×${_limits.VIEWPORT.height}, cheap; its pixels are the coordinate
-space browser_computer uses, 1:1). fullPage for the whole scroll, or a selector
-for one component you want to look at closely. For a magnified look at a small
-region use browser_computer zoom.`,
-    {
-      fullPage: z.boolean().optional().describe('Capture the whole scrollable page instead of the viewport. Several times more expensive.'),
-      selector: z.string().optional().describe('Capture only the first element matching this CSS selector.'),
-      scrollTo: z.union([z.number(), z.string()]).optional()
-        .describe("Scroll the viewport here first: pixels, a percentage like '50%', or a CSS selector. Real scroll, so entry animations and sticky headers behave as a visitor sees them."),
-    },
-    async ({ fullPage, selector, scrollTo }) => {
-      try {
-        return await withBrowser(projectId, async ({ page }) => {
-          if (scrollTo != null) {
-            await page.evaluate(async (spec) => {
-              const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-              let y = 0;
-              if (typeof spec === 'number') y = spec;
-              else if (/^-?[\d.]+%$/.test(spec)) y = maxY * (parseFloat(spec) / 100);
-              else {
-                const el = document.querySelector(spec);
-                if (el) y = el.getBoundingClientRect().top + window.scrollY;
-              }
-              window.scrollTo({ top: Math.max(0, Math.min(y, maxY)), behavior: 'instant' });
-              await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-            }, scrollTo);
-            await page.waitForTimeout(350);
-          }
-          let buf;
-          if (selector) {
-            const loc = page.locator(selector).first();
-            if (!(await loc.count())) return asText(`选择器没匹配到元素：${selector}`, true);
-            buf = await loc.screenshot({ type: 'png' });
-          } else {
-            buf = await page.screenshot({ type: 'png', fullPage: fullPage === true });
-            // 顺手把这张存成桌面卡片的预览 —— **不额外截图**，只是这一张本来就有。
-            // 整页图不用：卡片是一块 16:10 的画框，塞一张长图进去看不出东西。
-            if (fullPage !== true) await saveFrame(projectId, buf);
-          }
-          const shot = await normalizeShot(buf);
-          return {
-            content: [
-              { type: 'text', text: [`${await where(page)}`,
-                selector ? `只截了 ${selector}` : `${fullPage ? '整页' : '视口'} ${_limits.VIEWPORT.width}×${_limits.VIEWPORT.height}`,
-                shot.note].filter(Boolean).join(' · ') },
-              { type: 'image', data: shot.data, mimeType: shot.mimeType },
-            ],
-          };
-        });
-      } catch (err) {
-        return asText(`browser_screenshot 失败：${err.message}`, true);
-      }
-    },
-  );
-}
+// browser_screenshot 08-21 搬去 browse-screenshot.js（加了胶片条 + 元素探针，行数棘轮）
 
 export function makeBrowserRequestHelpTool({ projectId, ctx }) {
   return tool(
@@ -459,6 +397,18 @@ site is usually the parts you can turn straight into code:
             is boring; having them for a reference site turns "it feels thin"
             into "theirs has 6 shapes, yours has 1".
 - screenshot the picture, for the things numbers cannot carry
+- motion    ⭐ WHAT the site uses to move: every stylesheet (cross-origin CDN
+            ones too, via CDP) scanned for @keyframes / animation / transition /
+            CSS scroll-driven animation (animation-timeline, scroll(), view()) /
+            scroll-snap / sticky / reduced-motion; the browser's own running
+            animations (getAnimations: durations, easings, keyframes); motion
+            libraries (GSAP + every ScrollTrigger's start/end/scrub/pin, Lenis,
+            Locomotive, AOS, Swiper, three.js, framer-motion…); and a REAL wheel
+            scroll through the page that tells apart reveal-on-scroll elements
+            (with their transition), scrub/parallax elements, and scroll
+            hijacking. This is how you learn HOW an effect is built. ⚠ it scrolls
+            the page (restores to top); canvas/WebGL motion is invisible to it —
+            for the look and feel of motion use browser_screenshot frames.
 
 Everything lands in assets/references/web/ with a provenance sidecar (source
 URL, when, what you were looking for). It is there in the NEXT conversation too
@@ -467,8 +417,8 @@ URL, when, what you were looking for). It is there in the NEXT conversation too
 Write "lookingFor" honestly: in three days a folder of screenshots with no note
 about why they were taken is landfill.`,
     {
-      kinds: z.array(z.enum(['screenshot', 'palette', 'fonts', 'css', 'skeleton'])).min(1)
-        .describe('What to take. Cheap ones (palette/fonts/skeleton) can all go in one call.'),
+      kinds: z.array(z.enum(['screenshot', 'palette', 'fonts', 'css', 'skeleton', 'motion'])).min(1)
+        .describe('What to take. Cheap ones (palette/fonts/skeleton) can all go in one call; motion takes a few seconds (it scrolls the page).'),
       lookingFor: z.string().min(4).max(200)
         .describe('Why you are taking this, in one line — e.g. "刊物式开场的版面节奏与配色".'),
       name: z.string().max(48).optional()
@@ -514,6 +464,10 @@ about why they were taken is landfill.`,
             }
           }
           if (r.data.css) lines.push('', `CSS：${r.data.css.length} 条命中规则已写进 json`);
+          if (r.data.motion) {
+            lines.push('', '动效清单（这站靠什么在动）：', ...formatMotionInventory(r.data.motion).map(l => `  ${l}`));
+            lines.push('  → 想看它动起来的样子：browser_screenshot { frames:[0,150,300,600,1000], scrollBy: 900 }');
+          }
           if (r.failed?.length) {
             lines.push('', `⚠️ 有 ${r.failed.length} 种没采到（其余的已经落盘了）：`,
               ...r.failed.map(f => `  ${f}`));

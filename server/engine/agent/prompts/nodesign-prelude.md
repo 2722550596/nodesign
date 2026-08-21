@@ -249,6 +249,10 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 这是一只**按项目常驻的真浏览器**，不是一次性截图：登录态、点过的 Cookie 弹窗
 跨会话留着，所以能点链接、翻子页、逛到第三层。能预判两步以上的操作就用
 `browser_batch`（找框 → 点 → 打字 → 回车 → 看），别一个动作花一个回合。
+看参考站的**动效**有两层：`browser_capture { kinds:['motion'] }` 说它靠什么在动
+（keyframes / transition / CSS 滚动驱动 / GSAP+ScrollTrigger / Lenis 劫持 / 哪些元素
+滚动入场）；`browser_screenshot { frames:[…], scrollBy: 900 }` 出胶片条 + 元素探针，
+看它动起来的样子。静帧看不见时间轴，别只截一张就判断人家的动效。
 
 产物会话四件（常驻，**查自己的成品**）：`artifact_open`（把站点页 / deck / 游戏开进
 常驻会话，状态跨调用留着）· `artifact_computer`（对着它点、拖、滚、敲键盘、zoom、

@@ -238,11 +238,57 @@ function installMotionSampler(cfg) {
     wrap(OscillatorNode.prototype, 'start', () => 'oscillator.start');
   } catch { /* 没有 WebAudio 的环境 */ }
 
+  // 元素探针（08-21）：不用 agent 写表达式，自动盯一批"可能在动"的元素，逐帧采
+  // 文档坐标 / 透明度 / 缩放。文档坐标 = 视口 rect + scroll，所以滚动本身不算"动"，
+  // 视差 / 入场 / 固定元素随视口走的才算。参考站的全局 agent 不认识，这是它唯一能
+  // 拿到"谁在动、怎么动"的路。
+  st.elems = [];
+  if (cfg.probeElements) {
+    try {
+      const picked = [];
+      const seen = new Set();
+      const add = (el) => { if (picked.length >= 48 || seen.has(el)) return; const r = el.getBoundingClientRect(); if (r.width < 24 || r.height < 24) return; seen.add(el); picked.push(el); };
+      const vh = window.innerHeight;
+      // 先挑声明了会动的（will-change / transition / animation），再补视口附近的大块
+      for (const el of document.querySelectorAll('*')) {
+        if (picked.length >= 32) break;
+        const r = el.getBoundingClientRect();
+        if (r.bottom < -vh || r.top > vh * 2) continue;
+        const cs = getComputedStyle(el);
+        if (cs.willChange !== 'auto' || cs.animationName !== 'none' || (cs.transitionDuration !== '0s' && cs.transitionProperty !== 'none')) add(el);
+      }
+      for (const el of document.querySelectorAll('section, article, header, h1, h2, figure, img, video, canvas, [class*="hero"], [class*="card"], nav')) {
+        if (picked.length >= 48) break;
+        const r = el.getBoundingClientRect();
+        if (r.bottom < -vh || r.top > vh * 2) continue;
+        add(el);
+      }
+      const selOf = (el) => { const cls = typeof el.className === 'string' && el.className.trim() ? `.${el.className.trim().split(/\s+/).slice(0, 2).join('.')}` : ''; return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${cls}`; };
+      // fixed/sticky 要沿祖先看：固定头部里的链接自己是 static，但整层随视口走
+      const fixedOf = (el) => { for (let n = el, i = 0; n && n.nodeType === 1 && i < 40; n = n.parentElement, i += 1) { const p = getComputedStyle(n).position; if (p === 'fixed' || p === 'sticky') return true; } return false; };
+      st.elems = picked.map((el) => ({ el, sel: selOf(el), fixed: fixedOf(el), samples: [] }));
+    } catch { st.elems = []; }
+  }
+  const sampleElems = (now) => {
+    for (const e of st.elems) {
+      if (e.samples.length >= 600) continue;
+      try {
+        const r = e.el.getBoundingClientRect();
+        const cs = getComputedStyle(e.el);
+        let s = 1;
+        const m = cs.transform && cs.transform !== 'none' ? cs.transform.match(/matrix\(([^)]+)\)/) : null;
+        if (m) { const p = m[1].split(',').map(Number); s = Math.hypot(p[0], p[1]); }
+        e.samples.push([Math.round(now), Math.round(r.left + window.scrollX), Math.round(r.top + window.scrollY), Number(cs.opacity), Number(s.toFixed(3))]);
+      } catch { /* 元素没了就不采 */ }
+    }
+  };
+
   const hasExprs = Object.keys(fns).length > 0;
   const tick = () => {
     if (!st.running) return;
     const now = performance.now();
     if (st.rafTs.length < 4000) st.rafTs.push(now);
+    if (st.elems.length) sampleElems(now);
     if (hasExprs && st.rows.length < 4000) {
       const row = { t: now };
       for (const k in fns) {
@@ -275,6 +321,7 @@ function collectMotionSampler() {
     rows: st.rows,
     errs: st.errs,
     audio: st.audio,
+    elems: (st.elems || []).map((e) => ({ sel: e.sel, fixed: e.fixed, samples: e.samples })),
   };
 }
 /* eslint-enable no-undef */
@@ -293,10 +340,13 @@ function collectMotionSampler() {
  * }
  */
 export async function recordMotion(page, {
-  durationMs, trigger, click, expressions,
+  durationMs, trigger, click, expressions, during = null, probeElements = false,
   wantShots = true, shotMaxW = 1152, shotMaxH = 1152, shotQuality = 78,
 }) {
-  await page.evaluate(installMotionSampler, { exprs: expressions || {} });
+  // during（08-21）：t=0 之后、录制期间并行跑的一段动作（典型：真滚轮滚一段，见
+  // motion-scroll.js 的 wheelScroll）。它跟 trigger 的区别：trigger 是页面里的 JS，
+  // during 是 Playwright 侧的输入事件 —— 滚动劫持那族只认后者。
+  await page.evaluate(installMotionSampler, { exprs: expressions || {}, probeElements });
 
   const shots = [];
   let cdp = null;
@@ -329,10 +379,19 @@ export async function recordMotion(page, {
     trigP = page.evaluate(`(async () => { ${trigger} })()`)
       .catch((e) => { triggerNote = `trigger error: ${e?.message || e}`; });
   }
+  let duringNote = null;
+  let duringP = null;
+  if (typeof during === 'function') {
+    duringP = Promise.resolve().then(() => during(page))
+      .then((note) => { if (typeof note === 'string') duringNote = note; })
+      .catch((e) => { duringNote = `during error: ${e?.message || e}`; });
+  }
 
   await page.waitForTimeout(durationMs + 100);
   if (cdp) await cdp.send('Page.stopScreencast').catch(() => {});
   if (trigP) await Promise.race([trigP, new Promise((r) => { setTimeout(r, 10); })]);
+  // during 是按时间预算自己收尾的（wheelScroll 按 elapsed 配额派发），多等一秒拿它的说明
+  if (duringP) await Promise.race([duringP, new Promise((r) => { setTimeout(r, 1000); })]);
 
   const raw = await page.evaluate(collectMotionSampler);
   if (!raw) throw new Error('motion sampler vanished from the page (a reload during recording?)');
@@ -345,8 +404,10 @@ export async function recordMotion(page, {
     rows: raw.rows.map((r) => ({ ...r, t: rel(r.t) })),
     errs: raw.errs,
     audio: raw.audio.map((a) => ({ t: rel(a.t), what: a.what })),
+    elems: (raw.elems || []).map((e) => ({ ...e, samples: e.samples.map((s) => [Math.round(rel(s[0])), s[1], s[2], s[3], s[4]]) })),
     clickNote,
     triggerNote,
+    duringNote,
     captureNote: wantShots
       ? `screencast captured ${shots.length} frames over ${((durationMs + 250) / 1000).toFixed(1)}s`
         + (shots.length < 2 ? ' — the page never repainted; is anything actually animating?' : '')
@@ -473,5 +534,6 @@ export function motionCaptionLines(rec) {
   if (rec.captureNote) lines.push(rec.captureNote);
   if (rec.clickNote) lines.push(rec.clickNote);
   if (rec.triggerNote) lines.push(rec.triggerNote);
+  if (rec.duringNote) lines.push(rec.duringNote);
   return lines;
 }

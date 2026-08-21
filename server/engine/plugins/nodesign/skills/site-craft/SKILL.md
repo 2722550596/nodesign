@@ -86,7 +86,13 @@ description: NoDesign 站点设计方法论 —— 静态站点（手写起步�
    `browser_computer` 按截图坐标点。逛完再决定采什么，别一进门就采。
 4. ⭐ `browser_capture` 把可复用的带回来 —— 不只是截图：
    **调色板**（带用途：底色/正文色/强调色）、**字体**（字族 + 实际字号字重行高）、
-   某一块的 **CSS 片段**、以及 **结构三数**。
+   某一块的 **CSS 片段**、**结构三数**，以及 ⭐ **动效清单**（`kinds:['motion']`：
+   这站靠什么在动 —— @keyframes / transition / CSS 滚动驱动动画 / scroll-snap /
+   sticky / GSAP+ScrollTrigger 每个 trigger 的 start·end·scrub / Lenis 劫持 /
+   哪些元素是滚动入场、哪些随滚动走）。想看它**动起来的样子**用
+   `browser_screenshot { frames:[0,150,300,600,1000], scrollBy: 900 }`：一张按时刻拼的
+   胶片条 + 元素探针（谁在动、位移多少、什么时候）。"看全"一个参考站 = 版面（截图）
+   + 用料（palette/fonts/css）+ 骨架（skeleton）+ 动效（motion + 胶片条），四样齐了再下手。
    ⭐ 采 token 是**多页多步**的活：从摘要里挑好两三个内页后，**一趟 `browser_batch`**
    把它们串起来 —— navigate A → capture palette+fonts → navigate B → capture →
    navigate C → capture，结尾自动补截图。六个回合变一个；一页一个回合太慢。
