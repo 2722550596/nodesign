@@ -189,7 +189,7 @@ describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20�
   it('无会话前缀 / 没注册：全表反查照旧（探针、体检走这条）', () => {
     expect(resolveSessionWire('claude-sonnet-4-6', null)).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
     expect(resolveSessionWire('claude-sonnet-4-6', 'never-registered')).toMatchObject({ reason: 'table', wire: { appModel: 'gemini-3.1-pro' } });
-    expect(resolveSessionWire('nonsense-model', null)).toEqual({ wire: null, reason: 'none' });
+    expect(resolveSessionWire('nonsense-model', null)).toEqual({ wire: null, reason: 'none', role: 'main' });
   });
   it('qwen 会话：自己的 alias（原样 / 剥[1m]）→ 自己那行', () => {
     registerIngressSession(SID, 'qwen3.8-27b');
@@ -198,6 +198,24 @@ describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20�
       expect(resolveSessionWire('claude-opus-5', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'qwen3.8-27b' } });
       expect(resolveSessionWire('qwen3.8-27b', SID)).toMatchObject({ reason: 'table', wire: { appModel: 'qwen3.8-27b' } });
     } finally { unregisterIngressSession(SID); }
+  });
+  it('role：主行 main；fast 行 / 兜底 / 撞名 都是 helper（08-21，helper 降思考档用）', () => {
+    const S2 = 'ingress-test-oxmax';
+    registerIngressSession(S2, 'ox-alpha-max');
+    try {
+      expect(resolveSessionWire('claude-sonnet-4-5-20250929[1m]', S2)).toMatchObject({ reason: 'table', role: 'main', wire: { appModel: 'ox-alpha-max', reasoningEffort: 'max', helperReasoningEffort: 'low' } });
+      expect(resolveSessionWire('ox-alpha-helper', S2)).toMatchObject({ reason: 'table', role: 'helper', wire: { appModel: 'ox-alpha-helper', reasoningEffort: 'low' } });
+      expect(resolveSessionWire('claude-haiku-4-5', S2)).toMatchObject({ reason: 'table', role: 'helper', wire: { appModel: 'ox-alpha-helper' } });
+      expect(resolveSessionWire('claude-sonnet-5', S2)).toMatchObject({ reason: 'fallback', role: 'helper', wire: { appModel: 'ox-alpha-helper' } });
+      expect(resolveSessionWire('claude-opus-4-8[1m]', S2)).toMatchObject({ reason: 'collision', role: 'helper', wire: { appModel: 'ox-alpha-helper' } });   // ox-alpha 主行的 alias 在 max 会话里是别行
+      // ox-alpha 会话：主请求 main、helper 行 helper（两者不再同名）
+      const S3 = 'ingress-test-ox'; registerIngressSession(S3, 'ox-alpha');
+      try {
+        expect(resolveSessionWire('claude-opus-4-8[1m]', S3)).toMatchObject({ role: 'main', wire: { appModel: 'ox-alpha', reasoningEffort: 'high' } });
+        expect(resolveSessionWire('ox-alpha-helper', S3)).toMatchObject({ role: 'helper', wire: { reasoningEffort: 'low' } });
+      } finally { unregisterIngressSession(S3); }
+      expect(resolveSessionWire('ox-alpha', null)).toMatchObject({ role: 'main' });
+    } finally { unregisterIngressSession(S2); }
   });
   it('⛔ qwen 会话拿 gemini 行的 alias 发请求 → 不跨行，改道本会话 fast（qwen 自己），且标 collision', () => {
     registerIngressSession(SID, 'qwen3.8-27b');
@@ -211,10 +229,11 @@ describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20�
       expect(resolveSessionWire('claude-opus-4-7', SID)).toMatchObject({ reason: 'collision', collidesWith: 'kimi-k2.6', wire: { appModel: 'qwen3.8-27b' } });
     } finally { unregisterIngressSession(SID); }
   });
-  it('qwen 会话：不在表里的 helper 名 → fast 兜底（fallback）', () => {
+  it('qwen 会话：不在表里的 helper 名 → fast 兜底（fallback）；haiku 名 08-21 起属于 ox-alpha-helper 行 → 撞名改道', () => {
     registerIngressSession(SID, 'qwen3.8-27b');
     try {
-      expect(resolveSessionWire('claude-haiku-4-5', SID)).toMatchObject({ reason: 'fallback', fastModel: 'qwen3.8-27b', wire: { appModel: 'qwen3.8-27b' } });
+      expect(resolveSessionWire('claude-sonnet-5', SID)).toMatchObject({ reason: 'fallback', fastModel: 'qwen3.8-27b', wire: { appModel: 'qwen3.8-27b' } });
+      expect(resolveSessionWire('claude-haiku-4-5', SID)).toMatchObject({ reason: 'collision', collidesWith: 'ox-alpha-helper', wire: { appModel: 'qwen3.8-27b' } });
     } finally { unregisterIngressSession(SID); }
   });
   it('gemini 会话拿 kimi alias → 改道 gemini 自己（反向同样封）；注销后回到全表反查', () => {

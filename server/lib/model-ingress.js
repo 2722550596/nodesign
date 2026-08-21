@@ -114,13 +114,15 @@ export function unregisterIngressSession(sessionId) {
 export function resolveSessionWire(bodyModel, sessionTag) {
   const direct = resolveWireModel(bodyModel);
   const sess = sessionTag ? sessionRoutes.get(sessionTag) : null;
-  if (!sess) return { wire: direct, reason: direct ? 'table' : 'none' };
-  if (direct && (direct.appModel === sess.appModel || direct.appModel === sess.fastModel)) {
-    return { wire: direct, reason: 'table' };
-  }
+  if (!sess) return { wire: direct, reason: direct ? 'table' : 'none', role: 'main' };
+  // role：'main' = 会话主行的请求（主 agent 一轮）；'helper' = fast 行 / 兜底 / 撞名改道
+  // （标题、auto 分类器、摘要等一句话的活）。openai-chat 行按 role 选 reasoning_effort
+  if (direct && direct.appModel === sess.appModel) return { wire: direct, reason: 'table', role: 'main' };
+  if (direct && direct.appModel === sess.fastModel) return { wire: direct, reason: 'table', role: 'helper' };
   const wire = resolveWireModel(sess.fastModel);
   return {
     wire,
+    role: 'helper',
     reason: direct ? 'collision' : 'fallback',
     fastModel: sess.fastModel,
     sessionModel: sess.appModel,
@@ -242,7 +244,9 @@ async function handleRequest(req, res, bodyBuf) {
   // 协议分岔：上游说 OpenAI chat（Zen 等）→ 转换层；其余透传 Anthropic
   if (wire.protocol === 'openai-chat') {
     const target = new URL(wire.upstream.baseUrl);
-    forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:') });
+    // helper 请求降档：主行想多少归主行，helper 一句话的活用 helperReasoningEffort（默认 low）
+    const wireFwd = routed.role === 'helper' && wire.helperReasoningEffort ? { ...wire, reasoningEffort: wire.helperReasoningEffort } : wire;
+    forwardOpenAIChat({ parsed, wire: wireFwd, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:') });
     return;
   }
   const outBody = Buffer.from(JSON.stringify(parsed), 'utf8');

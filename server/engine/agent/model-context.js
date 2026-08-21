@@ -257,7 +257,7 @@ const MODELS = Object.freeze([
     api: {
       upstream: 'zen', wireModel: 'x-preview-f-free',
       sdkAlias: 'claude-opus-4-8[1m]',
-      fastModel: 'ox-alpha',
+      fastModel: 'ox-alpha-helper',   // helper 走独立行才分得出 role（会话 env SMALL_FAST_MODEL 发的是 app id）
       thinking: 'strip',              // 出口不带 Anthropic thinking 字段；转换层按 reasoningEffort 发 reasoning_effort
       // Ox 三档 low|high|max。08-21 小题实测 reasoning_tokens：不传≈27、low=0、high=3、max=27；
       // 但上生产后 'max' 在真会话里想了 28,930 字 / 4 分 20 秒才出第一个字（用户看到的是
@@ -277,9 +277,25 @@ const MODELS = Object.freeze([
     api: {
       upstream: 'zen', wireModel: 'x-preview-f-free',
       sdkAlias: 'claude-sonnet-4-5-20250929[1m]',
-      fastModel: 'ox-alpha',          // helper/子代理用 high 档那行，不必跟着深想
+      fastModel: 'ox-alpha-helper',   // helper 一句话的活用 low 档那行，不跟着深想
       thinking: 'strip',
       reasoningEffort: 'max',
+      maxOutput: 131_072,
+      prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  },
+  {
+    // Ox 的 helper 行（08-21 晚）：不进 picker（无 select），只做两个 Ox 主行的 fastModel。
+    // 为什么要单独一行：session-loop 给 CLI 的 ANTHROPIC_SMALL_FAST_MODEL 是 app id，
+    // ox-alpha 主行自己当 fast 时 helper 请求和主请求同名，ingress 分不出 role、helper
+    // 也跟着 high 想。独立行 + alias haiku（表内空着的订阅名，helper 不需要 1M 窗）。
+    id: 'ox-alpha-helper', window: 1_000_000,
+    api: {
+      upstream: 'zen', wireModel: 'x-preview-f-free',
+      sdkAlias: 'claude-haiku-4-5',
+      fastModel: 'ox-alpha-helper',
+      thinking: 'strip',
+      reasoningEffort: 'low',
       maxOutput: 131_072,
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
@@ -497,6 +513,10 @@ export function resolveWireModel(bodyModel) {
     liftImages: !!row.api.liftImages,
     protocol: UPSTREAMS[row.api.upstream]?.protocol || 'anthropic',
     reasoningEffort: row.api.reasoningEffort || null,
+    // helper 请求（标题生成 / auto 分类器 / 摘要 —— 凡 body.model 不是会话主行的）用的档位：
+    // 行内可写 helperReasoningEffort 显式指定，没写就 'low'（Ox 实测 low=0 reasoning token）。
+    // 主 agent 想多少是主行的事，helper 一句话的活不该跟着 high/max 想几分钟
+    helperReasoningEffort: row.api.helperReasoningEffort || (row.api.reasoningEffort ? 'low' : null),
     maxOutput: row.api.maxOutput || null,
   };
 }
