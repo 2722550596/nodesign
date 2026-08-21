@@ -74,6 +74,18 @@ export const UPSTREAMS = Object.freeze({
     // model-ingress.normalizeImages）。不填 = 什么都能吃，中转站那两个上游维持原样。
     imageFormats: Object.freeze(['image/png', 'image/jpeg']),
   }),
+  // OpenCode Zen（08-21）：免费 stealth 模型 Ox Alpha 只有 OpenAI chat 格式能用工具
+  // （它的 /v1/messages 桥一带 tools 就 [1210]，四种写法探死）。protocol 'openai-chat'
+  // 让 ingress 走 lib/ingress/openai-chat.js 的协议转换而不是透传；其余上游没有这个
+  // 字段 = 透传 Anthropic。钥匙在 .env（NODESIGN_UPSTREAM_ZEN_KEY）。
+  zen: Object.freeze({
+    label: 'OpenCode Zen',
+    baseUrl: 'https://opencode.ai/zen/v1',
+    keyEnv: 'NODESIGN_UPSTREAM_ZEN_KEY',
+    authStyle: 'bearer',
+    protocol: 'openai-chat',
+    countTokens: false,   // 08-21 探针：404
+  }),
 });
 
 /**
@@ -115,6 +127,8 @@ const MODELS = Object.freeze([
   // 只当 alias 用的订阅名（08-20）：SDK 二进制认识的 1M 名里还空着的一个（strings 扫过：
   // opus-4-6/4-7/4-8/5、sonnet-4-5-20250929/4-6/5 七个 [1m]），给 gemini-3.7-flash 行做 spoof。
   { id: 'claude-opus-4-6[1m]',   window: 1_000_000 },
+  // 同上，给 ox-alpha 行做 spoof（08-21）
+  { id: 'claude-opus-4-8[1m]',   window: 1_000_000 },
 
   // ── API 通路 ──
   // kimi-k2 已删：与 k2.6 共用 alias 是历史遗留，反查表容不下撞车，且 NoDesk
@@ -226,6 +240,26 @@ const MODELS = Object.freeze([
       // 官方促销价（2027-01-01 起翻倍 $1.5/$7.5）；缓存命中按输入价一折。中转站计量单位不明，
       // 这里的 USD 仍是配额/展示用的近似。
       prices: { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0 },
+    },
+  },
+  // ── OpenCode Zen · Ox Alpha（08-21，用户称「大事」的第一块）──
+  // 真 id x-preview-f-free（models.dev name "Ox Alpha Free"；/models 列表里没有带 ox 的名，别按名猜）。
+  // 1M ctx / 131k out / 图+视频 / 工具 / reasoning effort low|high|max / 价 0；官方「free for
+  // the next week」（08-20 公告）+ zero-retention 不训练。大概率 GLM 系 stealth（错误码体系 +
+  // 社区指纹）。⚠️ 一周后要么变付费 GLM 要么下架 —— 这行是插件，闸和转换层才是耐久资产。
+  // 上线顺序：先 gate localGen 给 admin 试跑真任务，过关再开闸并设为全员默认。
+  {
+    id: 'ox-alpha', window: 1_000_000,
+    select: { label: 'Ox Alpha（免费 · 限时）', desc: 'OpenCode Zen 免费 stealth 模型 · 1M 上下文 · 有视觉', gate: 'localGen' },
+    api: {
+      upstream: 'zen', wireModel: 'x-preview-f-free',
+      sdkAlias: 'claude-opus-4-8[1m]',
+      fastModel: 'ox-alpha',
+      thinking: 'strip',              // 出口不带 Anthropic thinking 字段；转换层按 reasoningEffort 发 reasoning_effort
+      reasoningEffort: 'high',        // Ox 三档 low|high|max
+      maxOutput: 131_072,
+      liftImages: true,               // tool 角色消息里放图上游挂死 120s（转换层也会兜，双保险）
+      prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     },
   },
 ]);
@@ -383,6 +417,9 @@ export function resolveWireModel(bodyModel) {
     upstream: UPSTREAMS[row.api.upstream],
     thinking: row.api.thinking || 'strip',
     liftImages: !!row.api.liftImages,
+    protocol: UPSTREAMS[row.api.upstream]?.protocol || 'anthropic',
+    reasoningEffort: row.api.reasoningEffort || null,
+    maxOutput: row.api.maxOutput || null,
   };
 }
 

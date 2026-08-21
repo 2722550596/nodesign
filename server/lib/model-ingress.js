@@ -36,6 +36,7 @@ import http from 'node:http';
 import https from 'node:https';
 import sharp from 'sharp';
 import { resolveWireModel, resolveModelRoute, UPSTREAMS } from '../engine/agent/model-context.js';
+import { forwardOpenAIChat } from './ingress/forward-openai-chat.js';
 
 // ── 出站连接池 ──
 // ⛔ 08-20 生产真踩：本地盒子（authStyle 'none' = 环回 SSH 隧道）走 Node 默认
@@ -237,6 +238,13 @@ async function handleRequest(req, res, bodyBuf) {
 
   // 修补流水线（count_tokens 也要 model 还原，其余修补无害）
   await transformForUpstream(parsed, wire);
+
+  // 协议分岔：上游说 OpenAI chat（Zen 等）→ 转换层；其余透传 Anthropic
+  if (wire.protocol === 'openai-chat') {
+    const target = new URL(wire.upstream.baseUrl);
+    forwardOpenAIChat({ parsed, wire, key, res, sidShort, target, path: joinPath(target.pathname, '/chat/completions'), agent: agentFor(wire, target.protocol === 'https:') });
+    return;
+  }
   const outBody = Buffer.from(JSON.stringify(parsed), 'utf8');
 
   // 换钥匙 + 头处理
