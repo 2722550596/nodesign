@@ -57,7 +57,7 @@ export function isSitePagePath(workspaceRoot, fp) {
   if (!fp || !/\.html?$/i.test(fp)) return false;
   const rel = path.relative(workspaceRoot, path.resolve(workspaceRoot, fp)).split(path.sep).join('/');
   if (!rel || rel.startsWith('..') || !rel.includes('/')) return false;
-  if (/^(exports|node_modules|\.)/.test(rel)) return false;
+  if (/^(exports|node_modules|_drafts|\.)/.test(rel)) return false;   // _drafts/ 是独立单页，不是站点页
   return true;
 }
 
@@ -76,6 +76,7 @@ export function makePostToolUseSiteValidationHandler({ workspaceRoot }) {
         if (err.code === 'ENOENT') return {};
         throw err;
       }
+      if (html.includes('__nd-deck-wrap')) return {};   // 收进文件夹的 deck，不是站点页
       const issues = lintSiteHtml(html);
       if (!issues.length) return {};
       const body = issues.map((i, idx) => `${idx + 1}. ${i.title}\n   ${i.detail}`).join('\n\n');

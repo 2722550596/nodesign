@@ -112,7 +112,7 @@ function validateLayoutComponents(html) {
   if (issues.length === 0) return null;
   return {
     title: `${issues.length} 处 data-layout 漏用推荐组件`,
-    detail: issues.join('\n   ') + '\n   模板 <script id="__nd-shadcn-lite"> 已自带 Card / Button / Badge / Tabs，0 import 直接 <Card> / <Tabs> 用即可。看 SKILL.md § Hybrid 选型表 + patterns/hybrid-grid.md。',
+    detail: issues.join('\n   ') + '\n   模板 <script id="__nd-shadcn-lite"> 已自带 Card / Button / Badge / Tabs，0 import 直接 <Card> / <Tabs> 用即可。选型见首次写 deck 时注入的 hybrid 技术参考（inline shadcn 一节）。',
   };
 }
 
@@ -151,7 +151,8 @@ export function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoo
   return async (input, _toolUseId, _options) => {
     try {
       const fp = input?.tool_input?.file_path;
-      if (!fp || !/(?:^|[/\\])canvas\.html$/i.test(fp)) return {};
+      // deck 现在叫 <名>.html（canvas.html 只是常用名）：先按扩展名放行，读到内容再按 deck wrap 标记认
+      if (!fp || !/\.html?$/i.test(fp)) return {};
       if (!workspaceRoot) return {};
 
       // 校验刚写的那份（2026-07-28）：任务模型下 deck 在 tasks/<任务>/canvas.html，
@@ -167,6 +168,7 @@ export function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoo
         if (err.code === 'ENOENT') return {};
         throw err;
       }
+      if (!/canvas\.html$/i.test(fp) && !html.includes('__nd-deck-wrap')) return {};   // 不是 deck（站点页等）
 
       // 预 strip 注释（HTML + CSS/JS block）防 false positive
       const cleaned = stripCommentsForValidate(html);
@@ -186,7 +188,7 @@ export function makePostToolUseCanvasValidationHandler({ ctx: _ctx, workspaceRoo
         systemMessage:
           `<system-reminder>\n[canvas-validate] 你刚改完 ${fp}，系统检测到 ${issues.length} 项可疑：\n\n`
         + body
-        + `\n\n如果有意为之（custom mode / 故意命名重复 等）忽略；否则在下一轮主动修。每次 Edit/Write 后都跑这套校验。\n`
+        + `\n\n如果有意为之（custom mode / 故意命名重复 等）忽略；否则在下一轮主动修。\n`
         + `</system-reminder>`,
       };
     } catch (err) {

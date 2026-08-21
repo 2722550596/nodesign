@@ -319,17 +319,12 @@ export async function paintStills(
     } catch { /* 体检本身不能变成新的故障源 */ }
 
     const head = `Batch done ${lines.length}/${stills.length} stills`;
-    // 2026-08-18：以前这里写死"不许看"。现在改成教怎么看 —— 挑技术性废图是
-    // agent 该干的活，审美判断才是用户的。
-    const tail = 'You may look at these: scan for technical breakage (duplicated figures, '
-      + 'broken limbs, colour cast, all-black/white, stray watermark text) and just re-roll '
-      + 'those yourself. Do NOT judge taste or style direction — hand the paths to the user '
-      + 'for that. Default detail is enough to spot breakage; do not burn high-detail on every frame.';
+    // （"产物可以看、只挑技术性废图"08-21 起只写在工具描述和 prelude 里，不再每批返回都带）
     if (failed.length) {
-      return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, tagNote, tail]
+      return asText([head, ...lines, 'FAILED（批在此中断）：', ...failed, tagNote]
         .filter(Boolean).join('\n'), lines.length === 0);
     }
-    return asText([head, ...lines, tagNote, tail].filter(Boolean).join('\n'));
+    return asText([head, ...lines, tagNote].filter(Boolean).join('\n'));
   } catch (err) {
     return asText(`paint_still 失败：${err.message}`, true);
   }

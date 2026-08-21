@@ -1,11 +1,11 @@
 # Task(subagent_type='vision-checker') 派遣 prompt 模板
 
 > 此文件由 PreToolUse(Task) hook 在 agent 派 vision-checker 时注入。
-> 何时派（prelude「做完之前先自己看」定的）：**同一个视觉问题你已自检 + 改过两轮、
-> 用户依旧不满意** —— 独立外援，不是收尾默认动作。派遣 prompt 里带上用户不满意的
-> 原话和你已试过的改法，让它带着"前两轮为什么没治好"去看。本文是派遣 prompt 范例。
+> 何时派见 prelude「做完之前先自己看」（自检两轮用户仍不满意才请的外援）。派遣 prompt 里
+> 带上用户不满意的原话和你已试过的改法。本文是派遣 prompt 范例。
 >
-> vision-checker 默认走"先全图一轮 + 每页逐张对照 plan"工作流（自己 list_pages 取页数 / fullPage 总览 / 循环 pageIndex 逐页 / 按页分组报告）。你只需要在 prompt 里给上下文 + 重点关注方向，工作流它自己跑。
+> vision-checker 默认走"先全图一轮 + 每页逐张"工作流（自己 list_pages 取页数 / fullPage 总览 /
+> 循环 pageIndex 逐页 / 按页分组报告）。你只需要在 prompt 里给上下文 + 重点关注方向。
 
 ## 默认：完整 deck 逐页自检
 
@@ -25,7 +25,7 @@ Task(subagent_type='vision-checker',
             返结构化 VERDICT + ISSUES (按页分组) + OVERALL。')
 ```
 
-vision-checker 会自动：① Read design-plan.md（有的话）跑 Tier 0；② list_pages 取页数；③ fullPage 截图看整体；④ 循环 pageIndex 逐页对照 plan；⑤ 按页分组返 critique。
+vision-checker 会自动：① list_pages 取页数；② fullPage 截图看整体；③ 循环 pageIndex 逐页；④ 按页分组返 critique。
 
 ## 单页定向评审
 
@@ -44,6 +44,5 @@ vision-checker 看到你点名了 page，会跳过逐页循环只评这一页。
 ## 调用约束
 
 - **Task 独占一个 message**（不跟别的 tool 并发；SDK parallel dispatch 会让 subagent 结果丢，这是 SDK 硬规则）
-- **`run_in_background: true` 留空或 false**（fire-and-forget 等于自检结果丢；万一传了 PreToolUse hook 会透明改回）
 - **派之前先 chat 一句**："让 vision-checker 帮我逐页自检视觉" —— 用户看到不卡死
 - **Budget**：逐页模式 ~`页数+5` turn（10 页 deck = ~15 turn）。SDK 给 vision-checker 的 maxTurns 上限 = 16，超长 deck 派之前先在 prompt 里点名分批（"只看 1-5 页" / "只看 6-10 页"）

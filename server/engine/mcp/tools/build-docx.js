@@ -86,8 +86,6 @@ whether it looks right.`,
             type: 'text',
             text: `${outRel} 已构建 · ${(r.bytes / 1024).toFixed(1)}KB · ${r.blocks} 个块 · ${r.styles} 个样式`
               + `${r.preset ? ` · 起点「${r.preset}」` : ''}\n`
-              + '现在 screenshot 看一眼。构建没报错**不等于**排版对了 —— '
-              + '缩进、行距、层级、分页这些只有渲染出来才看得见。'
               // 字符/版式体检：符号惯例与全文一致性，schema 和渲染都照不到的那层
               + (r.lint ? formatLint(r.lint) : ''),
           }],

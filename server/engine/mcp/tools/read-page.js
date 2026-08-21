@@ -37,13 +37,8 @@ import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 async function detectThumbnailHint(workspaceRoot, sectionHtml) {
   if (!workspaceRoot || !sectionHtml) return '';
   if (!/assets\/generated\//.test(sectionHtml)) return '';
-  try {
-    await fs.access(path.join(workspaceRoot, 'assets', 'generated', '.thumbnails'));
-    return '[hint] preview iframe 加载的 <img src> 指向 thumbnail（assets/generated/.thumbnails/*.thumb.webp）；'
-      + '下面 outerHTML 中的 src 是真实 src（同 Read 源文件），重生原图 N 秒内 thumbnail 自动更新。';
-  } catch {
-    return '';
-  }
+  // thumbnail 与真实 src 的差别 08-21 起只在 generate-image cookbook 里说一次（每次 read_page 都带是 N 倍重复）
+  return '';
 }
 
 /**

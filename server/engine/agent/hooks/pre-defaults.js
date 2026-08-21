@@ -42,12 +42,8 @@ export function makePreToolUseAgentForceForegroundHandler() {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
         updatedInput: { ...t, run_in_background: false },
-        additionalContext:
-          'NoDesign 工作台已把这次派遣改成前台（run_in_background: false），'
-          + '你会在这次 tool_result 里直接拿到子代理的完整报告。'
-          + '子代理默认是后台跑的，那样报告不会回到你手里——创作需要你看见素材和'
-          + 'critique 才能改产物，所以这里一律前台。下次派遣请自己显式写 '
-          + '`run_in_background: false`。',
+        // 一句事实就够：为什么要前台 prelude 硬规则里已经讲了，每次派遣重复一遍是 N 倍说教
+        additionalContext: '已改为前台执行（run_in_background: false），报告会在这次 tool_result 里回来。',
       },
     };
   };

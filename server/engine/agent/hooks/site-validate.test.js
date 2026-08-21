@@ -27,6 +27,7 @@ describe('site-validate lint', () => {
     expect(isSitePagePath(W, '观察日志/about.html')).toBe(true);
     expect(isSitePagePath(W, '/ws/deck.html')).toBe(false);
     expect(isSitePagePath(W, '/ws/exports/site/index.html')).toBe(false);
+    expect(isSitePagePath(W, '/ws/_drafts/单页.html')).toBe(false);
     expect(isSitePagePath(W, '/ws/观察日志/style.css')).toBe(false);
     expect(isSitePagePath(W, '/elsewhere/x/index.html')).toBe(false);
   });

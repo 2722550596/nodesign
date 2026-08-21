@@ -24,8 +24,17 @@ export function makePostToolUseCanvasFocusPageHandler({ ctx }) {
     try {
       const filePath = input?.tool_input?.file_path;
       if (!filePath || typeof filePath !== 'string') return {};
-      // basename 匹配 canvas.html（兼容相对/绝对路径）
-      if (!/(?:^|[/\\])canvas\.html$/i.test(filePath)) return {};
+      // deck 现在叫 <名>.html（canvas.html 只是常用名）：名字兜底 + 读文件看 deck wrap 标记
+      if (!/\.html?$/i.test(filePath)) return {};
+      if (!/(?:^|[/\\])canvas\.html$/i.test(filePath)) {
+        let isDeck = false;
+        try {
+          const { promises: fsp } = await import('node:fs');
+          const head = (await fsp.readFile(filePath, 'utf8')).slice(0, 200_000);
+          isDeck = head.includes('__nd-deck-wrap');
+        } catch { /* 相对路径读不到 / 文件没了：不是 deck 就当 */ }
+        if (!isDeck) return {};
+      }
 
       // 取改动文本：Edit 看 new_string，Write 看 content
       const toolName = input?.tool_name;

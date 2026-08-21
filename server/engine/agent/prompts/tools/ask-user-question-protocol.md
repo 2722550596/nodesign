@@ -2,18 +2,7 @@
 
 > SDK preset `claude_code` 自带 AskUserQuestion 工具用法；本节是 NoDesign 项目对该工具的**额外约定**（特别是 `preview` 字段渲染方式），SDK preset 不含这部分。
 
-### 何时用 AskUserQuestion vs chat 文本
-
-**有结构化候选（A/B/C）时优先 AskUserQuestion**——用户看到带选项按钮的卡片，点一下就回到 agent，比让用户打字答效率高很多。
-
-| 场景 | 用什么 |
-|---|---|
-| 离散选择（A/B/C 三选一） | ✅ AskUserQuestion |
-| 视觉方向 / 配色 / 字体 / 排版风格分类 | ✅ AskUserQuestion + preview |
-| 用户给了 reference 但风格模糊 → 提供 2-3 个解读方向 | ✅ AskUserQuestion + preview |
-| 开放问题（"你喜欢什么色调？"） | ❌ chat 文本（用户更易具体回答） |
-| 简单 yes/no | ❌ chat 文本 |
-| 需要用户写一段说明 | ❌ chat 文本 |
+（何时用 AskUserQuestion、何时直接聊，prelude 已定：有结构化候选用它，开放问题和 yes/no 走聊天。）
 
 ### 调用 schema
 

@@ -2,8 +2,11 @@
 
 起手：Read `canvas.template.html`（加载本 skill 时自动拷进 cwd），改写落到目标路径。
 模板预置 importmap（21 库）、Babel、Tailwind、4 个 inline shadcn 组件、键盘翻页、
-mode-detect、image CSS vars。**boilerplate 必须 verbatim 搬**，凭印象重写会差字节，
-deck 静默坏。fit script 由系统在导出时注入，模板不带。
+mode-detect、image CSS vars。**boilerplate 必须 verbatim 搬**，凭印象重写会差字节
+（importmap 版本号、shadcn 闭花括号），deck 静默坏。两条走法：Write-first（Read 模板把
+verbatim 装进 context 再 Write 整文件）或 **Edit-first（更省）**：Read 后只 Edit 替换
+`<style id="design-tokens">` 和 `<div class="__nd-deck-wrap">` 两块，boilerplate 不动。
+fit script 由系统在导出时注入，模板不带。
 
 ## 1 文件 4 类内容
 
@@ -78,13 +81,13 @@ anchor 用 kebab-case，重名加页号或角色后缀（`portrait-name-p3` / `c
 - JSX 里占位文字写纯文本，不要 `{改我}`。
 - 锚元素用 `position: absolute` 不用 `fixed`：section 自身有 transform scale，fixed 锚不到 viewport。
 - 用 `flex-1 min-h-0` 撑高度，不要 `h-[calc(100%-Npx)]`，hardcode 的数在别的视口会溢出。
-- **每页必须装在单屏内**，section 内部不允许滚动。信息多就拆页，8 页空一点好过 6 页塞爆。
+- 信息多就拆页：8 页空一点好过 6 页塞爆（单屏硬规则见 prelude）。
 
 ## 外部资源
 
 核心视觉资源（封面图 / 章节图 / BGM）`curl -L -o ./assets/<name>` 下载后引本地路径，
 比 hotlink 稳。icon 库、Google Fonts、importmap 里的 esm.sh / unpkg 直接 hotlink。
-sandbox 只允许写到 cwd / `./assets/` / `./agent-memory/`，写别处静默失败。
+`curl -L -o` 只能写到 cwd 底下，写别处静默失败。
 
 ## 6 个 layout-role 骨架
 

@@ -104,11 +104,11 @@ export function makeStopReflectionHandler({ ctx, workspaceRoot }) {
                 const remain = Math.max(0, realMax - used).toLocaleString();
                 let body;
                 if (hit.tone === 'soft') {
-                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr} tokens），还能再写一阵；下一个段落收尾时把当前进度落到 spec.json，避免后续 compact 丢上下文。`;
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr} tokens），还能再写一阵；下一个段落收尾时把当前进度落一张便利贴（record_decision 或 Write notes/<slug>.md），避免后续 compact 丢上下文。`;
                 } else if (hit.tone === 'firm') {
                   body = `上下文已用 ${percent}%（${usedStr}/${maxStr}，剩 ~${remain}）。从下一轮开始整理结论 / 落档，避免被自动 compact 硬切。`;
                 } else {
-                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr}）。已逼近 SDK auto-compact 触发线（90%）；立即收尾或主动整理 spec.json，否则下一轮可能被压缩中断当前思路。`;
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr}）。已逼近 SDK auto-compact 触发线（90%）；立即收尾或把结论落进便利贴（record_decision / notes/），否则下一轮可能被压缩中断当前思路。`;
                 }
                 warnContextUsage = `<system-reminder>\n[context-usage] ${body}\n</system-reminder>`;
               }

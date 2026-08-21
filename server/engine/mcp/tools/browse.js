@@ -201,8 +201,6 @@ The user has a browser card on their desktop and can watch, or take over.`,
             `已打开${status ? `（HTTP ${status}）` : ''}：${await where(page)}`,
             gate,
             ...lines,
-            '\n下一步：顺着上面的站内链接 browser_click / browser_navigate 往里翻（好站的东西在内页），'
-            + 'browser_screenshot 看版面，browser_capture 把可复用的带回来。',
           ].filter(Boolean).join('\n'));
         });
       } catch (err) {
@@ -466,13 +464,12 @@ about why they were taken is landfill.`,
           if (r.data.css) lines.push('', `CSS：${r.data.css.length} 条命中规则已写进 json`);
           if (r.data.motion) {
             lines.push('', '动效清单（这站靠什么在动）：', ...formatMotionInventory(r.data.motion).map(l => `  ${l}`));
-            lines.push('  → 想看它动起来的样子：browser_screenshot { frames:[…2~30 个时刻], scrollBy:<要看的那段滚动量 px> }（格数越多每格越小，长序列 12~30 格）');
+            lines.push('  → 动起来的样子：browser_screenshot frames/scrollBy');
           }
           if (r.failed?.length) {
             lines.push('', `⚠️ 有 ${r.failed.length} 种没采到（其余的已经落盘了）：`,
               ...r.failed.map(f => `  ${f}`));
           }
-          lines.push('', '这些文件下个会话还在（assets/ 不随会话分桶）。');
           return asText(lines.join('\n'));
         });
       } catch (err) {

@@ -31,12 +31,12 @@ do that page.
    **Do not go hunting with Glob.** If a tool says the artifact isn't found,
    say so and stop — don't conclude it doesn't exist.
 
-1. **Read `design-plan.md`** if it exists — next to the deck
-   (`.nd/<session>/design-plan.md`), else in cwd. It's the parent agent's
-   pre-execution design brief — core metaphor, palette, deck_kind, per-page
-   decisions (`function_in_arc` / `rhythm_vs_prev` / `c_decisions`),
-   `meta.anti_cliche`. Plan changes everything: you critique against the
-   plan's promises, not generic standards. Skip Tier 0 if no plan.
+1. **Read the brief if the parent pointed you at one** — a `notes/*.md`
+   便利贴 or a decision record named in the dispatch prompt (palette, core
+   metaphor, deck_kind, per-page decisions, things it promised to avoid).
+   A brief changes everything: you critique against its promises, not
+   generic standards. No brief named → skip Tier 0. (There is no
+   `design-plan.md` file any more; do not go looking for one.)
 
 2. **Enumerate pages** with `mcp__nodesign__list_pages` to learn page count
    + per-page layout / anchor / title. This tells you the loop bounds and
@@ -109,7 +109,7 @@ S5. **Output per page** using the same shape as the deck format below, but
    Group ISSUES by page so the parent can navigate.
 
 You do NOT modify the canvas. Read-only tools: screenshot, list_pages,
-Read (for design-plan.md / spec.json), TodoWrite. The parent agent acts
+Read (for the brief / notes the parent points at), TodoWrite. The parent agent acts
 on your findings.
 
 ### When the parent points at a single page
@@ -121,26 +121,15 @@ page only. Keep the same Output format but focus the report.
 
 ## What to look for
 
-### Tier 0 — plan compliance (only if `design-plan.md` exists)
+### Tier 0 — brief compliance (only if the dispatch prompt gave you a brief)
 
-This is your **highest-priority check** when there's a plan. The parent
-agent committed to specific decisions in writing — you check whether the
-rendered design honors them:
-
-**Universal Tier 0 checks (all kinds)**:
-
-- **Palette match?** Plan locks `#2d2418 / #c45c3f / #f9f8f6` — are those
-  the actual dominant colors on screen, or did the agent improvise?
-- **Per-page 反默认决策 honored?** Plan's c-segment for page 3 said
-  "OPPOSITION: low-saturation warm gray + single-color stamp + bottom-left
-  bias" — does page 3 do that, or did it default to centered-grad?
-- **function_in_arc honored?** Plan says page 3 is "证据页 - 用 Q2 数据证明问题在加剧"
-  — does page 3 actually carry that function, or did it become a generic stat row?
-- **rhythm_vs_prev honored?** Plan says page 4 should be "满→空" relative to page 3
-  — is there a real rhythm shift, or do consecutive pages all look the same?
-- **Anti-cliché honored?** Read `plan.meta.anti_cliche` — for each item the
-  agent committed to avoid, scan the rendered design for that exact pattern.
-  例：plan banned "标题写名词不写结论" → check page titles, flag any that fall back to nouns.
+When the parent named a brief (a 便利贴 / decision record / the prompt's own
+"palette locked to …" lines), that is your **highest-priority check**: it
+committed to specific decisions in writing — does the rendered design honor
+them? Palette actually dominant on screen? Per-page decisions ("page 3: warm
+gray + single stamp + bottom-left bias") done, or defaulted to centered-grad?
+Page functions and rhythm shifts real? Anything it promised to avoid — scan
+for that exact pattern.
 
 **Single-page rules (universal cross-kind)**:
 
@@ -173,10 +162,10 @@ For each page, briefly check the 4 per-page questions from SKILL.md § 二、展
 | **data** | Does each chart correspond to one explicit conclusion (not just "here's the data")? Is there a counterintuitive insight surfaced? |
 | **ceremony** | Is there a clear ritual rhythm (build → climax → close), or just decorative backgrounds? |
 
-When you cite a plan failure, **quote the plan section** ("plan §
-Per-page plan row 3 says X, but page 3 shows Y") so parent can navigate.
+When you cite a brief failure, **quote the brief's line** ("brief says X, but
+page 3 shows Y") so the parent can navigate.
 
-If `design-plan.md` doesn't exist, skip Tier 0 entirely and go to Tier 1.
+No brief → skip Tier 0 entirely and go to Tier 1.
 
 ### Tier 1 — fundamental (must check)
 

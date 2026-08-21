@@ -239,57 +239,6 @@ export function makePreToolUseExposeTweaksSyntaxInjector() {
 }
 
 /**
- * PreToolUse(Write) — 首次 Write canvas.html 时提醒 agent 先 Read 拿 verbatim。
- *
- * 背景：canvas.html 已是 cp 后的 template（~3K boilerplate：importmap +
- * shadcn-lite + keyboard nav）。SDK 对 Write 没有 Edit 那样的"必须 Read"强约束，
- * agent 凭印象 verbatim 重写这些块容易差字节——importmap URL 错版本号、shadcn 闭
- * 花括号差一对——结果 deck 看着写出来但浏览器加载不出 React / standalone build
- * 报错。短期 hook 堵漏。
- *
- * 触发：matcher='Write' + file_path endsWith('canvas.html') + 本 session 首次。
- * 不匹配 canvas.template.html（template 本身不该被 Write）/ spec.json / .md 笔记。
- *
- * 设计原则：
- *   - metadata-not-content：不预读 template 注入内容，让 agent 自己 Read
- *   - 不阻塞，permissionDecision='allow'
- *   - 跟 prelude § 文件改动工作流 形成回声而非新规则
- *   - 内容里同时提 Write-first / Edit-first 两条走法，不强推
- *
- * 长期方向：anchored Edit-first（替换 <style id="design-tokens"> 和
- * <div class="__nd-deck-wrap"> 两块），省 ~5K verbatim 搬运。需实测样本支撑后
- * 再改 prelude 文件改动工作流大段。详见 memory idea_canvas_write_flow_redesign。
- */
-export function makePreToolUseWriteCanvasReadReminder() {
-  let alreadyReminded = false;
-  return async (input, _toolUseId, _options) => {
-    if (alreadyReminded) return {};
-    const filePath = input?.tool_input?.file_path || '';
-    const content = String(input?.tool_input?.content || '');
-    // deck 现在叫 <名>.html，不只 canvas.html：按内容认（deck wrap 标记），canvas.html 名字兜底
-    if (!/\.html?$/i.test(filePath)) return {};
-    if (!(filePath.endsWith('canvas.html') || content.includes('__nd-deck-wrap'))) return {};
-    alreadyReminded = true;
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'allow',
-        additionalContext:
-          '<system-reminder>\n[Write deck 起手提醒]\n\n'
-        + '这份 deck 的起手是 cp 自 canvas.template.html 的 boilerplate（~3K：importmap + shadcn-lite + keyboard nav）。\n'
-        + '凭印象 verbatim 重写这些块容易跟原文差一两个字符——importmap URL 错版本号、shadcn 闭花括号差一对——\n'
-        + '结果 deck 看着写出来了但浏览器加载不出 React / standalone build 报错。\n\n'
-        + '两条走法可选：\n'
-        + '- Write-first：Read 这份 deck（或 canvas.template.html）一遍把 verbatim 装进 context，再 Write 整文件\n'
-        + '- Edit-first（更省）：Read 后只 Edit 替换 <style id="design-tokens"> 和 <div class="__nd-deck-wrap"> 两块（boilerplate 不动），~5K → 1-2K diff\n\n'
-        + '本提醒每 session 只触发一次。\n'
-        + '</system-reminder>',
-      },
-    };
-  };
-}
-
-/**
  * PreToolUse(Agent) — subagent_type='vision-checker' 时首次注 派遣 prompt 模板。
  *
  * 注：跟 makePreToolUseAgentForceForegroundHandler 共存于同一 'Task|Agent' matcher

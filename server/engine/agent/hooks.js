@@ -56,7 +56,6 @@ import {
   makePreToolUseGenerateImageCookbookInjector,
   makePreToolUseGenerateImageReadPageReminder,
   makePreToolUseExposeTweaksSyntaxInjector,
-  makePreToolUseWriteCanvasReadReminder,
   makePreToolUseTaskVisionCheckerDispatchInjector,
 } from './hooks/pre-injectors.js';
 import {
@@ -198,7 +197,6 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
         // Write canvas.html 首次调用时提醒 agent 先 Read 拿 verbatim boilerplate
         // （SDK 对 Write 没有 Edit 那样的"必须 Read"强约束，凭印象重写 importmap /
         // shadcn-lite 容易差字节 → deck 看着写出来但浏览器加载不出 React）
-        makePreToolUseWriteCanvasReadReminder(),
         // 首次写 HTML 时注入该形态的技术参考（deck: 模板结构 / 标记规约 / 库速查 /
         // 常坑；site: 目录约定 / 相对路径铁律 / 响应式与中文排版）。2026-07-28 从
         // prelude 搬来：那是参考知识不是行为，常驻 1.4k tokens 每轮都在，但只有真

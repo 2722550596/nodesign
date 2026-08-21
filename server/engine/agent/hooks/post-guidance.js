@@ -55,24 +55,16 @@ export function makePostToolUseScreenshotHandler({ ctx }) {
     // fullPage 截图体积是 viewport 的 N×（N=页数），且会留在 context 多 turn
     // 直到 autoCompact。push agent 下次整 deck 自检走 vision-checker subagent，
     // subagent context 是隔离的，主线只收文字 critique，几 K vs 几百 K 的差距。
-    const hint = wasFullPage
-      ? '\n\n**下次提示**：fullPage 截图体积是 viewport 的 N×（N=页数），留在 context 多 turn 烧 token。整 deck 自检请派 `vision-checker` subagent（Task 工具）—— subagent 自己跑 list_pages + fullPage + 循环 pageIndex，主线只收文字 critique（几 K）。单页针对性自检用 `pageIndex:N`。'
-      : wasPerPage
-        ? ''
-        : '\n\n**下次提示**：当前是 viewport 截图（最便宜）。要看具体某页用 `pageIndex:N`；整 deck 自检请派 `vision-checker` subagent，别堆 fullPage。';
-
+    // 08-21 起这里只注**状态**（张数计数），不再每张截图注一段"点 3 个问题 / 派 vision-checker"
+    // 的说教 —— 那些住 prelude（做完之前先自己看 / 何时请外援），每张都说是 N 倍重复，而且
+    // "整 deck 自检请派 vision-checker"跟 prelude 定的触发条件（自检两轮用户仍不满意）矛盾。
+    void wasFullPage; void wasPerPage;
+    if (takenInSession < SCREENSHOT_BUSY_HINT_AT) return {};
     return {
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext:
-          '你刚才截图了。基于这张图，简短点出 3 个具体的视觉问题（对比度/留白/对齐/层级/字号节奏 任选），每条 1-2 句。'
-          + '\n如果整体看起来 OK，就直接跟用户说"看起来 OK"，不要再重复截图。'
-          + hint
-          + (takenInSession >= SCREENSHOT_BUSY_HINT_AT
-            ? `\n\n**上下文提示**：本轮 ${takenInTurn} 张、本会话累计 ${takenInSession} 张`
-              + '（每张约 1k tokens，进了上下文不会释放）。没有额度上限，该看就看；'
-              + '只是大面积逐页检查交给 `vision-checker` 子代理更划算——它的截图在隔离上下文里，主线只收文字。'
-            : ''),
+          `**上下文提示**：本轮 ${takenInTurn} 张、本会话累计 ${takenInSession} 张截图（每张约 1k tokens，进了上下文不会释放）。没有额度上限，该看就看。`,
       },
     };
   };
@@ -85,13 +77,15 @@ export function makePostToolUseExportHandler({ ctx: _ctx }) {
   // 不 emit run.export_built —— mcp/tools/export-handoff.js:83 已经 emit
   // 完整字段（format / path / sizeBytes / notes）。hook 从 tool_response 字符串
   // substring 拼出来的 path 反而不准。hook 只负责注 additionalContext。
+  // 08-21：只在本 session 第一次打包时提醒一次；"收尾消息要自足"prelude 已讲，每次都注是重复
+  let said = false;
   return async (_input, _toolUseId, _options) => {
+    if (said) return {};
+    said = true;
     return {
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
-        additionalContext:
-          '已生成交付包。简短告诉用户打包文件路径（让她从 UI 下载），然后收尾。'
-          + '\n不要再重复调 export_handoff —— 同一个交付应只打包一次。',
+        additionalContext: '已生成交付包。把打包文件路径告诉用户（他从 UI 下载）；同一个交付只打包一次。',
       },
     };
   };
@@ -114,6 +108,7 @@ export function makePostToolUseExportHandler({ ctx: _ctx }) {
 //   - "deck-cover-v1" → "deck-cover"（去掉 -v\d / -\d / -draft 等 suffix）
 //   - 同 base 不同 suffix 仍计入同一组（避免 agent 改名绕过 watchdog）
 export function makePostToolUseGenerateImageRegenWatchdog() {
+  let nudgedOnce = false;   // 08-21：邀请反馈的判断准则每 session 说一次就够（以前每个 base 组第一张都说）
   const REGEN_THRESHOLD = 3;
   const counts = new Map();
 
@@ -135,7 +130,8 @@ export function makePostToolUseGenerateImageRegenWatchdog() {
       counts.set(base, next);
 
       // 第 1 次：邀请反馈 nudge（按 SKILL.md 高代价 / 低代价节点判断）
-      if (next === 1) {
+      if (next === 1 && !nudgedOnce) {
+        nudgedOnce = true;
         return {
           hookSpecificOutput: {
             hookEventName: 'PostToolUse',
@@ -199,7 +195,7 @@ export function makePostToolUseStyleAnchorNudge({ sharedRoot }) {
         hookEventName: 'PostToolUse',
         additionalContext:
           '这一笔看起来是在锚定这个项目的视觉方向。顺手做两件事（都只做一次）：\n'
-        + '1. 把这版风格写进 `./agent-memory/brand/memory.md`（色号 / 字体链 / 版式语言 / 动效预算），'
+        + '1. 把这版风格写进 `.claude/agent-memory/brand/memory.md`（色号 / 字体链 / 版式语言 / 动效预算；⚠️ 带 .claude/ 前缀，写错位置 BrandCard 读不到），'
         + '前端品牌档案卡会把色板和字体渲染出来给用户看，不写就一直空着。\n'
         + `2. 如果这次定下来的还包含**项目级约束**（不只这一个 deck 适用，比如"这个项目一律不用 emoji"），`
         + `在收尾时问用户一句要不要写进项目指引（${guidePath}，SDK 每次 session 自动读它）。用户点头你再写。\n`
