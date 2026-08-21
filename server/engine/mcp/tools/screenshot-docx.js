@@ -22,6 +22,7 @@
 import fs from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { renderDocx, cleanupRender } from '../../../lib/docx/render.js';
+import { normalizeShot } from './helpers/shot-pipeline.js';
 
 /** 一次最多回几页 —— 40 页文档全渲回来是上下文炸弹 */
 const MAX_PAGES = 6;
@@ -122,11 +123,13 @@ export async function screenshotDocx(target, opts = {}) {
       + '页数敏感的文档行距用 exact/atLeast 磅值，两边就一样高了）。',
     );
 
-    const images = await Promise.all(res.pngs.map(async (p) => ({
-      type: 'image',
-      data: (await fs.readFile(p)).toString('base64'),
-      mimeType: 'image/png',
-    })));
+    // 跟全站眼睛同口径（08-21）：过 normalizeShot → 视觉档尺寸 + webp q82。视觉模型按像素
+    // 网格计 token，PNG 原图多出来的字节它看不见；公文页 PNG 260KB → webp 97KB，放大
+    // 对比字形无差。少的是传给上游的字节和 CLI 按字符估算的假仪表，真 token 账不变。
+    const images = await Promise.all(res.pngs.map(async (p) => {
+      const n = await normalizeShot(await fs.readFile(p));
+      return { type: 'image', data: n.data, mimeType: n.mimeType };
+    }));
 
     return { content: [{ type: 'text', text: caption.join('\n') }, ...images] };
   } finally {
