@@ -124,7 +124,7 @@ Use this instead of Read+Grep+offset/limit when you want to inspect or
 reason about one specific page in detail. Returns the outerHTML of that
 section (including attributes and full subtree).
 
-**Hybrid mode**: when canvas.html has \`<script type="text/babel">\` blocks
+**Hybrid mode**: when the deck has \`<script type="text/babel">\` blocks
 (the Hybrid format from the deck starter canvas.template.html), this tool also
 returns the corresponding React mount source code for any
 \`data-react-mount\` / \`id\` attribute it finds in the section — so you

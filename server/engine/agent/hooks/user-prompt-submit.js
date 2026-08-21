@@ -45,7 +45,7 @@ export function makeUserPromptSubmitHandler({ ctx, workspaceRoot, sessionId, pro
       parts.push(
         `你的 cwd 是 ${workspaceRoot} —— 这是**项目工作区**，产物直接住这儿。\n`
         + `关键路径（用 ./ 相对路径访问，全是真目录，没有软链）：\n`
-        + `  ./                         产出的家。deck → canvas.html（用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → index.html + 子页 + style.css\n`
+        + `  ./                         产出的家。deck → <名>.html（每个 .html 一份；用 mcp__nodesign__read_page 切片读，别 Read 全文件）；站点 → <站名>/index.html + 子页（住自己的文件夹，样式怎么拆你定）\n`
         + `  ./notes/                   便利贴（.md，\\n---\\n 分面）——和用户共享的头脑风暴层，桌面上渲成可翻页贴纸\n`
         + `  ./assets/                  用户上传素材 + 你 curl 下载的资源\n`
         + `  ./.claude/agent-memory/    跨项目长期记忆\n`

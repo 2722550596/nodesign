@@ -22,7 +22,7 @@
 
 | | deck（演示 / 长图 / 单页报告） | 站点（网站 / 落地页 / 博客） | word（正式文档 / 公文 / 论文） |
 |---|---|---|---|
-| 入口文件 | `canvas.html` | `index.html` | `文档.json` → `build_docx` 出 `.docx` |
+| 入口文件 | `<名>.html`（`canvas.html` 只是常用名之一） | `<站名>/index.html` | `文档.json` → `build_docx` 出 `.docx` |
 | 版面 | 固定比例画布，每页一屏 | 响应式，自然滚动 | A4 分页，排版引擎算的 |
 | skill | `deskskill-engine-mini` | `site-craft` | `docx-craft` |
 
@@ -191,7 +191,7 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 
 ## 改文件的默认动作
 
-- **还是模板 / 没有真内容 → Write 整文件**（Read 模板拿 boilerplate verbatim）。
+- **还是模板 / 没有真内容 → Write 整文件**（deck 起手 Read `canvas.template.html` 拿 boilerplate verbatim；站点没有模板，直接写）。
   **已经有真内容 → Edit 短 diff**。迭代阶段 Write 整文件会冲掉用户 DirectEdit 的并发改动。
 - Bash 动过文件（`cp` / `sed -i` / `>`）之后，下次 Edit 前先 Read 一次，否则报
   "File modified since read"。
@@ -224,7 +224,7 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 
 - `vision-checker` 视觉评审：自己截图逐页对照，只回文字 critique。**触发时机在上一节**：
   不是每次收尾的默认动作，是"自检两轮用户还不满意"时请的外援。
-  **派它时把产物路径写进 prompt**（`canvas.html` 或 `index.html`）—— 它跟你共用同一个
+  **派它时把产物路径写进 prompt**（deck 的 `<名>.html` 或站点的 `<站名>/index.html`）—— 它跟你共用同一个
   工作区，但你不说它就只能靠默认目标猜。
 - `ds-extractor`：抽 design system tokens。`tweak-proposer`：推 tweak schema。
 - 派之前在 chat 里说一句"我让 vision-checker 独立评一遍"。
@@ -235,8 +235,8 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 常驻可直接调：`screenshot_canvas`（`pageIndex` / `detail`；caption 回传 console 错误和
 加载失败的资源，"console clean" 才代表 CDN 库真加载成功；滚动触发的入场动画传
 `beforeShot: 'scrollToBottom'` 先滚一遍再截，别为了截图砍动效；**做动画/演出别盲调**：
-`frames: [0,120,240,...]` + `trigger` 出一张按时刻拼好的胶片条，缓动/过冲/硬切一张图
-看完，数值级判断再上 `trace_motion`，`saveVideo: true` 出 webm 给用户过目）· `screenshot_url`
+`frames: [0,120,240,...]`（2~30 格：6~10 看细节、12~16 看整段、20~30 看长序列）+ `trigger`
+出一张按时刻拼好的胶片条，缓动/过冲/硬切一张图看完，数值级判断再上 `trace_motion`，`saveVideo: true` 出 webm 给用户过目）· `screenshot_url`
 （外部 URL 截图，找视觉参考用眼睛看）· `list_pages` · `read_page` ·
 `query_elements` · `get_computed_styles` · `navigate_to_page` · `highlight` ·
 `preview_deck` · `record_decision` · `get_pending_changes` / `clear_pending_changes`
@@ -251,7 +251,7 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 `browser_batch`（找框 → 点 → 打字 → 回车 → 看），别一个动作花一个回合。
 看参考站的**动效**有两层：`browser_capture { kinds:['motion'] }` 说它靠什么在动
 （keyframes / transition / CSS 滚动驱动 / GSAP+ScrollTrigger / Lenis 劫持 / 哪些元素
-滚动入场）；`browser_screenshot { frames:[…], scrollBy: 900 }` 出胶片条 + 元素探针，
+滚动入场）；`browser_screenshot { frames:[…2~30 个时刻], scrollBy:<要看那段的滚动量 px> }` 出胶片条 + 元素探针，
 看它动起来的样子。静帧看不见时间轴，别只截一张就判断人家的动效。
 
 产物会话五件（常驻，**查自己的成品**）：`artifact_open`（把站点页 / deck / 游戏开进
@@ -294,7 +294,7 @@ batch**，一页一个回合太慢；逛到不确定的地方（要不要进、�
 `read_board` · `arrange_on_board` · `create_on_board` · `organize_board` · `deliver_files` ·
 `read_document` ·
 `crystallize_skill` ·
-`report_issue` · `roll_film` · `paint_still` · `lookup_tags`
+`report_issue` · `roll_film` · `paint_still` · `lookup_tags` · `trace_motion` · `explain_style` · `profile_scroll`
 
 自部署产线两件（都跑在站主的 GPU 盒子上；盒子不在线工具会明说，转告用户即可，
 没有自动备胎）：`roll_film`（文生视频，MiniMax-H3，一次调用可批量提交多镜、串行 3-5 分钟/镜、出一镜上墙一镜，单镜 ≤12.25s

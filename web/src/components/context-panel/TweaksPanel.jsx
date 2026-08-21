@@ -186,7 +186,7 @@ export default function TweaksPanel({
         <button
           onClick={handleApply}
           style={btnPrimary}
-          title="发 chat 让 AI 把当前数值固化进 canvas.html 的 CSS variables 定义"
+          title="发 chat 让 AI 把当前数值固化进当前 deck 的 CSS variables 定义"
         >
           <Check size={11} /> Apply
         </button>

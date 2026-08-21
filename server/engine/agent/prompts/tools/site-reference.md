@@ -55,8 +55,8 @@
 - 任务根有 `index.html`（或产物根里有）= 一个站点，同目录 `.html` 是它的子页
 - 任务根没有 `index.html` 时，带 `index.html` 的**一级子目录**各是一个站
   （两个平行版本就放 `v1/` `v2/`）
-- 顶层每个 `canvas.html` / 其他 `.html` = 各一份 deck（根站存在时只有
-  `canvas.html` 保留 deck 身份，其余算站点子页）
+- 顶层每个 `.html` = 各一份 deck（旧项目的根站存在时只有 `canvas.html` 保留 deck
+  身份，其余算站点子页）
 - 桌面上一个站点 = **一张**卡（不是每个 html 一张），双击开响应式预览窗；
   `_drafts/` 里的单页各自一张卡
 - 导出菜单换成整站 zip / 单页自包含 HTML / 工程交付包（PDF/PPTX 不出现，站点没有分页）
@@ -85,6 +85,8 @@
 | 某一页长什么样 | `screenshot_canvas { path, device }` |
 | 移动端断点有没有生效 | `screenshot_canvas { device: 'mobile' }`（真的按 390px 渲染） |
 | 某个元素的实际盒子 / 计算样式 | `query_elements` / `get_computed_styles`（站点按 1440 宽量） |
+| 交互态（点开的菜单 / 填到一半的表单 / 玩到一半的游戏） | `artifact_open` 开进会话 → `artifact_computer` / `artifact_find` 操作到那一步 → 上面的量具带 `live:true` 对着现在这一页量 |
+| 自己的页靠什么在动、reveal 有没有真接上 | `artifact_motion`（跟参考站的 `browser_capture motion` 同一把尺） |
 | 页面正文 | 直接 `Read`（站点页面通常不大）；`read_page` 的页码语义不适用 |
 
 `screenshot_canvas` 站点下默认整页（fullPage），因为网页本来就是长的，只截首屏
@@ -97,7 +99,7 @@
 - **构建型站点上的 DirectEdit**：用户在预览里直接改的字落在**产物**上，下次构建
   会被冲掉。收到构建型站点的 DirectEdit 变更时，把改动**同步回源文件**再重新构建
 - **忘了 `<meta name="viewport">`**：移动端会按 980px 虚拟视口渲染，你的媒体查询
-  看着"没生效"，其实是视口不对。模板里已经有，别删
+  看着"没生效"，其实是视口不对。没有模板兜底了，每写一页自己加；漏了系统会 lint 出来
 - **字体链少了 CJK 那段**：`'Inter', sans-serif` 换台机器中文就掉到系统默认字体。
   每段 latin family 后面必须跟 `'PingFang SC', 'Noto Sans SC'`
 - **改了 style.css 预览没变**：不会。html/css/js 走 `no-cache`，写完即时刷新

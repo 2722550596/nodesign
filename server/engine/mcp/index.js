@@ -102,7 +102,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   // screenshot_url 常驻：explorer 显式 tools 列表没有 ToolSearch，defer 了它就
   // 永远拉不到 schema；schema 本身很小（4 字段），常驻成本可忽略
   'screenshot_url',
-  // ⭐ 浏览通道六件（2026-08-18 当天从 deferred 改常驻）。
+  // ⭐ 浏览通道六件（2026-08-18 当天从 deferred 改常驻；08-21 加到九件，见下）。
   //
   // 它们最初跟着「新工具默认 deferred」的习惯走，而那条习惯的依据是**成本**：
   // defer 掉的是 expose_tweaks / paint_still / roll_film 那种十万字符级的胖子。
@@ -120,7 +120,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   // browser_batch 的卖点"省掉模型往返"和 browser_find 的"ref 比像素稳"都在描述里，
   // 名字本身不卖；三件描述合计 ≈ 5.5k 字符，缓存里每轮增量约等于零。
   'browser_computer', 'browser_find', 'browser_batch',
-  // 08-21 产物会话四件：成品检查的交互半边（状态跨调用留着）。artifact_batch 的卖点
+  // 08-21 产物会话五件：成品检查的交互半边（状态跨调用留着）。artifact_batch 的卖点
   // "一趟跑完 + 结尾截图"和 live:true 的存在都只在描述里说，常驻。
   'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_batch', 'artifact_motion',
 ]);
@@ -147,7 +147,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
   const getComputedStyles = makeGetComputedStylesTool({ workspaceRoot, projectId, sessionId, ctx });
   const explainStyle = makeExplainStyleTool({ workspaceRoot, projectId, sessionId });
   const traceMotion = makeTraceMotionTool({ workspaceRoot, projectId, sessionId });
-  // 产物会话三件（engine/perception/session.js）：artifact_open / computer / find
+  // 产物会话四件（engine/perception/session.js）：artifact_open / computer / find / motion
   const artifactSessionTools = [
     makeArtifactOpenTool({ projectId, workspaceRoot, sessionId }),
     makeArtifactComputerTool({ projectId }),

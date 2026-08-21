@@ -197,7 +197,7 @@ export function makePreToolUseGenerateImageReadPageReminder() {
         permissionDecision: 'allow',
         additionalContext:
           '<system-reminder>\n[generate_image 目标页提醒]\n\n'
-        + '即将生成图片。如果还没看过目标页（canvas.html 中对应 <section data-page="N">），建议先 Read 一下：\n'
+        + '即将生成图片。如果还没看过目标页（deck 里对应的 <section data-page="N"> / 站点的那一页），建议先 Read 一下：\n'
         + '  - 页面尺寸（多少行 / 多大留给图）\n'
         + '  - 主色（design-tokens 里的 --bg / --accent / --hero）\n'
         + '  - 已有视觉风格（hybrid 范式有无 React 组件 / 已有图片调性）\n\n'
@@ -265,19 +265,22 @@ export function makePreToolUseWriteCanvasReadReminder() {
   return async (input, _toolUseId, _options) => {
     if (alreadyReminded) return {};
     const filePath = input?.tool_input?.file_path || '';
-    if (!filePath.endsWith('canvas.html')) return {};
+    const content = String(input?.tool_input?.content || '');
+    // deck 现在叫 <名>.html，不只 canvas.html：按内容认（deck wrap 标记），canvas.html 名字兜底
+    if (!/\.html?$/i.test(filePath)) return {};
+    if (!(filePath.endsWith('canvas.html') || content.includes('__nd-deck-wrap'))) return {};
     alreadyReminded = true;
     return {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
         additionalContext:
-          '<system-reminder>\n[Write canvas.html 起手提醒]\n\n'
-        + 'canvas.html 已是 cp 后的 template（~3K boilerplate：importmap + shadcn-lite + keyboard nav）。\n'
+          '<system-reminder>\n[Write deck 起手提醒]\n\n'
+        + '这份 deck 的起手是 cp 自 canvas.template.html 的 boilerplate（~3K：importmap + shadcn-lite + keyboard nav）。\n'
         + '凭印象 verbatim 重写这些块容易跟原文差一两个字符——importmap URL 错版本号、shadcn 闭花括号差一对——\n'
         + '结果 deck 看着写出来了但浏览器加载不出 React / standalone build 报错。\n\n'
         + '两条走法可选：\n'
-        + '- Write-first：Read canvas.html 一遍把 verbatim 装进 context，再 Write 整文件\n'
+        + '- Write-first：Read 这份 deck（或 canvas.template.html）一遍把 verbatim 装进 context，再 Write 整文件\n'
         + '- Edit-first（更省）：Read 后只 Edit 替换 <style id="design-tokens"> 和 <div class="__nd-deck-wrap"> 两块（boilerplate 不动），~5K → 1-2K diff\n\n'
         + '本提醒每 session 只触发一次。\n'
         + '</system-reminder>',

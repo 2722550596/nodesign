@@ -1,6 +1,6 @@
 # Hybrid deck 技术参考（首次写 HTML 时注入）
 
-起手：Read `canvas.template.html`（session 创建时已拷到 cwd），改写落到目标路径。
+起手：Read `canvas.template.html`（加载本 skill 时自动拷进 cwd），改写落到目标路径。
 模板预置 importmap（21 库）、Babel、Tailwind、4 个 inline shadcn 组件、键盘翻页、
 mode-detect、image CSS vars。**boilerplate 必须 verbatim 搬**，凭印象重写会差字节，
 deck 静默坏。fit script 由系统在导出时注入，模板不带。

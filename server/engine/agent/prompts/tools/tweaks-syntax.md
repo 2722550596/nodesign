@@ -68,7 +68,7 @@
 }
 ```
 
-**前置条件 — canvas.html 里有对应 scoped CSS rule**：
+**前置条件 — deck 文件里有对应 scoped CSS rule**：
 
 ```css
 :root                       { --hero: 96px; }    /* 默认 */
@@ -100,7 +100,7 @@ Tailwind utility 已编译固化（`p-8` 永远 padding 32px）—— 但骨架�
 - **target_var 不以 `--` 开头** → zod 校验会拒
 - **slider 没 unit** → 默认 px 也写明白
 - **Apply 后只改 :root，忘了再 expose_tweaks 更新 default** → 下次开界面看到旧值
-- **target_scope 写了但 canvas.html 没有对应 selector 的 CSS rule** → 控件失灵
+- **target_scope 写了但 deck 文件里没有对应 selector 的 CSS rule** → 控件失灵
 
 ## 调用范例（典型 deck 第一版完成后一次性调）
 

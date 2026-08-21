@@ -11,7 +11,7 @@
 
 ```
 Task(subagent_type='vision-checker',
-     prompt='对当前 canvas.html 跑完整逐页视觉评审。
+     prompt='对 <产物路径，填你正在做的那份 .html> 跑完整逐页视觉评审。
 
             <deck 上下文 — 用 1-2 句话告诉它这是什么 deck>
             例："情绪型 deck，6 页，《Lain》赛博冷调主题。"
@@ -33,7 +33,7 @@ vision-checker 会自动：① Read design-plan.md（有的话）跑 Tier 0；�
 
 ```
 Task(subagent_type='vision-checker',
-     prompt='重点评审 canvas.html 的 page 3（用 pageIndex=3 截图）。
+     prompt='重点评审 <产物路径> 的 page 3（用 pageIndex=3 截图）。
             上下文：刚改完数据可视化部分，重点看图表层级 + 对比度
             是否撑住"投资回报"核心叙述。
             其他页跳过。')

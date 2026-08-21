@@ -49,8 +49,8 @@ export function makePostToolUseFailureHandler({ ctx, projectId, sessionId }) {
     if (tool === 'mcp__nodesign__screenshot_canvas') {
       advice =
         '截图失败。常见原因：\n'
-        + '  1. canvas.html 还没创建 → 先 Write 创建首版\n'
-        + '  2. playwright spawn 慢 / 失败 → 换 Read canvas.html 让用户看代码\n'
+        + '  1. 产物文件还没创建 → 先 Write 创建首版\n'
+        + '  2. playwright spawn 慢 / 失败 → 换 Read 产物文件让用户看代码\n'
         + '  3. fullPage 截图太大 → 换 fullPage:false 截视口';
     } else if (tool === 'Bash' && /apply-seccomp|unshare\(CLONE_NEWUSER\)/.test(error)) {
       // 沙盒启动自身的偶发（2026-08-15 实测约 1-2/14）：seccomp 那步的 unshare
