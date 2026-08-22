@@ -24,6 +24,7 @@ import { promisify } from 'util';
 import { getSharedDir } from '../projects/workspace.js';
 import { taskManifest } from './kinds/index.js';
 import { walkTaskFiles, loadIgnore } from './task-scan.js';
+import { resolveBinary } from '../runtime/capabilities.js';
 import {
   getPublished, upsertPublished, removePublished,
   countPublishedByUser, cfProjectNameFor, getByCustomDomain, slugify,
@@ -51,7 +52,8 @@ function fail(status, message) {
 
 /** wrangler 跟着服务进程的 node 走（nvm 全局包和 node 同目录），pm2 的 PATH 不可靠 */
 function wranglerBin() {
-  return path.join(path.dirname(process.execPath), 'wrangler');
+  // 启动探测（runtime/capabilities.js 'publish'）找到的优先（PATH 或 node 同目录）；没探到仍按老规矩猜 node 同目录
+  return resolveBinary('publish', path.join(path.dirname(process.execPath), 'wrangler'));
 }
 
 async function runWrangler(args) {

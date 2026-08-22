@@ -29,6 +29,7 @@
 
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { withParamSanitizer } from './param-sanitizer.js';
+import { withCapabilityGate } from './capability-gate.js';
 import { makeScreenshotCanvasTool } from './tools/screenshot.js';
 import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
 import { makeExportHandoffTool } from './tools/export-handoff.js';
@@ -314,6 +315,10 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     ALWAYS_LOAD_TOOLS.has(t.name)
       ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
       : t
+  )).map((t) => (
+    // 本机能力闸（08-22）：缺 chromium / LibreOffice / 钥匙 的工具，描述前缀「不可用 + 装法」、调用期拦住。
+    // 对照表在 capability-gate.js 一份；没探过（单测）原样放行
+    withCapabilityGate(t)
   )).map((t) => (
     // 参数标签泄漏消毒（2026-08-19）：上游偶发把下一个参数吞进上一个字符串参数
     // （</rationale><parameter name="scope">… 原样落进 tool_use.input，会话

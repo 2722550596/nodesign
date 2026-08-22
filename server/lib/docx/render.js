@@ -24,6 +24,8 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// 二进制路径走启动探测（Mac/Win 的 LibreOffice 不在 PATH；没探到就原名让 ENOENT 原样报）
+import { resolveBinary } from '../../runtime/capabilities.js';
 
 const run = promisify(execFile);
 
@@ -56,7 +58,7 @@ export async function renderDocx(docxPath, opts = {}) {
       HOME: scratch,                                // 军规1：可写 HOME
       FONTCONFIG_FILE: FONTCONF,                    // 军规3：字体替身
     };
-    await run('soffice', [
+    await run(resolveBinary('libreoffice', 'soffice'), [
       `-env:UserInstallation=file://${scratch}/loprofile`,  // 军规1：独立 profile
       '--headless', '--convert-to', 'pdf', '--outdir', scratch, inFile,
     ], { env, timeout: opts.timeoutMs ?? SOFFICE_TIMEOUT });
@@ -70,7 +72,7 @@ export async function renderDocx(docxPath, opts = {}) {
       if (Array.isArray(opts.pngPages)) {
         args.push('-f', String(opts.pngPages[0]), '-l', String(opts.pngPages[1]));
       }
-      await run('pdftoppm', [...args, pdf, join(scratch, 'page')], { timeout: PDFTOPPM_TIMEOUT });
+      await run(resolveBinary('poppler', 'pdftoppm'), [...args, pdf, join(scratch, 'page')], { timeout: PDFTOPPM_TIMEOUT });
       // pdftoppm 按总页数补零（55 页 → page-01…page-55），宽度统一，
       // 所以字典序等于数字序 —— 这条核过，不是碰运气
       for (const f of (await fs.readdir(scratch)).sort()) {

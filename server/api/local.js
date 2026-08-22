@@ -18,6 +18,8 @@ import { platform } from '../runtime/platform.js';
 import { loadLocalConfig, saveLocalConfig, CONFIG_ENUMS } from '../runtime/local-config.js';
 import { MODEL_CONFIG_ERRORS, EXTERNAL_SDK_ALIAS, UPSTREAMS } from '../engine/agent/model-context.js';
 import { UPSTREAMS_BUILTIN } from '../engine/agent/model-table.js';
+import { capabilitySnapshot } from '../runtime/capabilities.js';
+import { TOOL_CAPABILITIES } from '../engine/mcp/capability-gate.js';
 
 export const RESTART_EXIT_CODE = 75;
 
@@ -34,6 +36,8 @@ router.get('/status', (_req, res) => {
     configPath: loadLocalConfig().path,
     // 进程里**正在生效**的那份表报的错（文件现在可能已经改好但没重启）
     modelConfigErrors: MODEL_CONFIG_ERRORS,
+    // 本机能力位 + 每个能力位管着哪些工具（配置页那张表）
+    capabilities: capabilitySnapshot().map((c) => ({ ...c, tools: Object.entries(TOOL_CAPABILITIES).filter(([, v]) => v.cap === c.id).map(([t]) => t) })),
     externalSdkAlias: EXTERNAL_SDK_ALIAS,
     // 内置上游（只报名字和是否配了钥匙，不报钥匙）：配置页提示「这些名字被占了」
     builtinUpstreams: Object.fromEntries(Object.entries(UPSTREAMS_BUILTIN).map(([id, u]) => [id, { label: u.label, keyPresent: u.authStyle === 'none' || !!(u.keyEnv && process.env[u.keyEnv]) }])),

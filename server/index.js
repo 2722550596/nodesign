@@ -49,10 +49,15 @@ import adminRouter from './api/admin.js';
 import meRouter from './api/me.js';
 import localRouter, { RESTART_EXIT_CODE } from './api/local.js';
 import { platform } from './runtime/platform.js';
+import { probeCapabilities, summarizeCapabilities } from './runtime/capabilities.js';
 
 // 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
 // 跨平台坑排查的第一信号
 platform.dump();
+// 本机能力位（git / chromium / LibreOffice / 钥匙…）：启动探一遍，工具注册（mcp/capability-gate.js）与
+// GET /api/local/status 都读它。探测是异步的（playwright 要 import），在 listen 之前等它
+await probeCapabilities();
+console.log(summarizeCapabilities());
 
 const PORT = Number(process.env.PORT || 4001);
 
