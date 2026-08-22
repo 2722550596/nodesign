@@ -3,6 +3,7 @@ import { Plus, Paperclip, FoldVertical } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { ContextDetail, usageColor, formatK, clamp } from './ContextMeter.jsx';
 import { Me } from '../../lib/api.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
  * ComposerMenu —— composer 左下角的 [+] 展开菜单（2026-07-30）
@@ -39,6 +40,7 @@ export default function ComposerMenu({
   const [account, setAccount] = useState(null);
   useEffect(() => {
     if (!open) return undefined;
+    if (useGlobalStore.getState().authProfile === 'local') return undefined;   // 本地分发版：没有账号用量这一段
     let alive = true;
     Me.usage().then((u) => { if (alive) setAccount(u); }).catch(() => { /* fail-soft：不显示这一段 */ });
     return () => { alive = false; };

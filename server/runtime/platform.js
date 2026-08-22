@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { profile } from './profile.js';
 
 const isLinux = process.platform === 'linux';
 
@@ -108,8 +109,12 @@ const skipWebFetchPreflight = true;
  * 目录里的文件，拦不住 `ls` 看文件名 —— 文件名不是秘密，接受）。
  */
 /** 数据根（给 credentialBlacklist 用；跟 protectedPathRules 收到的那个同源） */
-const PROJECTS_DATA_ROOT_FOR_DENY = process.env.PROJECTS_DATA_ROOT
-  || path.join(repoRoot, 'server', 'projects-data');
+// ⚠️ 变量名跟 projects/workspace.js 对齐（PROJECTS_DATA_DIR）。08-22 之前这里读的是 PROJECTS_DATA_ROOT，
+// 而 .env.example 与生产 .env 写的都是 PROJECTS_DATA_DIR —— 两个名字一个事实，数据根一旦不是默认值，
+// 凭据黑名单就盖错目录。旧名留作兜底，别再新增读它的地方。
+const PROJECTS_DATA_ROOT_FOR_DENY = path.resolve(
+  process.env.PROJECTS_DATA_DIR || process.env.PROJECTS_DATA_ROOT || path.join(repoRoot, 'server', 'projects-data'),
+);
 
 function credentialBlacklist() {
   const home = os.homedir();
@@ -273,6 +278,8 @@ function repoChildrenOutside(dataRoot) {
  */
 function dump() {
   const info = {
+    profile: profile.name,
+    ...(profile.isLocal ? { dataRoot: profile.dataRoot, listenHost: profile.listenHost, serveWeb: profile.serveWeb } : {}),
     os: process.platform,
     arch: process.arch,
     node: process.version,
@@ -291,6 +298,14 @@ function dump() {
 }
 
 export const platform = {
+  // 部署形态（runtime/profile.js）：hosted | local。消费方一律从这里读，不直接 import profile.js
+  profile: profile.name,
+  isLocal: profile.isLocal,
+  dataRoot: profile.dataRoot,
+  cacheRoot: profile.cacheRoot,
+  listenHost: profile.listenHost,
+  serveWeb: profile.serveWeb,
+  webDistDir: profile.webDistDir,
   isLinux,
   isMac,
   isWin,

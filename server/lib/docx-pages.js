@@ -22,11 +22,12 @@
  */
 
 import path from 'node:path';
+import { platform } from '../runtime/platform.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { renderDocx, cleanupRender } from './docx/render.js';
 
-const CACHE_DIR = path.join(process.cwd(), 'server', '.cache', 'docx-pages');
+const CACHE_DIR = path.join(platform.cacheRoot, 'docx-pages');
 
 /** 缓存的渲染精度。缩略图从这份缩，不另跑 LibreOffice */
 const CACHE_DPI = 120;

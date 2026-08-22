@@ -58,6 +58,21 @@ server/  Node ESM 服务端。Claude Agent SDK 驱动 agent 会话（每会话�
   帧。分流名单与过期判据抽成纯函数并有钉子测试。
 - **多用户**：邀请码注册、按用户隔离、用量计费闸门、内容外审档位。
 
+## 本地运行（单机版）
+
+同一份代码有两种形态：线上多用户站（hosted）和本地单机版（local）。本地版默认单租户：
+没有登录墙、没有账号和额度，服务只绑 `127.0.0.1`，数据都在 `~/.nodesign/`。
+
+```bash
+npm install && cd web && npm install && npm run build && cd ..
+npm run local            # = node bin/nodesign.js --no-open；起在 http://127.0.0.1:4001
+# 或 node bin/nodesign.js [--port N] [--data-dir DIR] [--no-open]
+```
+
+模型钥匙二选一：本机 `claude login` 过（Claude 订阅），什么都不用填；或者在
+`~/.nodesign/.env` 里写一行 `ANTHROPIC_API_KEY=...`。其它模型插槽与配置页还在做，
+这版只有 Claude。npm 包尚未发布，`npx nodesign` 要等下一步。
+
 ## 开发
 
 ```bash

@@ -12,7 +12,11 @@
  *   （Node 22+ 内置 --env-file-if-exists，不需要 dotenv 依赖）
  */
 
+// ⚠️ 必须是第一个 import：它在别的模块加载前决定 profile（hosted | local）并给数据目录 env 填默认值
+import './runtime/profile.js';
 import http from 'http';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import { originAllowed } from './auth/origin-guard.js';
@@ -80,9 +84,15 @@ app.get('/api/health', (_req, res) => {
 // run 全标成 failed，实测误杀过真实用户的对话。
 sweepOrphanRuns();
 
-bootstrapAuth();
-if (!authEnabled()) {
-  console.warn('[auth] ⚠️ 无用户且未设 NODESIGN_AUTH_PASSWORD — 登录墙关闭，切勿公网暴露！');
+if (platform.isLocal) {
+  // 本地分发版：单租户，登录墙钉死关闭（auth/users-store.js authEnabled），请求者恒为 LOCAL_OWNER。
+  // 不跑 bootstrapAuth：它会按 NODESIGN_AUTH_PASSWORD 建 admin、回填项目归属 —— 那是多用户站的事。
+  console.log(`[profile] local：单租户模式，数据目录 ${platform.dataRoot}，只监听 ${platform.listenHost}`);
+} else {
+  bootstrapAuth();
+  if (!authEnabled()) {
+    console.warn('[auth] ⚠️ 无用户且未设 NODESIGN_AUTH_PASSWORD — 登录墙关闭，切勿公网暴露！');
+  }
 }
 app.use('/api/auth', authRouter);
 app.use('/api', authGuard);
@@ -114,6 +124,27 @@ app.use('/api/skills', skillsRouter);
 // 用户级 plugin（跨 project 全局）
 app.use('/api/plugins', userPluginsRouter);
 
+// ── 前端静态托管（本地分发版；hosted 由 nginx 发 dist，这里默认关）──
+if (platform.serveWeb) {
+  const indexHtml = path.join(platform.webDistDir, 'index.html');
+  if (!fs.existsSync(indexHtml)) {
+    // 不抛：API 照常可用（开发者可能正用 vite dev 连着）。但要说出来，别让人对着 404 猜
+    console.warn(`[server] ⚠️ 前端构建产物不存在：${indexHtml}（先 cd web && npm run build）`);
+  }
+  // 入口 HTML 不缓存（和线上 nginx 同口径：发新版后开着的页面刷新就能拿到新分片）；哈希分片随便缓存
+  app.use(express.static(platform.webDistDir, {
+    index: false,
+    setHeaders(res, file) { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
+  }));
+  app.use((req, res, next) => {
+    // SPA 回退：非 API / WS 的 GET 一律回 index.html（/projects/:id 这类前端路由刷新不 404）
+    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/ws/')) return next();
+    if (!fs.existsSync(indexHtml)) return next();
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(indexHtml);
+  });
+}
+
 // ── 错误兜底 ──
 app.use((err, _req, res, _next) => {
   console.error('[server] error:', err);
@@ -127,11 +158,13 @@ app.use((err, _req, res, _next) => {
 const httpServer = http.createServer(app);
 setupWS(httpServer);
 
-httpServer.listen(PORT, () => {
+// listenHost：local = 127.0.0.1（没有登录墙，绝不能开到全地址）；hosted = undefined（Node 默认全地址，nginx 在前）
+httpServer.listen(PORT, platform.listenHost, () => {
   // 出网闸要知道本机的公网 IP —— 云上 1:1 NAT 下它不在任何网卡上（见 ssrf-guard）
   primeOwnAddresses().catch(() => {});
-  console.log(`[server] listening on :${PORT}`);
+  console.log(`[server] listening on ${platform.listenHost || ''}:${PORT}`);
   console.log(`[server] health: http://localhost:${PORT}/api/health`);
+  if (platform.serveWeb) console.log(`[server] app: http://${platform.listenHost || 'localhost'}:${PORT}/`);
 });
 
 // 起 rembg-service 常驻 python 进程：onnxruntime session 在内存里 warm 缓存，

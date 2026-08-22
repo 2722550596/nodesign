@@ -27,11 +27,12 @@
  */
 
 import path from 'node:path';
+import { platform } from '../runtime/platform.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 
-const CACHE_DIR = path.join(process.cwd(), 'server', '.cache', 'variants');
+const CACHE_DIR = path.join(platform.cacheRoot, 'variants');
 
 /**
  * 每种格式的默认质量 + 文件扩展名 + 编码器。

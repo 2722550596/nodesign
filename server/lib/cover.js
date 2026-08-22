@@ -20,6 +20,7 @@
  */
 
 import path from 'node:path';
+import { platform } from '../runtime/platform.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { taskManifest, can } from './kinds/index.js';
@@ -29,7 +30,7 @@ import { openArtifactPage, launchPerceptionBrowser } from '../engine/mcp/tools/h
 
 const SITE_VIEWPORT = { width: 1440, height: 900 };
 const OUT_WIDTH = 800;          // 出图宽度（卡片最宽也就 ~400 CSS px，2x 足够）
-const CACHE_DIR = path.join(process.cwd(), 'server', '.cache', 'covers');
+const CACHE_DIR = path.join(platform.cacheRoot, 'covers');
 
 /** 截图串行闸门 —— 冷启动时十张卡同时请求也只有一个 chromium 在跑 */
 let renderChain = Promise.resolve();

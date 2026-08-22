@@ -12,6 +12,10 @@ export const useGlobalStore = create((set) => ({
   // AuthGate 登录/status 后写入；{ id, username, role } | null（登录墙关闭时 null）
   authUser: null,
   setAuthUser: (u) => set({ authUser: u }),
+  // 部署形态（/api/auth/status 的 profile）：'hosted' 线上多用户站 | 'local' 本地单租户分发版。
+  // local 下账号徽记 / 额度横幅 / 用量面板这些 SaaS 界面整体不渲染（代码不删，只是藏）
+  authProfile: 'hosted',
+  setAuthProfile: (p) => set({ authProfile: p === 'local' ? 'local' : 'hosted' }),
 
   // ── Toast ──
   toasts: [],

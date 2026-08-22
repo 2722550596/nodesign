@@ -19,12 +19,13 @@ import { useMedia, NARROW } from '../../lib/use-media.js';
  */
 function UserBadge() {
   const authUser = useGlobalStore(s => s.authUser);
+  const local = useGlobalStore(s => s.authProfile === 'local');   // 本地分发版：没有账号这回事，整块不渲染
   const [usage, setUsage] = useState(null);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
-    if (!authUser) return undefined;
+    if (!authUser || local) return undefined;
     let dead = false;
     const pull = () => {
       fetch('/api/me/usage').then(r => (r.ok ? r.json() : null))
@@ -45,7 +46,7 @@ function UserBadge() {
     return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
   }, [open]);
 
-  if (!authUser) return null;
+  if (!authUser || local) return null;
   // 警戒线 75%：跟配额横幅第一档对齐。07-31 起额度是一个总数且单位是钱，
   // 服务端直接给 pct（金额不下发给普通用户，见 api/me.js）
   const pct = usage?.capped ? (usage.pct || 0) : 0;

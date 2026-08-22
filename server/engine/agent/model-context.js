@@ -113,6 +113,7 @@ export const UPSTREAMS = Object.freeze({
  *                没填 = 沿用 SDK 按 alias 算的虚价（接真流量前先填）
  */
 import { can, localGenApproved, DENIAL } from '../../auth/tier.js';
+import { platform } from '../../runtime/platform.js';
 
 /**
  * 模型出自谁家 —— 前端据此画身份标（picker 图标 / 画布精灵 / 舞台徽记）。
@@ -383,11 +384,13 @@ export function hasSubscriptionAccess(user) {   // 订阅 Claude 资格 = 档位
   return can(user, 'subscription');
 }
 
+const upstreamKeyPresent = (row) => !row.api || UPSTREAMS[row.api.upstream].authStyle === 'none' || !!process.env[UPSTREAMS[row.api.upstream].keyEnv];
 export function selectableModelsFor(user) {
   const approved = localGenApproved(user);   // 档位 + 逐人批准，同 paint_still / roll_film / 演出端点一把尺
   const subscribed = hasSubscriptionAccess(user);
   const out = [];
   for (const m of SELECTABLE_MODELS) {
+    if (platform.isLocal && !upstreamKeyPresent(BY_ID.get(m.id))) continue;   // 本地版藏没配钥匙的 API 行；hosted 不过滤（缺钥匙让请求 502 fail-loud）
     if (m.gate === 'localGen') { if (approved) out.push(m); continue; }
     if (m.gate === 'subscription' && !subscribed) { out.push({ ...m, locked: true, lockReason: SUBSCRIPTION_LOCK_REASON }); continue; }
     out.push(m);

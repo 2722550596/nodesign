@@ -48,6 +48,7 @@ export default function AuthGate({ children }) {
 
   const applyStatus = (s) => {
     setOpenReg(!!s.openRegistration);
+    useGlobalStore.getState().setAuthProfile?.(s.profile);
     if (!s.required || s.authed) {
       useGlobalStore.getState().setAuthUser?.(s.user || null);
       setPhase('ok');
