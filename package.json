@@ -15,7 +15,8 @@
     "!server/**/*.test.js",
     "!server/**/_probe-*",
     "!server/**/_*-check.mjs",
-    "!server/server/"
+    "!server/server/",
+    "LICENSE"
   ],
   "scripts": {
     "postinstall": "node server/ops/fix-sdk-musl.mjs",
@@ -89,5 +90,6 @@
     "claude",
     "deepseek",
     "local-first"
-  ]
+  ],
+  "license": "AGPL-3.0-only"
 }
