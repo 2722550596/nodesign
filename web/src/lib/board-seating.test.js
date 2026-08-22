@@ -40,6 +40,25 @@ describe('computeDesktopSeating', () => {
     expect(r.seatFixes['a.png']).toBeUndefined();            // 老座位不重写
   });
 
+  it('搬家中且座位已撤的旧 id 不当新客排座（飞进文件夹后不再闪回桌面）', () => {
+    const r = seat({
+      dirIndex: dirIndexOf([
+        { id: 'a.png', type: 'image' },
+        { id: 'moving.png', type: 'image' },   // 清单还没刷新，旧 id 仍在根目录
+      ]),
+      layout: { 'a.png': { x: 40, y: 40, z: 1 } },   // moving.png 的座位已被 useBoardMoves 撤掉
+      movingIds: new Set(['moving.png']),
+    });
+    expect(r.positioned.some(o => o.id === 'moving.png')).toBe(false);   // 不渲染、不排座
+    expect(r.seatFixes['moving.png']).toBeUndefined();                    // 更不落盘
+    // 对照：同样没座位但不在搬家名单里 → 照旧当新客排座
+    const r2 = seat({
+      dirIndex: dirIndexOf([{ id: 'a.png', type: 'image' }, { id: 'moving.png', type: 'image' }]),
+      layout: { 'a.png': { x: 40, y: 40, z: 1 } },
+    });
+    expect(r2.positioned.some(o => o.id === 'moving.png')).toBe(true);
+  });
+
   it('起排线也吃文件夹卡的底边', () => {
     const r = seat({
       dirIndex: dirIndexOf([{ id: 'x.png', type: 'image' }], ['素材']),
