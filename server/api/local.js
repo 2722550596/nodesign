@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { platform } from '../runtime/platform.js';
 import { loadLocalConfig, saveLocalConfig, CONFIG_ENUMS } from '../runtime/local-config.js';
-import { MODEL_CONFIG_ERRORS, EXTERNAL_SDK_ALIAS, UPSTREAMS } from '../engine/agent/model-context.js';
+import { MODEL_CONFIG_ERRORS, EXTERNAL_SDK_ALIAS, externalModelIds } from '../engine/agent/model-context.js';
 import { UPSTREAMS_BUILTIN } from '../engine/agent/model-table.js';
 import { capabilitySnapshot } from '../runtime/capabilities.js';
 import { TOOL_CAPABILITIES } from '../engine/mcp/capability-gate.js';
@@ -51,8 +51,8 @@ router.get('/status', (_req, res) => {
 router.get('/config', (_req, res) => {
   const cfg = loadLocalConfig();
   res.json({ path: cfg.path, exists: cfg.exists, raw: cfg.raw || { upstreams: {}, models: [] }, errors: cfg.errors, enums: CONFIG_ENUMS,
-    // 这份文件里的行此刻有没有在跑：与 MODELS 表对不上说明还没重启
-    activeExternalModels: Object.keys(UPSTREAMS).filter((id) => UPSTREAMS[id].external) });
+    // 这份文件里的行此刻有没有在跑：不在这份名单里说明还没重启（或校验没过）
+    activeExternalModels: externalModelIds() });
 });
 
 router.put('/config', (req, res) => {

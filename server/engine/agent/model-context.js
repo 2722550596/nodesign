@@ -97,6 +97,11 @@ if (MODEL_CONFIG_ERRORS.length) {
   for (const e of MODEL_CONFIG_ERRORS) console.warn(`  - ${e.where}: ${e.message}`);
 }
 
+/** 当前进程里真正生效的外部行 id（配置页据此判「已生效 / 要重启」） */
+export function externalModelIds() {
+  return [...BY_ID.values()].filter((r) => r.external).map((r) => r.id);
+}
+
 /** 一行在入口会以哪些 body.model 名出现（id / sdkAlias / 剥 [1m] 的 alias）。session-routes 会话优先匹配用；不认识的 id → [] */
 export function wireNamesOf(appModel) {
   const row = appModel ? BY_ID.get(appModel) : null;
