@@ -1,7 +1,7 @@
 {
   "name": "nodesign",
   "version": "0.0.1",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "NoDesign — 面向独立创作者的 agent 创作工作台（本地分发版：npx nodesign）",
   "bin": {
@@ -70,5 +70,24 @@
   "devDependencies": {
     "happy-dom": "^20.11.2",
     "vitest": "^4.1.10"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xiaokebuyu/Nodesign.git"
+  },
+  "homepage": "https://github.com/Xiaokebuyu/Nodesign#readme",
+  "bugs": {
+    "url": "https://github.com/Xiaokebuyu/Nodesign/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "agent",
+    "canvas",
+    "creative",
+    "claude",
+    "deepseek",
+    "local-first"
+  ]
 }

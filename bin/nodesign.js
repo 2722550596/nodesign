@@ -10,12 +10,14 @@
  *   nodesign --port 5000          # 换端口
  *   nodesign --data-dir ./mydata  # 换数据目录（.env / config.json / 数据库 / 项目都在里面）
  *   nodesign --no-open            # 不自动开浏览器
+ *   nodesign login                # 用 Claude 订阅：登录一次（转发给 SDK 自带的 claude auth login）
  *
  * 钥匙放 <数据目录>/.env：ANTHROPIC_API_KEY=...（或者本机 `claude login` 过，什么都不用填）；
  * 自己的模型插槽放 <数据目录>/config.json（形状见 server/runtime/local-config.js）。
  */
 
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
@@ -25,6 +27,16 @@ const RESTART_EXIT_CODE = 75;
 const serverEntry = path.join(path.dirname(fileURLToPath(import.meta.url)), '../server/index.js');
 
 const args = process.argv.slice(2);
+
+// 子命令：`nodesign login` / `logout` / `auth status` —— 转发给 SDK 自带的 Claude CLI（用户不用再全局装一份 claude）。
+// 配置目录与服务端同一个（server/runtime/platform.js 的 claudeConfigDir：NODESIGN_CONFIG_DIR 或 ~/.claude），
+// 登录态落在那里，服务端的 claudeAuthPresent() 才看得见。
+if (['login', 'logout', 'auth'].includes(args[0])) {
+  const sub = args[0] === 'auth' ? args.slice(1) : [args[0], ...args.slice(1)];
+  const code = await runBundledClaude(['auth', ...sub]);
+  process.exit(code);
+}
+
 const flags = {};
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -48,6 +60,7 @@ if (flags.help) {
   --data-dir DIR  数据目录：.env / config.json / 数据库 / 项目 / 缓存（默认 ~/.nodesign；env NODESIGN_DATA_DIR）
   --host H        监听地址（默认 127.0.0.1；没有登录墙，别改成 0.0.0.0）
   --no-open       启动后不自动打开浏览器
+  login / logout / auth status   Claude 订阅登录态（不用另装 claude CLI）
 钥匙：<数据目录>/.env 里写 ANTHROPIC_API_KEY=...；或本机已 \`claude login\` 则不用填。`);
   process.exit(0);
 }
@@ -88,6 +101,25 @@ async function pickPort(wanted) {
 let opened = false;
 let child = null;
 let stopping = false;
+
+/** SDK 平台包里的 claude 可执行：@anthropic-ai/claude-agent-sdk-<platform>-<arch>[-musl]/claude[.exe] */
+function bundledClaudePath() {
+  const require = createRequire(import.meta.url);
+  const musl = process.platform === 'linux' && (() => { try { return require('node:fs').readFileSync('/usr/bin/ldd', 'utf8').includes('musl'); } catch { return false; } })();
+  const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}${musl ? '-musl' : ''}`;
+  const dir = path.dirname(require.resolve(`${pkg}/package.json`));
+  return path.join(dir, process.platform === 'win32' ? 'claude.exe' : 'claude');
+}
+function runBundledClaude(cliArgs) {
+  return new Promise((resolve) => {
+    let bin;
+    try { bin = bundledClaudePath(); } catch (e) { console.error(`[nodesign] 找不到 SDK 自带的 claude 可执行：${e.message}`); resolve(1); return; }
+    const cfgDir = process.env.NODESIGN_CONFIG_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '', '.claude');
+    const p = spawn(bin, cliArgs, { stdio: 'inherit', env: { ...process.env, CLAUDE_CONFIG_DIR: cfgDir } });
+    p.on('error', (e) => { console.error(`[nodesign] 起不来 claude：${e.message}`); resolve(1); });
+    p.on('exit', (c) => resolve(c ?? 1));
+  });
+}
 
 function start() {
   child = spawn(process.execPath, [serverEntry], { env, stdio: 'inherit' });
