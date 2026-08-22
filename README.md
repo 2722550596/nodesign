@@ -60,18 +60,41 @@ server/  Node ESM 服务端。Claude Agent SDK 驱动 agent 会话（每会话�
 
 ## 本地运行（单机版）
 
-同一份代码有两种形态：线上多用户站（hosted）和本地单机版（local）。本地版默认单租户：
-没有登录墙、没有账号和额度，服务只绑 `127.0.0.1`，数据都在 `~/.nodesign/`。
+同一份代码有两种形态：线上多用户站（hosted）和本地单机版（local，`NODESIGN_PROFILE=local`）。
+本地版默认单租户：没有登录墙、没有账号和额度，服务只绑 `127.0.0.1`，数据都在 `~/.nodesign/`
+（`.env` 钥匙 / `config.json` 模型插槽 / 数据库 / 项目 / 缓存）。
+
+从仓库跑：
 
 ```bash
-npm install && cd web && npm install && npm run build && cd ..
+npm install && cd web && npm install && cd ..
+npm run build:web        # 前端构建产物由 Node 直接托管
 npm run local            # = node bin/nodesign.js --no-open；起在 http://127.0.0.1:4001
 # 或 node bin/nodesign.js [--port N] [--data-dir DIR] [--no-open]
 ```
 
-模型钥匙二选一：本机 `claude login` 过（Claude 订阅），什么都不用填；或者在
-`~/.nodesign/.env` 里写一行 `ANTHROPIC_API_KEY=...`。其它模型插槽与配置页还在做，
-这版只有 Claude。npm 包尚未发布，`npx nodesign` 要等下一步。
+从 npm 包跑（`npm pack` 出 tgz，或发布后 `npx nodesign`）：
+
+```bash
+npm pack                          # 得到 nodesign-<ver>.tgz（prepack 会先构建前端）
+mkdir try && cd try && npm init -y && npm i ../nodesign-<ver>.tgz
+npx nodesign                      # 起来并自动开浏览器
+```
+
+第一次起来后打开右上角齿轮（`/settings`）：
+
+- **本机能力**：git / Chromium(playwright) / LibreOffice / poppler / ffmpeg / rembg 等探测结果与装法。
+  截图自检要 `npx playwright install chromium`；Word 形态要装 LibreOffice。缺的能力对应的工具
+  会在 agent 面前标「不可用 + 装法」，不会静默失败
+- **钥匙与开关**：Anthropic 直连 / 四家搜索 / 生图通道 / Cloudflare 发布 / 沙盒与权限模式，写进
+  `~/.nodesign/.env`，钥匙类保存即生效
+- **模型插槽**：自己的上游（Anthropic 或 OpenAI-chat 协议的任何端点）+ 模型行，保存后重启生效；
+  每行可「体检」（非流式 / 流式 / 工具调用 / 看图 / count_tokens 五项红绿）
+
+Claude 本身二选一：本机 `claude login` 过（订阅），什么都不用填；或在钥匙页填 `ANTHROPIC_API_KEY`。
+
+Windows 没有沙盒（bwrap/sandbox-exec），本地版默认不开沙盒，靠 CLI 自己的权限模式；
+`NODESIGN_SANDBOX=on` 只在 Linux/macOS 有效。
 
 ## 开发
 
