@@ -67,8 +67,9 @@ server/  Node ESM 服务端。Claude Agent SDK 驱动 agent 会话（每会话�
 一条命令（要先装好 Node ≥ 20）：
 
 ```bash
-npx nodesign                 # 首次会下载约 470MB（含 Claude CLI 本体），起来后自动开浏览器
-npx nodesign login           # 用 Claude 订阅的话登录一次（不用另装 claude CLI）；用 API Key 的话在设置页填
+npx @xiaobuyu/nodesign       # 首次会下载约 470MB（含 Claude CLI 本体），起来后自动开浏览器
+npx @xiaobuyu/nodesign login # 用 Claude 订阅的话登录一次（不用另装 claude CLI）；用 API Key 的话在设置页填
+# 或者装成全局命令：npm i -g @xiaobuyu/nodesign，之后直接 nodesign / nodesign login
 ```
 
 常用参数：`--port N`（默认 4001，被占会自动往上找）、`--data-dir DIR`、`--no-open`。
