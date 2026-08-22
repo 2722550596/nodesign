@@ -17,6 +17,7 @@
 
 import { spawn } from 'node:child_process';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,9 +58,33 @@ if (flags.port) env.PORT = String(flags.port);
 if (flags['data-dir']) env.NODESIGN_DATA_DIR = flags['data-dir'];
 if (flags.host) env.NODESIGN_HOST = flags.host;
 
-const port = Number(env.PORT || 4001);
 const host = env.NODESIGN_HOST || '127.0.0.1';
+// 端口：用户指定了（--port / PORT）就用它，被占就报错退出；没指定则从 4001 往上找第一个空的
+// （4001 在别人机器上常有主——Cursor、QQ 都见过——让用户自己换端口不如自己让一步）
+const port = await pickPort(env.PORT ? Number(env.PORT) : null);
+env.PORT = String(port);
 const url = `http://${host}:${port}/`;
+
+async function pickPort(wanted) {
+  const free = (p) => new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(p, host, () => srv.close(() => resolve(true)));
+  });
+  if (wanted) {
+    if (await free(wanted)) return wanted;
+    console.error(`[nodesign] 端口 ${wanted} 已被占用（查占用：${process.platform === 'win32' ? `netstat -ano | findstr :${wanted}` : `lsof -i :${wanted}`}）`);
+    process.exit(1);
+  }
+  for (let p = 4001; p < 4001 + 50; p++) {
+    if (await free(p)) {
+      if (p !== 4001) console.log(`[nodesign] 4001 被占用，改用端口 ${p}`);
+      return p;
+    }
+  }
+  console.error('[nodesign] 4001～4050 全被占用，用 --port 指定一个');
+  process.exit(1);
+}
 let opened = false;
 let child = null;
 let stopping = false;
