@@ -50,21 +50,6 @@ export function Card({ children, style }) {
   );
 }
 
-/** 折叠框：高级/次要内容收起来，标题行一直可见。details 原生可访问，不自己管状态 */
-export function Fold({ title, desc, defaultOpen = false, children }) {
-  return (
-    <details open={defaultOpen} style={{ marginTop: GAP.md }}>
-      <summary style={{ cursor: 'pointer', listStyle: 'none', display: 'flex', alignItems: 'baseline', gap: GAP.md, fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, padding: `${GAP.xs}px 0`, userSelect: 'none' }}>
-        <span className="nd-fold-arrow" style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, width: 12 }}>▸</span>
-        <span style={{ fontWeight: 500 }}>{title}</span>
-        {desc && <span style={{ fontSize: FONT_SIZE.xs, color: COLOR.sub }}>{desc}</span>}
-      </summary>
-      <style>{'details[open] > summary > .nd-fold-arrow { transform: rotate(90deg); display: inline-block; }'}</style>
-      <div style={{ marginTop: GAP.sm }}>{children}</div>
-    </details>
-  );
-}
-
 export function Dot({ ok }) {
   const color = ok === true ? COLOR.success : ok === false ? COLOR.error : COLOR.sub;
   return <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: color, marginRight: 6, verticalAlign: 'middle' }} />;
