@@ -41,8 +41,17 @@ export default function EnvKeys({ onCapabilities, showToast, onSaved, only, excl
         <div key={g} style={{ marginBottom: GAP.lg }}>
           {groups.length > 1 && <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text4, marginBottom: GAP.sm, letterSpacing: 1 }}>{g}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr', gap: `${GAP.sm}px ${GAP.lg}px`, alignItems: 'start' }}>
-            {keys.filter((k) => k.group === g).map((k) => {
+            {keys.filter((k) => k.group === g).filter((k) => {
+              // showIf：{ 某键: 值 } —— 那个键的当前值（正在编辑的优先，其次已存的，再次默认值）等于它才显示
+              if (!k.showIf) return true;
+              return Object.entries(k.showIf).every(([dep, want]) => {
+                const d = keys.find((x) => x.key === dep);
+                const cur = dep in edits ? edits[dep] : (d?.preview || d?.default || '');
+                return cur === want;
+              });
+            }).map((k) => {
               const editing = k.key in edits;
+              const curVal = editing ? edits[k.key] : (k.preview || k.default || '');
               return [
                 <div key={k.key + '-l'} style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, paddingTop: 6 }}>
                   <Dot ok={k.set ? true : null} />{k.label}
@@ -50,10 +59,11 @@ export default function EnvKeys({ onCapabilities, showToast, onSaved, only, excl
                 </div>,
                 <div key={k.key + '-v'}>
                   {k.options
-                    ? <Select width={220} value={editing ? edits[k.key] : (k.preview || '')} options={k.options} onChange={(v) => setEdits({ ...edits, [k.key]: v })} />
+                    ? <Select width={220} value={curVal} options={k.options} onChange={(v) => setEdits({ ...edits, [k.key]: v })} />
                     : <TextInput type={k.secret ? 'password' : 'text'} value={editing ? edits[k.key] : ''} placeholder={k.set ? `已配 ${k.preview}（留空不改；要清除请输入 - ）` : '未配'}
                       onChange={(v) => setEdits({ ...edits, [k.key]: v })} />}
                   {k.hint && <Hint>{k.hint}</Hint>}
+                  {k.optionHints?.[curVal] && <Hint>{k.optionHints[curVal]}</Hint>}
                 </div>,
               ];
             })}
