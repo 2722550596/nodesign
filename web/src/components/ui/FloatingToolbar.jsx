@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Pin } from 'lucide-react';
 import { INK_SURFACE } from '../../lib/paper.js';
-import ToolbarButton from './ToolbarButton.jsx';
+import ToolbarButton, { TOOL_BTN } from './ToolbarButton.jsx';
 import { FONT_SANS, FONT_SIZE, GAP } from '../../lib/theme.js';
 import { usePanelState } from '../layout/PanelManager.jsx';
 import { useMedia, NARROW, COARSE } from '../../lib/use-media.js';
@@ -406,7 +406,11 @@ function ToolGroup({ group }) {
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
         borderRadius: 14,
-        padding: `${GAP.xs}px ${GAP.sm}px`,
+        // 与图标组同高：内衬 4 + 内容撑到一颗按钮的高度（TOOL_BTN.height）。原来只包着文字的
+        // 自然高度，地址读数 / 站点「上线」控件那一格比旁边的按钮组矮一截（2026-08-22 用户报）
+        padding: `4px ${GAP.sm}px`,
+        minHeight: TOOL_BTN.height,
+        boxSizing: 'content-box',
         boxShadow: INK_SURFACE.shadow,
       }}>
         {group.node}
