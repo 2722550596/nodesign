@@ -44,6 +44,23 @@ const claudeConfigDir = process.env.NODESIGN_CONFIG_DIR
   || path.join(process.env.HOME || os.homedir(), '.claude');
 
 /**
+ * 本机有没有能跑内置 Claude 行的凭据（本地版 picker 的闸，08-22）：
+ *   - ANTHROPIC_API_KEY 在 env 里（设置页存进 .env 后 setEnvValues 会同步进 process.env，所以每次现查）
+ *   - 或 `claude login` 过：<claudeConfigDir>/.credentials.json（Linux/Windows 的 OAuth 落盘处），
+ *     或 .claude.json 里有 oauthAccount（mac 走钥匙串时凭据不落文件，但这个账号记录在）。
+ * 只是「像是配过」的判据，不是验资格 —— 真假由第一次会话说了算；没配时 picker 空着、
+ * 设置页指路，比让用户点一个必失败的 Claude 行强。hosted 不走这条（订阅行按档位放）。
+ */
+export function claudeAuthPresent() {
+  if (process.env.ANTHROPIC_API_KEY) return 'api_key';
+  if (fs.existsSync(path.join(claudeConfigDir, '.credentials.json'))) return 'login';
+  for (const f of [path.join(claudeConfigDir, '.claude.json'), path.join(process.env.HOME || os.homedir(), '.claude.json')]) {
+    try { if (JSON.parse(fs.readFileSync(f, 'utf8'))?.oauthAccount) return 'login'; } catch { /* 没这个文件或不是 JSON */ }
+  }
+  return null;
+}
+
+/**
  * Sandbox 是否开启
  *
  * 2026-08-15 实测重开（此前因 bwrap 不解析 session root 的 symlink 关了三个月；
@@ -311,6 +328,7 @@ export const platform = {
   isWin,
   repoRoot,
   claudeConfigDir,
+  claudeAuthPresent,
   sandboxEnabled,
   permissionModeDefault,
   autoModeEnabled,

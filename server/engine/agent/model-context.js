@@ -143,13 +143,13 @@ export function hasSubscriptionAccess(user) {   // 订阅 Claude 资格 = 档位
   return can(user, 'subscription');
 }
 
-const upstreamKeyPresent = (row) => { const up = row.api && UPSTREAMS[row.api.upstream]; return !up || up.authStyle === 'none' || !!up.key || !!(up.keyEnv && process.env[up.keyEnv]); };
+const upstreamKeyPresent = (row) => { if (!row.api) return !!platform.claudeAuthPresent(); const up = UPSTREAMS[row.api.upstream]; return !up || up.authStyle === 'none' || !!up.key || !!(up.keyEnv && process.env[up.keyEnv]); };   // 无 api = 内置 Claude 行：本地版看本机凭据
 export function selectableModelsFor(user) {
   const approved = localGenApproved(user);   // 档位 + 逐人批准，同 paint_still / roll_film / 演出端点一把尺
   const subscribed = hasSubscriptionAccess(user);
   const out = [];
   for (const m of SELECTABLE_MODELS) {
-    if (platform.isLocal && !upstreamKeyPresent(BY_ID.get(m.id))) continue;   // 本地版藏没配钥匙的 API 行；hosted 不过滤（缺钥匙让请求 502 fail-loud）
+    if (platform.isLocal && !upstreamKeyPresent(BY_ID.get(m.id))) continue;   // 本地版藏没配钥匙的行（含没登录/没 key 时的内置 Claude 行）；hosted 不过滤（缺钥匙让请求 502 fail-loud）
     if (m.gate === 'localGen') { if (approved) out.push(m); continue; }
     if (m.gate === 'subscription' && !subscribed) { out.push({ ...m, locked: true, lockReason: SUBSCRIPTION_LOCK_REASON }); continue; }
     out.push(m);

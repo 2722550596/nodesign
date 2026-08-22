@@ -5,7 +5,12 @@ import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js'
 import { Local } from '../../lib/api.js';
 import { Card, TextInput, Select, Hint, Err, Btn, Dot } from './primitives.jsx';
 
-export default function EnvKeys({ onCapabilities, showToast }) {
+/**
+ * @param {string[]} [only]    只渲染这些分组（设置页「模型」那块只要 '模型' 组）
+ * @param {string[]} [exclude] 不渲染这些分组
+ * @param {boolean}  [bare]    不套 Card（嵌进别人的 Card 里）
+ */
+export default function EnvKeys({ onCapabilities, showToast, onSaved, only, exclude, bare = false }) {
   const [keys, setKeys] = useState(null);     // 服务端视图
   const [edits, setEdits] = useState({});     // key → 新值（'' = 清空）
   const [busy, setBusy] = useState(false);
@@ -15,7 +20,7 @@ export default function EnvKeys({ onCapabilities, showToast }) {
   useEffect(() => { reload(); }, []);
 
   if (!keys) return <Card><span style={{ color: COLOR.sub, fontSize: FONT_SIZE.sm }}>{err || '读取中…'}</span></Card>;
-  const groups = [...new Set(keys.map((k) => k.group))];
+  const groups = [...new Set(keys.map((k) => k.group))].filter((g) => (!only || only.includes(g)) && !(exclude || []).includes(g));
   const dirty = Object.keys(edits).length > 0;
 
   const save = async (values) => {
@@ -24,15 +29,17 @@ export default function EnvKeys({ onCapabilities, showToast }) {
       const r = await Local.saveEnv(values);
       setKeys(r.keys); setEdits({});
       onCapabilities?.(r.capabilities);
+      onSaved?.(r);
       showToast?.(r.changed.length ? `已保存 ${r.changed.join(', ')}` : '没有变化', 'info');
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
+  const Wrap = bare ? ({ children }) => <div>{children}</div> : Card;
   return (
-    <Card>
+    <Wrap>
       {groups.map((g) => (
         <div key={g} style={{ marginBottom: GAP.lg }}>
-          <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text4, marginBottom: GAP.sm, letterSpacing: 1 }}>{g}</div>
+          {groups.length > 1 && <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text4, marginBottom: GAP.sm, letterSpacing: 1 }}>{g}</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px, 220px) 1fr', gap: `${GAP.sm}px ${GAP.lg}px`, alignItems: 'start' }}>
             {keys.filter((k) => k.group === g).map((k) => {
               const editing = k.key in edits;
@@ -62,6 +69,6 @@ export default function EnvKeys({ onCapabilities, showToast }) {
         {dirty && <Btn onClick={() => setEdits({})}>放弃改动</Btn>}
         <Err>{err}</Err>
       </div>
-    </Card>
+    </Wrap>
   );
 }

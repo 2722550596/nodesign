@@ -1,13 +1,13 @@
 // web/src/routes/LocalSettings.jsx — 本地分发版设置页（/settings，08-22）。
 //
-// 四块：状态（数据目录 / 版本 / 重启）、本机能力（一张表）、钥匙与开关（.env 白名单）、模型插槽（config.json）。
+// 四块：状态（数据目录 / 版本 / 重启）、模型（API Key + 折叠起来的模型插槽 config.json）、本机能力（一张表）、其他钥匙与开关（.env 白名单）。
 // 全部数据来自 /api/local/*（只在 NODESIGN_PROFILE=local 下存在）；hosted 下进来只会看到空态说明。
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../lib/theme.js';
 import { Local } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { Section, Card, Btn, Err } from '../components/local/primitives.jsx';
+import { Section, Card, Btn, Err, Fold, Dot } from '../components/local/primitives.jsx';
 import CapabilityTable from '../components/local/CapabilityTable.jsx';
 import EnvKeys from '../components/local/EnvKeys.jsx';
 import SlotEditor from '../components/local/SlotEditor.jsx';
@@ -85,19 +85,31 @@ export default function LocalSettings() {
           </Card>
         </Section>
 
+        <Section title="模型" desc="先把这块配好，模型选择器里才会出现可选项">
+          <Card>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text3, marginBottom: GAP.md }}>
+              <Dot ok={status?.claudeAuth ? true : false} />
+              {status?.claudeAuth === 'api_key' ? 'Claude 行可选：走 API Key'
+                : status?.claudeAuth === 'login' ? 'Claude 行可选：用的是本机 claude login 的登录态'
+                  : '还没配：填下面的 API Key，或在终端里 claude login 一次（之后点右上角「重启」）'}
+            </div>
+            <EnvKeys only={['模型']} bare showToast={showToast} onSaved={() => Local.status().then(setStatus).catch(() => {})}
+              onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
+            <Fold title="模型插槽" desc="OpenAI 格式的接口、别家服务商、或者多个不同的上游 —— 高级用法，一般不用碰">
+              {cfg && draft ? (
+                <SlotEditor config={draft} setConfig={setDraft} errors={cfg.errors} enums={cfg.enums} active={cfg.activeExternalModels}
+                  needsRestart={needsRestart} onSave={save} saving={saving} showToast={showToast} />
+              ) : <span style={{ color: COLOR.sub, fontSize: FONT_SIZE.sm }}>读取中…</span>}
+            </Fold>
+          </Card>
+        </Section>
+
         <Section title="本机能力" desc="启动时探的；装好东西后「重启」重探">
           <CapabilityTable capabilities={status?.capabilities} />
         </Section>
 
-        <Section title="钥匙与开关" desc={`写进 ${status?.dataRoot || '~/.nodesign'}/.env，钥匙类保存即生效`}>
-          <EnvKeys showToast={showToast} onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
-        </Section>
-
-        <Section title="模型插槽" desc="你自己的上游与模型；Claude 行来自本机登录态或 ANTHROPIC_API_KEY，不用在这里配">
-          {cfg && draft ? (
-            <SlotEditor config={draft} setConfig={setDraft} errors={cfg.errors} enums={cfg.enums} active={cfg.activeExternalModels}
-              needsRestart={needsRestart} onSave={save} saving={saving} showToast={showToast} />
-          ) : <Card><span style={{ color: COLOR.sub, fontSize: FONT_SIZE.sm }}>读取中…</span></Card>}
+        <Section title="其他钥匙与开关" desc={`写进 ${status?.dataRoot || '~/.nodesign'}/.env，钥匙类保存即生效`}>
+          <EnvKeys exclude={['模型']} showToast={showToast} onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
         </Section>
       </div>
     </AppShell>

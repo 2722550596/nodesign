@@ -11,7 +11,8 @@ import path from 'node:path';
 import { profile } from './profile.js';
 
 export const ENV_KEYS = Object.freeze([
-  { key: 'ANTHROPIC_API_KEY', group: '模型', label: 'Anthropic API Key', secret: true, hint: '不填则用本机 claude login 的订阅登录态；填了 CLI 就走 API 计费' },
+  { key: 'ANTHROPIC_API_KEY', group: '模型', label: 'API Key', secret: true, hint: 'Anthropic 格式的钥匙（官方，或兼容这个格式的中转站）。不填也行：本机 claude login 过就用那份登录态。OpenAI 格式的接口在下面「模型插槽」里配' },
+  { key: 'ANTHROPIC_BASE_URL', group: '模型', label: '接口地址（可选）', secret: false, hint: '不填 = Anthropic 官方；用中转站就填它给的地址（如 https://xxx/），Claude 行会直接打到那里' },
   { key: 'NODESIGN_TAVILY_KEY', group: '联网搜索', label: 'Tavily', secret: true, hint: 'web_search 四家任一即可；英文检索优先用它' },
   { key: 'NODESIGN_EXA_KEY', group: '联网搜索', label: 'Exa', secret: true },
   { key: 'NODESIGN_BAIDU_QIANFAN_KEY', group: '联网搜索', label: '百度千帆', secret: true, hint: '中文检索自动路由到它' },

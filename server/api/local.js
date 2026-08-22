@@ -43,6 +43,8 @@ router.get('/status', (_req, res) => {
     // 本机能力位 + 每个能力位管着哪些工具（配置页那张表）
     capabilities: capabilitySnapshot().map((c) => ({ ...c, tools: Object.entries(TOOL_CAPABILITIES).filter(([, v]) => v.cap === c.id).map(([t]) => t) })),
     externalSdkAlias: EXTERNAL_SDK_ALIAS,
+    // 内置 Claude 行现在能不能选：'api_key' | 'login' | null（设置页「模型」那块的状态行）
+    claudeAuth: platform.claudeAuthPresent(),
     // 内置上游（只报名字和是否配了钥匙，不报钥匙）：配置页提示「这些名字被占了」
     builtinUpstreams: Object.fromEntries(Object.entries(UPSTREAMS_BUILTIN).map(([id, u]) => [id, { label: u.label, keyPresent: u.authStyle === 'none' || !!(u.keyEnv && process.env[u.keyEnv]) }])),
   });

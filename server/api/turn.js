@@ -187,8 +187,8 @@ router.post('/:pid/turn', async (req, res, next) => {
         code: 'MODEL_LOCKED', model: turnModel,
       });
     }
-    if (!allowedModelsFor(modelUser).some((m) => m.id === turnModel)) {
-      return res.status(403).json({ error: `这个会话指向的模型（${turnModel}）现在不可用，请在模型选择器里换一个`, code: 'MODEL_NOT_ALLOWED', model: turnModel });
+    if (!allowedModelsFor(modelUser).some((m) => m.id === turnModel)) {   // 清单整个为空（本地版没 key/没登录/没插槽）→ 指路设置页，别让人去选择器里找
+      return res.status(403).json(allowedModelsFor(modelUser).length ? { error: `这个会话指向的模型（${turnModel}）现在不可用，请在模型选择器里换一个`, code: 'MODEL_NOT_ALLOWED', model: turnModel } : { error: '还没有可用的模型：到「设置」填 API Key（或本机 claude login），或者配一个模型插槽', code: 'NO_MODEL_CONFIGURED', model: turnModel });
     }
     if (requestedModelEarly && sessionModelEarly.override && crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly)) {
       return res.status(409).json({ error: crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly), code: 'LANE_SWITCH' });

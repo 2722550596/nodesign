@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -123,5 +123,33 @@ describe('外部插槽进表 + 会话优先路由（子进程）', () => {
     expect(without).not.toContain('glm-5');      // keyEnv MY_RELAY_KEY 没设
     expect(without).not.toContain('ox-alpha');   // 内置行钥匙没配
     expect(run({ MY_RELAY_KEY: 'x' })).toContain('glm-5');
+  });
+
+  it('local profile：内置 Claude 行要本机有凭据才进 picker（没 key 没登录 = 空着指路，08-22 用户要求）', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'nd-cfg-'));
+    const cfg = path.join(dir, 'config.json');
+    writeFileSync(cfg, JSON.stringify({ upstreams: {}, models: [] }));
+    const home = path.join(dir, 'home'); const cfgDir = path.join(dir, 'claude-cfg');
+    mkdirSync(home, { recursive: true }); mkdirSync(cfgDir, { recursive: true });
+    const code = `
+      import { selectableModelsFor } from '../engine/agent/model-context.js';
+      import { platform } from './platform.js';
+      console.log(JSON.stringify({ via: platform.claudeAuthPresent(), ids: selectableModelsFor({ id: '_anon', role: 'admin' }).map((m) => m.id) }));`;
+    const base = { ...process.env }; delete base.VITEST; delete base.ANTHROPIC_API_KEY; delete base.NODESIGN_CONFIG_DIR;
+    const run = (extra) => {
+      const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: here, env: { ...base, NODESIGN_PROFILE: 'local', NODESIGN_DATA_DIR: dir, NODESIGN_MODELS_CONFIG: cfg, HOME: home, USERPROFILE: home, NODESIGN_CONFIG_DIR: cfgDir, ...extra }, encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(0);
+      return JSON.parse(r.stdout.trim().split('\n').pop());
+    };
+    const bare = run({});
+    expect(bare.via).toBe(null);
+    expect(bare.ids).toEqual([]);                                  // 什么都没配：一行都不给
+    const withKey = run({ ANTHROPIC_API_KEY: 'sk-x' });
+    expect(withKey.via).toBe('api_key');
+    expect(withKey.ids).toContain('claude-sonnet-5[1m]');
+    writeFileSync(path.join(cfgDir, '.credentials.json'), '{}');  // claude login 落盘的样子
+    const loggedIn = run({});
+    expect(loggedIn.via).toBe('login');
+    expect(loggedIn.ids).toContain('claude-opus-5[1m]');
   });
 });
