@@ -12,7 +12,11 @@
  *   （Node 22+ 内置 --env-file-if-exists，不需要 dotenv 依赖）
  */
 
+// ⚠️ 必须是第一个 import：它在别的模块加载前决定 profile（hosted | local）并给数据目录 env 填默认值
+import './runtime/profile.js';
 import http from 'http';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import cors from 'cors';
 import { originAllowed } from './auth/origin-guard.js';
@@ -43,11 +47,17 @@ import { bootstrapAuth } from './auth/users-store.js';
 import { sweepOrphanRuns } from './engine/runs/store.js';
 import adminRouter from './api/admin.js';
 import meRouter from './api/me.js';
+import localRouter, { RESTART_EXIT_CODE } from './api/local.js';
 import { platform } from './runtime/platform.js';
+import { probeCapabilities, summarizeCapabilities } from './runtime/capabilities.js';
 
 // 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
 // 跨平台坑排查的第一信号
 platform.dump();
+// 本机能力位（git / chromium / LibreOffice / 钥匙…）：启动探一遍，工具注册（mcp/capability-gate.js）与
+// GET /api/local/status 都读它。探测是异步的（playwright 要 import），在 listen 之前等它
+await probeCapabilities();
+console.log(summarizeCapabilities());
 
 const PORT = Number(process.env.PORT || 4001);
 
@@ -80,15 +90,23 @@ app.get('/api/health', (_req, res) => {
 // run 全标成 failed，实测误杀过真实用户的对话。
 sweepOrphanRuns();
 
-bootstrapAuth();
-if (!authEnabled()) {
-  console.warn('[auth] ⚠️ 无用户且未设 NODESIGN_AUTH_PASSWORD — 登录墙关闭，切勿公网暴露！');
+if (platform.isLocal) {
+  // 本地分发版：单租户，登录墙钉死关闭（auth/users-store.js authEnabled），请求者恒为 LOCAL_OWNER。
+  // 不跑 bootstrapAuth：它会按 NODESIGN_AUTH_PASSWORD 建 admin、回填项目归属 —— 那是多用户站的事。
+  console.log(`[profile] local：单租户模式，数据目录 ${platform.dataRoot}，只监听 ${platform.listenHost}`);
+} else {
+  bootstrapAuth();
+  if (!authEnabled()) {
+    console.warn('[auth] ⚠️ 无用户且未设 NODESIGN_AUTH_PASSWORD — 登录墙关闭，切勿公网暴露！');
+  }
 }
 app.use('/api/auth', authRouter);
 app.use('/api', authGuard);
 // admin 管理接口 + 当前用户自视图（都在 authGuard 之后，req.user 已挂）
 app.use('/api/admin', adminRouter);
 app.use('/api/me', meRouter);
+// 本地分发版专用（配置文件 / 状态 / 重启）。hosted 下不挂：这组接口假设请求者就是机器的主人
+if (platform.isLocal) app.use('/api/local', localRouter);
 
 // ── 业务路由 ──
 // projects router 挂在 /api/projects（CRUD）
@@ -114,6 +132,27 @@ app.use('/api/skills', skillsRouter);
 // 用户级 plugin（跨 project 全局）
 app.use('/api/plugins', userPluginsRouter);
 
+// ── 前端静态托管（本地分发版；hosted 由 nginx 发 dist，这里默认关）──
+if (platform.serveWeb) {
+  const indexHtml = path.join(platform.webDistDir, 'index.html');
+  if (!fs.existsSync(indexHtml)) {
+    // 不抛：API 照常可用（开发者可能正用 vite dev 连着）。但要说出来，别让人对着 404 猜
+    console.warn(`[server] ⚠️ 前端构建产物不存在：${indexHtml}（先 cd web && npm run build）`);
+  }
+  // 入口 HTML 不缓存（和线上 nginx 同口径：发新版后开着的页面刷新就能拿到新分片）；哈希分片随便缓存
+  app.use(express.static(platform.webDistDir, {
+    index: false,
+    setHeaders(res, file) { if (file.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache'); },
+  }));
+  app.use((req, res, next) => {
+    // SPA 回退：非 API / WS 的 GET 一律回 index.html（/projects/:id 这类前端路由刷新不 404）
+    if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/ws/')) return next();
+    if (!fs.existsSync(indexHtml)) return next();
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(indexHtml);
+  });
+}
+
 // /api 下没路由接住的一律回 JSON 404（express 默认是 HTML，前端 jsonRequest 拿到的是解析错误不是 {error}）
 app.use('/api', (req, res) => res.status(404).json({ error: `not found: ${req.method} ${req.originalUrl}`, code: 'NOT_FOUND' }));
 
@@ -130,17 +169,23 @@ app.use((err, _req, res, _next) => {
 const httpServer = http.createServer(app);
 setupWS(httpServer);
 
+// listenHost：local = 127.0.0.1（没有登录墙，绝不能开到全地址）；hosted = undefined（Node 默认全地址，nginx 在前）
 httpServer.on('error', (err) => {
-  // 不走 uncaughtException（那个 handler 故意不退出）：没监听成功的进程是僵尸，pm2 以为它活着
-  if (err?.code === 'EADDRINUSE') console.error(`[server] 端口 ${PORT} 已被占用。换 PORT，或查占用：lsof -i :${PORT}`);
-  else console.error('[server] listen failed:', err?.message || err);
+  // 不走 uncaughtException（那个 handler 故意不退出）：没监听成功的进程是僵尸，supervisor 会以为它还活着
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[server] 端口 ${PORT} 已被占用（${platform.listenHost || '*'}:${PORT}）。换一个：nodesign --port 4002，或 PORT=4002；查占用：`
+      + (process.platform === 'win32' ? `netstat -ano | findstr :${PORT}` : `lsof -i :${PORT}`));
+  } else {
+    console.error('[server] listen failed:', err?.message || err);
+  }
   process.exit(1);
 });
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, platform.listenHost, () => {
   // 出网闸要知道本机的公网 IP —— 云上 1:1 NAT 下它不在任何网卡上（见 ssrf-guard）
   primeOwnAddresses().catch(() => {});
-  console.log(`[server] listening on :${PORT}`);
+  console.log(`[server] listening on ${platform.listenHost || ''}:${PORT}`);
   console.log(`[server] health: http://localhost:${PORT}/api/health`);
+  if (platform.serveWeb) console.log(`[server] app: http://${platform.listenHost || 'localhost'}:${PORT}/`);
 });
 
 // 起 rembg-service 常驻 python 进程：onnxruntime session 在内存里 warm 缓存，
@@ -170,7 +215,7 @@ process.on('unhandledRejection', (reason) => {
 
 // graceful shutdown
 let shuttingDown = false;
-function shutdown(signal) {
+function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[server] ${signal} received, shutting down...`);
@@ -181,10 +226,13 @@ function shutdown(signal) {
   stopRembgService();
   httpServer.close((err) => {
     if (err) console.error('[server] close error:', err);
-    process.exit(err ? 1 : 0);
+    process.exit(err ? 1 : exitCode);
   });
-  // 兜底强制退出
-  setTimeout(() => process.exit(1), 5000).unref();
+  // 兜底强制退出（重启请求也按约定码退，bin 的 supervisor 才会拉起新进程）
+  setTimeout(() => process.exit(exitCode || 1), 5000).unref();
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// 本地分发版「保存配置后重启」：api/local.js 发这个事件，进程以 RESTART_EXIT_CODE 退出，bin/nodesign.js 的
+// supervisor 见到这个码就重新拉起（模型表是加载时冻结的，热改不如重起干净）
+process.on('nodesign:restart', () => shutdown('restart', RESTART_EXIT_CODE));

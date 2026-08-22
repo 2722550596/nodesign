@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { LogOut, LayoutDashboard } from 'lucide-react';
+import { LogOut, LayoutDashboard, Settings } from 'lucide-react';
 import { COLOR, CHROME, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_KAI } from '../../lib/theme.js';
 import { GRAIN } from '../../lib/paper.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
@@ -17,14 +17,28 @@ import { useMedia, NARROW } from '../../lib/use-media.js';
  *
  * 轮询也因此不能改成"打开才拉"（那样描边永远不会亮），只是从 90s 放慢到 5 分钟。
  */
+/** 本地分发版：账号徽记的位置换成设置入口（钥匙 / 模型插槽 / 本机能力） */
+function LocalSettingsEntry() {
+  return (
+    <Link to="/settings" title="设置：钥匙 · 模型插槽 · 本机能力" style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30,
+      borderRadius: RADIUS.pill, color: CHROME.ink2, textDecoration: 'none',
+    }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(43,33,23,0.06)'; }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+    ><Settings size={16} /></Link>
+  );
+}
+
 function UserBadge() {
   const authUser = useGlobalStore(s => s.authUser);
+  const local = useGlobalStore(s => s.authProfile === 'local');   // 本地分发版：没有账号这回事，整块不渲染
   const [usage, setUsage] = useState(null);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
-    if (!authUser) return undefined;
+    if (!authUser || local) return undefined;
     let dead = false;
     const pull = () => {
       fetch('/api/me/usage').then(r => (r.ok ? r.json() : null))
@@ -45,6 +59,7 @@ function UserBadge() {
     return () => { window.removeEventListener('mousedown', onDown); window.removeEventListener('keydown', onKey); };
   }, [open]);
 
+  if (local) return <LocalSettingsEntry />;
   if (!authUser) return null;
   // 警戒线 75%：跟配额横幅第一档对齐。07-31 起额度是一个总数且单位是钱，
   // 服务端直接给 pct（金额不下发给普通用户，见 api/me.js）

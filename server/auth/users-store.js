@@ -19,6 +19,26 @@
 import crypto from 'node:crypto';
 import db from '../engine/runs/store.js';
 import { PLANS, basicDefaultDailyUsd } from './tier.js';
+import { platform } from '../runtime/platform.js';
+
+/**
+ * 登录墙关闭时的请求者（HTTP / WS / 工具内 owner 反查三处共用同一个对象）。
+ * 形状对齐 rowToUser：role admin ⇒ tier admin ⇒ 全能力、免额度、免外审；没有 plan /
+ * moderationLevel ⇒ 档位默认值。id 进 projects.owner_id / runs.user_id 这些列，所以
+ * 必须稳定不变 —— 改了它，老项目在本地版里会「找不到」。
+ */
+export const LOCAL_OWNER = Object.freeze({ id: '_anon', username: 'anon', role: 'admin', dailyTokenLimit: null, disabled: false });
+
+/**
+ * 登录墙是否启用。
+ *   - local profile：钉死关闭（单租户；服务只绑环回，见 runtime/profile.js）。users 表里有没有行都不看 ——
+ *     开发者用同一个 DB 切过 profile 也不会突然被一堵墙拦住。
+ *   - hosted：有用户就启用；一个用户都没有且没密码 = 关闭（本地开发）。
+ */
+export function authEnabled() {
+  if (platform.isLocal) return false;
+  return countUsers() > 0 || (process.env.NODESIGN_AUTH_PASSWORD || '').length > 0;
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -161,17 +181,10 @@ function rowToUser(row) {
 const userCache = new Map();   // id → { user, at }
 const USER_CACHE_MS = 60_000;
 
-/** 登录墙关闭时的本地管理员（requestUser 与 getUserById 必须是同一个对象，别各造一份） */
-export const LOCAL_OWNER = Object.freeze({ id: '_anon', username: 'anon', role: 'admin', dailyTokenLimit: null, disabled: false });
-
-/** 登录墙是否启用：有用户就启用；一个用户都没有且没密码 = 关闭（本地开发）。原在 session.js，下沉到这里让 getUserById 也能问 */
-export function authEnabled() {
-  return countUsers() > 0 || (process.env.NODESIGN_AUTH_PASSWORD || '').length > 0;
-}
-
 export function getUserById(id) {
-  // 登录墙关闭时 requestUser 发的是 _anon；它不在 users 表里，按 id 反查要回同一个对象，
-  // 否则 session-loop 的订阅资格断言 can(getUserById(ownerId)) 拿到 null → 本地开发跑不了 Claude 行（08-21 回归，08-22 本地版抓到）
+  // 登录墙关闭时 owner 是 LOCAL_OWNER，它不在表里。不在这里接住，session-loop 的订阅资格断言 /
+  // tier-gate / paint_still 这些按 ownerId 反查的地方会拿到 null ⇒ fail-closed ⇒ 本地版什么都跑不了。
+  // 登录墙开着时 '_anon' 不是合法身份（表里没有这行），照常查表得 null。
   if (id === LOCAL_OWNER.id && !authEnabled()) return LOCAL_OWNER;
   const hit = userCache.get(id);
   if (hit && Date.now() - hit.at < USER_CACHE_MS) return hit.user;

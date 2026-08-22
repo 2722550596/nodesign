@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { profile } from './profile.js';
 
 const isLinux = process.platform === 'linux';
 
@@ -41,6 +42,23 @@ const isWin = process.platform === 'win32';
  */
 const claudeConfigDir = process.env.NODESIGN_CONFIG_DIR
   || path.join(process.env.HOME || os.homedir(), '.claude');
+
+/**
+ * 本机有没有能跑内置 Claude 行的凭据（本地版 picker 的闸，08-22）：
+ *   - ANTHROPIC_API_KEY 在 env 里（设置页存进 .env 后 setEnvValues 会同步进 process.env，所以每次现查）
+ *   - 或 `claude login` 过：<claudeConfigDir>/.credentials.json（Linux/Windows 的 OAuth 落盘处），
+ *     或 .claude.json 里有 oauthAccount（mac 走钥匙串时凭据不落文件，但这个账号记录在）。
+ * 只是「像是配过」的判据，不是验资格 —— 真假由第一次会话说了算；没配时 picker 空着、
+ * 设置页指路，比让用户点一个必失败的 Claude 行强。hosted 不走这条（订阅行按档位放）。
+ */
+export function claudeAuthPresent() {
+  if (process.env.ANTHROPIC_API_KEY) return 'api_key';
+  if (fs.existsSync(path.join(claudeConfigDir, '.credentials.json'))) return 'login';
+  for (const f of [path.join(claudeConfigDir, '.claude.json'), path.join(process.env.HOME || os.homedir(), '.claude.json')]) {
+    try { if (JSON.parse(fs.readFileSync(f, 'utf8'))?.oauthAccount) return 'login'; } catch { /* 没这个文件或不是 JSON */ }
+  }
+  return null;
+}
 
 /**
  * Sandbox 是否开启
@@ -108,9 +126,12 @@ const skipWebFetchPreflight = true;
  * 目录里的文件，拦不住 `ls` 看文件名 —— 文件名不是秘密，接受）。
  */
 /** 数据根（给 credentialBlacklist 用；跟 protectedPathRules 收到的那个同源） */
-// 08-22 修：.env / .env.example 里写的是 PROJECTS_DATA_DIR，这里原来读 PROJECTS_DATA_ROOT（没人设）→ 数据根一旦非默认，黑名单就盖错目录
-const PROJECTS_DATA_ROOT_FOR_DENY = process.env.PROJECTS_DATA_DIR || process.env.PROJECTS_DATA_ROOT
-  || path.join(repoRoot, 'server', 'projects-data');
+// ⚠️ 变量名跟 projects/workspace.js 对齐（PROJECTS_DATA_DIR）。08-22 之前这里读的是 PROJECTS_DATA_ROOT，
+// 而 .env.example 与生产 .env 写的都是 PROJECTS_DATA_DIR —— 两个名字一个事实，数据根一旦不是默认值，
+// 凭据黑名单就盖错目录。旧名留作兜底，别再新增读它的地方。
+const PROJECTS_DATA_ROOT_FOR_DENY = path.resolve(
+  process.env.PROJECTS_DATA_DIR || process.env.PROJECTS_DATA_ROOT || path.join(repoRoot, 'server', 'projects-data'),
+);
 
 function credentialBlacklist() {
   const home = os.homedir();
@@ -274,6 +295,8 @@ function repoChildrenOutside(dataRoot) {
  */
 function dump() {
   const info = {
+    profile: profile.name,
+    ...(profile.isLocal ? { dataRoot: profile.dataRoot, listenHost: profile.listenHost, serveWeb: profile.serveWeb } : {}),
     os: process.platform,
     arch: process.arch,
     node: process.version,
@@ -292,11 +315,20 @@ function dump() {
 }
 
 export const platform = {
+  // 部署形态（runtime/profile.js）：hosted | local。消费方一律从这里读，不直接 import profile.js
+  profile: profile.name,
+  isLocal: profile.isLocal,
+  dataRoot: profile.dataRoot,
+  cacheRoot: profile.cacheRoot,
+  listenHost: profile.listenHost,
+  serveWeb: profile.serveWeb,
+  webDistDir: profile.webDistDir,
   isLinux,
   isMac,
   isWin,
   repoRoot,
   claudeConfigDir,
+  claudeAuthPresent,
   sandboxEnabled,
   permissionModeDefault,
   autoModeEnabled,

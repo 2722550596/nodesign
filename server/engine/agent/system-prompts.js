@@ -23,7 +23,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 解耦。模块级 readFileSync 一次性读入，避免每次 turn 重读。
 export const NODESIGN_PRELUDE = (() => {
   try {
-    // CRLF 归一：Windows git autocrlf 会把 md checkout 成 CRLF，下面 POLICY_BLOCK 按 `\n` 切块（.gitattributes 已钉 LF，这里是第二道保险）
+    // CRLF 归一：Windows git autocrlf 会把 md checkout 成 CRLF，下面 POLICY_BLOCK 按 `\n` 切块
+    // （.gitattributes 已钉 LF，这里是第二道保险，老 checkout 不重拉也能起）
     return fs.readFileSync(path.join(__dirname, 'prompts/nodesign-prelude.md'), 'utf8').replace(/\r\n?/g, '\n').trim();
   } catch (err) {
     console.warn('[system-prompts] failed to load nodesign-prelude.md:', err.message);

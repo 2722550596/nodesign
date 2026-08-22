@@ -60,6 +60,7 @@ export default function QuotaBanner() {
   }, []);
 
   const pull = useCallback(() => {
+    if (useGlobalStore.getState().authProfile === 'local') return;   // 本地分发版没有额度也没有站务公告
     fetch('/api/me/usage')
       .then((r) => (r.ok ? r.json() : null))
       .then((u) => {

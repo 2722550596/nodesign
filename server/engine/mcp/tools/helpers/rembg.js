@@ -28,7 +28,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // helpers/ 在 server/engine/mcp/tools/helpers/，server root 上溯 4 层
 const SERVER_ROOT = path.resolve(__dirname, '../../../../');
 
-// venv 里 python 的位置按平台走（Windows 是 Scripts\python.exe）；安装提示同源，launcher / remove_background 都引这里
+// venv 里 python 的位置按平台走（Windows 是 Scripts\python.exe，不是 bin/python3）；
+// 安装提示同源，launcher / capabilities / remove_background 三处都引这里，别各写一遍
 const IS_WIN = process.platform === 'win32';
 export const REMBG_VENV_PYTHON = IS_WIN
   ? path.join(SERVER_ROOT, '.venv-rembg', 'Scripts', 'python.exe')

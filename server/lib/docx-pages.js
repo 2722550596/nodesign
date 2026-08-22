@@ -27,7 +27,7 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { renderDocx, cleanupRender } from './docx/render.js';
 
-const CACHE_DIR = path.join(platform.repoRoot, 'server', '.cache', 'docx-pages');   // 按仓库根，不按 cwd（cwd=server/ 起过一次就写进 server/server/.cache）
+const CACHE_DIR = path.join(platform.cacheRoot, 'docx-pages');
 
 /** 缓存的渲染精度。缩略图从这份缩，不另跑 LibreOffice */
 const CACHE_DPI = 120;

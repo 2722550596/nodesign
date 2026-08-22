@@ -77,6 +77,17 @@ export const Me = {
 };
 
 
+// ── Local（本地分发版专用：配置 / 钥匙 / 能力 / 体检 / 重启；hosted 下这组路由不存在）──
+export const Local = {
+  status: () => jsonRequest('GET', '/api/local/status'),
+  config: () => jsonRequest('GET', '/api/local/config'),
+  saveConfig: (raw) => jsonRequest('PUT', '/api/local/config', raw),
+  env: () => jsonRequest('GET', '/api/local/env'),
+  saveEnv: (values) => jsonRequest('PUT', '/api/local/env', { values }),
+  probe: (id, { vision = true } = {}) => jsonRequest('POST', `/api/local/models/${encodeURIComponent(id)}/probe?vision=${vision ? 1 : 0}`),
+  restart: () => jsonRequest('POST', '/api/local/restart'),
+};
+
 // ── Publish（站点一键上线 Cloudflare Pages，task 级）──
 // 根站的 task 是空串（扁平化后站点住工作区根）。它的 store key 是 '.'，但 '.'
 // 进不了 URL 路径段（WHATWG 把单点段归一掉，发出去就成 /publish/），所以

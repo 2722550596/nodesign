@@ -108,7 +108,10 @@ export default function ModelPicker({
     return () => { alive = false; };
   }, [hasSession, projectId, sessionId]);
 
-  const options = remote?.options?.length ? remote.options : FALLBACK_MODELS;
+  // 服务端**答了**就信它（空清单也是答案：本地版没配钥匙时就是空）；只有没答上来（还在等 / 接口挂了）才吃兜底常量
+  const options = remote ? (remote.options || []) : FALLBACK_MODELS;
+  const none = !!remote && options.length === 0;
+  const isLocalProfile = useGlobalStore(s => s.authProfile) === 'local';
 
   /**
    * 本地偏好过期自净（2026-08-20 随「本地 Qwen 摘牌」加）。
@@ -179,7 +182,7 @@ export default function ModelPicker({
     }
   }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens, options, confirmDialog]);
 
-  const label = shortLabel(effective, options);
+  const label = none ? '未配置模型' : shortLabel(effective, options);
   const busy = disabled || saving;
   /**
    * 实心 = 现在跑在重档上。
@@ -202,6 +205,7 @@ export default function ModelPicker({
         disabled={busy}
         title={
           disabled ? '这一轮跑完再切（切换从下一条消息生效）'
+            : none ? '还没有可用的模型'
             : hasSession
               ? `这个会话跑在 ${effective}。切换从下一条消息生效，对话不丢`
               : `新会话将用 ${label}`
@@ -241,6 +245,14 @@ export default function ModelPicker({
           padding: GAP.xs,
           zIndex: 60,
         }}>
+          {none && (
+            <div style={{ padding: `${GAP.sm}px ${GAP.md}px`, fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text3, lineHeight: 1.6 }}>
+              还没有可用的模型。
+              {isLocalProfile
+                ? <>到 <a href="/settings" style={{ color: COLOR.text, textDecoration: 'underline' }}>设置</a> 填 API Key（或在终端 <span style={{ fontFamily: FONT_MONO }}>claude login</span>），要接别家接口就配一个模型插槽。</>
+                : '请联系站主。'}
+            </div>
+          )}
           {options.map((o) => (
             <Option
               key={o.id}

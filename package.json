@@ -1,9 +1,32 @@
 {
-  "name": "nodesign",
-  "version": "0.0.1",
-  "private": true,
+  "name": "@xiaobuyu/nodesign",
+  "version": "0.0.2",
+  "private": false,
   "type": "module",
-  "description": "Nodesign — 云端 SaaS skill engine（自由创作 + 风格参照 + 元素级 edit）",
+  "description": "NoDesign — 面向独立创作者的 agent 创作工作台（本地分发版：npx nodesign）",
+  "bin": {
+    "nodesign": "bin/nodesign.js"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "web/dist/",
+    "README.md",
+    "LICENSE",
+    "!server/**/*.test.js",
+    "!server/**/_probe-*",
+    "!server/**/_*-check.mjs",
+    "!server/**/_smoke.js",
+    "!server/server/",
+    "!server/db/",
+    "!server/node_modules/",
+    "!server/runs/",
+    "!server/skills/installed/",
+    "!server/lib/docx/lab/",
+    "!server/lib/ssrf-lab/",
+    "!server/scripts/",
+    "!web/dist/mock/"
+  ],
   "scripts": {
     "postinstall": "node server/ops/fix-sdk-musl.mjs",
     "start": "node --env-file-if-exists=.env server/index.js",
@@ -11,7 +34,10 @@
     "smoke:engine": "node --env-file-if-exists=.env server/engine/_smoke.js",
     "smoke:agent": "node --env-file-if-exists=.env server/engine/agent/_smoke.js",
     "test:server": "nice -n 15 vitest run -c vitest.server.config.js",
-    "test": "npm run test:server && cd web && nice -n 15 npx vitest run"
+    "test": "npm run test:server && cd web && nice -n 15 npx vitest run",
+    "local": "node bin/nodesign.js --no-open",
+    "build:web": "cd web && npx vite build",
+    "prepack": "npm run build:web"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.237",
@@ -54,5 +80,25 @@
   "devDependencies": {
     "happy-dom": "^20.11.2",
     "vitest": "^4.1.10"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Xiaokebuyu/Nodesign.git"
+  },
+  "homepage": "https://github.com/Xiaokebuyu/Nodesign#readme",
+  "bugs": {
+    "url": "https://github.com/Xiaokebuyu/Nodesign/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "agent",
+    "canvas",
+    "creative",
+    "claude",
+    "deepseek",
+    "local-first"
+  ],
+  "license": "AGPL-3.0-only"
 }

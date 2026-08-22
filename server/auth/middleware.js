@@ -17,6 +17,7 @@ import {
 } from './session.js';
 import { getCredential, verifyPassword, getUserById, registerUser, openRegistrationEnabled } from './users-store.js';
 import { makeRateWindow } from '../lib/rate-window.js';
+import { platform } from '../runtime/platform.js';
 
 const MAX_FAILS = 10;
 const LOCK_MS = 15 * 60 * 1000;
@@ -61,7 +62,8 @@ export const authRouter = express.Router();
 
 authRouter.get('/status', (req, res) => {
   const user = requestUser(req);
-  res.json({ required: authEnabled(), authed: !!user, user: publicUser(user), openRegistration: openRegistrationEnabled() });
+  // profile：前端据此藏 SaaS 那套界面（账号徽记 / 额度横幅 / 管理入口）。local = 本地单租户分发版
+  res.json({ required: authEnabled(), authed: !!user, user: publicUser(user), openRegistration: openRegistrationEnabled(), profile: platform.profile });
 });
 
 authRouter.post('/login', (req, res) => {

@@ -30,7 +30,7 @@ import { openArtifactPage, launchPerceptionBrowser } from '../engine/mcp/tools/h
 
 const SITE_VIEWPORT = { width: 1440, height: 900 };
 const OUT_WIDTH = 800;          // 出图宽度（卡片最宽也就 ~400 CSS px，2x 足够）
-const CACHE_DIR = path.join(platform.repoRoot, 'server', '.cache', 'covers');   // 按仓库根，不按 cwd（cwd=server/ 起过一次就写进 server/server/.cache）
+const CACHE_DIR = path.join(platform.cacheRoot, 'covers');
 
 /** 截图串行闸门 —— 冷启动时十张卡同时请求也只有一个 chromium 在跑 */
 let renderChain = Promise.resolve();

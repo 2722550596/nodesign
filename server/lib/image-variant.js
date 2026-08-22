@@ -32,7 +32,7 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 
-const CACHE_DIR = path.join(platform.repoRoot, 'server', '.cache', 'variants');   // 按仓库根，不按 cwd（cwd=server/ 起过一次就写进 server/server/.cache）
+const CACHE_DIR = path.join(platform.cacheRoot, 'variants');
 
 /**
  * 每种格式的默认质量 + 文件扩展名 + 编码器。

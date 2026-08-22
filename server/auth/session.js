@@ -15,6 +15,8 @@
 
 import crypto from 'crypto';
 import { getUserById, authEnabled, LOCAL_OWNER } from './users-store.js';
+
+// 登录墙开关住 users-store（它要看 users 表 + profile），这里转出口给老调用点
 export { authEnabled };
 
 export const COOKIE_NAME = 'nd_auth';
