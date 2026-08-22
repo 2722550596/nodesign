@@ -12,11 +12,20 @@
     "server/",
     "web/dist/",
     "README.md",
+    "LICENSE",
     "!server/**/*.test.js",
     "!server/**/_probe-*",
     "!server/**/_*-check.mjs",
+    "!server/**/_smoke.js",
     "!server/server/",
-    "LICENSE"
+    "!server/db/",
+    "!server/node_modules/",
+    "!server/runs/",
+    "!server/skills/installed/",
+    "!server/lib/docx/lab/",
+    "!server/lib/ssrf-lab/",
+    "!server/scripts/",
+    "!web/dist/mock/"
   ],
   "scripts": {
     "postinstall": "node server/ops/fix-sdk-musl.mjs",
