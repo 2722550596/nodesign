@@ -93,9 +93,11 @@ export default function LocalSettings() {
                 : status?.claudeAuth === 'login' ? 'Claude 行可选：用的是本机 claude login 的登录态'
                   : '还没配：填下面的 API Key，或在终端里 claude login 一次（之后点右上角「重启」）'}
             </div>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, fontWeight: 500, marginBottom: GAP.xs }}>Anthropic 格式接口 → Claude 行</div>
+            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: GAP.sm }}>Claude 官方，或兼容 Anthropic 格式的中转站。填好就有 Sonnet / Opus 可选；不填也行，本机 claude login 过就用那份登录态。</div>
             <EnvKeys only={['模型']} bare showToast={showToast} onSaved={() => Local.status().then(setStatus).catch(() => {})}
               onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
-            <Fold title="模型插槽" desc="OpenAI 格式的接口、别家服务商、或者多个不同的上游 —— 高级用法，一般不用碰">
+            <Fold title="OpenAI 格式接口 / 其他服务商 → 模型插槽" desc="DeepSeek、OpenAI、智谱、通义、OpenRouter、本机 Ollama…（也能再接别的 Anthropic 格式端点）">
               {cfg && draft ? (
                 <SlotEditor config={draft} setConfig={setDraft} errors={cfg.errors} enums={cfg.enums} active={cfg.activeExternalModels}
                   needsRestart={needsRestart} onSave={save} saving={saving} showToast={showToast} />
