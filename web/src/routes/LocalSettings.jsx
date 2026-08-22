@@ -1,13 +1,13 @@
 // web/src/routes/LocalSettings.jsx — 本地分发版设置页（/settings，08-22）。
 //
-// 四块：状态（数据目录 / 版本 / 重启）、模型（API Key + 折叠起来的模型插槽 config.json）、本机能力（一张表）、其他钥匙与开关（.env 白名单）。
+// 四块：状态（数据目录 / 版本 / 重启）、模型（「Claude 官方」与「自定义接入」两张并列的卡）、本机能力（一张表）、其他钥匙与开关（.env 白名单）。
 // 全部数据来自 /api/local/*（只在 NODESIGN_PROFILE=local 下存在）；hosted 下进来只会看到空态说明。
 import { useState, useEffect, useCallback } from 'react';
 import AppShell from '../components/layout/AppShell.jsx';
 import { COLOR, GAP, FONT_SIZE, FONT_SANS, FONT_MONO } from '../lib/theme.js';
 import { Local } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
-import { Section, Card, Btn, Err, Fold, Dot } from '../components/local/primitives.jsx';
+import { Section, Card, Btn, Err, Dot } from '../components/local/primitives.jsx';
 import CapabilityTable from '../components/local/CapabilityTable.jsx';
 import EnvKeys from '../components/local/EnvKeys.jsx';
 import SlotEditor from '../components/local/SlotEditor.jsx';
@@ -85,24 +85,34 @@ export default function LocalSettings() {
           </Card>
         </Section>
 
-        <Section title="模型" desc="先把这块配好，模型选择器里才会出现可选项">
-          <Card>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text3, marginBottom: GAP.md }}>
-              <Dot ok={status?.claudeAuth ? true : false} />
-              {status?.claudeAuth === 'api_key' ? 'Claude 行可选：走 API Key'
-                : status?.claudeAuth === 'login' ? 'Claude 行可选：用的是本机 claude login 的登录态'
-                  : '还没配：填下面的 API Key，或在终端里 claude login 一次（之后点右上角「重启」）'}
+        <Section title="模型" desc="两种接入方式并列，配好任一种，模型选择器里就有可选项">
+          <Card style={{ marginBottom: GAP.md }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: GAP.sm }}>
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text }}>Claude 官方</span>
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>Anthropic 的 Sonnet / Opus。填 API Key，或在终端 claude login 用订阅</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: status?.claudeAuth ? COLOR.success : COLOR.sub }}>
+                <Dot ok={status?.claudeAuth ? true : false} />
+                {status?.claudeAuth === 'api_key' ? '已配（API Key）' : status?.claudeAuth === 'login' ? '已配（本机 claude login 登录态）' : '未配'}
+              </span>
             </div>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text2, fontWeight: 500, marginBottom: GAP.xs }}>Anthropic 格式接口 → Claude 行</div>
-            <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: GAP.sm }}>Claude 官方，或兼容 Anthropic 格式的中转站。填好就有 Sonnet / Opus 可选；不填也行，本机 claude login 过就用那份登录态。</div>
             <EnvKeys only={['模型']} bare showToast={showToast} onSaved={() => Local.status().then(setStatus).catch(() => {})}
               onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
-            <Fold title="OpenAI 格式接口 / 其他服务商 → 模型插槽" desc="DeepSeek、OpenAI、智谱、通义、OpenRouter、本机 Ollama…（也能再接别的 Anthropic 格式端点）">
-              {cfg && draft ? (
-                <SlotEditor config={draft} setConfig={setDraft} errors={cfg.errors} enums={cfg.enums} active={cfg.activeExternalModels}
-                  needsRestart={needsRestart} onSave={save} saving={saving} showToast={showToast} />
-              ) : <span style={{ color: COLOR.sub, fontSize: FONT_SIZE.sm }}>读取中…</span>}
-            </Fold>
+          </Card>
+          <Card>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: GAP.md }}>
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text }}>自定义接入</span>
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>任何服务商：DeepSeek、OpenAI、智谱、通义、OpenRouter、中转站、本机 Ollama…（OpenAI 格式或 Anthropic 格式都行）</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: cfg?.activeExternalModels?.length ? COLOR.success : COLOR.sub }}>
+                <Dot ok={cfg?.activeExternalModels?.length ? true : false} />
+                {cfg?.activeExternalModels?.length ? `已配 ${cfg.activeExternalModels.length} 个模型` : '未配'}
+              </span>
+            </div>
+            {cfg && draft ? (
+              <SlotEditor config={draft} setConfig={setDraft} errors={cfg.errors} enums={cfg.enums} active={cfg.activeExternalModels}
+                needsRestart={needsRestart} onSave={save} saving={saving} showToast={showToast} />
+            ) : <span style={{ color: COLOR.sub, fontSize: FONT_SIZE.sm }}>读取中…</span>}
           </Card>
         </Section>
 
