@@ -167,6 +167,16 @@ const httpServer = http.createServer(app);
 setupWS(httpServer);
 
 // listenHost：local = 127.0.0.1（没有登录墙，绝不能开到全地址）；hosted = undefined（Node 默认全地址，nginx 在前）
+httpServer.on('error', (err) => {
+  // 不走 uncaughtException（那个 handler 故意不退出）：没监听成功的进程是僵尸，supervisor 会以为它还活着
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[server] 端口 ${PORT} 已被占用（${platform.listenHost || '*'}:${PORT}）。换一个：nodesign --port 4002，或 PORT=4002；查占用：`
+      + (process.platform === 'win32' ? `netstat -ano | findstr :${PORT}` : `lsof -i :${PORT}`));
+  } else {
+    console.error('[server] listen failed:', err?.message || err);
+  }
+  process.exit(1);
+});
 httpServer.listen(PORT, platform.listenHost, () => {
   // 出网闸要知道本机的公网 IP —— 云上 1:1 NAT 下它不在任何网卡上（见 ssrf-guard）
   primeOwnAddresses().catch(() => {});

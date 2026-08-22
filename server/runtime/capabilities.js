@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isAvailable as rembgAvailable } from '../engine/mcp/tools/helpers/rembg.js';
+import { isAvailable as rembgAvailable, REMBG_SETUP_HINT } from '../engine/mcp/tools/helpers/rembg.js';
 
 const isWin = process.platform === 'win32';
 
@@ -73,7 +73,7 @@ export const CAPABILITY_DEFS = Object.freeze([
     fix: isWin ? '装 ffmpeg 并加进 PATH' : process.platform === 'darwin' ? 'brew install ffmpeg' : 'apt install ffmpeg',
     probe: () => bin('ffmpeg', BREW_DIRS) },
   { id: 'rembg', kind: 'service', level: 'feature', label: 'rembg 抠图环境', uses: 'remove_background',
-    fix: 'python3 -m venv server/.venv-rembg && server/.venv-rembg/bin/pip install rembg onnxruntime（见 server/services/rembg-launcher.js）',
+    fix: `${REMBG_SETUP_HINT}（见 server/services/rembg-launcher.js）`,
     probe: async () => { const r = await rembgAvailable(); return { available: r.available, detail: r.available ? `mode=${r.mode}` : r.reason }; } },
   { id: 'imageGen', kind: 'service', level: 'feature', label: '生图通道', uses: 'generate_image',
     fix: '默认走 codex CLI：npm i -g @openai/codex && codex login；或 NODESIGN_IMAGE_PROVIDER=gateway + NODESIGN_GATEWAY_KEY',
