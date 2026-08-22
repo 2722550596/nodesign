@@ -6,12 +6,12 @@
 //
 // 08-22 下午按用户口径改：① 不让人手写 JSON —— 上游有「常用服务商」预设（选一个，地址/协议/示例模型名
 // 自动填）；② 常用数值进下拉（窗口、maxOutput）；③ 模型行只露必填三项（上游 / 上游真名 / 显示名），
-// id 从上游真名自动生成，其余放在「高级」小标题下（不折叠）。JSON 模式仍在，给会写的人。
+// id 从上游真名自动生成，其余收进「高级」。JSON 模式仍在，给会写的人。
 import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { Local } from '../../lib/api.js';
-import { Card, TextInput, Select, Hint, Err, Btn, Dot } from './primitives.jsx';
+import { Card, TextInput, Select, Hint, Err, Btn, Dot, Fold } from './primitives.jsx';
 
 /**
  * 常用服务商预设。baseUrl 口径跟服务端一致：
@@ -57,8 +57,6 @@ const idFromWire = (wire) => String(wire || '').split('/').pop().replace(/[^A-Za
 /** 字段 = 小标题 + 控件。放组件外：在 SlotEditor 里定义的话每次渲染都是新类型，React 重挂输入框，敲一个字失一次焦 */
 const labelStyle = { fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginBottom: 2 };
 function Field({ label, children }) { return <div><div style={labelStyle}>{label}</div>{children}</div>; }
-/** 卡片内的小节标题（「高级」那一行）。不折叠：用户要一眼看全 */
-function SubHead({ children }) { return <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, fontWeight: 600, color: COLOR.text2, marginTop: GAP.md, marginBottom: GAP.xs, letterSpacing: 1 }}>{children}</div>; }
 
 /** 带「自定义」的数值下拉：值在档里就选档，不在就显示自定义 + 输入框 */
 function NumberPick({ value, presets, allowEmpty, emptyLabel, onChange, width = 120 }) {
@@ -169,8 +167,7 @@ export default function SlotEditor({ config, setConfig, errors, enums, active, n
                   </Field>
                   <button onClick={() => delUp(id)} title="删除" style={{ border: 0, background: 'transparent', color: COLOR.sub, cursor: 'pointer', paddingBottom: 8 }}><Trash2 size={14} /></button>
                 </div>
-                <SubHead>高级 <span style={{ fontWeight: 400, color: COLOR.sub }}>协议 / 鉴权方式 / 内部名</span></SubHead>
-                <div>
+                <Fold title="高级" desc="协议 / 鉴权方式 / 内部名">
                   <div style={{ display: 'grid', gridTemplateColumns: '160px 160px 160px', gap: GAP.sm, alignItems: 'end' }}>
                     <Field label="接口格式">
                       <Select value={u.protocol || 'openai-chat'} options={enums.PROTOCOLS.map((p) => ({ value: p, label: p === 'openai-chat' ? 'OpenAI 格式' : 'Anthropic 格式' }))} onChange={(v) => setUp(id, { protocol: v })} />
@@ -183,7 +180,7 @@ export default function SlotEditor({ config, setConfig, errors, enums, active, n
                     </Field>
                   </div>
                   <Hint>OpenAI 格式 = /chat/completions（经转换层，大多数国产/第三方接口是这个）；Anthropic 格式 = /v1/messages 原生直通。鉴权头默认：OpenAI 格式 bearer，Anthropic 格式 x-api-key。</Hint>
-                </div>
+                </Fold>
                 <Err>{errorsFor(errors, new RegExp(`^upstreams\\.${esc(id)}(\\b|$)`))}</Err>
               </Card>
             );
@@ -225,8 +222,7 @@ export default function SlotEditor({ config, setConfig, errors, enums, active, n
                   <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: isActive ? COLOR.success : COLOR.sub }}>{isActive ? '● 生效中' : '○ 未生效（保存并重启）'}</span>
                   <Btn small disabled={!isActive || pr?.busy} onClick={() => runProbe(m.id)}>{pr?.busy ? '体检中…' : '体检'}</Btn>
                 </div>
-                <SubHead>高级 <span style={{ fontWeight: 400, color: COLOR.sub }}>说明 / 思考参数 / 输出上限 / 图标 / 内部 id</span></SubHead>
-                <div>
+                <Fold title="高级" desc="说明 / 思考参数 / 输出上限 / 图标 / 内部 id">
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 200px 140px 200px 140px 160px', gap: GAP.sm, alignItems: 'end' }}>
                     <Field label="一句话说明（选择器里的灰字）"><TextInput mono={false} value={m.desc || ''} onChange={(v) => setModel(i, { desc: v })} placeholder="可空" /></Field>
                     <Field label="thinking 参数"><Select value={m.thinking || 'strip'} options={enums.THINKING_MODES.map((t) => ({ value: t, label: t === 'strip' ? '剥掉（非 Claude 用这个）' : t }))} onChange={(v) => setModel(i, { thinking: v })} /></Field>
@@ -236,7 +232,7 @@ export default function SlotEditor({ config, setConfig, errors, enums, active, n
                     <Field label="内部 id"><TextInput value={m.id} onChange={(v) => setModel(i, { id: v })} placeholder="自动" /></Field>
                   </div>
                   <Hint>窗口填服务商标称的上下文长度（填大了撑满时对方 400，填小了白扔容量）。价目 / 重试 / liftImages / fastModel 这些少用字段在 JSON 模式里填，字段名同内置表。</Hint>
-                </div>
+                </Fold>
                 <Err>{errorsFor(errors, new RegExp(`^models(\\[${i}\\]| \\(${esc(m.id)}\\))`))}</Err>
                 {pr?.result && <ProbeResult r={pr.result} />}
               </Card>
