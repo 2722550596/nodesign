@@ -15,11 +15,11 @@ import { fileURLToPath } from 'node:url';
 import { MARKS } from './ModelMark.jsx';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const SRC = fs.readFileSync(path.join(REPO, 'server/engine/agent/model-context.js'), 'utf8');
+const SRC = fs.readFileSync(path.join(REPO, 'server/engine/agent/model-table.js'), 'utf8');
 
 function serverBrands() {
   const m = SRC.match(/export const BRANDS = Object\.freeze\(\[([^\]]+)\]\)/);
-  if (!m) throw new Error('model-context.js 里找不到 BRANDS —— 它改名了？这条 lint 要跟着改');
+  if (!m) throw new Error('model-table.js 里找不到 BRANDS —— 它改名了？这条 lint 要跟着改');
   return m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
 }
 

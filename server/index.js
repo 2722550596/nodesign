@@ -47,6 +47,7 @@ import { bootstrapAuth } from './auth/users-store.js';
 import { sweepOrphanRuns } from './engine/runs/store.js';
 import adminRouter from './api/admin.js';
 import meRouter from './api/me.js';
+import localRouter, { RESTART_EXIT_CODE } from './api/local.js';
 import { platform } from './runtime/platform.js';
 
 // 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
@@ -99,6 +100,8 @@ app.use('/api', authGuard);
 // admin 管理接口 + 当前用户自视图（都在 authGuard 之后，req.user 已挂）
 app.use('/api/admin', adminRouter);
 app.use('/api/me', meRouter);
+// 本地分发版专用（配置文件 / 状态 / 重启）。hosted 下不挂：这组接口假设请求者就是机器的主人
+if (platform.isLocal) app.use('/api/local', localRouter);
 
 // ── 业务路由 ──
 // projects router 挂在 /api/projects（CRUD）
@@ -194,7 +197,7 @@ process.on('unhandledRejection', (reason) => {
 
 // graceful shutdown
 let shuttingDown = false;
-function shutdown(signal) {
+function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[server] ${signal} received, shutting down...`);
@@ -205,10 +208,13 @@ function shutdown(signal) {
   stopRembgService();
   httpServer.close((err) => {
     if (err) console.error('[server] close error:', err);
-    process.exit(err ? 1 : 0);
+    process.exit(err ? 1 : exitCode);
   });
-  // 兜底强制退出
-  setTimeout(() => process.exit(1), 5000).unref();
+  // 兜底强制退出（重启请求也按约定码退，bin 的 supervisor 才会拉起新进程）
+  setTimeout(() => process.exit(exitCode || 1), 5000).unref();
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// 本地分发版「保存配置后重启」：api/local.js 发这个事件，进程以 RESTART_EXIT_CODE 退出，bin/nodesign.js 的
+// supervisor 见到这个码就重新拉起（模型表是加载时冻结的，热改不如重起干净）
+process.on('nodesign:restart', () => shutdown('restart', RESTART_EXIT_CODE));

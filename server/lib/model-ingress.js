@@ -21,7 +21,7 @@
  *   4. 修补：model 还原成上游真名 · thinking strip/enabled8k · tool_result
  *      图片提升到顶层（Kimi 与 Gemini 桥都丢 tool_result 图，08-19 探针实锤）·
  *      超长边图片下采样
- *   5. 换钥匙：上游钥匙从 env（UPSTREAMS[].keyEnv）取，按 authStyle 发；
+ *   5. 换钥匙：上游钥匙按条目取（外部插槽 .key 内联 > env UPSTREAMS[].keyEnv），按 authStyle 发；
  *      binary 带来的 ANTHROPIC_API_KEY 是占位符，一律丢弃
  *   6. 转发（SSE 直接 pipe，不解析响应流）
  *
@@ -35,7 +35,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import sharp from 'sharp';
-import { resolveWireModel, resolveModelRoute, UPSTREAMS } from '../engine/agent/model-context.js';
+import { resolveWireModel, UPSTREAMS } from '../engine/agent/model-context.js';
+import { resolveSessionWire, fallbackLogged } from './ingress/session-routes.js';
 import { forwardOpenAIChat } from './ingress/forward-openai-chat.js';
 import { failStreaks, exhaustedErrorBody } from './ingress/upstream-fail-streak.js';
 import { noteUpstreamBilling } from './ingress/upstream-billing.js';
@@ -73,66 +74,8 @@ const VISION_MAX_DIM = (() => {
 // 表里 countTokens:false 的上游直接短路，true 的先转发、404 后降级并记住。
 const countTokensDead = new Set();
 
-// ── 会话级 fast 兜底路由 ──
-// SDK binary 的部分内部 helper 不看 ANTHROPIC_SMALL_FAST_MODEL，直接用它
-// config 目录里的默认 Claude 名发请求（_ingress-check 实测抓到 claude-sonnet-5
-// 重试 8 次）。旧基建里这类请求静默打错通路烧钱；fail-loud 之后它们会 502 =
-// helper 功能死。这里给注册过的会话一条兜底：未知 model 名 → 本会话的 fast
-// 模型。session-loop 在 API 会话起 query 前注册、finally 注销。
-//
-// ⛔ 撞名雷（2026-08-19 审计标出、08-20 封死）：API 行的 sdkAlias 同时也是真实的
-// Claude 名（gemini-3.7-flash 行 = claude-opus-4-6[1m]，deepseek 行 = claude-opus-4-7[1m]，Ox 行 = claude-opus-4-8[1m]）。
-// qwen 会话里的 binary 若用这类名字发一发 helper 请求（SDK 换个 config 默认名就会），
-// 按全表反查会**命中别的行**、带着别家钥匙静默转发 —— 事前无警报、成功转发不留
-// 日志，只有记账侧（qwen run 里冒出 gemini 行）事后才看得见。表级断言封不住它
-// （SDK 内部会用哪些名字没法枚举），所以改成**会话级路由**：一个会话只认自己那行
-// 和自己的 fast 行，其它一概改道 fast 兜底，绝不跨行。
-const sessionRoutes = new Map();     // sessionId → { appModel, fastModel }
-const fallbackLogged = new Set();     // `${sid}:${model}` 只告一次，防日志洪水
-
-export function registerIngressSession(sessionId, appModel) {
-  const route = resolveModelRoute(appModel);
-  if (route.mode === 'api') sessionRoutes.set(sessionId, { appModel: route.appModel, fastModel: route.fastModel });
-}
-
-export function unregisterIngressSession(sessionId) {
-  sessionRoutes.delete(sessionId);
-  for (const k of fallbackLogged) {
-    if (k.startsWith(sessionId + ':')) fallbackLogged.delete(k);
-  }
-}
-
-/**
- * 会话级路由决策（纯函数，有单测）。
- *
- * - 没注册的会话 / 无会话前缀（探针、体检）：全表反查，查不到就是 null（502）。
- * - 注册过的 API 会话：只认**自己那行**和**自己的 fast 行**。其它名字一律改道
- *   fast 兜底 —— 不在表里的是 SDK helper 默认名（'fallback'），在表里但属于别的行
- *   的就是撞名雷（'collision'），后者尤其不能放过去（那是别家的钥匙、真钱）。
- *
- * @param {string|undefined} bodyModel
- * @param {string|null} sessionTag
- * @returns {{ wire: ReturnType<typeof resolveWireModel>, reason: 'table'|'fallback'|'collision'|'none',
- *             fastModel?: string, sessionModel?: string, collidesWith?: string }}
- */
-export function resolveSessionWire(bodyModel, sessionTag) {
-  const direct = resolveWireModel(bodyModel);
-  const sess = sessionTag ? sessionRoutes.get(sessionTag) : null;
-  if (!sess) return { wire: direct, reason: direct ? 'table' : 'none', role: 'main' };
-  // role：'main' = 会话主行的请求（主 agent 一轮）；'helper' = fast 行 / 兜底 / 撞名改道
-  // （标题、auto 分类器、摘要等一句话的活）。openai-chat 行按 role 选 reasoning_effort
-  if (direct && direct.appModel === sess.appModel) return { wire: direct, reason: 'table', role: 'main' };
-  if (direct && direct.appModel === sess.fastModel) return { wire: direct, reason: 'table', role: 'helper' };
-  const wire = resolveWireModel(sess.fastModel);
-  return {
-    wire,
-    role: 'helper',
-    reason: direct ? 'collision' : 'fallback',
-    fastModel: sess.fastModel,
-    sessionModel: sess.appModel,
-    ...(direct ? { collidesWith: direct.appModel } : {}),
-  };
-}
+// 会话级路由（注册 / 注销 / 决策）住 ingress/session-routes.js；这里转出口给 session-loop 与测试
+export { registerIngressSession, unregisterIngressSession, resolveSessionWire } from './ingress/session-routes.js';
 
 /**
  * 启动入口（幂等单例；路由是 per-request 的，单例不再锁死目标）。
@@ -224,10 +167,11 @@ async function handleRequest(req, res, bodyBuf) {
 
   // authStyle 'none' = 无鉴权上游（本地 llama-server 走环回隧道），不需要钥匙
   const needKey = wire.upstream.authStyle !== 'none';
-  const key = needKey ? process.env[wire.upstream.keyEnv] : null;
+  // 钥匙取用点（全入口唯一一处）：外部插槽（runtime/local-config.js）把钥匙写在条目里；内置行走 env
+  const key = needKey ? (wire.upstream.key || (wire.upstream.keyEnv ? process.env[wire.upstream.keyEnv] : null)) : null;
   if (needKey && !key) {
     res.writeHead(502, { 'Content-Type': 'text/plain' });
-    res.end(`model-ingress: 上游钥匙未配置（env ${wire.upstream.keyEnv} 为空）`);
+    res.end(`model-ingress: 上游钥匙未配置（${wire.upstream.keyEnv ? `env ${wire.upstream.keyEnv} 为空` : `上游 ${wire.upstreamId} 没填 key`}）`);
     return;
   }
 
