@@ -114,6 +114,9 @@ app.use('/api/skills', skillsRouter);
 // 用户级 plugin（跨 project 全局）
 app.use('/api/plugins', userPluginsRouter);
 
+// /api 下没路由接住的一律回 JSON 404（express 默认是 HTML，前端 jsonRequest 拿到的是解析错误不是 {error}）
+app.use('/api', (req, res) => res.status(404).json({ error: `not found: ${req.method} ${req.originalUrl}`, code: 'NOT_FOUND' }));
+
 // ── 错误兜底 ──
 app.use((err, _req, res, _next) => {
   console.error('[server] error:', err);
@@ -127,6 +130,12 @@ app.use((err, _req, res, _next) => {
 const httpServer = http.createServer(app);
 setupWS(httpServer);
 
+httpServer.on('error', (err) => {
+  // 不走 uncaughtException（那个 handler 故意不退出）：没监听成功的进程是僵尸，pm2 以为它活着
+  if (err?.code === 'EADDRINUSE') console.error(`[server] 端口 ${PORT} 已被占用。换 PORT，或查占用：lsof -i :${PORT}`);
+  else console.error('[server] listen failed:', err?.message || err);
+  process.exit(1);
+});
 httpServer.listen(PORT, () => {
   // 出网闸要知道本机的公网 IP —— 云上 1:1 NAT 下它不在任何网卡上（见 ssrf-guard）
   primeOwnAddresses().catch(() => {});

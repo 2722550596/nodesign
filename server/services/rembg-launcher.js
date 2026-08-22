@@ -32,12 +32,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import http from 'node:http';
 import { promises as fs, readFileSync, writeFileSync } from 'node:fs';
+import { REMBG_VENV_PYTHON, REMBG_SETUP_HINT } from '../engine/mcp/tools/helpers/rembg.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // services/ 在 server/services/，server root 上溯 1 层
 const SERVER_ROOT = path.resolve(__dirname, '..');
 
-const DEFAULT_PYTHON = path.join(SERVER_ROOT, '.venv-rembg', 'bin', 'python3');
+const DEFAULT_PYTHON = REMBG_VENV_PYTHON;
 const DEFAULT_SERVICE = path.join(__dirname, 'rembg-service.py');
 // 默认只预热 isnet-general-use（fast 档）。birefnet-general-lite (balanced) /
 // birefnet-general (best) 都带 alpha matting，pymatting 单线程 CPU 重，预热占
@@ -216,7 +217,7 @@ export async function startRembgService() {
   } catch (err) {
     console.warn(
       `[rembg-service] not started: ${err.code === 'ENOENT' ? 'venv or script missing' : err.message}.`
-      + ' Setup: cd server && python3 -m venv .venv-rembg && .venv-rembg/bin/python3 -m pip install rembg onnxruntime.'
+      + ` Setup: ${REMBG_SETUP_HINT}.`
       + ' remove_background tool will fall back to per-call spawn (slower).',
     );
     return false;

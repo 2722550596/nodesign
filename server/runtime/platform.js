@@ -108,7 +108,8 @@ const skipWebFetchPreflight = true;
  * 目录里的文件，拦不住 `ls` 看文件名 —— 文件名不是秘密，接受）。
  */
 /** 数据根（给 credentialBlacklist 用；跟 protectedPathRules 收到的那个同源） */
-const PROJECTS_DATA_ROOT_FOR_DENY = process.env.PROJECTS_DATA_ROOT
+// 08-22 修：.env / .env.example 里写的是 PROJECTS_DATA_DIR，这里原来读 PROJECTS_DATA_ROOT（没人设）→ 数据根一旦非默认，黑名单就盖错目录
+const PROJECTS_DATA_ROOT_FOR_DENY = process.env.PROJECTS_DATA_DIR || process.env.PROJECTS_DATA_ROOT
   || path.join(repoRoot, 'server', 'projects-data');
 
 function credentialBlacklist() {

@@ -28,7 +28,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // helpers/ 在 server/engine/mcp/tools/helpers/，server root 上溯 4 层
 const SERVER_ROOT = path.resolve(__dirname, '../../../../');
 
-const DEFAULT_PYTHON = path.join(SERVER_ROOT, '.venv-rembg', 'bin', 'python3');
+// venv 里 python 的位置按平台走（Windows 是 Scripts\python.exe）；安装提示同源，launcher / remove_background 都引这里
+const IS_WIN = process.platform === 'win32';
+export const REMBG_VENV_PYTHON = IS_WIN
+  ? path.join(SERVER_ROOT, '.venv-rembg', 'Scripts', 'python.exe')
+  : path.join(SERVER_ROOT, '.venv-rembg', 'bin', 'python3');
+export const REMBG_SETUP_HINT = IS_WIN
+  ? 'cd server && python -m venv .venv-rembg && .venv-rembg\\Scripts\\python.exe -m pip install rembg onnxruntime'
+  : 'cd server && python3 -m venv .venv-rembg && .venv-rembg/bin/python3 -m pip install rembg onnxruntime';
+const DEFAULT_PYTHON = REMBG_VENV_PYTHON;
 const DEFAULT_HELPER = path.join(__dirname, 'rembg-bridge.py');
 const DEFAULT_SOCKET = '/tmp/nodesign-rembg.sock';
 // fallback spawn 的 timeout——首次冷启 + 模型 load 留余量

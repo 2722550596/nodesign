@@ -1,0 +1,26 @@
+# 文本文件一律 LF checkout（2026-08-22）。服务端有若干按 `\n` 解析仓库内文本资产的地方
+# （prelude 标记块、SKILL frontmatter、sh 脚本），Windows git 默认 autocrlf=true 会把它们
+# 换成 CRLF，首个受害者是 system-prompts.js 的加载期断言（Windows 上起不来）。
+* text=auto eol=lf
+
+# 二进制显式标出，免得被当文本改行尾
+*.webp binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.mp4 binary
+*.webm binary
+*.mp3 binary
+*.wav binary
+*.pdf binary
+*.docx binary
+*.pptx binary
+*.zip binary
+*.gz binary
+*.db binary

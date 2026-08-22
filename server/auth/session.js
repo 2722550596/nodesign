@@ -14,15 +14,11 @@
  */
 
 import crypto from 'crypto';
-import { getUserById, countUsers } from './users-store.js';
+import { getUserById, authEnabled, LOCAL_OWNER } from './users-store.js';
+export { authEnabled };
 
 export const COOKIE_NAME = 'nd_auth';
 const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
-
-/** 登录墙是否启用：有用户就启用；一个用户都没有且没密码 = 关闭（本地开发） */
-export function authEnabled() {
-  return countUsers() > 0 || (process.env.NODESIGN_AUTH_PASSWORD || '').length > 0;
-}
 
 let warnedDerivedSecret = false;
 function secret() {
@@ -79,9 +75,7 @@ export function tokenFromCookieHeader(cookieHeader) {
  * @returns {object|null} user（登录墙关闭时返回匿名 admin，guard 全放行）
  */
 export function requestUser(req) {
-  if (!authEnabled()) {
-    return { id: '_anon', username: 'anon', role: 'admin', dailyTokenLimit: null, disabled: false };
-  }
+  if (!authEnabled()) return LOCAL_OWNER;
   const userId = verifyToken(tokenFromCookieHeader(req.headers?.cookie));
   if (!userId) return null;
   const user = getUserById(userId);

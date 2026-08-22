@@ -161,7 +161,18 @@ function rowToUser(row) {
 const userCache = new Map();   // id → { user, at }
 const USER_CACHE_MS = 60_000;
 
+/** 登录墙关闭时的本地管理员（requestUser 与 getUserById 必须是同一个对象，别各造一份） */
+export const LOCAL_OWNER = Object.freeze({ id: '_anon', username: 'anon', role: 'admin', dailyTokenLimit: null, disabled: false });
+
+/** 登录墙是否启用：有用户就启用；一个用户都没有且没密码 = 关闭（本地开发）。原在 session.js，下沉到这里让 getUserById 也能问 */
+export function authEnabled() {
+  return countUsers() > 0 || (process.env.NODESIGN_AUTH_PASSWORD || '').length > 0;
+}
+
 export function getUserById(id) {
+  // 登录墙关闭时 requestUser 发的是 _anon；它不在 users 表里，按 id 反查要回同一个对象，
+  // 否则 session-loop 的订阅资格断言 can(getUserById(ownerId)) 拿到 null → 本地开发跑不了 Claude 行（08-21 回归，08-22 本地版抓到）
+  if (id === LOCAL_OWNER.id && !authEnabled()) return LOCAL_OWNER;
   const hit = userCache.get(id);
   if (hit && Date.now() - hit.at < USER_CACHE_MS) return hit.user;
   const user = rowToUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id));

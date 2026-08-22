@@ -25,11 +25,12 @@
  */
 
 import path from 'node:path';
+import { platform } from '../runtime/platform.js';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 
-const CACHE_DIR = path.join(process.cwd(), 'server', '.cache', 'videos');
+const CACHE_DIR = path.join(platform.repoRoot, 'server', '.cache', 'videos');   // 按仓库根，不按 cwd（cwd=server/ 起过一次就写进 server/server/.cache）
 
 /** 能转的源格式。都是浏览器能直接放的容器，转出来统一成 mp4 */
 const TRANSCODABLE = new Set(['.mp4', '.mov', '.webm', '.m4v', '.avi', '.mkv']);
