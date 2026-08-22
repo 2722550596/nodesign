@@ -58,6 +58,12 @@ export function computeDesktopSeating({
     const stored = layout[o.id];
     if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
       items.push({ ...o, pos: stored, zoneId: '' });
+    } else if (movingIds?.has(o.id)) {
+      // 搬家中、座位又已经撤了（飞进文件夹的动画放完 → useBoardMoves 删了旧 id 的座位），
+      // 但产物清单这一拍还没刷回来：这张旧卡不是新客，别给它排座 —— 排了就是「飞进文件夹
+      // 之后又闪回桌面、滑向内容区」那个鬼畜（2026-08-22 用户报；远端 RTT 越大越明显）。
+      // 清单刷新它就消失；搬失败 useBoardMoves 会把座位放回来，又走上面那条。
+      continue;
     } else {
       const it = { ...o, pos: { x: 0, y: 0, z: 1 }, zoneId: '' };
       items.push(it);
