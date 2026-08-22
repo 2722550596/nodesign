@@ -20,6 +20,10 @@ import { MODEL_CONFIG_ERRORS, EXTERNAL_SDK_ALIAS, UPSTREAMS } from '../engine/ag
 import { UPSTREAMS_BUILTIN } from '../engine/agent/model-table.js';
 import { capabilitySnapshot } from '../runtime/capabilities.js';
 import { TOOL_CAPABILITIES } from '../engine/mcp/capability-gate.js';
+import { probeCapabilities } from '../runtime/capabilities.js';
+import { envView, setEnvValues, envPath } from '../runtime/local-env.js';
+import { probeModel } from '../lib/ingress/slot-probe.js';
+import { selectableModelsFor } from '../engine/agent/model-context.js';
 
 export const RESTART_EXIT_CODE = 75;
 
@@ -61,6 +65,42 @@ router.put('/config', (req, res) => {
     res.json({ ok: true, path: v.path, errors: v.errors, needsRestart: true });
   } catch (err) {
     res.status(500).json({ error: `写配置失败：${err.message}` });
+  }
+});
+
+// ── 钥匙与开关（<dataRoot>/.env 白名单）──
+router.get('/env', (_req, res) => {
+  res.json({ path: envPath, keys: envView() });
+});
+
+router.put('/env', async (req, res) => {
+  const values = req.body?.values;
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return res.status(400).json({ error: 'body 要是 { values: { KEY: "v" | null } }' });
+  try {
+    const r = setEnvValues(values);
+    // 钥匙变了能力表要重探（钥匙类即时生效；二进制类不变），新会话的工具闸就按新结果
+    await probeCapabilities({ force: true });
+    res.json({ ok: true, changed: r.changed, keys: envView(), capabilities: capabilitySnapshot() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ── 插槽体检（穿进程内入口打五发最小请求，见 lib/ingress/slot-probe.js）──
+const probing = new Set();
+router.post('/models/:id/probe', async (req, res) => {
+  const id = req.params.id;
+  if (!selectableModelsFor(req.user).some((m) => m.id === id)) return res.status(404).json({ error: `模型 ${id} 不在可选清单里（没配钥匙的行不体检）` });
+  if (probing.has(id)) return res.status(409).json({ error: '这一行正在体检，等它完' });
+  probing.add(id);
+  try {
+    const vision = req.query.vision !== '0';
+    const timeoutMs = Math.min(120_000, Math.max(5_000, Number(req.query.timeoutMs) || 45_000));
+    res.json(await probeModel(id, { vision, timeoutMs }));
+  } catch (err) {
+    res.status(500).json({ error: `体检出错：${err.message}` });
+  } finally {
+    probing.delete(id);
   }
 });
 
