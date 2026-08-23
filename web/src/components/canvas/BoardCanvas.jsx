@@ -1655,8 +1655,7 @@ export default function BoardCanvas({
         currentSessionId={currentSessionId}
         fileVersions={fileVersions}
         added={addedPaths.has(obj.id)}
-        // 避让系统：拖拽中只有被拖的卡要逐帧跟手（关过渡），被避让的
-        // 邻居保持 380ms 滑动 —— 挤开和弹回都是顺滑的
+        // 避让系统：拖拽中只有被拖的卡逐帧跟手（关过渡），被避让的邻居保持 380ms 滑动
         animateLayout={!win && (!dragActive || dragRef.current?.id !== obj.id)}
         vanishing={!win && flyingIds.has(obj.id)}
         agentActive={ringObjects.has(obj.id)}
@@ -1667,6 +1666,7 @@ export default function BoardCanvas({
         renaming={renamingId === obj.id}
         onRenameCommit={(v) => commitRename(obj.id, v)}
         onRenameCancel={() => setRenamingId(null)}
+        onMeasured={win ? null : patchLayout}
         onPointerDown={win ? undefined : (e) => onObjectPointerDown(e, obj)}
         wasDrag={win ? () => false : wasDrag}
         onPrimary={() => primaryOpen(obj)}

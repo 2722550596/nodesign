@@ -37,15 +37,20 @@ export function textBox(t, sizeKey, { md = false, wUnits = null } = {}) {
     const longest = Math.max(8, ...lines.map(em));
     const w = wUnits ? wUnits * UNIT : Math.min(440, Math.max(200, Math.round(longest * px) + 24));
     const colsEm = Math.max(8, (w - 12) / px);
-    let n = 0;
-    for (const l of lines) n += Math.max(1, Math.ceil(em(l) / colsEm));
+    // 渲染侧（MdInk）单换行 = 真换行，所以按源码行数估；空行 = 段落间距（GAP.sm≈8）；
+    // 行高 1.6、上下 padding 4+4。前端还会把真实高度回写（useMeasuredSize），这里只求落位时别差太多
+    let n = 0; let paras = 0;
+    for (const l of lines) {
+      if (!l.trim()) { paras += 1; continue; }
+      n += Math.max(1, Math.ceil(em(l.replace(/[*_`#>]/g, '')) / colsEm));
+    }
     // mermaid 盒子：横向（LR/RL）矮、纵向按语句数长；都只是估，真高度由渲染定
     const mm = raw.match(/```mermaid\n([\s\S]*?)```/);
     if (mm) {
       const body = mm[1].split('\n').filter(l => l.trim()).length;
       n += /\b(LR|RL)\b/.test(mm[1]) ? 3 : Math.max(4, body * 1.6);
     }
-    return { w, h: Math.round(n * px * 1.7) + 14 };
+    return { w, h: Math.round(n * px * 1.6) + 8 + paras * 8 };
   }
   const cols = wUnits ? Math.max(4, Math.floor((wUnits * UNIT) / (px * 1.05))) : Math.min(26, Math.max(6, t.length));
   const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
@@ -223,13 +228,20 @@ export function bboxOf(rects) {
  */
 export function findSpot({ w, h, near = null, obstacles = [], contentBottom = 0, viewport = null }) {
   const hits = (x, y) => obstacles.some(o => !(x + w <= o.x || o.x + o.w <= x || y + h <= o.y || o.y + o.h <= y));
-  // 用户视口里有空地就落在视口里（黑板是主窗口时，画在他眼前而不是让他去找）：
-  // 从视口左上起按 1/8 视口步进扫一遍，第一个放得下又不撞的位置
+  // 用户视口里有空地就落在视口里（黑板是主窗口时，画在他眼前而不是让他去找）。
+  // 阅读顺序纪律（08-23 真踩：第二张图落到第一张的**左边**）：先挑不在已有内容左侧/
+  // 上方的位置（顺着先左后右、先上后下长），实在没有才退而求其次。
   if (!near && viewport && viewport.w >= w + 24 && viewport.h >= h + 24) {
+    const content = obstacles.length ? {
+      x: Math.min(...obstacles.map(o => o.x)), y: Math.min(...obstacles.map(o => o.y)),
+    } : null;
     const sx = Math.max(24, Math.round(viewport.w / 8)); const sy = Math.max(24, Math.round(viewport.h / 8));
-    for (let y = viewport.y + 12; y + h <= viewport.y + viewport.h - 12; y += sy) {
-      for (let x = viewport.x + 12; x + w <= viewport.x + viewport.w - 12; x += sx) {
-        if (!hits(x, y)) return { x: Math.round(x), y: Math.round(y), side: 'viewport' };
+    for (const strict of [true, false]) {
+      for (let y = viewport.y + 12; y + h <= viewport.y + viewport.h - 12; y += sy) {
+        for (let x = viewport.x + 12; x + w <= viewport.x + viewport.w - 12; x += sx) {
+          if (strict && content && (x < content.x - 24 || y < content.y - 24)) continue;
+          if (!hits(x, y)) return { x: Math.round(x), y: Math.round(y), side: 'viewport' };
+        }
       }
     }
   }
@@ -247,5 +259,19 @@ export function findSpot({ w, h, near = null, obstacles = [], contentBottom = 0,
       y = blocker.y + blocker.h + GAP;
     }
   }
-  return { x: 10, y: Math.round(contentBottom) + 40, side: 'bottom' };
+  // 排在内容底下：左边缘对齐已有内容（不是写死的 10），读起来像续在同一栏
+  const left = obstacles.length ? Math.min(...obstacles.map(o => o.x)) : 10;
+  return { x: Math.round(left), y: Math.round(contentBottom) + 40, side: 'bottom' };
+}
+
+/**
+ * 按用户屏幕算「一屏」：视点里有相机矩形和缩放 → 屏幕像素 = 世界 × 缩放；
+ * 0.8 倍可读 → 一屏世界像素 = 屏幕 / 0.8。没视点就用 SKETCH_FIT 的缺省。
+ */
+export function fitFor(vp) {
+  if (vp?.camera?.w && vp?.zoom) {
+    const sw = vp.camera.w * vp.zoom; const sh = vp.camera.h * vp.zoom;
+    return { w: Math.round(sw / 0.8), h: Math.round(sh / 0.8), screen: { w: Math.round(sw), h: Math.round(sh) } };
+  }
+  return { ...SKETCH_FIT, screen: null };
 }

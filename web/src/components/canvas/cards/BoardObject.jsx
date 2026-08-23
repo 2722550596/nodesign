@@ -9,6 +9,7 @@ import { EASE, POP_IN } from '../../../lib/board-geometry.js';
 import { SIZES, sizeOf, actionsOf, chromeOf, cardOf } from '../../../lib/board-kinds.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../../lib/text-fonts.js';
 import MdInk from './MdInk.jsx';
+import { useMeasuredSize } from './useMeasuredSize.js';
 import { splitNoteFaces, faceParts } from '../../../lib/note-faces.js';
 import { formatSize } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
@@ -39,6 +40,8 @@ function BoardObject({
   vanishing = false,
   groupTarget = false, selected = false, noteCount = 0,
   renaming = false, onRenameCommit, onRenameCancel,
+  /** 文字类真实高度回写（useMeasuredSize）：(id, { h }) → 写 layout */
+  onMeasured = null,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus, onOrchestrate,
   onAnnotate,
   onExport,
@@ -53,6 +56,9 @@ function BoardObject({
   // 按钮去的路上稍微出界一下（很容易，按钮浮在卡外）工具条就当场卸载 ——
   // 用户的原话是"鼠标一离开产物本身视图点击按钮，按钮就会消失"。
   const hoverTimer = useRef(null);
+  const rootRef = useRef(null);
+  const textual = o.type === 'text' || !!o.chalk;
+  useMeasuredSize(rootRef, o, textual ? onMeasured : null, [o.data?.t, o.text, o.data?.size, o.data?.format]);
   const armHover = () => { clearTimeout(hoverTimer.current); setHover(true); onHoverCard?.(o.id); };
   const disarmHover = () => {
     clearTimeout(hoverTimer.current);
@@ -211,6 +217,7 @@ function BoardObject({
 
   return (
     <div
+      ref={rootRef}
       data-board-object={o.id}
       data-board-type={o.type}
       onPointerDown={onPointerDown}

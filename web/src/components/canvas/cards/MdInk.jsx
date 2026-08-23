@@ -14,10 +14,17 @@
  * 不在这儿强制。
  */
 import { lazy, Suspense, Children } from 'react';
+import remarkBreaks from 'remark-breaks';
 import MarkdownMath from '../../ui/MarkdownMath.jsx';
 import { COLOR, FONT_MONO, FONT_SIZE, GAP, RADIUS } from '../../../lib/theme.js';
 
 const MermaidBlock = lazy(() => import('./MermaidBlock.jsx'));
+/**
+ * 单个换行 = 真换行（remark-breaks）。板上的字是 agent/用户一行一行写的，标准 markdown
+ * 把单换行并成一段会把"四行要点"揉成一坨，而且服务端按行估的高度跟渲染对不上
+ * （08-23 真踩：估 123px 渲出 60px，行距撑成两倍）。聊天正文不受影响（只在这层加）。
+ */
+const EXTRA_REMARK = [remarkBreaks];
 
 function mermaidSourceOf(preChildren) {
   const kid = Children.toArray(preChildren)[0];
@@ -45,7 +52,7 @@ export default function MdInk({ text, fontFamily, fontSize, color }) {
   return (
     <>
       <div className="nd-mdink" style={{ fontFamily, fontSize, color, lineHeight: 1.6 }}>
-        <MarkdownMath components={COMPONENTS}>{text || ''}</MarkdownMath>
+        <MarkdownMath components={COMPONENTS} remarkPlugins={EXTRA_REMARK}>{text || ''}</MarkdownMath>
       </div>
       <style>{`
         .nd-mdink p { margin: 0 0 ${GAP.sm}px 0; }

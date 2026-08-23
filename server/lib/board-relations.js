@@ -38,7 +38,7 @@ const DIR_KIND_PREFIXES = Object.entries(KINDS)
 export function describeEndpoint(end, board) {
   const obj = board?.objects?.[end];
   if (obj?.kind === 'text') {
-    const t = String(obj.data?.t || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const t = String(obj.data?.t || '').replace(/\s+/g, ' ').trim().slice(0, 48);
     return `手写字「${t}」`;
   }
   if (obj?.kind === 'scribble') return '一笔涂鸦（笔画内容要看得截图画布）';

@@ -21,7 +21,7 @@ import { readBoard, patchBoard, commitStaging, removeByTag, TEXT_FONTS } from '.
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { layerOf, normalizeCanvasId } from '../../../lib/canvas-id.js';
 import { BINDING_TYPE_IDS, BINDING_MATERIALS } from '../../../lib/binding-types.js';
-import { UNIT, SKETCH_FIT, SKETCH_MAX, textBox, shapePath, layoutNodes, bboxOf, findSpot } from '../../../lib/sketch-layout.js';
+import { UNIT, SKETCH_FIT, SKETCH_MAX, textBox, shapePath, layoutNodes, bboxOf, findSpot, fitFor } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 
 const MAX_PER_TURN = 3;
@@ -87,7 +87,7 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
         font: z.enum(['pen', 'kai', 'sans', 'serif', 'mono']).optional(),
         color: z.enum(['ink', 'red', 'pencil', 'brass']).optional(),
         at: GRID_PT.optional().describe('Grid position (layout free); top-left of the node'),
-        w: z.number().min(3).max(40).optional().describe('Width in grid units (md nodes; default by content)'),
+        w: z.number().min(3).max(22).optional().describe('Width in grid units (md nodes; default by content; ≤22 = 528px — paragraphs grow down, not wide)'),
       })).max(MAX_NODES).optional(),
       shapes: z.array(z.object({
         id: LOCAL_ID.optional(),
@@ -264,9 +264,10 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
       if (local.w > SKETCH_MAX.w || local.h > SKETCH_MAX.h) {
         return err(`这张图太大了（${Math.round(local.w)}x${Math.round(local.h)} 世界像素，上限 ${SKETCH_MAX.w}x${SKETCH_MAX.h}）：用户在 80%~100% 缩放下看不全。拆成两张（各自一个 tag，之间用线连），或减节点/缩 w。`);
       }
-      // 用户视口（同一层才算；黑板是主窗口时画在他眼前）
+      // 用户视口（同一层才算；黑板是主窗口时画在他眼前）+ 按他的屏幕算"一屏"
       const vp = getViewpoint(projectId);
       const vpRect = (vp && (vp.layer || '') === zone && vp.camera) ? vp.camera : null;
+      const fit = fitFor(vp);
       const spot = findSpot({ w: local.w + 24, h: local.h + 24, near: anchor, obstacles, contentBottom, viewport: vpRect });
       const ox = spot.x - local.x + 12; const oy = spot.y - local.y + 12;
 
@@ -299,7 +300,7 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
         `ids: ${[...idOf].map(([k, v]) => `${k}=${v}`).join(', ')}`,
       ];
       if (badEdges.length) lines.push(`Skipped ${badEdges.length} edge(s) with unknown endpoints: ${badEdges.slice(0, 6).join(', ')}`);
-      if (world.w > SKETCH_FIT.w || world.h > SKETCH_FIT.h) lines.push(`⚠ Bigger than one screen at 80% zoom (${SKETCH_FIT.w}x${SKETCH_FIT.h} fits) — the user will have to pan. Prefer splitting next time.`);
+      if (world.w > fit.w || world.h > fit.h) lines.push(`⚠ Bigger than one screen at 80% zoom${fit.screen ? ` (user's screen ${fit.screen.w}x${fit.screen.h}px → ${fit.w}x${fit.h} world px fits)` : ` (${fit.w}x${fit.h} fits)`} — the user will have to pan. Split into two tagged sketches (side by side or stacked) next time.`);
       if (vp?.zoom && vp.zoom < 0.8) lines.push(`User's zoom is ${vp.zoom} (<0.8): text this size is small on their screen. Keep nodes md/lg and say in one line that there is a sketch on the board.`);
       lines.push(spot.side === 'viewport' ? 'Placed inside the user\'s current viewport.' : `Placed ${spot.side === 'bottom' ? 'below current content' : spot.side + ' of the anchor'}${vpRect ? ' (no room in the user\'s viewport)' : ''}.`);
       lines.push(staging

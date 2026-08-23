@@ -11,10 +11,12 @@ describe('board-groups', () => {
     };
     const tags = { d: 'g1', a: 'g1' };
     const groups = groupObjects(ids, bindings, id => tags[id] || null);
-    expect(groups[0].members.sort()).toEqual(['a', 'b', 'c', 'd']);
-    expect([...groups[0].tags]).toEqual(['g1']);
-    expect(groups[0].edges.sort()).toEqual(['b1', 'b2']);
-    expect(groups.length).toBe(3);   // {a,b,c,d} {e} {f}
+    // tag 优先：a-b 那条线一端有 tag 一端没有 → 组间线，不把 b 粘进 #g1
+    const byKey = Object.fromEntries(groups.map(g => [g.members.slice().sort().join(','), g]));
+    expect(Object.keys(byKey).sort()).toEqual(['a,d', 'b,c', 'e', 'f']);
+    expect([...byKey['a,d'].tags]).toEqual(['g1']);
+    expect(byKey['b,c'].edges).toEqual(['b2']);
+    expect(groups.cross).toEqual(['b1']);
   });
   it('小地图：字母盖格子，图例对得上，视口画框', () => {
     const m = asciiMinimap([

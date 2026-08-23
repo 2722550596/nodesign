@@ -18,7 +18,7 @@ import { readBoard } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { layerOf } from '../../../lib/canvas-id.js';
 import { relationsDigest, bindingLine } from '../../../lib/board-relations.js';
-import { groupObjects, asciiMinimap } from '../../../lib/board-groups.js';
+import { groupObjects, asciiMinimap, bboxOfRects, relationOf, columnsOf, viewportRelation } from '../../../lib/board-groups.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 import { chalkExcerpts, CHALK_DIR } from '../../../lib/chalk.js';
 import { getSharedDir } from '../../../projects/workspace.js';
@@ -59,8 +59,9 @@ on the minimap and listed with what is inside it.`,
         .describe("Folder path to read ('' or omitted = the root desktop plus a folder list)"),
       tag: z.string().max(40).optional()
         .describe('Only list items/lines carrying this #tag (one group, e.g. a sketch you made)'),
+      minimap: z.boolean().optional().describe('Also print an ASCII minimap (off by default — the relative-position summary is usually enough)'),
     },
-    async ({ layer, tag }) => {
+    async ({ layer, tag, minimap }) => {
       if (!projectId) {
         return { content: [{ type: 'text', text: 'No project bound.' }], isError: true };
       }
@@ -97,7 +98,7 @@ on the minimap and listed with what is inside it.`,
       if (!items.length) {
         lines.push('（这一层还没有摆过的东西）');
       } else {
-        if (mini) {
+        if (mini && minimap) {
           lines.push(`小地图（一格≈${mini.cell}px，左上=(${mini.bbox.x},${mini.bbox.y})，范围 ${mini.bbox.w}x${mini.bbox.h}${vpRect ? '，┌┐└┘ 框=用户视口' : ''}）：`);
           lines.push(mini.grid);
         }
@@ -105,6 +106,23 @@ on the minimap and listed with what is inside it.`,
         const groups = groupObjects(items.map(it => it.id), board.bindings || {}, id => entryOf.get(id)?.tag || null);
         const real = groups.filter(g => g.members.length >= 2);
         const loose = groups.filter(g => g.members.length < 2).flatMap(g => g.members);
+        // 相对位置总览：每组的包围盒、列数、相对前一组/用户视口在哪（阅读顺序：先左后右、先上后下）
+        const rectOf = new Map(rects.map(r => [r.id, r]));
+        const boxes = real.map(g => bboxOfRects(g.members.map(id => rectOf.get(id)).filter(Boolean)));
+        const whole = bboxOfRects(rects);
+        if (whole) lines.push(`这一层内容范围：(${Math.round(whole.x)},${Math.round(whole.y)}) ${Math.round(whole.w)}x${Math.round(whole.h)}${vpRect ? `；用户视口 (${Math.round(vpRect.x)},${Math.round(vpRect.y)}) ${Math.round(vpRect.w)}x${Math.round(vpRect.h)}` : ''}`);
+        if (real.length) {
+          lines.push('各组位置（新东西默认排在已有内容的右侧或下方，顺着先左后右、先上后下的阅读顺序）：');
+          real.forEach((g, i) => {
+            const b = boxes[i]; if (!b) return;
+            const tags = [...g.tags].map(t => `#${t}`).join(' ') || `组 ${i + 1}`;
+            const cols = columnsOf(g.members.map(id => rectOf.get(id)).filter(Boolean));
+            const bits = [`(${Math.round(b.x)},${Math.round(b.y)}) ${Math.round(b.w)}x${Math.round(b.h)}`, cols.length > 1 ? `${cols.length} 列（${cols.map(c => c.n).join('/')} 件）` : '单列'];
+            if (i > 0 && boxes[0]) bits.push(`在 ${[...real[0].tags].map(t => `#${t}`).join(' ') || '组 1'} 的${relationOf(boxes[0], b)}`);
+            const vr = viewportRelation(vpRect, b); if (vr) bits.push(vr);
+            lines.push(`  ${tags}：${bits.join('；')}`);
+          });
+        }
         real.forEach((g, i) => {
           const tags = [...g.tags].map(t => `#${t}`).join(' ');
           const staging = g.members.every(id => entryOf.get(id)?.staging);
@@ -115,6 +133,10 @@ on the minimap and listed with what is inside it.`,
           for (const bid of g.edges.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)} (line id: ${bid})`);
           if (g.edges.length > 12) lines.push(`    …还有 ${g.edges.length - 12} 条线`);
         });
+        if (groups.cross?.length) {
+          lines.push('', '组间线：');
+          for (const bid of groups.cross.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)} (line id: ${bid})`);
+        }
         if (loose.length) {
           lines.push('', real.length ? '散件：' : '');
           let rowY = null;

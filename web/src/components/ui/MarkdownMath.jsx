@@ -69,10 +69,13 @@ const COMPONENTS = {
  * `components`：调用方可以追加/覆盖渲染器（画布 md 节点拿它接管 mermaid 围栏）。
  * 表格/任务列表那几个仍是这层的底，调用方的同名键盖过去。
  */
-export default function MarkdownMath({ children, components = null }) {
+export default function MarkdownMath({ children, components = null, remarkPlugins = null }) {
   const comps = components ? { ...COMPONENTS, ...components } : COMPONENTS;
+  // 调用方可追加 remark 插件（画布板书加 remark-breaks：agent 写的换行就是换行）。
+  // 数学那两件永远在，追加的排在后面
+  const plugins = remarkPlugins ? { ...MATH_PLUGINS, remarkPlugins: [...MATH_PLUGINS.remarkPlugins, ...remarkPlugins] } : MATH_PLUGINS;
   return (
-    <ReactMarkdown {...MATH_PLUGINS} components={comps}>
+    <ReactMarkdown {...plugins} components={comps}>
       {normalizeMath(children)}
     </ReactMarkdown>
   );
