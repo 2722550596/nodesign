@@ -169,16 +169,15 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
       sections.push({ key: 'chalk', title: '最近板书', text: `画布上最近的板书（${CHALK_DIR}/，新在前；正文 Read 文件）：\n${lines.join('\n')}`, items: recent.map(c => c.path) });
     }
   } catch { /* 板书读不到就沉默 */ }
-  // 黑板模式（2026-08-23）：用户把画布当主窗口。这一节只在开着时注入，关着不提。
+  // 黑板模式（2026-08-23）：用户在画布上专注思考时开。这一节只在开着时注入，关着不提。
   try {
     const cfg = await readUiConfigFile(workspaceRoot);
     if (cfg?.blackboard_mode === true) {
       sections.push({ key: 'blackboard', title: '黑板模式', text:
-        '【黑板模式：开】用户此刻把画布当主窗口，侧栏只是日志。这一轮**给用户看的话写在画布上**：'
-        + '说明、结论、建议、问题用 write_on_board（贴着它说的那件东西 near=；回应用户标注的板书用 reply_to=），'
-        + '要画的用 sketch_on_board / edit_sketch。聊天里只留 1 句：指出板上写了什么。'
-        + '不要把整段分析写在聊天里再"顺便"抄一份上板。改动用 edit_sketch 原地改，不要擦掉重画。'
-        + '尺寸守规范（一张图 0.8 倍一屏可读，正文 md 起；板书一条 ≤1500 字、一条说一件事）；画完 look_at_board 看一眼再收。' });
+        '【黑板模式：开】用户此刻在画布上专注思考。这一轮默认这么做：想事情就画成图（sketch_on_board，'
+        + '小改动用 edit_sketch 原地改别重画）；做完一件东西在它旁边写一条板书（write_on_board near=）；'
+        + '用户标注了板上的东西就接在那条下面回（reply_to=）。侧栏照常回复，但板上已经写的别大段重复。'
+        + '尺寸守规范（0.8 倍一屏可读、正文 md 起、一条板书说一件事）；画完 look_at_board 看一眼再收。' });
     }
   } catch { /* 读失败：不注入 */ }
   try {
