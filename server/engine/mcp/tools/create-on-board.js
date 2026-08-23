@@ -12,7 +12,7 @@
  *   - 尺寸估算抄前端 handleCreateText 同款公式（约 26 全角字/行）
  *   - by:'agent' 出处，用户一眼分得出谁写的
  *
- * 护栏：每回合上限 4 条 —— 画布是版面不是弹幕区。
+ * 护栏：每回合上限 08-23 按用户意思撤了（只记数）；画布不是弹幕区这条写在 prelude 里。
  */
 
 import { tool } from '@anthropic-ai/claude-agent-sdk';
@@ -21,7 +21,6 @@ import { readBoard, patchBoard, TEXT_FONTS } from '../../../projects/board-store
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { normalizeCanvasId, layerOf } from '../../../lib/canvas-id.js';
 
-const MAX_PER_TURN = 4;
 const SIZE_PX = { sm: 13, md: 16, lg: 22, xl: 30 };
 
 let seq = 0;
@@ -44,7 +43,7 @@ export function makeCreateOnBoardTool({ projectId, ctx }) {
 
 Use it for remarks worth KEEPING on the board: why a version went this way, what
 to compare, a caption for a group. Not for conversation (that goes in your reply)
-and not for documents (write a .md instead). Hard cap: ${MAX_PER_TURN} notes per turn.
+and not for documents (write a .md instead).
 
 - near: anchor it beside a thing (and usually pass relation to draw the line —
   that is exactly the user's "annotation" gesture: a note + an annotates edge)
@@ -68,12 +67,9 @@ and not for documents (write a .md instead). Hard cap: ${MAX_PER_TURN} notes per
       }
       const err = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
 
-      // 回合键用 runId（每 turn 被 startTurn 覆盖）；counters.turns 在工具调用时刻恒 0（fable 08-23 P1）
-      const turn = ctx?.runId ?? ctx?.counters?.turns ?? -1;
+      // 回合闸 08-23 用户拍板先不设：只记数不拦
+      const turn = ctx?.runId ?? -1;
       if (turnStamp.turn !== turn) { turnStamp.turn = turn; turnStamp.count = 0; }
-      if (turnStamp.count >= MAX_PER_TURN) {
-        return err(`本回合便签额度用完（${MAX_PER_TURN} 条）—— 画布是版面不是弹幕区，要说的话说给用户听。`);
-      }
 
       const t = String(text).trim();
       if (!t) return err('空字不落板。');
@@ -148,7 +144,7 @@ and not for documents (write a .md instead). Hard cap: ${MAX_PER_TURN} notes per
         content: [{
           type: 'text',
           text: `Note on board at (${pos.x},${pos.y})${relation ? ' with a line' : ''} (id: ${textId}).`
-            + ` ${MAX_PER_TURN - turnStamp.count} left this turn.`,
+            + '',
         }],
       };
     },

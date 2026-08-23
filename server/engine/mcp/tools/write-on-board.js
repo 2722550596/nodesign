@@ -22,7 +22,6 @@ import { textBox, findSpot, SKETCH_FIT } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 import { renderChalk, chalkFileName, writeChalkFile, CHALK_DIR } from '../../../lib/chalk.js';
 
-const MAX_PER_TURN = 6;
 let seq = 0;
 const stamp = () => `${Date.now().toString(36)}${(seq++ % 1000).toString(36)}`;
 
@@ -43,7 +42,7 @@ the conversation. The note is a real file (${CHALK_DIR}/…md) you can Read/Grep
 - neither → lands in the user's viewport (or below current content).
 - text: Markdown (+KaTeX, lists, tables; ≤1500 chars, keep it one thought — long
   analysis belongs in a .md the user opens). size 'md' default, 'lg' for headlines.
-Cap ${MAX_PER_TURN} per turn. Keep the chat reply to one line pointing at the board.`,
+Keep the chat reply short — a line pointing at the board is enough.`,
     {
       text: z.string().min(1).max(1500),
       near: z.string().max(300).optional(),
@@ -55,10 +54,9 @@ Cap ${MAX_PER_TURN} per turn. Keep the chat reply to one line pointing at the bo
     async ({ text, near, reply_to: replyTo, tag, size, width }) => {
       const err = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
       if (!projectId || !sharedRoot) return err('No project bound.');
-      // 回合键用 runId（每 turn 被 startTurn 覆盖）；counters.turns 在工具调用时刻恒 0（fable 08-23 P1）
-      const turn = ctx?.runId ?? ctx?.counters?.turns ?? -1;
+      // 回合闸 08-23 用户拍板先不设：只记数不拦
+      const turn = ctx?.runId ?? -1;
       if (turnStamp.turn !== turn) { turnStamp.turn = turn; turnStamp.count = 0; }
-      if (turnStamp.count >= MAX_PER_TURN) return err(`本回合板书额度用完（${MAX_PER_TURN} 条）——要说的合并成一条，或写成 .md 让用户打开。`);
       const body = String(text).trim();
       if (!body) return err('空话不上板。');
 
@@ -126,7 +124,7 @@ Cap ${MAX_PER_TURN} per turn. Keep the chat reply to one line pointing at the bo
       return { content: [{ type: 'text', text:
         `Wrote board note ${rel} at (${rect.x},${rect.y}) ${rect.w}x${rect.h}`
         + (anchorId ? ` beside ${anchorId} (annotates line)` : parentId ? ` under ${parentId} (thread)` : ' in the user\'s view')
-        + `.${big ? ' ⚠ It is tall — next time split or shorten.' : ''} ${MAX_PER_TURN - turnStamp.count} left this turn. Mention it in one line in chat; the user can annotate it to reply.` }] };
+        + `.${big ? ' ⚠ It is tall — next time split or shorten.' : ''} Mention it in one line in chat; the user can annotate it to reply.` }] };
     },
   );
 }

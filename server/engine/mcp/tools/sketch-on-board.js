@@ -24,7 +24,6 @@ import { BINDING_TYPE_IDS, BINDING_MATERIALS } from '../../../lib/binding-types.
 import { UNIT, SKETCH_FIT, SKETCH_MAX, textBox, shapePath, layoutNodes, bboxOf, findSpot, fitFor } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 
-const MAX_PER_TURN = 3;
 const MAX_NODES = 40;
 const MAX_SHAPES = 30;
 const MAX_EDGES = 60;
@@ -37,7 +36,7 @@ const LOCAL_ID = z.string().regex(/^[A-Za-z0-9_-]{1,24}$/, 'local id: letters/di
 const GRID_PT = z.object({ x: z.number().min(-400).max(400), y: z.number().min(-400).max(400) });
 
 export function makeSketchOnBoardTool({ projectId, ctx }) {
-  const turnStamp = { turn: -1, count: 0 };
+  const turnStamp = { turn: -1, count: 0 };   // 只记数（返回里不再报余额）
   return tool(
     'sketch_on_board',
     `Draw a whole sketch on the canvas in ONE call — notes, shapes and lines, laid out
@@ -69,7 +68,7 @@ How it works
   hard limit ${SKETCH_MAX.w}x${SKETCH_MAX.h} — split into two tagged sketches instead of one huge one.
 - To change an existing sketch use edit_sketch (move/retext/add/remove by id) — do NOT
   erase and redraw the whole thing for a small change.
-Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges each.`,
+Per sketch: ≤${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges (split big ones).`,
     {
       title: z.string().max(60).optional().describe('Optional heading written at the top of the sketch'),
       tag: z.string().regex(/^[\w一-鿿぀-ヿ-]{1,40}$/).optional()
@@ -113,10 +112,9 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
     async (args) => {
       if (!projectId) return { content: [{ type: 'text', text: 'No project bound.' }], isError: true };
       const err = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
-      // 回合键用 runId（每 turn 被 startTurn 覆盖）；counters.turns 在工具调用时刻恒 0（fable 08-23 P1）
-      const turn = ctx?.runId ?? ctx?.counters?.turns ?? -1;
+      // 回合闸 08-23 用户拍板先不设（「别设置限制吧先」）：只记数不拦
+      const turn = ctx?.runId ?? -1;
       if (turnStamp.turn !== turn) { turnStamp.turn = turn; turnStamp.count = 0; }
-      if (turnStamp.count >= MAX_PER_TURN) return err(`本回合草图额度用完（${MAX_PER_TURN} 张）。要改已有的图：finish_sketch 擦掉重画，或 create_on_board 补一条。`);
 
       const nodesIn = args.nodes || [];
       const shapesIn = args.shapes || [];
@@ -308,7 +306,6 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
       lines.push(staging
         ? 'Next: look_at_board {tag} to check it, then finish_sketch {tag} (or it commits at turn end). Mention the sketch to the user in one line.'
         : 'Next: look_at_board {tag} to check it.');
-      lines.push(`${MAX_PER_TURN - turnStamp.count} sketches left this turn.`);
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     },
   );
