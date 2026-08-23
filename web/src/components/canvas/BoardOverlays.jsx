@@ -55,14 +55,16 @@ export function makeBoardReaders({ projectId, setViewer }) {
     },
 
     async note(o) {
-      const title = o.noteTask ? o.name.replace(/\.md$/i, '') : '便签';
+      const title = o.chalk ? `板书 · ${o.chalk.by === 'user' ? '你写的' : 'agent 写的'}` : (o.noteTask ? o.name.replace(/\.md$/i, '') : '便签');
       try {
         const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
         const raw = await res.text();
-        // 任务便利贴带 note 引用 → 浮层出"编辑"按钮（共享头脑风暴：用户改完
-        // agent 下轮从注入清单看到文件、自己 Read 到新内容）
-        setViewer({ title, content: raw.replace(/^---\n[\s\S]{0,500}?\n---\n?/, ''), note: o.noteTask ? o : null });
-      } catch { setViewer({ title, content: o.text || '', note: o.noteTask ? o : null }); }
+        // 任务便利贴/板书带 note 引用 → 浮层出"编辑"按钮（共享头脑风暴：用户改完
+        // agent 下轮从注入清单看到文件、自己 Read 到新内容）。
+        // head = frontmatter 原样留着（板书的 nd:chalk/anchor/reply_to 都在里面，保存时要拼回去）
+        const head = /^---\n[\s\S]{0,800}?\n---\n?/.exec(raw)?.[0] || '';
+        setViewer({ title, content: raw.slice(head.length), head, note: o.noteTask ? o : null });
+      } catch { setViewer({ title, content: o.text || '', head: '', note: o.noteTask ? o : null }); }
     },
   };
 
@@ -119,7 +121,9 @@ export function MarkdownViewerOverlay({ projectId, viewer, onClose, onSaved }) {
                   // 三参了，这里曾一直是四参老签名 —— noteTask 当 filename、
                   // 文件名当正文。恰好 noteTask 同期恒 null 让编辑按钮根本不
                   // 出现，两个 bug 互相掩护（2026-08-14 一起修）。
-                  await Assets.putTaskNote(projectId, o.name, draft);
+                  // 板书住 notes/板书/ 且 frontmatter 必须保住（丢了就降级成普通便利贴、也不知道它关于谁）
+                  if (o.chalk) await Assets.putChalk(projectId, o.name, `${viewer.head || ''}${draft}`);
+                  else await Assets.putTaskNote(projectId, o.name, draft);
                   onSaved(draft);
                   setDraft(null);
                 } catch (err) { console.warn('[board] save note failed:', err.message); }

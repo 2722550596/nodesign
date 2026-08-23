@@ -36,6 +36,7 @@ import { onChrome } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
+import TagHullLayer from './TagHullLayer.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import LinkPopover from './LinkPopover.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
@@ -1019,7 +1020,6 @@ export default function BoardCanvas({
   // 黑板组三动作（整组选 / 落定 / 擦）→ useBoardGroups.js
   const { selectGroup, commitGroup, eraseGroup, exportGraph } = useBoardGroups({ projectId, positionedRef, setSelectedIds, reload });
 
-  // 打开语义（双击 / 加进上下文 / 删便签）→ useBoardOpen.js
   const {
     handleAdd, openViewer, openFile, openOrchestrate,
     handleDeleteNote, focusDeck, primaryOpen,
@@ -1029,8 +1029,7 @@ export default function BoardCanvas({
     setAddedPaths, setViewer, setOrchestrate, setDetail,
     openTextEditor,
   });
-  // 两个 ref 留在这儿赋值：挂得更早的 effect（Delete 键、preview_deck 工具）
-  // 靠它们够到下面才定义的函数
+  // 两个 ref 留在这儿赋值：挂得更早的 effect（Delete 键、preview_deck 工具）靠它们够到下面才定义的函数
   handleDeleteNoteRef.current = handleDeleteNote;
   primaryOpenRef.current = primaryOpen;
 
@@ -1832,6 +1831,7 @@ export default function BoardCanvas({
 
 
           {/* 关系线（世界坐标，铺在物件之下）*/}
+          <TagHullLayer positioned={positioned} />
           <BindingLayer
             bindings={bindings}
             rectOf={rectOfId}
