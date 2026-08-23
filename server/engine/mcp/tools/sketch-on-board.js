@@ -21,7 +21,8 @@ import { readBoard, patchBoard, commitStaging, removeByTag, TEXT_FONTS } from '.
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { layerOf, normalizeCanvasId } from '../../../lib/canvas-id.js';
 import { BINDING_TYPE_IDS, BINDING_MATERIALS } from '../../../lib/binding-types.js';
-import { UNIT, textBox, shapePath, layoutNodes, bboxOf, findSpot } from '../../../lib/sketch-layout.js';
+import { UNIT, SKETCH_FIT, SKETCH_MAX, textBox, shapePath, layoutNodes, bboxOf, findSpot } from '../../../lib/sketch-layout.js';
+import { getViewpoint } from '../../../projects/viewpoint-store.js';
 
 const MAX_PER_TURN = 3;
 const MAX_NODES = 40;
@@ -63,6 +64,11 @@ How it works
 - Items land as STAGING (half-transparent = you are still drawing). Call finish_sketch
   when done, or they commit automatically when the turn ends. Look at the result with
   look_at_board before you call it done — agent scribbles only make sense with eyes.
+- Readability rule: the user reads the board at 80–100% zoom. Body text stays md/lg
+  (sm only for captions ≤40 chars); one sketch ≤ ${SKETCH_FIT.w}x${SKETCH_FIT.h} world px (one screen at 80%),
+  hard limit ${SKETCH_MAX.w}x${SKETCH_MAX.h} — split into two tagged sketches instead of one huge one.
+- To change an existing sketch use edit_sketch (move/retext/add/remove by id) — do NOT
+  erase and redraw the whole thing for a small change.
 Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges each.`,
     {
       title: z.string().max(60).optional().describe('Optional heading written at the top of the sketch'),
@@ -127,7 +133,9 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
       for (const n of nodesIn) {
         if (localIds.has(n.id)) return err(`节点 id 重复：${n.id}`);
         localIds.add(n.id);
-        nodes.push({ key: n.id, text: n.text, format: n.format || 'plain', size: n.size || 'md', font: n.font || 'pen', color: n.color || 'ink', at: n.at || null, w: n.w || null });
+        // 可读性规范：正文不低于 md（0.8 倍下 12.8 屏幕像素是底线）；sm 只给 ≤40 字的题注
+        const size = (n.size === 'sm' && n.text.length > 40) ? 'md' : (n.size || 'md');
+        nodes.push({ key: n.id, text: n.text, format: n.format || 'plain', size, font: n.font || 'pen', color: n.color || 'ink', at: n.at || null, w: n.w || null });
       }
       for (const n of nodes) {
         const box = textBox(n.text, n.size, { md: n.format === 'md', wUnits: n.w });
@@ -252,7 +260,14 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
         obstacles.push(r); contentBottom = Math.max(contentBottom, r.y + r.h);
       }
       if (!zone) for (const zz of Object.values(board.zones || {})) if (Number.isFinite(zz?.y)) contentBottom = Math.max(contentBottom, zz.y + 240);
-      const spot = findSpot({ w: local.w + 24, h: local.h + 24, near: anchor, obstacles, contentBottom });
+      // 尺寸规范：硬上限直接拒（一张图说一件事），推荐上限以上给提醒
+      if (local.w > SKETCH_MAX.w || local.h > SKETCH_MAX.h) {
+        return err(`这张图太大了（${Math.round(local.w)}x${Math.round(local.h)} 世界像素，上限 ${SKETCH_MAX.w}x${SKETCH_MAX.h}）：用户在 80%~100% 缩放下看不全。拆成两张（各自一个 tag，之间用线连），或减节点/缩 w。`);
+      }
+      // 用户视口（同一层才算；黑板是主窗口时画在他眼前）
+      const vp = getViewpoint(projectId);
+      const vpRect = (vp && (vp.layer || '') === zone && vp.camera) ? vp.camera : null;
+      const spot = findSpot({ w: local.w + 24, h: local.h + 24, near: anchor, obstacles, contentBottom, viewport: vpRect });
       const ox = spot.x - local.x + 12; const oy = spot.y - local.y + 12;
 
       // ── 落盘 ──
@@ -273,14 +288,20 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
       const landed = Object.keys(objects).filter(id => saved.objects?.[id]).length;
       if (!landed) return err('草图被 board 拒了（内容或字段不合法）。');
       turnStamp.count += 1;
-      try { ctx?.emit?.({ type: 'board.updated', sessionId: null, summary: `画了一张草图 #${tag}` }); } catch { /* fail-soft */ }
-
       const world = { x: Math.round(local.x + ox), y: Math.round(local.y + oy), w: Math.round(local.w), h: Math.round(local.h) };
+      try {
+        ctx?.emit?.({ type: 'board.updated', sessionId: null, summary: `画了一张草图 #${tag}` });
+        // 镜头提示（前端只在黑板模式跟随；不是劫持，是"黑板是主窗口"的约定）
+        ctx?.emit?.({ type: 'board.focus', sessionId: null, tag, rect: world, layer: zone });
+      } catch { /* fail-soft */ }
       const lines = [
         `Sketch #${tag} landed${staging ? ' as STAGING (半透明)' : ''}: ${Object.keys(objects).length - shapes.length} nodes, ${shapes.length} shapes, ${Object.keys(bindings).length} lines; layout ${tpl}; at world (${world.x},${world.y}) ${world.w}x${world.h}${anchor ? ` (${spot.side} of ${args.near})` : ' (below current content)'}.`,
         `ids: ${[...idOf].map(([k, v]) => `${k}=${v}`).join(', ')}`,
       ];
       if (badEdges.length) lines.push(`Skipped ${badEdges.length} edge(s) with unknown endpoints: ${badEdges.slice(0, 6).join(', ')}`);
+      if (world.w > SKETCH_FIT.w || world.h > SKETCH_FIT.h) lines.push(`⚠ Bigger than one screen at 80% zoom (${SKETCH_FIT.w}x${SKETCH_FIT.h} fits) — the user will have to pan. Prefer splitting next time.`);
+      if (vp?.zoom && vp.zoom < 0.8) lines.push(`User's zoom is ${vp.zoom} (<0.8): text this size is small on their screen. Keep nodes md/lg and say in one line that there is a sketch on the board.`);
+      lines.push(spot.side === 'viewport' ? 'Placed inside the user\'s current viewport.' : `Placed ${spot.side === 'bottom' ? 'below current content' : spot.side + ' of the anchor'}${vpRect ? ' (no room in the user\'s viewport)' : ''}.`);
       lines.push(staging
         ? 'Next: look_at_board {tag} to check it, then finish_sketch {tag} (or it commits at turn end). Mention the sketch to the user in one line.'
         : 'Next: look_at_board {tag} to check it.');

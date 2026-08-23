@@ -141,6 +141,8 @@ export default function ProjectWorkspace() {
   useEffect(() => () => { if (listBumpTimerRef.current) clearTimeout(listBumpTimerRef.current); }, []);
   // agent 改画布布局（board.updated）→ bump，BoardCanvas 整份重拉 board.json
   const [boardVersion, setBoardVersion] = useState(0);
+  // agent 落了草图 → 黑板模式下镜头跟过去（board.focus，2026-08-23）
+  const [boardFocus, setBoardFocus] = useState(null);
   // 工作台 UI 态（BoardCanvas 上报）：工具栏 + 会话栏聚焦条共同消费
   const [boardUi, setBoardUi] = useState(null);
   // 画布操作句柄（顶栏面包屑退回项目区 / 刷新产物墙都从这里走）
@@ -1254,6 +1256,10 @@ export default function ProjectWorkspace() {
         if (evt.summary) showToast(`工作台：${evt.summary}`, 'info');
         break;
       }
+      case 'board.focus': {
+        if (evt.rect) setBoardFocus({ rect: evt.rect, tag: evt.tag || null, layer: evt.layer || '', at: Date.now() });
+        break;
+      }
 
       // Phase B 批次 3：SDK 自动 recall 写入 globalStore，MemoryCard 折叠区显示
       case 'run.memory_recall':
@@ -2089,6 +2095,7 @@ export default function ProjectWorkspace() {
             artifactRefreshToken={listVersion}
             fileVersions={fileVersions}
             boardVersion={boardVersion}
+            boardFocus={boardFocus}
             boardUi={boardUi}
             boardApiRef={boardApiRef}
             onBoardUiState={setBoardUi}

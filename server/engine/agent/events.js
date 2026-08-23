@@ -41,6 +41,7 @@
  *   run.rate_limit             { info }                                    rate limit 变化
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
  *   board.updated              { objectId, zoneId, summary }               pin_to_board 改画布布局（sessionId:null 广播，前端整份重拉 board.json）
+ *   board.focus                { rect, tag, layer }                        agent 落了一张草图（sessionId:null 广播；前端只在黑板模式跟镜头）
  *   project.active_session     { activeSessionId }                         项目级会话指针变更（故意不带 sessionId —— 见构造器注释）
  *
  * 外层把 EventBus 桥接到：

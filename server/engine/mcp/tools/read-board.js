@@ -105,7 +105,7 @@ on the minimap and listed with what is inside it.`,
           const sorted = g.members.map(id => ({ id, entry: entryOf.get(id) }))
             .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
           for (const { id, entry } of sorted) lines.push(describeEntry(board, id, entry, glyphOf.get(id)));
-          for (const bid of g.edges.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)}`);
+          for (const bid of g.edges.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)} (line id: ${bid})`);
           if (g.edges.length > 12) lines.push(`    …还有 ${g.edges.length - 12} 条线`);
         });
         if (loose.length) {

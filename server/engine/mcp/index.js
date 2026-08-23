@@ -66,6 +66,7 @@ import { makeReadBoardTool } from './tools/read-board.js';
 import { makeArrangeOnBoardTool } from './tools/arrange-on-board.js';
 import { makeCreateOnBoardTool } from './tools/create-on-board.js';
 import { makeSketchOnBoardTool, makeFinishSketchTool } from './tools/sketch-on-board.js';
+import { makeEditSketchTool } from './tools/edit-sketch.js';
 import { makeLookAtBoardTool } from './tools/look-at-board.js';
 import { makeReadUserViewTool } from './tools/read-user-view.js';
 import { makeOrganizeBoardTool } from './tools/organize-board.js';
@@ -311,6 +312,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 黑板（2026-08-23）：一次落一整张草图 / 落定或擦掉 / 看一眼 / 用户在看哪
       makeSketchOnBoardTool({ projectId, ctx }),
       makeFinishSketchTool({ projectId, ctx }),
+      makeEditSketchTool({ projectId, ctx }),
       makeLookAtBoardTool({ projectId, ctx }),
       makeReadUserViewTool({ projectId }),
 

@@ -10,6 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { makeReadBoardTool } from './engine/mcp/tools/read-board.js';
 import { makeSketchOnBoardTool, makeFinishSketchTool } from './engine/mcp/tools/sketch-on-board.js';
+import { makeEditSketchTool } from './engine/mcp/tools/edit-sketch.js';
 import { makeLookAtBoardTool } from './engine/mcp/tools/look-at-board.js';
 import { makeReadUserViewTool } from './engine/mcp/tools/read-user-view.js';
 import { readBoard } from './projects/board-store.js';
@@ -32,6 +33,7 @@ const img = (r, name) => {
 const read = makeReadBoardTool({ projectId });
 const sketch = makeSketchOnBoardTool({ projectId, ctx });
 const finish = makeFinishSketchTool({ projectId, ctx });
+const edit = makeEditSketchTool({ projectId, ctx });
 const look = makeLookAtBoardTool({ projectId, ctx });
 const view = makeReadUserViewTool({ projectId });
 
@@ -77,6 +79,20 @@ console.log('\n== look_at_board {tag} (staging) ==');
 const t0 = Date.now();
 const l1 = await look.handler({ tag }, {});
 console.log(txt(l1), l1.isError ? '(ERROR)' : '', `${Date.now() - t0}ms`, img(l1, `${tag}-staging.png`) || '(no image)');
+
+// 取 id 做编辑
+const ids = Object.fromEntries(txt(r1).split('\n').find(l => l.startsWith('ids:')).slice(5).split(', ').map(kv => kv.split('=')));
+const r2 = await edit.handler({ tag, ops: [
+  { op: 'set_text', id: ids.a, text: '方向 A：扩产物类型（改过字了）', color: 'brass' },
+  { op: 'move', id: ids.b, to: { ref: ids.d, side: 'below', gap: 1 } },
+  { op: 'add_node', id: 'n1', text: '新加的支：先做黑板', at: { ref: ids.a, side: 'right', gap: 2 } },
+  { op: 'add_edge', from: 'n1', to: ids.a, type: 'flow', material: 'pencil' },
+  { op: 'remove', id: ids.s2 },
+  { op: 'move', id: 'no-such-id', to: { dx: 1, dy: 1 } },
+] }, {});
+console.log('\n== edit_sketch ==\n' + txt(r2), r2.isError ? '(ERROR)' : '');
+const l1b = await look.handler({ tag }, {});
+console.log('look (edited):', img(l1b, `${tag}-edited.png`) || txt(l1b));
 
 console.log('\n== finish_sketch ==\n' + txt(await finish.handler({ tag }, {})));
 const l2 = await look.handler({ tag }, {});

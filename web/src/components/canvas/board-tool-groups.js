@@ -8,7 +8,7 @@
  * 调用方仍然要用 useMemo 包住它，而且**镜头动作必须先经 ref 转一手**：理由
  * 记在 BoardCanvas 那个 memo 的头上（每帧换身份 → 死循环，build 和单测都照不出来）。
  */
-import { Maximize2, Minus, Plus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid } from 'lucide-react';
+import { Maximize2, Minus, Plus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid, Presentation } from 'lucide-react';
 
 /**
  * @param {object} p
@@ -23,6 +23,7 @@ import { Maximize2, Minus, Plus, MousePointer2, Move, Hand, Type, PenLine, Layou
 export function buildBoardToolGroups({
   tool, setTool, drawMode, setDrawMode, scale,
   tidyBoard, zoomFit, zoomBy, zoomTo, filterGroup,
+  blackboardMode = false, toggleBlackboard = null,
 }) {
   return ([
     ...(filterGroup ? [filterGroup] : []),
@@ -38,6 +39,15 @@ export function buildBoardToolGroups({
         { id: 'zoomOut', icon: Minus, title: '缩小（Ctrl -）', onClick: () => zoomBy(-1) },
         { id: 'zoomLevel', icon: null, label: `${Math.round(scale * 100)}%`, title: '回到 100%（Ctrl 0）', onClick: () => zoomTo(1) },
         { id: 'zoomIn', icon: Plus, title: '放大（Ctrl +）', onClick: () => zoomBy(1) },
+        // 黑板模式（2026-08-23）：画布取代侧栏成为主窗口 —— agent 每轮主体内容落画布、
+        // 聊天只留一两句，草图落下时镜头跟过去。开关是项目级偏好（ui-config.json）。
+        ...(toggleBlackboard ? [{
+          id: 'blackboard', icon: Presentation, label: '黑板', active: blackboardMode,
+          title: blackboardMode
+            ? '黑板模式：开 —— agent 把想法画在画布上、聊天只旁白、镜头跟着新图走。点一下关'
+            : '黑板模式：关 —— 开了以后 agent 默认把讨论画到画布上，聊天只留一两句，镜头跟着新图走',
+          onClick: toggleBlackboard,
+        }] : []),
       ],
     },
     {

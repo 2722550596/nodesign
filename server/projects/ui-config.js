@@ -22,6 +22,12 @@ const LEGACY_NAME = 'session-config.json';
 
 export const DEFAULT_UI_CONFIG = Object.freeze({
   tweaks_mode_enabled: true,
+  /**
+   * 黑板模式（2026-08-23）：用户专注头脑风暴时，画布取代侧栏成为主交互窗口 ——
+   * agent 每轮的主体内容落画布（sketch_on_board / edit_sketch），聊天里只留一两句；
+   * 草图落定时服务端广播 board.focus，前端把镜头带过去。
+   */
+  blackboard_mode: false,
 });
 
 /**

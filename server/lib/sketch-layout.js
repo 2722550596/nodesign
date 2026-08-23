@@ -15,6 +15,14 @@
  */
 
 export const UNIT = 24;            // 1 网格 = 24 世界像素
+/**
+ * 可读性规范（2026-08-23，用户定）：黑板上的字要在 80%~100% 缩放下清晰可读。
+ * 手写/md 正文 16px 世界像素在 0.8 倍下是 12.8 屏幕像素 —— 这是底线，所以节点
+ * 字号不低于 md；一张图的尺寸要能在 0.8 倍下整张进一个普通视口（1400×900 屏
+ * ≈ 1750×1125 世界像素）。超过 SKETCH_MAX 直接拒：一张图说一件事，大了就拆。
+ */
+export const SKETCH_FIT = { w: 1700, h: 1100 };   // 推荐上限（0.8 倍一屏）
+export const SKETCH_MAX = { w: 2600, h: 1700 };   // 硬上限（再大就拆成两张）
 export const GAP = 16;             // 模板排布的节点间距
 const SIZE_PX = { sm: 13, md: 16, lg: 22, xl: 30 };
 
@@ -211,8 +219,18 @@ export function bboxOf(rects) {
  * - near：锚右侧（撞了往下让），让不开就锚下方
  * - 否则：内容最低边下面（与入座"新东西排底下"同一条起排线精神）
  */
-export function findSpot({ w, h, near = null, obstacles = [], contentBottom = 0 }) {
+export function findSpot({ w, h, near = null, obstacles = [], contentBottom = 0, viewport = null }) {
   const hits = (x, y) => obstacles.some(o => !(x + w <= o.x || o.x + o.w <= x || y + h <= o.y || o.y + o.h <= y));
+  // 用户视口里有空地就落在视口里（黑板是主窗口时，画在他眼前而不是让他去找）：
+  // 从视口左上起按 1/8 视口步进扫一遍，第一个放得下又不撞的位置
+  if (!near && viewport && viewport.w >= w + 24 && viewport.h >= h + 24) {
+    const sx = Math.max(24, Math.round(viewport.w / 8)); const sy = Math.max(24, Math.round(viewport.h / 8));
+    for (let y = viewport.y + 12; y + h <= viewport.y + viewport.h - 12; y += sy) {
+      for (let x = viewport.x + 12; x + w <= viewport.x + viewport.w - 12; x += sx) {
+        if (!hits(x, y)) return { x: Math.round(x), y: Math.round(y), side: 'viewport' };
+      }
+    }
+  }
   if (near) {
     let x = near.x + near.w + 32; let y = near.y;
     for (let g = 0; g < 30; g += 1) {

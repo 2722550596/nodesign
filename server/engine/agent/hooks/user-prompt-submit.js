@@ -160,6 +160,18 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
   } catch { /* 扫不动就不说 */ }
 
   // tweaks 开关：文件不存在 = 用户没碰过 = 沉默
+  // 黑板模式（2026-08-23）：用户把画布当主窗口。这一节只在开着时注入，关着不提。
+  try {
+    const cfg = await readUiConfigFile(workspaceRoot);
+    if (cfg?.blackboard_mode === true) {
+      sections.push({ key: 'blackboard', title: '黑板模式', text:
+        '【黑板模式：开】用户此刻把画布当主窗口，侧栏只是旁白。这一轮的**主体内容必须落在画布上**'
+        + '（sketch_on_board 画新图 / edit_sketch 改旧图 / create_on_board 一条便签），聊天里只留 1~2 句：'
+        + '指出画了什么、问下一步。思考、对比、列要点、画关系，一律上板；不要把整段分析写在聊天里再"顺便"画一张。'
+        + '改动优先用 edit_sketch 原地改（挪/改字/加支/删线），不要擦掉重画。'
+        + '尺寸守规范（一张图 0.8 倍一屏可读，正文 md 起）；画完 look_at_board 看一眼再收。' });
+    }
+  } catch { /* 读失败：不注入 */ }
   try {
     const cfg = await readUiConfigFile(workspaceRoot);
     if (cfg) {

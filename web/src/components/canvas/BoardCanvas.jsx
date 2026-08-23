@@ -21,10 +21,9 @@ import FolderCard from './cards/FolderCard.jsx';
 import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
-import { useViewpointReport } from './useViewpointReport.js';
 import { submitLinkPop, deleteLinkPop } from './link-pop-actions.js';
 import { useBoardGroups } from './useBoardGroups.js';
-import { eyeParams, useEyeMode } from './eye-mode.js';
+import { useBlackboardWiring } from './useBlackboardMode.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
@@ -117,6 +116,8 @@ export default function BoardCanvas({
   deckOpen = false,
   /** 开着哪扇产物窗（CanvasFrame 算的描述串，如 deck:主稿.html）—— 只用于视点上报 */
   openWindow = null,
+  /** agent 落了草图（board.focus 事件）：{ rect, tag, at }，黑板模式下镜头跟过去 */
+  focusRequest = null,
   /**
    * 「让 agent 在这儿做点什么」——**画布里的 agent 入口**（2026-08-08）。
    *
@@ -674,13 +675,11 @@ export default function BoardCanvas({
   scaleRef.current = scale;
   camApiRef.current = camera;
 
-  // 用户视点上报 + 眼睛模式（2026-08-23 黑板，useViewpointReport.js / eye-mode.js 有全注）
-  const eye = eyeParams();
-  useViewpointReport({
-    projectId, cam, viewport: camera.viewport, layer: winDir || '',
-    openWindow: winDir ? `folder:${winDir}` : openWindow, selectedIds, enabled: !eye,
+  // 黑板三件（视点上报 / 眼睛模式 / 黑板模式+跟随）→ useBlackboardMode.js
+  const { blackboardMode, toggleBlackboard } = useBlackboardWiring({
+    projectId, cam, viewport: camera.viewport, winDir, openWindow, selectedIds,
+    camRef: camApiRef, positionedRef, focusRequest,
   });
-  useEyeMode({ eye, camRef: camApiRef, positionedRef });
 
   // ── 画布工具（选择 / 文字 / 笔 / 评论）────────────────────────────────
   //
@@ -1630,7 +1629,8 @@ export default function BoardCanvas({
   const boardToolGroups = useMemo(() => buildBoardToolGroups({
     tool, setTool, drawMode, setDrawMode, scale,
     tidyBoard, zoomFit: zoomFitStable, zoomBy: zoomByStable, zoomTo: zoomToStable, filterGroup,
-  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable, filterGroup]);
+    blackboardMode, toggleBlackboard,
+  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable, filterGroup, blackboardMode, toggleBlackboard]);
 
   useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
 
