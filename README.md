@@ -129,7 +129,7 @@ The local version ships with the command sandbox and the automatic permission ch
 
 ## Project status
 
-A personal project, started at the end of April 2026 and still moving quickly. The current local release is `0.0.5`, and the core features have been in steady use during the private beta.
+A personal project, started at the end of April 2026 and still moving quickly. The current local release is `0.0.6`, and the core features have been in steady use during the private beta.
 
 The interface is in Chinese only for now, and so are the screenshots above. An English interface does not exist yet. The Agent's own prompts are in Chinese as well. Nothing in them fixes which language it answers in.
 
