@@ -48,3 +48,18 @@ describe('board-sanitize 黑板字段', () => {
     expect(b.bindings.b3.material).toBeUndefined();
   });
 });
+
+describe('画布 id 路径安全（fable 08-23 P0）', () => {
+  it('拒 `..` 段 / 绝对路径 / 反斜杠；正常 id 与带前缀 id 放行', async () => {
+    const { isSafeCanvasId } = await import('./board-sanitize.js');
+    expect(isSafeCanvasId('notes/板书/a.md')).toBe(true);
+    expect(isSafeCanvasId('deck:海报/x.html')).toBe(true);
+    expect(isSafeCanvasId('text:abc')).toBe(true);
+    expect(isSafeCanvasId('notes/板书/../../../etc/passwd')).toBe(false);
+    expect(isSafeCanvasId('/etc/passwd')).toBe(false);
+    expect(isSafeCanvasId('deck:../x.html')).toBe(false);
+    expect(isSafeCanvasId('a\\b')).toBe(false);
+    const b = sanitizeBoard({ objects: { 'notes/板书/../../x': { x: 1, y: 1, tag: 'boom' }, 'ok.png': { x: 1, y: 1 } } });
+    expect(Object.keys(b.objects)).toEqual(['ok.png']);
+  });
+});

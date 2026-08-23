@@ -68,7 +68,8 @@ and not for documents (write a .md instead). Hard cap: ${MAX_PER_TURN} notes per
       }
       const err = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
 
-      const turn = ctx?.counters?.turns ?? -1;
+      // 回合键用 runId（每 turn 被 startTurn 覆盖）；counters.turns 在工具调用时刻恒 0（fable 08-23 P1）
+      const turn = ctx?.runId ?? ctx?.counters?.turns ?? -1;
       if (turnStamp.turn !== turn) { turnStamp.turn = turn; turnStamp.count = 0; }
       if (turnStamp.count >= MAX_PER_TURN) {
         return err(`本回合便签额度用完（${MAX_PER_TURN} 条）—— 画布是版面不是弹幕区，要说的话说给用户听。`);

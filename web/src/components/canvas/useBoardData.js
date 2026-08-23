@@ -26,7 +26,12 @@ import { useBoardFilter } from './board-filter.jsx';
  *
  * **过期响应丢弃。** 连续重载时先发的请求可能后到，回来就把新数据覆盖成旧的。
  */
-export function useBoardData({ projectId, listVersion, boardVersion }) {
+/**
+ * readOnly（2026-08-23）：眼睛模式（agent 的 look_at_board 开的那一页）是只读客户端 —— 它量出的
+ * 尺寸来自无头 chromium 的字体度量，回写会盖掉用户浏览器量的真值；入座落盘同理。
+ * 这一页所有落盘都从 scheduleSave 走，所以在这儿一刀关掉（fable 08-23 审出 P1）。
+ */
+export function useBoardData({ projectId, listVersion, boardVersion, readOnly = false }) {
   // ── 数据源 ──
   const [artifacts, setArtifacts] = useState([]);
   const [tasks, setTasks] = useState([]);         // 有产物的文件夹（含工作区根，id=''）
@@ -103,6 +108,7 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
 
   // ── 布局持久化（diff 式 PATCH，只发脏条目）──
   const scheduleSave = useCallback(() => {
+    if (readOnly) { dirtyRef.current = { objects: new Set(), zones: new Set() }; return; }
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const d = dirtyRef.current;
@@ -129,7 +135,7 @@ export function useBoardData({ projectId, listVersion, boardVersion }) {
       dirtyRef.current = { objects: new Set(), zones: new Set() };
       Assets.patchBoard(projectId, patch).catch(() => {});
     }, 800);
-  }, [projectId]);
+  }, [projectId, readOnly]);
 
   const patchLayout = useCallback((id, patch) => {
     setLayout(prev => ({ ...prev, [id]: { x: 0, y: 0, z: 1, ...prev[id], ...patch } }));

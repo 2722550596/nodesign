@@ -22,6 +22,7 @@ import { getViewpoint } from '../../projects/viewpoint-store.js';
 import { renderChalk, writeChalkFile, CHALK_DIR } from '../../lib/chalk.js';
 
 const byRun = new Map();   // runId → { projectId, rel, fileName, items, linked:Set, session }
+const MAX_LINKS_PER_RUN = 24;
 
 function renderList(items) {
   const lines = ['### 这一轮的步骤', ''];
@@ -58,12 +59,14 @@ async function upsert(st, items) {
   const content = renderChalk({ body, by: 'agent', tag: st.tag, sessionId: st.session || null });
   const sharedRoot = getSharedDir(st.projectId);
   if (!st.fileName) st.fileName = `${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-')}-步骤.md`;
-  st.rel = await writeChalkFile(sharedRoot, st.fileName, content);
+  st.rel = await writeChalkFile(sharedRoot, st.fileName, content, { overwrite: !!st.rel });
+  st.fileName = st.rel.split('/').pop();   // 首写可能被加了防撞序号，之后原地覆盖同一个文件
   const board = await readBoard(st.projectId);
   const box = textBox(body, 'md', { md: true, wUnits: 14 });
   const prev = board.objects?.[st.rel];
   if (prev && Number.isFinite(prev.x)) {
-    await patchBoard(st.projectId, { objects: { [st.rel]: { ...prev, w: box.w, h: box.h } } });
+    // 已有座位：只改高（行数变了）不碰宽 —— 宽由前端量过真值，回写会跟它来回抖（fable P2）
+    await patchBoard(st.projectId, { objects: { [st.rel]: { ...prev, h: box.h } } });
     return;
   }
   // 首次落位：用户视口的空地 > 内容底下（跟 write_on_board 同口径）
@@ -99,6 +102,12 @@ export function attachBoardTasklist(bus, projectId) {
       if (!st?.rel || !evt.filePath) return;
       const idx = st.items.findIndex(t => t.status === 'in_progress');
       if (idx < 0) return;
+      // 只连工作区内、非隐藏目录的真产物；每轮封顶（否则 /tmp、.nd、.claude 里的写入会灌一堆
+      // 指向虚空的 auto 线，MAX_BINDINGS 一到用户自己的线都不收 —— fable 08-23 P2）
+      const rel = String(evt.filePath).replace(/\\/g, '/');
+      if (rel.startsWith('/') || rel.split('/').some(seg => seg === '..' || seg.startsWith('.') || seg === 'node_modules')) return;
+      if (rel.startsWith(`${CHALK_DIR}/`) || rel.startsWith('notes/')) return;
+      if (st.linked.size >= MAX_LINKS_PER_RUN) return;
       const board = await readBoard(st.projectId);
       const target = canvasIdForRel(board, evt.filePath);
       if (!target || target === st.rel || target.startsWith(`${CHALK_DIR}/`)) return;

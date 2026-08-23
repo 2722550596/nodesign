@@ -143,8 +143,16 @@ export function mountNotesRoutes({ router, guardProject, getSharedDir, ensurePro
       if (text.length > 20_000) return res.status(400).json({ error: 'too long (max 20k chars)' });
       const file = resolveChalk(req.params.pid, name);
       if (!file) return res.status(400).json({ error: 'invalid path' });
+      // frontmatter（nd:chalk/anchor/reply_to/tag）由服务端保住：正文只收正文。客户端拼头那条路
+      // 在 fetch 失败时会丢头、还会把 4KB 截断的展示副本写回（fable 08-23 P2）。
+      // 来的文本若自带头（老客户端拼过来的）剥掉，以磁盘上的头为准；磁盘上没有就保留来的头。
+      let head = '';
+      try { head = /^---\n[\s\S]{0,800}?\n---\n?/.exec(await fs.readFile(file, 'utf8'))?.[0] || ''; } catch { /* 新文件 */ }
+      const incomingHead = /^---\n[\s\S]{0,800}?\n---\n?/.exec(text)?.[0] || '';
+      const body = text.slice(incomingHead.length).replace(/^\n+/, '');
+      if (!body.trim()) return res.status(400).json({ error: 'text required' });
       await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, text, 'utf8');
+      await fs.writeFile(file, `${head || incomingHead}${head || incomingHead ? '\n' : ''}${body.replace(/\n+$/, '')}\n`, 'utf8');
       res.json({ ok: true, path: `notes/板书/${name}` });
     } catch (err) { next(err); }
   });

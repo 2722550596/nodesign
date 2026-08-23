@@ -24,6 +24,7 @@ import { useBoardCamera } from './useBoardCamera.js';
 import { submitLinkPop, deleteLinkPop } from './link-pop-actions.js';
 import { useBoardGroups } from './useBoardGroups.js';
 import { useBlackboardWiring } from './useBlackboardMode.js';
+import { eyeParams } from './eye-mode.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
@@ -152,7 +153,7 @@ export default function BoardCanvas({
     guideText, fileCount,
     reload, scheduleSave, patchLayout,
     layoutRef, zonesRef, dirtyRef, layoutLoadedRef, zMaxRef,
-  } = useBoardData({ projectId, listVersion, boardVersion });
+  } = useBoardData({ projectId, listVersion, boardVersion, readOnly: !!eyeParams() });
   // 影子工作区（2026-07-28）：agent 正在往一个还不存在的任务目录里写，产物列表
   // 要等这次写完才知道它存在。先在桌面上把这块区长出来（只在内存里，不落盘），
   // 舞台卡当场就有地方贴；真任务出现后 zone 派生 effect 接管、影子退场。

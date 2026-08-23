@@ -28,7 +28,7 @@ export {
 export { TEXT_FONTS } from './board-sanitize.js';
 import { DEFAULT_BOARD_SIZE, MAX_BOARD_BYTES, MAX_OBJECTS, MAX_ZONES, MAX_BINDINGS } from './board-limits.js';
 import {
-  clampNum, sanitizeSize, sanitizeTag, sanitizeObject, sanitizeBinding, sanitizeZone, sanitizeBoard,
+  clampNum, sanitizeSize, sanitizeTag, sanitizeObject, sanitizeBinding, sanitizeZone, sanitizeBoard, isSafeCanvasId,
 } from './board-sanitize.js';
 
 // 分区自动铺位常数 —— 与前端 BoardCanvas 的 ZONE_* 保持一致（数值约定，非共享代码）
@@ -95,7 +95,7 @@ export function patchBoard(pid, patch) {
     const fwd = (id) => forwardId(pid, id);
     if (patch?.zones && typeof patch.zones === 'object') {
       for (const [rawId, z] of Object.entries(patch.zones)) {
-        if (typeof rawId !== 'string' || rawId.length > 300) continue;
+        if (!isSafeCanvasId(rawId)) continue;
         const id = fwd(rawId);
         if (z === null) { delete board.zones[id]; removed.add(id); continue; }
         const s = sanitizeZone(z);
@@ -104,7 +104,7 @@ export function patchBoard(pid, patch) {
     }
     if (patch?.objects && typeof patch.objects === 'object') {
       for (const [rawId, o] of Object.entries(patch.objects)) {
-        if (typeof rawId !== 'string' || rawId.length > 300) continue;
+        if (!isSafeCanvasId(rawId)) continue;
         const id = fwd(rawId);
         if (o === null) { delete board.objects[id]; removed.add(id); continue; }
         const s = sanitizeObject(o, board.size);
@@ -200,9 +200,12 @@ export function removeByTag(pid, tag) {
     for (const [id, o] of Object.entries(board.objects || {})) {
       if (o.tag !== t) continue;
       if (o.kind) { delete board.objects[id]; gone.add(id); removed += 1; continue; }
-      // 板书（notes/板书/*.md）是这组自己的话，擦组连文件一起删；其它文件只摘标签
+      // 板书（notes/板书/*.md）是这组自己的话，擦组连文件一起删；其它文件只摘标签。
+      // ⛔ 删前按绝对路径断言落在 notes/板书/ 里且是单段文件名（fable 08-23 审出：id 里塞 ../ 能
+      // 以进程身份删任意文件；sanitize 现在也拒 `..`，这里是第二道闸）
       if (id.startsWith(`${CHALK_DIR}/`)) {
-        try { await fs.unlink(path.join(getSharedDir(pid), id)); } catch { /* 已经没了 */ }
+        const abs = chalkAbsPath(pid, id);
+        if (abs) { try { await fs.unlink(abs); } catch { /* 已经没了 */ } }
         delete board.objects[id]; gone.add(id); removed += 1; continue;
       }
       delete o.tag;
@@ -214,6 +217,16 @@ export function removeByTag(pid, tag) {
     await writeBoard(pid, board);
     return { board, removed };
   });
+}
+
+/** 板书 id → 绝对路径，越界/多段/非 .md 一律 null（删与读两处共用） */
+export function chalkAbsPath(pid, id) {
+  if (typeof id !== 'string' || !id.startsWith(`${CHALK_DIR}/`)) return null;
+  const name = id.slice(CHALK_DIR.length + 1);
+  if (!name || name.includes('/') || name.includes('\\') || name.includes('..') || name.startsWith('.') || !name.endsWith('.md')) return null;
+  const base = path.resolve(getSharedDir(pid), CHALK_DIR);
+  const abs = path.resolve(base, name);
+  return abs.startsWith(base + path.sep) ? abs : null;
 }
 
 const RENAME_TTL_MS = 5 * 60 * 1000;

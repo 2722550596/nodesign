@@ -63,12 +63,20 @@ export function chalkFileName(body, now = new Date()) {
 }
 
 /** 写一条板书到工作区；返回相对路径 */
-export async function writeChalkFile(sharedRoot, fileName, content) {
+export async function writeChalkFile(sharedRoot, fileName, content, { overwrite = false } = {}) {
   const dir = path.join(sharedRoot, CHALK_DIR);
   await fs.mkdir(dir, { recursive: true });
-  const abs = path.join(dir, fileName);
+  let name = fileName;
+  if (!overwrite) {
+    // 同一秒两条同首行的板书会撞名（fable 08-23 P2）：存在就加序号，绝不静默覆盖
+    for (let i = 2; i < 100; i += 1) {
+      try { await fs.access(path.join(dir, name)); } catch { break; }
+      name = fileName.replace(/\.md$/, `-${i}.md`);
+    }
+  }
+  const abs = path.join(dir, name);
   await fs.writeFile(abs, content, 'utf8');
-  return `${CHALK_DIR}/${fileName}`;
+  return `${CHALK_DIR}/${name}`;
 }
 
 /** 最近的板书（给注入用）：按文件名（=时间戳）倒序，读前几条的首行 */
@@ -93,10 +101,16 @@ export async function recentChalk(sharedRoot, { limit = 8 } = {}) {
 /** 给一批画布 id 里的板书读首行（read_board 用）：Map<id, {first, by, anchor, replyTo}> */
 export async function chalkExcerpts(sharedRoot, ids) {
   const out = new Map();
+  const base = path.resolve(sharedRoot, CHALK_DIR);
   for (const id of ids) {
     if (typeof id !== 'string' || !id.startsWith(`${CHALK_DIR}/`)) continue;
+    const name = id.slice(CHALK_DIR.length + 1);
+    // 读侧同一道闸：单段文件名、不越界（fable 08-23：id 可控，别拿它直接 join）
+    if (!name || name.includes('/') || name.includes('..') || name.startsWith('.')) continue;
+    const abs = path.resolve(base, name);
+    if (!abs.startsWith(base + path.sep)) continue;
     try {
-      const raw = await fs.readFile(path.join(sharedRoot, id), 'utf8');
+      const raw = await fs.readFile(abs, 'utf8');
       const { body, chalk } = parseChalk(raw);
       if (!chalk) continue;
       const first = (body.split('\n').find(l => l.trim()) || '').replace(/^#+\s*/, '').replace(/\*\*/g, '').slice(0, 60);

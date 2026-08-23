@@ -37,6 +37,7 @@ export function useBlackboardMode({ projectId, focusRequest, camRef }) {
   //   - 其余情况：在视口里就不打扰；在视口外 → 一条带「看一眼」的提示，点了再飞（不劫持镜头）
   const seen = useRef(0);
   useEffect(() => {
+    if (eyeParams()) return;   // 眼睛页：不飞、不弹提示（否则截图里会有 toast / 镜头跑偏）
     if (!focusRequest?.rect || !focusRequest.at || focusRequest.at === seen.current) return;
     seen.current = focusRequest.at;
     const r = focusRequest.rect;

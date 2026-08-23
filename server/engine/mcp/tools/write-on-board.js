@@ -55,7 +55,8 @@ Cap ${MAX_PER_TURN} per turn. Keep the chat reply to one line pointing at the bo
     async ({ text, near, reply_to: replyTo, tag, size, width }) => {
       const err = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
       if (!projectId || !sharedRoot) return err('No project bound.');
-      const turn = ctx?.counters?.turns ?? -1;
+      // 回合键用 runId（每 turn 被 startTurn 覆盖）；counters.turns 在工具调用时刻恒 0（fable 08-23 P1）
+      const turn = ctx?.runId ?? ctx?.counters?.turns ?? -1;
       if (turnStamp.turn !== turn) { turnStamp.turn = turn; turnStamp.count = 0; }
       if (turnStamp.count >= MAX_PER_TURN) return err(`本回合板书额度用完（${MAX_PER_TURN} 条）——要说的合并成一条，或写成 .md 让用户打开。`);
       const body = String(text).trim();

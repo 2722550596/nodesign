@@ -30,6 +30,10 @@ import { normalizeCanvasId } from '../../../lib/canvas-id.js';
 
 const VIEW = { width: 1400, height: 900 };
 const READY_TIMEOUT_MS = 25_000;
+// 并发闸：一次只开一台 chromium 看板（1 vCPU 机器多会话同时看板 = 多个浏览器进程；fable 08-23 P2）。
+// 排队不拒绝，等前一个看完。
+let gate = Promise.resolve();
+const withGate = (fn) => { const run = gate.then(fn, fn); gate = run.catch(() => {}); return run; };
 
 export function webOrigin() {
   const env = String(process.env.NODESIGN_WEB_ORIGIN || '').trim().replace(/\/+$/, '');
@@ -83,6 +87,7 @@ Costs a few seconds and ~1.7k tokens; don't call it in a loop.`,
       else if (tag) q.set('tag', tag);
       const url = `${origin}/projects/${encodeURIComponent(projectId)}/work?${q}`;
 
+      return withGate(async () => {
       let browser = null;
       try {
         browser = await launchPerceptionBrowser();
@@ -113,6 +118,7 @@ Costs a few seconds and ~1.7k tokens; don't call it in a loop.`,
       } finally {
         try { await browser?.close(); } catch { /* noop */ }
       }
+      });
     },
   );
 }

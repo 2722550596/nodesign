@@ -113,7 +113,8 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
     async (args) => {
       if (!projectId) return { content: [{ type: 'text', text: 'No project bound.' }], isError: true };
       const err = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
-      const turn = ctx?.counters?.turns ?? -1;
+      // 回合键用 runId（每 turn 被 startTurn 覆盖）；counters.turns 在工具调用时刻恒 0（fable 08-23 P1）
+      const turn = ctx?.runId ?? ctx?.counters?.turns ?? -1;
       if (turnStamp.turn !== turn) { turnStamp.turn = turn; turnStamp.count = 0; }
       if (turnStamp.count >= MAX_PER_TURN) return err(`本回合草图额度用完（${MAX_PER_TURN} 张）。要改已有的图：finish_sketch 擦掉重画，或 create_on_board 补一条。`);
 
@@ -161,6 +162,7 @@ Cap: ${MAX_PER_TURN} sketches/turn, ${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${
       for (let i = 0; i < shapesIn.length; i += 1) {
         const s = shapesIn[i];
         const sid = s.id || `s${i + 1}`;
+        if (localIds.has(sid) || shapes.some(x => x.key === sid)) return err(`形状 id「${sid}」跟节点/别的形状重名（形状缺省叫 s1,s2…，节点别用这类名）`);
         const seed = `${tag}:${sid}`;
         const color = COLORS.includes(s.color) ? s.color : (s.kind === 'arrow' || s.kind === 'line' ? 'ink2' : 'ink');
         const width = s.width || 2;

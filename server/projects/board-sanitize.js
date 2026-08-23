@@ -69,6 +69,20 @@ const TEXT_FORMATS = ['plain', 'md'];
  * 是因为它会进 DOM 属性和 URL 查询串。
  */
 const TAG_RE = /^[\w\u4e00-\u9fff\u3040-\u30ff-]{1,40}$/;
+/**
+ * 画布 id 的路径安全（2026-08-23 fable 审出 P0）：id 大多是工作区相对路径，下游有人拿它拼
+ * 文件路径（removeByTag 删板书、chalkExcerpts 读板书）。拒掉 `..` 段、绝对路径、反斜杠、NUL；
+ * 带形态前缀（deck:/site:/…）的先剥前缀再查。
+ */
+export function isSafeCanvasId(id) {
+  if (typeof id !== 'string' || !id || id.length > 300) return false;
+  if (id.includes('\0') || id.includes('\\')) return false;
+  const c = id.indexOf(':');
+  const p = (c > 0 && /^[a-z]+$/.test(id.slice(0, c))) ? id.slice(c + 1) : id;
+  if (p.startsWith('/')) return false;
+  return !p.split('/').some(seg => seg === '..');
+}
+
 export function sanitizeTag(v) {
   return typeof v === 'string' && TAG_RE.test(v) ? v : null;
 }
@@ -212,14 +226,14 @@ export function sanitizeBoard(raw) {
   let count = 0;
   for (const [id, o] of Object.entries(raw?.objects && typeof raw.objects === 'object' ? raw.objects : {})) {
     if (count >= MAX_OBJECTS) break;
-    if (typeof id !== 'string' || id.length > 300) continue;
+    if (!isSafeCanvasId(id)) continue;
     const s = sanitizeObject(o, size);
     if (s) { objects[id] = s; count += 1; }
   }
   let zCount = 0;
   for (const [id, z] of Object.entries(raw?.zones && typeof raw.zones === 'object' ? raw.zones : {})) {
     if (zCount >= MAX_ZONES) break;
-    if (typeof id !== 'string' || id.length > 300) continue;
+    if (!isSafeCanvasId(id)) continue;
     const s = sanitizeZone(z);
     if (s) { zones[id] = s; zCount += 1; }
   }
