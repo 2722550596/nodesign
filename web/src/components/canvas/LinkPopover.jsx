@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2, Check } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SANS, FONT_SIZE, alpha } from '../../lib/theme.js';
-import { PAPER_SHADOW } from '../../lib/paper.js';
-import { BINDING_STYLES } from '../../lib/board-bindings.js';
+import { PAPER_SHADOW, PAPER } from '../../lib/paper.js';
+import { BINDING_STYLES, BINDING_MATERIALS } from '../../lib/board-bindings.js';
 import { isImeEnter } from '../../lib/helpers.js';
 
 /**
@@ -32,7 +32,8 @@ export default function LinkPopover({
   mode = 'create',            // 'create' | 'edit'
   fromTitle, toTitle,
   initialType = 'link', initialLabel = '',
-  onSubmit,                   // ({ type, label }) => void
+  initialMaterial = 'ink',
+  onSubmit,                   // ({ type, label, material }) => void
   onDelete = null,            // edit 才给
   onClose,
 }) {
@@ -40,10 +41,12 @@ export default function LinkPopover({
   const inputRef = useRef(null);
   const [type, setType] = useState(BINDING_STYLES[initialType] ? initialType : 'link');
   const [label, setLabel] = useState(initialLabel);
+  // 材质轴（2026-08-23 黑板）：语义之外的第二个轴，墨线/手绘/丝线
+  const [material, setMaterial] = useState(BINDING_MATERIALS[initialMaterial] ? initialMaterial : 'ink');
   const [flip, setFlip] = useState({ x: false, y: false });
 
   useEffect(() => {
-    setFlip({ x: x + POP_W + 8 > window.innerWidth, y: y + 190 + 8 > window.innerHeight });
+    setFlip({ x: x + POP_W + 8 > window.innerWidth, y: y + 224 + 8 > window.innerHeight });
   }, [x, y]);
 
   useEffect(() => {
@@ -58,7 +61,7 @@ export default function LinkPopover({
   }, [onClose]);
 
   const submit = () => {
-    onSubmit?.({ type, label: label.trim() });
+    onSubmit?.({ type, label: label.trim(), material });
     onClose();
   };
 
@@ -119,6 +122,30 @@ export default function LinkPopover({
               }}
             >
               {BINDING_STYLES[id].label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 材质：同一条语义可以是安静的墨线、顺手的手绘，或侦探板上的丝线 */}
+      <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+        <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxs, color: COLOR.sub, marginRight: 2 }}>材质</span>
+        {Object.keys(BINDING_MATERIALS).map((id) => {
+          const on = id === material;
+          return (
+            <button
+              key={id}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setMaterial(id)}
+              style={{
+                padding: '2px 9px', borderRadius: RADIUS.pill,
+                border: `1px solid ${on ? COLOR.text : COLOR.borderLt}`,
+                background: on ? alpha(COLOR.text, 0.08) : 'transparent',
+                fontFamily: FONT_SANS, fontSize: FONT_SIZE.xxs,
+                color: id === 'yarn' ? PAPER.red : COLOR.text, cursor: 'pointer',
+              }}
+            >
+              {BINDING_MATERIALS[id].label}
             </button>
           );
         })}

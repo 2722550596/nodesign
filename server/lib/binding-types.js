@@ -55,6 +55,18 @@ export const BINDING_TYPES = {
 /** 词汇表 id 列表，校验和 parity 断言都用它。 */
 export const BINDING_TYPE_IDS = Object.keys(BINDING_TYPES);
 
+/**
+ * 材质（2026-08-23 黑板）：与语义正交的第二个轴。
+ *   ink     墨线 —— 版面线的默认材质，安静
+ *   pencil  手绘 —— 铅笔抖动，像人顺手拉的一笔
+ *   yarn    丝线 —— 侦探板上的红线 + 图钉，推理态、声量大
+ * 前端 board-bindings.js 的 BINDING_MATERIALS 必须与这份 id 一一对应（parity 测试）。
+ */
+export const BINDING_MATERIALS = ['ink', 'pencil', 'yarn'];
+export function isBindingMaterial(m) {
+  return BINDING_MATERIALS.includes(m);
+}
+
 export function isBindingType(t) {
   return Object.prototype.hasOwnProperty.call(BINDING_TYPES, t);
 }

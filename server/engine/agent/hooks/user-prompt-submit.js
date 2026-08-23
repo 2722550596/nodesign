@@ -26,6 +26,10 @@ import path from 'node:path';
 import { readUiConfigFile } from '../../../projects/ui-config.js';
 import { readAssetsSummary } from '../../../projects/assets-summary.js';
 import { relationsDigest } from '../../../lib/board-relations.js';
+import { getViewpoint, describeViewpoint } from '../../../projects/viewpoint-store.js';
+import { readBoard } from '../../../projects/board-store.js';
+import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
+import { layerOf } from '../../../lib/canvas-id.js';
 import {
   getActiveArtifact, listWorkspaceArtifacts, taskManifest, kindDef,
   KIND_DECK, KIND_SITE, ENTRY_FILE,
@@ -107,6 +111,25 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
   } catch { /* notes/ 不存在：noop */ }
 
   // 画布关系线：用户画的排前面
+  // 用户视点（2026-08-23 黑板）：一行，只在变化时进注入（renderTurnState 按 hash 判）。
+  // 视口矩形按 1/8 视口量化再进 hash，不然相机挪一像素就算"变了"。
+  try {
+    const vp = getViewpoint(projectId);
+    if (vp) {
+      const board = await readBoard(projectId);
+      const known = new Set(Object.keys(board.zones || {}));
+      const rects = Object.entries(board.objects || {})
+        .filter(([id, e]) => Number.isFinite(e?.x) && layerOf(id, e, known) === (vp.layer || ''))
+        .map(([id, e]) => ({ id, x: e.x, y: e.y, ...estimateSizeOn(board, id, e) }));
+      const q = vp.camera ? { ...vp, camera: {
+        x: Math.round(vp.camera.x / Math.max(1, vp.camera.w / 8)) * Math.round(vp.camera.w / 8),
+        y: Math.round(vp.camera.y / Math.max(1, vp.camera.h / 8)) * Math.round(vp.camera.h / 8),
+        w: vp.camera.w, h: vp.camera.h,
+      } } : vp;
+      const line = describeViewpoint(q, rects);
+      if (line) sections.push({ key: 'viewpoint', title: '用户视点', text: `用户此刻在画布上：${line}。他说「这个/这里/这张」多半指选中的 > 开着的窗 > 视口里的东西；要细节调 read_user_view。` });
+    }
+  } catch { /* 视点读不到就沉默 */ }
   try {
     const digest = await relationsDigest(projectId, { limit: 12 });
     if (digest) {

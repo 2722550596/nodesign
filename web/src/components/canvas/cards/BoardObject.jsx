@@ -8,6 +8,7 @@ import { PAPER, PAPER_SHADOW } from '../../../lib/paper.js';
 import { EASE, POP_IN } from '../../../lib/board-geometry.js';
 import { SIZES, sizeOf, actionsOf, chromeOf, cardOf } from '../../../lib/board-kinds.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../../lib/text-fonts.js';
+import MdInk from './MdInk.jsx';
 import { splitNoteFaces, faceParts } from '../../../lib/note-faces.js';
 import { formatSize } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
@@ -87,6 +88,8 @@ function BoardObject({
     cursor: 'grab', userSelect: 'none',
     touchAction: 'none',
     animation: POP_IN,
+    // 草稿态（2026-08-23 黑板）：agent 这一轮还在打草稿的东西半透明，落定变实
+    ...((o.staging || o.pos?.staging) ? { opacity: 0.55 } : null),
     // 变换（2026-08-13，选中态控制器写入 data.rotation / data.scale）：
     // 围绕中心转/缩。命中不用另算 —— DOM 事件本来就跟着 transform 走，
     // 选中框作为子层也一起转。只有墨类（text/scribble）有这两个字段。
@@ -288,7 +291,18 @@ function BoardObject({
         }} />
       )}
 
-      {o.type === 'text' && (
+      {o.type === 'text' && o.data?.format === 'md' && (
+        /* md 档（2026-08-23 黑板）：同一块纸上的字，只是排版认 markdown/KaTeX/mermaid */
+        <div style={{ padding: '4px 6px', pointerEvents: 'none', userSelect: 'none' }}>
+          <MdInk
+            text={o.data?.t || ''}
+            fontFamily={TEXT_FONT_CSS[o.data?.font] || TEXT_FONT_CSS.kai}
+            fontSize={TEXT_SIZE_PX[o.data?.size] || TEXT_SIZE_PX.md}
+            color={SCRIBBLE_INK[o.data?.color] || PAPER.ink}
+          />
+        </div>
+      )}
+      {o.type === 'text' && o.data?.format !== 'md' && (
         /* 画布手写文字：没有卡片外观（同涂鸦），就是一段字浮在纸上。
            白名单字体表在 lib/text-fonts.js，跟服务端那份校验对齐。 */
         <div style={{

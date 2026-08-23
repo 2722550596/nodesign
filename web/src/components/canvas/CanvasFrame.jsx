@@ -244,6 +244,13 @@ export default function CanvasFrame({
           // 各写一遍：deckOpen 为真但窗没渲染的那一瞬，画布工具栏和小地图
           // 都藏了、窗也没出来，屏幕上一个工具都没有。
           deckOpen={windowOpen}
+          // 视点上报用：开着哪扇窗（2026-08-23 黑板）
+          openWindow={
+            (deckOpen && (sessionId || deckTaskSrc)) ? `deck:${deckRelPath}`
+              : siteSrc ? `site:${siteSrc.base || siteSrc.task || siteSrc.entry || ''}`
+                : docxSrc ? `docx:${docxSrc.file || docxSrc.task || ''}`
+                  : browseWin ? 'browse' : null
+          }
         />
 
         {deckOpen && (sessionId || deckTaskSrc) && (

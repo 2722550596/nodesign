@@ -1,0 +1,92 @@
+/**
+ * _probe-blackboard.mjs —— 黑板工具真数据冒烟（2026-08-23）
+ *   node --env-file=.env server/_probe-blackboard.mjs <projectId> [--keep]
+ * 直接调 MCP 工具 handler：read_board → sketch_on_board → read_board{tag} → look_at_board{tag}
+ * → finish_sketch → look_at_board。截图落 ~/claude-report-file/blackboard/。
+ * 不带 --keep 时最后把草图擦掉（finish_sketch erase），board.json 回原样。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { makeReadBoardTool } from './engine/mcp/tools/read-board.js';
+import { makeSketchOnBoardTool, makeFinishSketchTool } from './engine/mcp/tools/sketch-on-board.js';
+import { makeLookAtBoardTool } from './engine/mcp/tools/look-at-board.js';
+import { makeReadUserViewTool } from './engine/mcp/tools/read-user-view.js';
+import { readBoard } from './projects/board-store.js';
+
+const projectId = process.argv[2];
+const keep = process.argv.includes('--keep');
+if (!projectId) { console.error('usage: node --env-file=.env server/_probe-blackboard.mjs <projectId> [--keep]'); process.exit(1); }
+const OUT = path.join(os.homedir(), 'claude-report-file', 'blackboard');
+fs.mkdirSync(OUT, { recursive: true });
+const ctx = { counters: { turns: 1 }, emit: (e) => console.log('  [emit]', e.type, e.summary || '') };
+const txt = (r) => r.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+const img = (r, name) => {
+  const im = r.content.find(c => c.type === 'image');
+  if (!im) return null;
+  const p = path.join(OUT, name);
+  fs.writeFileSync(p, Buffer.from(im.data, 'base64'));
+  return p;
+};
+
+const read = makeReadBoardTool({ projectId });
+const sketch = makeSketchOnBoardTool({ projectId, ctx });
+const finish = makeFinishSketchTool({ projectId, ctx });
+const look = makeLookAtBoardTool({ projectId, ctx });
+const view = makeReadUserViewTool({ projectId });
+
+const before = await readBoard(projectId);
+console.log('== read_board (before) ==\n' + txt(await read.handler({}, {})));
+console.log('\n== read_user_view ==\n' + txt(await view.handler({}, {})));
+
+// 锚到板上第一件有座位的产物
+const anchor = Object.entries(before.objects).find(([id, e]) => !e.kind && Number.isFinite(e.x))?.[0] || null;
+console.log('\nanchor =', anchor);
+
+const tag = `probe-${Date.now().toString(36)}`;
+const r1 = await sketch.handler({
+  title: '黑板冒烟：三个方向',
+  tag,
+  near: anchor || undefined,
+  layout: 'mindmap',
+  nodes: [
+    { id: 'c', text: '**核心问题**\n\n下一步做什么？', format: 'md', size: 'lg', font: 'kai' },
+    { id: 'a', text: '方向 A：扩产物类型', font: 'pen' },
+    { id: 'b', text: '方向 B：移动端\n（上次没过关）', font: 'pen', color: 'red' },
+    { id: 'd', text: '方向 C：公式 $E=mc^2$ 与表格\n\n| 项 | 值 |\n|---|---|\n| 成本 | 低 |\n| 风险 | 中 |', format: 'md', size: 'sm' },
+    { id: 'm', text: '```mermaid\nflowchart LR\n  A[想法] --> B[草图] --> C[看一眼] --> D[落定]\n```', format: 'md', size: 'sm', w: 14 },
+  ],
+  shapes: [
+    { kind: 'circle', around: 'c', color: 'brass' },
+    { kind: 'underline', around: 'b', color: 'red' },
+    { kind: 'rect', around: 'd', color: 'pencil' },
+  ],
+  edges: [
+    { from: 'c', to: 'a', type: 'link', material: 'pencil' },
+    { from: 'c', to: 'b', type: 'link', material: 'pencil', label: '先放放' },
+    { from: 'c', to: 'd', type: 'link', material: 'ink' },
+    { from: 'c', to: 'm', type: 'flow', material: 'pencil' },
+    ...(anchor ? [{ from: 'a', to: anchor, type: 'ref', material: 'yarn', label: '证物' }] : []),
+  ],
+}, {});
+console.log('\n== sketch_on_board ==\n' + txt(r1), r1.isError ? '(ERROR)' : '');
+
+console.log('\n== read_board {tag} ==\n' + txt(await read.handler({ tag }, {})));
+
+console.log('\n== look_at_board {tag} (staging) ==');
+const t0 = Date.now();
+const l1 = await look.handler({ tag }, {});
+console.log(txt(l1), l1.isError ? '(ERROR)' : '', `${Date.now() - t0}ms`, img(l1, `${tag}-staging.png`) || '(no image)');
+
+console.log('\n== finish_sketch ==\n' + txt(await finish.handler({ tag }, {})));
+const l2 = await look.handler({ tag }, {});
+console.log('look (committed):', txt(l2).slice(0, 80), img(l2, `${tag}-committed.png`) || '(no image)');
+const l3 = await look.handler({}, {});
+console.log('look (overview):', img(l3, `${tag}-overview.png`) || '(no image)');
+
+if (!keep) {
+  console.log('\n== erase ==\n' + txt(await finish.handler({ tag, erase: true }, {})));
+  const after = await readBoard(projectId);
+  console.log('objects before/after:', Object.keys(before.objects).length, Object.keys(after.objects).length,
+    'bindings:', Object.keys(before.bindings).length, Object.keys(after.bindings).length);
+} else console.log(`\n(kept) tag=${tag}`);

@@ -12,7 +12,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { readBoard, patchBoard } from '../../../projects/board-store.js';
-import { estimateSize } from '../../../lib/board-kind-sizes.js';
+import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { normalizeCanvasId, layerOf } from '../../../lib/canvas-id.js';
 
 const GAP_X = 24;
@@ -94,8 +94,8 @@ drag things afterwards — their move wins, do not fight it.`,
         }
       }
 
-      const aSize = estimateSize(anchor, anchorEntry);
-      const sSize = estimateSize(subject, subjectEntry);
+      const aSize = estimateSizeOn(board, anchor, anchorEntry);
+      const sSize = estimateSizeOn(board, subject, subjectEntry);
       const want = action === 'beside'
         ? { x: Math.round(anchorEntry.x + aSize.w + GAP_X), y: Math.round(anchorEntry.y) }
         : { x: Math.round(anchorEntry.x), y: Math.round(anchorEntry.y + aSize.h + GAP_Y) };
@@ -103,7 +103,7 @@ drag things afterwards — their move wins, do not fight it.`,
       const obstacles = Object.entries(board.objects || {})
         .filter(([id, e]) => id !== subject && Number.isFinite(e?.x)
           && layerOf(id, e, known) === anchorLayer)
-        .map(([id, e]) => ({ ...estimateSize(id, e), x: e.x, y: e.y }));
+        .map(([id, e]) => ({ ...estimateSizeOn(board, id, e), x: e.x, y: e.y }));
       const pos = nudgeDown(want, sSize, obstacles);
 
       await patchBoard(projectId, {

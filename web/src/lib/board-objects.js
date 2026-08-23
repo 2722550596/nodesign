@@ -30,7 +30,13 @@ export function deriveBoardObjects({ tasks = [], artifacts = [], layout = {}, br
     // 画布原生物件先进来（它们不依赖任何数据源，只依赖 layout 本身）
     for (const [id, l] of Object.entries(layout)) {
       if (!l?.kind) continue;
-      out.push({ id, type: l.kind, data: l.data, native: true, zoneField: l.zone });
+      out.push({
+        id, type: l.kind, data: l.data, native: true, zoneField: l.zone,
+        // 黑板字段（2026-08-23）：分组标签 + 草稿位。产物卡的同名字段住 pos 上
+        // （pos 就是 layout 条目本身），原生物件在这里抬到顶层，两边读法见 BoardObject
+        ...(l.tag ? { tag: l.tag } : {}),
+        ...(l.staging ? { staging: true } : {}),
+      });
     }
     // 项目级文档（记忆 / 品牌）不再当画布物件 —— 2026-07-28 起由桌面顶带
     // 顶栏「⋯」里的四件套之一（2026-08-07 从画布顶带搬过去），跟指引、文件一起构成"项目区"。

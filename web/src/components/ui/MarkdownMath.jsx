@@ -65,9 +65,14 @@ const COMPONENTS = {
   ),
 };
 
-export default function MarkdownMath({ children }) {
+/**
+ * `components`：调用方可以追加/覆盖渲染器（画布 md 节点拿它接管 mermaid 围栏）。
+ * 表格/任务列表那几个仍是这层的底，调用方的同名键盖过去。
+ */
+export default function MarkdownMath({ children, components = null }) {
+  const comps = components ? { ...COMPONENTS, ...components } : COMPONENTS;
   return (
-    <ReactMarkdown {...MATH_PLUGINS} components={COMPONENTS}>
+    <ReactMarkdown {...MATH_PLUGINS} components={comps}>
       {normalizeMath(children)}
     </ReactMarkdown>
   );

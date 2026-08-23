@@ -15,38 +15,48 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { readBoard } from '../../../projects/board-store.js';
-import { estimateSize } from '../../../lib/board-kind-sizes.js';
+import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { layerOf } from '../../../lib/canvas-id.js';
-import { relationsDigest } from '../../../lib/board-relations.js';
+import { relationsDigest, bindingLine } from '../../../lib/board-relations.js';
+import { groupObjects, asciiMinimap } from '../../../lib/board-groups.js';
+import { getViewpoint } from '../../../projects/viewpoint-store.js';
 
 /** 同一"行"的 y 容差：入座算法一行内顶对齐，40 世界像素内视作同行 */
 const ROW_TOLERANCE = 40;
 
-function describeEntry(id, entry) {
-  const sz = estimateSize(id, entry);
+function describeEntry(board, id, entry, glyph = null) {
+  const sz = estimateSizeOn(board, id, entry);
   const at = `@(${Math.round(entry.x)},${Math.round(entry.y)}) ${Math.round(sz.w)}x${Math.round(sz.h)}`;
+  const g = glyph ? `[${glyph}] ` : '';
+  const flags = `${entry.staging ? ' 〔草稿〕' : ''}${entry.tag ? ` #${entry.tag}` : ''}`;
   if (entry.kind === 'text') {
-    const t = String(entry.data?.t || '').replace(/\s+/g, ' ').slice(0, 24);
-    return `- [手写] 「${t}」 ${at} (id: ${id})${entry.by === 'agent' ? ' ·你写的' : ''}`;
+    const t = String(entry.data?.t || '').replace(/\s+/g, ' ').slice(0, entry.data?.format === 'md' ? 60 : 24);
+    const md = entry.data?.format === 'md' ? 'md' : '手写';
+    return `- ${g}[${md}] 「${t}」 ${at} (id: ${id})${entry.by === 'agent' ? ' ·你写的' : ''}${flags}`;
   }
-  if (entry.kind === 'scribble') return `- [涂鸦] ${at} (id: ${id})`;
-  return `- ${id} ${at}${entry.by === 'agent' ? ' ·你摆的' : ''}`;
+  if (entry.kind === 'scribble') return `- ${g}[涂鸦] ${at} (id: ${id})${entry.by === 'agent' ? ' ·你画的' : ''}${flags}`;
+  return `- ${g}${id} ${at}${entry.by === 'agent' ? ' ·你摆的' : ''}${flags}`;
 }
 
 export function makeReadBoardTool({ projectId }) {
   return tool(
     'read_board',
-    `Read the workbench canvas seating chart: what sits where, row by row, per folder layer.
+    `Read the workbench canvas: an ASCII minimap, then GROUPS (things linked by lines or
+sharing a #tag), then loose items row by row, then relation lines.
 
-Use this BEFORE arranging anything (arrange_on_board) or writing notes near things
-(create_on_board) — placement without looking is guessing. Coordinates are world
-pixels; items listed top-to-bottom, left-to-right per row. Only items that have
-been seated appear (freshly produced artifacts get their seat within a second).`,
+Use this BEFORE arranging (arrange_on_board), writing notes (create_on_board) or
+sketching (sketch_on_board) — placement without looking is guessing. Coordinates are
+world pixels. Only seated items appear (fresh artifacts get a seat within a second).
+Items marked 〔草稿〕 are still staging (yours from this turn, half-transparent until
+finish_sketch / end of turn). The user's current viewport (if known) is drawn as a box
+on the minimap and listed with what is inside it.`,
     {
       layer: z.string().max(300).optional()
         .describe("Folder path to read ('' or omitted = the root desktop plus a folder list)"),
+      tag: z.string().max(40).optional()
+        .describe('Only list items/lines carrying this #tag (one group, e.g. a sketch you made)'),
     },
-    async ({ layer }) => {
+    async ({ layer, tag }) => {
       if (!projectId) {
         return { content: [{ type: 'text', text: 'No project bound.' }], isError: true };
       }
@@ -64,23 +74,55 @@ been seated appear (freshly produced artifacts get their seat within a second).`
       }
 
       const lines = [];
-      const renderLayer = (l) => {
-        const items = (byLayer.get(l) || []).sort((a, b) =>
-          (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
-        if (!items.length) { lines.push('（这一层还没有摆过的东西）'); return; }
-        let rowY = null;
-        for (const { id, entry } of items) {
-          if (rowY === null || Math.abs(entry.y - rowY) > ROW_TOLERANCE) {
-            rowY = entry.y;
-            lines.push(`— 行 y≈${Math.round(rowY)} —`);
-          }
-          lines.push(describeEntry(id, entry));
-        }
-      };
+      const items = (byLayer.get(want) || [])
+        .filter(({ entry }) => !tag || entry.tag === tag)
+        .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
+      const entryOf = new Map(items.map(it => [it.id, it.entry]));
 
-      lines.push(want ? `文件夹「${want}」的座次：` : '桌面（根层）的座次：');
-      renderLayer(want);
-      if (!want) {
+      // 小地图（用户视口画框）
+      const vp = getViewpoint(projectId);
+      const vpRect = (vp && (vp.layer || '') === want && vp.camera) ? vp.camera : null;
+      const rects = items.map(({ id, entry }) => ({ id, x: entry.x, y: entry.y, ...estimateSizeOn(board, id, entry) }));
+      const mini = asciiMinimap(rects, { viewport: vpRect });
+      const glyphOf = new Map(mini ? mini.legend : []);
+
+      lines.push(want ? `文件夹「${want}」的座次${tag ? `（只看 #${tag}）` : ''}：` : `桌面（根层）的座次${tag ? `（只看 #${tag}）` : ''}：`);
+      if (!items.length) {
+        lines.push('（这一层还没有摆过的东西）');
+      } else {
+        if (mini) {
+          lines.push(`小地图（一格≈${mini.cell}px，左上=(${mini.bbox.x},${mini.bbox.y})，范围 ${mini.bbox.w}x${mini.bbox.h}${vpRect ? '，┌┐└┘ 框=用户视口' : ''}）：`);
+          lines.push(mini.grid);
+        }
+        // 组：连通分量 + tag；≥2 件的才叫组，单件归「散件」按行列
+        const groups = groupObjects(items.map(it => it.id), board.bindings || {}, id => entryOf.get(id)?.tag || null);
+        const real = groups.filter(g => g.members.length >= 2);
+        const loose = groups.filter(g => g.members.length < 2).flatMap(g => g.members);
+        real.forEach((g, i) => {
+          const tags = [...g.tags].map(t => `#${t}`).join(' ');
+          const staging = g.members.every(id => entryOf.get(id)?.staging);
+          lines.push('', `组 ${i + 1}${tags ? ` ${tags}` : ''}（${g.members.length} 件 ${g.edges.length} 线${staging ? '，草稿' : ''}）：`);
+          const sorted = g.members.map(id => ({ id, entry: entryOf.get(id) }))
+            .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
+          for (const { id, entry } of sorted) lines.push(describeEntry(board, id, entry, glyphOf.get(id)));
+          for (const bid of g.edges.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)}`);
+          if (g.edges.length > 12) lines.push(`    …还有 ${g.edges.length - 12} 条线`);
+        });
+        if (loose.length) {
+          lines.push('', real.length ? '散件：' : '');
+          let rowY = null;
+          const sorted = loose.map(id => ({ id, entry: entryOf.get(id) }))
+            .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
+          for (const { id, entry } of sorted) {
+            if (rowY === null || Math.abs(entry.y - rowY) > ROW_TOLERANCE) {
+              rowY = entry.y;
+              lines.push(`— 行 y≈${Math.round(rowY)} —`);
+            }
+            lines.push(describeEntry(board, id, entry, glyphOf.get(id)));
+          }
+        }
+      }
+      if (!want && !tag) {
         const folders = Object.keys(board.zones || {}).sort();
         if (folders.length) {
           lines.push('', `文件夹卡：${folders.map(f => {
@@ -89,12 +131,28 @@ been seated appear (freshly produced artifacts get their seat within a second).`
           }).join('、')}`);
         }
       }
-      if (board.hero) lines.push('', `★ 显式主角：${board.hero}（arrange_on_board 的 feature/unfeature 管它）`);
+      if (board.hero && !tag) lines.push('', `★ 显式主角：${board.hero}（arrange_on_board 的 feature/unfeature 管它）`);
 
-      try {
-        const digest = await relationsDigest(projectId, { limit: 16 });
-        if (digest) lines.push('', '关系线：', digest);
-      } catch { /* 关系读不到不挡座次 */ }
+      // 用户视点（有上报才有）
+      if (vp && !tag) {
+        const inside = vpRect ? rects.filter(r =>
+          !(r.x + r.w < vpRect.x || r.x > vpRect.x + vpRect.w || r.y + r.h < vpRect.y || r.y > vpRect.y + vpRect.h))
+          .map(r => r.id) : [];
+        const bits = [];
+        if (vpRect) bits.push(`视口 (${Math.round(vpRect.x)},${Math.round(vpRect.y)}) ${Math.round(vpRect.w)}x${Math.round(vpRect.h)} 缩放 ${vp.zoom ?? '?'}`);
+        if (vp.openWindow) bits.push(`开着窗：${vp.openWindow}${vp.openPage ? `（${vp.openPage}）` : ''}`);
+        if (vp.selected?.length) bits.push(`选中：${vp.selected.slice(0, 8).join('、')}`);
+        if (inside.length) bits.push(`视口里有：${inside.slice(0, 12).join('、')}${inside.length > 12 ? ' 等' : ''}`);
+        const age = Math.round((Date.now() - (vp.at || 0)) / 1000);
+        lines.push('', `用户此刻（${age}s 前上报）：${bits.join('；') || '只知道在看这一层'}`);
+      }
+
+      if (!tag) {
+        try {
+          const digest = await relationsDigest(projectId, { limit: 16 });
+          if (digest) lines.push('', '关系线：', digest);
+        } catch { /* 关系读不到不挡座次 */ }
+      }
 
       lines.push('', '（口径：稀疏表只列摆过的；层归属为服务端近似；尺寸为形态估算）');
       return { content: [{ type: 'text', text: lines.join('\n') }] };

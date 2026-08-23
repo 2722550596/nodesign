@@ -65,6 +65,9 @@ import { makeRelateOnBoardTool } from './tools/relate-on-board.js';
 import { makeReadBoardTool } from './tools/read-board.js';
 import { makeArrangeOnBoardTool } from './tools/arrange-on-board.js';
 import { makeCreateOnBoardTool } from './tools/create-on-board.js';
+import { makeSketchOnBoardTool, makeFinishSketchTool } from './tools/sketch-on-board.js';
+import { makeLookAtBoardTool } from './tools/look-at-board.js';
+import { makeReadUserViewTool } from './tools/read-user-view.js';
 import { makeOrganizeBoardTool } from './tools/organize-board.js';
 import { makeReadDocumentTool } from './tools/read-document.js';
 import { makeReadTavernJsonTool } from './tools/read-tavern-json.js';
@@ -305,6 +308,11 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       makeArrangeOnBoardTool({ projectId, ctx }),
       makeCreateOnBoardTool({ projectId, ctx }),
       makeOrganizeBoardTool({ projectId, ctx }),
+      // 黑板（2026-08-23）：一次落一整张草图 / 落定或擦掉 / 看一眼 / 用户在看哪
+      makeSketchOnBoardTool({ projectId, ctx }),
+      makeFinishSketchTool({ projectId, ctx }),
+      makeLookAtBoardTool({ projectId, ctx }),
+      makeReadUserViewTool({ projectId }),
 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；

@@ -3,7 +3,8 @@ import { PAPER } from '../../lib/paper.js';
 import { FONT_SANS, FONT_SIZE } from '../../lib/theme.js';
 import {
   BINDING_STYLES, BINDING_ACCENT, bindingStyle,
-  edgePoints, bindingPath, bindingMidpoint,
+  BINDING_MATERIALS, materialOf, bindingGeometry,
+  edgePoints,
 } from '../../lib/board-bindings.js';
 
 /**
@@ -62,11 +63,10 @@ export default function BindingLayer({
       if (!a || !z) continue;                     // 端点当下不可见 → 跳过
       const pts = edgePoints(a, z, 6);
       if (!pts) continue;
-      out.push({
-        id, b, style,
-        d: bindingPath(pts.from, pts.to),
-        mid: bindingMidpoint(pts.from, pts.to),
-      });
+      // 材质轴（2026-08-23）：墨线/手绘/丝线各有各的几何；抖动以线 id 做种子
+      const material = materialOf(b);
+      const geo = bindingGeometry(pts.from, pts.to, material, id);
+      out.push({ id, b, style, material, d: geo.d, mid: geo.mid, from: pts.from, to: pts.to });
     }
     return out;
   }, [bindings, rectOf, epoch]);
@@ -89,11 +89,15 @@ export default function BindingLayer({
         ].filter(Boolean))}
       </defs>
 
-      {drawn.map(({ id, b, style, d, mid }) => {
+      {drawn.map(({ id, b, style, material, d, mid, from, to }) => {
         const hot = hoveredId === id
           || (!!hotEndpointId && (b.from === hotEndpointId || b.to === hotEndpointId));
-        const stroke = hot ? BINDING_ACCENT : style.stroke;
+        const mat = BINDING_MATERIALS[material];
+        const stroke = hot ? BINDING_ACCENT : (mat?.stroke || style.stroke);
+        const width = mat?.width || style.width;
         const suffix = hot ? '-hot' : '';
+        // 草稿态（agent 还在打草稿）：半透明，落定后变实
+        const ghost = b.staging ? 0.5 : 1;
         // 悬停标签补一笔出处：agent 画的线标出来（用户自己画的是默认，不啰嗦）
         const label = (b.label || style.label)
           + (b.by === 'agent' ? ' · agent 画的' : b.by === 'auto' ? ' · 自动' : '');
@@ -106,7 +110,12 @@ export default function BindingLayer({
           || (b.by !== 'auto' && b.type !== 'annotates' ? style.label : null);
         const shownLabel = hot ? label : restLabel;
         return (
-          <g key={id}>
+          <g key={id} style={{ opacity: ghost }}>
+            {/* 丝线的影子：线是绷在纸面上方的，得有一点落影才像实物 */}
+            {material === 'yarn' && (
+              <path d={d} fill="none" stroke="rgba(43,33,23,0.22)" strokeWidth={width + 0.4}
+                strokeLinecap="round" transform="translate(-1.2 2)" />
+            )}
             {/* 命中区：透明粗线，细线也好悬停 */}
             <path
               d={d} fill="none" stroke="transparent" strokeWidth={HIT_W}
@@ -125,13 +134,23 @@ export default function BindingLayer({
             <path
               d={d} fill="none"
               stroke={stroke}
-              strokeWidth={hot ? style.width + 0.6 : style.width}
-              strokeDasharray={style.dash || undefined}
+              strokeWidth={hot ? width + 0.6 : width}
+              // 丝线不走虚线（绳子没有虚的），手绘照语义的线型
+              strokeDasharray={material === 'yarn' ? undefined : (style.dash || undefined)}
               strokeLinecap="round"
-              markerEnd={style.head ? `url(#nd-b-${b.type}-head${suffix})` : undefined}
-              markerStart={style.tail ? `url(#nd-b-${b.type}-tail${suffix})` : undefined}
+              // 丝线两头是图钉不是端头；手绘/墨线照语义端头（丝线语义仍由 label 表达）
+              markerEnd={material !== 'yarn' && style.head ? `url(#nd-b-${b.type}-head${suffix})` : undefined}
+              markerStart={material !== 'yarn' && style.tail ? `url(#nd-b-${b.type}-tail${suffix})` : undefined}
               style={{ transition: 'stroke 0.14s, stroke-width 0.14s' }}
             />
+            {material === 'yarn' && [from, to].map((p, i) => (
+              /* 图钉：深色钉帽 + 高光点，压在线头上 */
+              <g key={i} transform={`translate(${p.x} ${p.y})`}>
+                <circle r={5.2} fill="rgba(43,33,23,0.18)" transform="translate(-0.8 1.4)" />
+                <circle r={4.6} fill={hot ? BINDING_ACCENT : PAPER.red} stroke={PAPER.ink} strokeWidth={0.8} />
+                <circle r={1.3} cx={-1.2} cy={-1.2} fill="rgba(255,255,255,0.75)" />
+              </g>
+            ))}
             {/* 线上的字：手画的线常显（restLabel），悬停放大并补出处。
                 自动线仍是悬停才出 —— 弹幕化的教训写在上面。 */}
             {shownLabel && (

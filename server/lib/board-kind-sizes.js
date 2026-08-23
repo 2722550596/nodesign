@@ -10,6 +10,7 @@
  */
 
 import { KINDS } from './kinds/index.js';
+import { boardHeroId, heroSize } from './board-hero.js';
 
 export const DECK_EMBED_W = 640;
 export const ARTIFACT_HEADER_H = 28;
@@ -59,4 +60,26 @@ export function estimateSize(id, entry) {
   if (VIDEO_EXT.test(s)) return KIND_SIZES.video;
   if (/\.(md|txt)$/i.test(s)) return KIND_SIZES.note;
   return KIND_SIZES.file;
+}
+
+/**
+ * 按**这块板**估尺寸：主角卡（board-hero 的判断）放大 1.5 倍，其余同 estimateSize。
+ * 凡是拿尺寸去避让/取景/列座次的地方都该用它 —— 主角不是特例，是版面常态。
+ * heroId 按 board 对象缓存一次（同一次工具调用里反复问不重算）。
+ */
+const heroCache = new WeakMap();
+export function estimateSizeOn(board, id, entry) {
+  if (entry && Number.isFinite(entry.w) && Number.isFinite(entry.h)) return { w: entry.w, h: entry.h };
+  if (board && typeof board === 'object') {
+    let hero = heroCache.get(board);
+    if (hero === undefined) {
+      hero = boardHeroId(board);
+      heroCache.set(board, hero);
+    }
+    if (hero && hero === id) {
+      const hs = heroSize(id);
+      if (hs) return hs;
+    }
+  }
+  return estimateSize(id, entry);
 }

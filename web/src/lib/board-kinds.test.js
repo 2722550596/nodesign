@@ -302,7 +302,7 @@ describe('SIZES 兼容出口', () => {
  *
  * 前端渲染表（cards/BoardObject.jsx 的 SCRIBBLE_INK，2026-08-13 随卡体从
  * BoardCanvas 搬过去）和服务端白名单
- * （board-store.js 的 sanitizeCanvasData）是两份手写的字符串列表。
+ * （board-sanitize.js 的 sanitizeCanvasData，2026-08-23 从 board-store 拆出）是两份手写的字符串列表。
  * 两边不一致的表现很隐蔽：**"我选了红色，存下来变黑"** —— 不报错、
  * 不失败，只是颜色悄悄回落成 ink。所以钉一条。
  */
@@ -311,7 +311,7 @@ describe('涂鸦墨色词汇表两端一致', () => {
     const fe = await import('fs').then(fs =>
       fs.readFileSync(new URL('../components/canvas/cards/BoardObject.jsx', import.meta.url), 'utf8'));
     const be = await import('fs').then(fs =>
-      fs.readFileSync(new URL('../../../server/projects/board-store.js', import.meta.url), 'utf8'));
+      fs.readFileSync(new URL('../../../server/projects/board-sanitize.js', import.meta.url), 'utf8'));
 
     // 提取不依赖排版：写成一行还是一行一个键都认得（2026-08-13 栽过 ——
     // 卡体搬文件时顺手写成一行，断言只捞到第一个键，失败信息还挺唬人）

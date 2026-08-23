@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  BINDING_MATERIAL_IDS, materialOf, bindingGeometry,
   BINDING_STYLES, BINDING_STYLE_IDS, bindingStyle,
   edgePoints, bindingPath, bindingMidpoint,
 } from './board-bindings.js';
-import { BINDING_TYPES, BINDING_TYPE_IDS, isBindingType } from '../../../server/lib/binding-types.js';
+import { BINDING_TYPES, BINDING_TYPE_IDS, isBindingType, BINDING_MATERIALS as SERVER_MATERIALS } from '../../../server/lib/binding-types.js';
 
 /**
  * 关系线：语义表（服务端，校验方）与视觉表（前端，渲染方）的一致性 + 几何。
@@ -126,5 +127,29 @@ describe('路径与标签位', () => {
   it('零长度不炸（同点）', () => {
     expect(() => bindingPath({ x: 5, y: 5 }, { x: 5, y: 5 })).not.toThrow();
     expect(() => bindingMidpoint({ x: 5, y: 5 }, { x: 5, y: 5 })).not.toThrow();
+  });
+});
+
+describe('材质轴 parity（2026-08-23 黑板）', () => {
+  it('前端材质表与服务端 BINDING_MATERIALS 一一对应', () => {
+    expect([...BINDING_MATERIAL_IDS].sort()).toEqual([...SERVER_MATERIALS].sort());
+  });
+  it('缺省材质是 ink；未知材质回落 ink', () => {
+    expect(materialOf({})).toBe('ink');
+    expect(materialOf({ material: 'lava' })).toBe('ink');
+    expect(materialOf({ material: 'yarn' })).toBe('yarn');
+  });
+  it('手绘抖动按 seed 确定；丝线往 +y 垂', () => {
+    const a = { x: 0, y: 0 }; const b = { x: 300, y: 0 };
+    const g1 = bindingGeometry(a, b, 'pencil', 'b:1');
+    const g2 = bindingGeometry(a, b, 'pencil', 'b:1');
+    const g3 = bindingGeometry(a, b, 'pencil', 'b:2');
+    expect(g1.d).toBe(g2.d);
+    expect(g1.d).not.toBe(g3.d);
+    const y = bindingGeometry(a, b, 'yarn');
+    expect(y.mid.y).toBeGreaterThan(0);
+    // 两端不抖：端头要贴卡边
+    expect(g1.d.startsWith('M 0 0 ')).toBe(true);
+    expect(g1.d.trim().endsWith('300 0')).toBe(true);
   });
 });

@@ -1,0 +1,238 @@
+/**
+ * server/projects/board-sanitize.js — board.json 的校验/清洗（2026-08-23 从 board-store 拆出）
+ *
+ * 纯函数，不碰磁盘不碰锁。board-store 是唯一读写方，读进来先过这里、写出去前
+ * 也过这里；字段的白名单与上限全在这一份。拆出来只是因为 board-store 胖过了
+ * 行数棘轮，语义一个字没改。
+ *
+ * schema 见 board-store 头注释。黑板字段（2026-08-23）：
+ *   object.tag / object.staging / text.data.format
+ *   binding.material / binding.tag / binding.staging
+ */
+
+import { isBindingType, isBindingMaterial } from '../lib/binding-types.js';
+import { DEFAULT_BOARD_SIZE, MAX_OBJECTS, MAX_ZONES, MAX_BINDINGS } from './board-limits.js';
+
+export function clampNum(v, min, max, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+export function sanitizeSize(raw) {
+  return {
+    w: clampNum(raw?.w, 1000, 20000, DEFAULT_BOARD_SIZE.w),
+    h: clampNum(raw?.h, 800, 20000, DEFAULT_BOARD_SIZE.h),
+  };
+}
+
+/**
+ * **画布原生**物件的形态白名单。
+ *
+ * 绝大多数画布物件是磁盘产物的影子：board.json 只存它摆在哪，本体是文件
+ * （所以 agent 读得到、能进上下文、删文件即消失）。涂鸦不一样 —— 它没有
+ * 有意义的文件形态，board.json 就是它的**本体**。这类物件必须显式登记，
+ * 否则任何人往 objects 里塞一个 kind 就能造出一个不受形态表管的东西。
+ *
+ * 2026-08-08 加进 `text`。在那之前画布上打的字一律落成 `.md` 便签，理由是
+ * "agent 读得到"。但用户要的是**白板**：在工程文件旁边随手写一句、画一笔，
+ * 那是给自己的记号，不是给 agent 的输入。想让 agent 看见的写便利贴 ——
+ * 那条路还在，挪到了右键菜单里。
+ */
+const CANVAS_NATIVE_KINDS = new Set(['scribble', 'text']);
+
+/**
+ * 坐标夹持上限。画布 2026-08-13 起全向无限，坐标不再由 board.size 夹住 ——
+ * 这个数只挡非有限值和纯属事故的数字（±100 万世界像素之外没有正常操作能到）。
+ */
+const COORD_LIMIT = 1e6;
+
+/** 涂鸦路径串上限。一条随手画的线约 300~800 字符，8000 够长且撑不爆 board.json */
+const MAX_SCRIBBLE_PATH = 8000;
+/**
+ * 画布文字的字数上限。
+ *
+ * 它是"写在白板上的一句话"，不是文档 —— 长东西该写成 .md（那是便利贴，
+ * agent 读得到）。2000 字够写一段说明，也撑不爆 board.json。
+ */
+const MAX_TEXT_LEN = 2000;
+/**
+ * md 档文字的上限（2026-08-23 黑板）。画布上的 markdown/KaTeX/mermaid 节点比手写
+ * 一句话长，但它仍是"黑板上的一块"不是文档 —— 想写长的走 .md。
+ */
+const MAX_MD_TEXT_LEN = 4000;
+/** 文字的排版格式：plain = 原样手写；md = Markdown（含 KaTeX 与 mermaid 围栏） */
+const TEXT_FORMATS = ['plain', 'md'];
+/**
+ * 分组标签（2026-08-23 黑板）：物件和线都可以带。它**不是几何容器**，只是一个
+ * 字段 —— 读侧按它过滤、渲染侧按它画包络、staging 落定按它成批。字符集收紧
+ * 是因为它会进 DOM 属性和 URL 查询串。
+ */
+const TAG_RE = /^[\w\u4e00-\u9fff\u3040-\u30ff-]{1,40}$/;
+export function sanitizeTag(v) {
+  return typeof v === 'string' && TAG_RE.test(v) ? v : null;
+}
+
+/** 画布文字可选的字体。**白名单而不是自由字符串** —— 这个值会进 CSS */
+export const TEXT_FONTS = ['pen', 'kai', 'sans', 'serif', 'mono'];
+const TEXT_SIZES = ['sm', 'md', 'lg', 'xl'];
+
+/**
+ * 变换字段（2026-08-13，选中态控制器）。缺省不落字段 —— 没转过没缩过的物件
+ * 别背两个恒等值，board.json 的 diff 要能一眼看出"谁被动过"。
+ */
+function sanitizeTransform(data) {
+  const out = {};
+  const rot = Number(data?.rotation);
+  if (Number.isFinite(rot) && rot !== 0) out.rotation = clampNum(rot, -360, 360, 0);
+  const sc = Number(data?.scale);
+  if (Number.isFinite(sc) && sc !== 1) out.scale = clampNum(sc, 0.2, 10, 1);
+  return out;
+}
+
+function sanitizeCanvasData(kind, data) {
+  if (kind === 'text') {
+    const format = TEXT_FORMATS.includes(data?.format) ? data.format : 'plain';
+    const max = format === 'md' ? MAX_MD_TEXT_LEN : MAX_TEXT_LEN;
+    const t = typeof data?.t === 'string' ? data.t.slice(0, max) : '';
+    if (!t.trim()) return null;
+    return {
+      t,
+      // plain 不落字段：存量条目全是 plain，别让 diff 里凭空多一行
+      ...(format === 'md' ? { format } : {}),
+      font: TEXT_FONTS.includes(data?.font) ? data.font : 'kai',
+      size: TEXT_SIZES.includes(data?.size) ? data.size : 'md',
+      color: ['ink', 'red', 'pencil', 'brass'].includes(data?.color) ? data.color : 'ink',
+      ...sanitizeTransform(data),
+    };
+  }
+  if (kind !== 'scribble') return null;
+  const d = typeof data?.d === 'string' ? data.d.slice(0, MAX_SCRIBBLE_PATH) : '';
+  // 只收 SVG path 里合法的那几个字符，挡住任何往 DOM 里塞东西的尝试
+  if (!d || !/^[\dMLQCZ ,.\-eE]+$/.test(d)) return null;
+  return {
+    d,
+    color: ['ink', 'red', 'pencil', 'brass'].includes(data.color) ? data.color : 'ink',
+    width: clampNum(data.width, 1, 24, 2),
+    ...sanitizeTransform(data),
+  };
+}
+
+export function sanitizeObject(o, size) {
+  if (!o || typeof o !== 'object') return null;
+  const kind = typeof o.kind === 'string' && CANVAS_NATIVE_KINDS.has(o.kind) ? o.kind : null;
+  const data = kind ? sanitizeCanvasData(kind, o.data) : null;
+  // 登记了 kind 却给不出合法内容 → 整条丢弃。留一个空壳会在画布上变成
+  // 一个看不见也删不掉的幽灵物件。
+  if (kind && !data) return null;
+  return {
+    // 画布 2026-08-13 起全向无限：坐标不再被桌面尺寸夹持（原来非 native 只许
+    // 正区间、native 也出不了 ±size）。这里只挡非有限值和纯属事故的数字 ——
+    // 夹得再紧一点都意味着"用户摆在那儿的东西刷新后跳走"，那是静默数据损坏。
+    x: clampNum(o.x, -COORD_LIMIT, COORD_LIMIT, 0),
+    y: clampNum(o.y, -COORD_LIMIT, COORD_LIMIT, 0),
+    z: clampNum(o.z, 0, 1e6, 0),
+    ...(Number.isFinite(Number(o.w)) ? { w: clampNum(o.w, 4, COORD_LIMIT, 200) } : {}),
+    ...(Number.isFinite(Number(o.h)) ? { h: clampNum(o.h, 4, COORD_LIMIT, 200) } : {}),
+    ...(o.expanded ? { expanded: true } : {}),
+    // 显式归属：'' = 明确无归属（覆盖 sid 派生），非空 = 所属工作区 id
+    ...(typeof o.zone === 'string' && o.zone.length <= 300 ? { zone: o.zone } : {}),
+    // 出处（2026-08-14 agent 摆位/建元素）：agent 落的座/写的字标出来，
+    // 用户的是默认不标 —— 跟关系线的 by 同一条纪律
+    ...(o.by === 'agent' ? { by: 'agent' } : {}),
+    // 分组标签 + 草稿位（2026-08-23 黑板）。staging = agent 这一轮还在打草稿：
+    // 入座不看它、read_board 默认不列它、画面上半透明；落定（commitStaging）清位。
+    ...(sanitizeTag(o.tag) ? { tag: sanitizeTag(o.tag) } : {}),
+    ...(o.staging === true ? { staging: true } : {}),
+    ...(kind ? { kind, data } : {}),
+  };
+}
+
+/**
+ * 关系线。**不存坐标** —— 端点是 object id 或 zone id，线跟着端点走。
+ *
+ * 词汇表在 `server/lib/binding-types.js`（前端画线那份视觉映射要跟它对齐，
+ * 有 parity 断言看着）。不认识的 type 一律丢弃：宁可少画一条线，也不要在
+ * 画布上留一条没人知道什么意思的连线。
+ *
+ * 自环（from === to）也丢：它画不出来，且多半是 agent 传错了 id。
+ */
+export function sanitizeBinding(b) {
+  if (!b || typeof b !== 'object') return null;
+  if (!isBindingType(b.type)) return null;
+  const from = typeof b.from === 'string' ? b.from.slice(0, 300) : '';
+  const to = typeof b.to === 'string' ? b.to.slice(0, 300) : '';
+  if (!from || !to || from === to) return null;
+  return {
+    type: b.type,
+    from,
+    to,
+    // 线上的字。没写就渲染时回落到词汇表的默认词，不在这里补 —— 存了默认词
+    // 之后改词汇表就改不动存量了。
+    ...(typeof b.label === 'string' && b.label.trim()
+      ? { label: b.label.trim().slice(0, 60) }
+      : {}),
+    // 谁画的。用户画的线 agent 不该擅自删，反过来也一样；auto = 机器可证的
+    // 引用关系（auto-relations.js 对账层专属，只有它增删自家 b:auto:* 条目）。
+    ...(b.by === 'agent' || b.by === 'user' || b.by === 'auto' ? { by: b.by } : {}),
+    // 材质（2026-08-23 黑板）：语义之外的第二个轴 —— 墨线/手绘/丝线。不落默认值，
+    // 渲染侧按语义给缺省材质；存了默认值以后改缺省就改不动存量。
+    ...(isBindingMaterial(b.material) && b.material !== 'ink' ? { material: b.material } : {}),
+    ...(sanitizeTag(b.tag) ? { tag: sanitizeTag(b.tag) } : {}),
+    ...(b.staging === true ? { staging: true } : {}),
+  };
+}
+
+/**
+ * zones 一行只剩坐标（2026-08-13 瘦身，#14）。
+ *
+ * 逐字段的下场：
+ * - `w`/`h` —— 文件夹变方卡后前端视图**强制** FOLDER_CARD 尺寸，存的数字
+ *   没人读，还会成为"画布上 288 宽、存档里 1340"那种自相矛盾的证据。
+ * - `title` —— 名字从路径读（id 就是路径），存一份就是第二个真相源，
+ *   改名后立刻过期（实测过）。
+ * - `collapsed` —— 收起/展开两态 2026-08-13 随"当前目录"模型退役。
+ * - `pinned` —— 纵向堆叠 2026-08-08 退役，字段没有了对立面。
+ * 存量数据里这些字段读进来直接丢，下次写盘自然消失。
+ */
+export function sanitizeZone(z) {
+  if (!z || typeof z !== 'object') return null;
+  return {
+    // 同 sanitizeObject：无限画布，文件夹卡也能摆在任何地方（含负坐标）
+    x: clampNum(z.x, -COORD_LIMIT, COORD_LIMIT, 0),
+    y: clampNum(z.y, -COORD_LIMIT, COORD_LIMIT, 0),
+  };
+}
+
+export function sanitizeBoard(raw) {
+  const size = sanitizeSize(raw?.size);
+  const objects = {};
+  const zones = {};
+  const bindings = {};
+  let count = 0;
+  for (const [id, o] of Object.entries(raw?.objects && typeof raw.objects === 'object' ? raw.objects : {})) {
+    if (count >= MAX_OBJECTS) break;
+    if (typeof id !== 'string' || id.length > 300) continue;
+    const s = sanitizeObject(o, size);
+    if (s) { objects[id] = s; count += 1; }
+  }
+  let zCount = 0;
+  for (const [id, z] of Object.entries(raw?.zones && typeof raw.zones === 'object' ? raw.zones : {})) {
+    if (zCount >= MAX_ZONES) break;
+    if (typeof id !== 'string' || id.length > 300) continue;
+    const s = sanitizeZone(z);
+    if (s) { zones[id] = s; zCount += 1; }
+  }
+  let bCount = 0;
+  for (const [id, b] of Object.entries(raw?.bindings && typeof raw.bindings === 'object' ? raw.bindings : {})) {
+    if (bCount >= MAX_BINDINGS) break;
+    if (typeof id !== 'string' || id.length > 300) continue;
+    const s = sanitizeBinding(b);
+    if (s) { bindings[id] = s; bCount += 1; }
+  }
+  // 主角覆盖（2026-08-14 agent 摆位）：显式立的主角压过前端 pickHero 的推断。
+  // 存 id 不存理由 —— 理由在会话里，画布只要知道谁站 C 位
+  const hero = typeof raw?.hero === 'string' && raw.hero.length <= 300 ? raw.hero : null;
+  return { size, zones, objects, bindings, ...(hero ? { hero } : {}) };
+}
+

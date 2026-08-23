@@ -78,6 +78,7 @@ import { autoNameProjectFromSession } from '../../projects/auto-name.js';
 // getUserById/levelFor 是 main 的每用户内容尺度旋钮（78ceaac）；
 // main 的 listTasks 已随任务层退役，不再引入
 import { commitTaskWorkspace, commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
+import { commitStaging } from '../../projects/board-store.js';
 import { taskManifest } from '../../lib/artifact-target.js';
 import { getUserById } from '../../auth/users-store.js';
 import { can, defaultModerationLevel } from '../../auth/tier.js';
@@ -726,6 +727,16 @@ export async function runSession({
     // commit 前面，改名这一轮就漏掉了。
     await commitWorkspace(projectId, sessionId, `turn ${status}: ${new Date().toISOString()}`, { author: 'agent' })
       .catch((err) => console.warn('[git] turn commit failed:', err.message));
+
+    // 黑板草稿兜底落定（2026-08-23）：agent 这一轮 sketch_on_board 留下的 staging
+    // 物件，没调 finish_sketch 也在回合结束时变实 —— 草稿态是"正在画"的信号，
+    // 回合都结束了还半透明就是幽灵。取消/出错同样落定：画了就是画了。
+    if (projectId) {
+      try {
+        const { committed } = await commitStaging(projectId);
+        if (committed > 0) sharedCtx.emit({ type: 'board.updated', sessionId: null, summary: `黑板草稿落定 ${committed} 件` });
+      } catch (err) { console.warn('[board] commitStaging failed:', err.message); }
+    }
 
     activeTurnRunId = null;
     turnStartedAt = 0;

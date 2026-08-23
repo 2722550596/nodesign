@@ -18,7 +18,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { readBoard, patchBoard, TEXT_FONTS } from '../../../projects/board-store.js';
-import { estimateSize } from '../../../lib/board-kind-sizes.js';
+import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { normalizeCanvasId, layerOf } from '../../../lib/canvas-id.js';
 
 const MAX_PER_TURN = 4;
@@ -89,12 +89,12 @@ and not for documents (write a .md instead). Hard cap: ${MAX_PER_TURN} notes per
           return err(`锚点 ${rawNear} 还没有座位（read_board 里看不到就锚不上）。`);
         }
         zone = layerOf(near, anchorEntry, known);
-        const aSize = estimateSize(near, anchorEntry);
+        const aSize = estimateSizeOn(board, near, anchorEntry);
         pos = { x: Math.round(anchorEntry.x + aSize.w + 24), y: Math.round(anchorEntry.y) };
         // 撞卡往下让（同 arrange 的避让）
         const obstacles = Object.entries(board.objects || {})
           .filter(([id, e]) => Number.isFinite(e?.x) && layerOf(id, e, known) === zone)
-          .map(([id, e]) => ({ ...estimateSize(id, e), x: e.x, y: e.y }));
+          .map(([id, e]) => ({ ...estimateSizeOn(board, id, e), x: e.x, y: e.y }));
         for (let g = 0; g < 40; g += 1) {
           const blocker = obstacles.find(o =>
             !(pos.x + box.w <= o.x || o.x + o.w <= pos.x || pos.y + box.h <= o.y || o.y + o.h <= pos.y));
@@ -106,7 +106,7 @@ and not for documents (write a .md instead). Hard cap: ${MAX_PER_TURN} notes per
         let bottom = 0;
         for (const [id, e] of Object.entries(board.objects || {})) {
           if (!Number.isFinite(e?.y) || layerOf(id, e, known) !== '') continue;
-          bottom = Math.max(bottom, e.y + estimateSize(id, e).h);
+          bottom = Math.max(bottom, e.y + estimateSizeOn(board, id, e).h);
         }
         for (const zz of Object.values(board.zones || {})) {
           if (Number.isFinite(zz?.y)) bottom = Math.max(bottom, zz.y + 150);

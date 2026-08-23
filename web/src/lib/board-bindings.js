@@ -161,3 +161,117 @@ export function bindingMidpoint(from, to, bow = 0.14, maxBow = 46) {
     y: 0.25 * from.y + 0.5 * cy + 0.25 * to.y,
   };
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * 材质轴（2026-08-23 黑板）—— 与语义正交的第二个轴
+ *
+ * 语义类型管"这条线是什么意思"（label / 端头 / affinity），材质管"它是用什么
+ * 画的"。整块画布是一张侦探板：版面线安静地用墨线归档，推理中的关系拿丝线
+ * 和图钉压着，人顺手拉的一笔是铅笔。三种材质谁都能用（用户/agent 都可以
+ * 选），缺省由语义给：存档里不写 material 就是 ink。
+ *
+ * 服务端 `server/lib/binding-types.js` 的 BINDING_MATERIALS 是校验方，两份 id
+ * 必须一一对应（board-bindings.test.js 有 parity 断言）。
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export const BINDING_MATERIALS = {
+  ink:    { label: '墨线' },
+  pencil: { label: '手绘' },
+  yarn:   { label: '丝线', stroke: PAPER.red, width: 2.6 },
+};
+export const BINDING_MATERIAL_IDS = Object.keys(BINDING_MATERIALS);
+
+export function materialOf(b) {
+  return BINDING_MATERIALS[b?.material] ? b.material : 'ink';
+}
+
+/** 字符串 → 32 位种子（FNV-1a）。抖动要稳定：同一条线每次渲染抖在同一处 */
+function hashSeed(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i += 1) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+/** mulberry32 —— 够用的确定性随机 */
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 二次贝塞尔上取点 */
+function qPoint(p0, c, p1, t) {
+  const u = 1 - t;
+  return {
+    x: u * u * p0.x + 2 * u * t * c.x + t * t * p1.x,
+    y: u * u * p0.y + 2 * u * t * c.y + t * t * p1.y,
+  };
+}
+
+/**
+ * 手绘线：沿原本那条微拱的贝塞尔采样成折线，每个采样点沿法线抖一点。
+ * 抖幅随线长微增但封顶（长线抖 1.6px 已经像手画了，再大就像心电图）。
+ * 返回 { d, mid }。
+ */
+function pencilGeometry(from, to, seed) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const lift = Math.min(dist * 0.14, 46);
+  const c = { x: (from.x + to.x) / 2 + (-dy / dist) * lift, y: (from.y + to.y) / 2 + (dx / dist) * lift };
+  const nx = -dy / dist; const ny = dx / dist;
+  const rand = rng(seed);
+  const segs = Math.max(6, Math.min(28, Math.round(dist / 22)));
+  const amp = Math.min(1.6, 0.6 + dist / 400);
+  const pts = [];
+  for (let i = 0; i <= segs; i += 1) {
+    const t = i / segs;
+    const p = qPoint(from, c, to, t);
+    // 两端不抖：端头要贴着卡边
+    const w = (i === 0 || i === segs) ? 0 : amp * (rand() * 2 - 1);
+    pts.push({ x: p.x + nx * w, y: p.y + ny * w });
+  }
+  // 用 Catmull-Rom 转三次贝塞尔让折线圆滑一点，不然像锯齿
+  let d = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
+    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
+    d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${p2.x} ${p2.y}`;
+  }
+  return { d, mid: qPoint(from, c, to, 0.5) };
+}
+
+/**
+ * 丝线：两颗图钉之间绷着的线会往下垂（重力朝 +y，不管两点怎么摆）。
+ * 垂度取线长的一个小比例并封顶；近乎竖直的线几乎不垂（绷直了）。
+ */
+function yarnGeometry(from, to) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const horiz = Math.abs(dx) / dist;          // 越横越垂
+  const sag = Math.min(dist * 0.11, 56) * (0.25 + 0.75 * horiz);
+  const c = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 + sag };
+  return { d: `M ${from.x} ${from.y} Q ${c.x} ${c.y} ${to.x} ${to.y}`, mid: qPoint(from, c, to, 0.5) };
+}
+
+/**
+ * 一条线的几何 —— 按材质派发。ink 走原来的 bindingPath/bindingMidpoint。
+ * @returns {{ d: string, mid: {x:number,y:number} }}
+ */
+export function bindingGeometry(from, to, material, seedKey = '') {
+  if (material === 'pencil') return pencilGeometry(from, to, hashSeed(seedKey));
+  if (material === 'yarn') return yarnGeometry(from, to);
+  return { d: bindingPath(from, to), mid: bindingMidpoint(from, to) };
+}

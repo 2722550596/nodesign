@@ -19,7 +19,7 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { patchBoard } from '../../../projects/board-store.js';
-import { BINDING_TYPES, BINDING_TYPE_IDS } from '../../../lib/binding-types.js';
+import { BINDING_TYPES, BINDING_TYPE_IDS, BINDING_MATERIALS } from '../../../lib/binding-types.js';
 
 /** 词汇表渲染成工具描述里的一段表，免得两处各写各的 */
 const VOCAB = BINDING_TYPE_IDS
@@ -63,8 +63,10 @@ where the files live.`,
       to: z.string().min(1).max(300).describe('Target canvas id — see forms above'),
       label: z.string().max(60).optional()
         .describe('Optional short words on the line. Omit to use the default for the type.'),
+      material: z.enum(BINDING_MATERIALS).optional()
+        .describe('How the line is drawn (orthogonal to type): ink = quiet archive line (default); pencil = hand-drawn; yarn = detective red string with pins, for hypotheses/evidence while reasoning. The whole canvas is a detective board — use yarn when the relation is still being argued, ink when it is settled.'),
     },
-    async ({ type, from, to, label }) => {
+    async ({ type, from, to, label, material }) => {
       if (!projectId) {
         return { content: [{ type: 'text', text: 'No project bound; cannot draw relationships.' }], isError: true };
       }
@@ -76,7 +78,7 @@ where the files live.`,
       }
       const id = nextId();
       // by:'agent' 不只是记录出处 —— 用户画的线 agent 不该擅自删，反过来也一样
-      const binding = { type, from, to, by: 'agent', ...(label ? { label } : {}) };
+      const binding = { type, from, to, by: 'agent', ...(label ? { label } : {}), ...(material && material !== 'ink' ? { material } : {}) };
       const board = await patchBoard(projectId, { bindings: { [id]: binding } });
 
       // 服务端会丢掉非法的线（未知 type / 自环）。**丢了要说**，否则 agent 以为

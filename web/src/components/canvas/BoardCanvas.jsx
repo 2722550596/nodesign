@@ -21,6 +21,9 @@ import FolderCard from './cards/FolderCard.jsx';
 import TransformControls from './TransformControls.jsx';
 import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
+import { useViewpointReport } from './useViewpointReport.js';
+import { submitLinkPop, deleteLinkPop } from './link-pop-actions.js';
+import { eyeParams, useEyeMode } from './eye-mode.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
@@ -111,6 +114,8 @@ export default function BoardCanvas({
   stageRef,
   // 编辑窗开着时 ESC 归它（关窗），画布不抢
   deckOpen = false,
+  /** 开着哪扇产物窗（CanvasFrame 算的描述串，如 deck:主稿.html）—— 只用于视点上报 */
+  openWindow = null,
   /**
    * 「让 agent 在这儿做点什么」——**画布里的 agent 入口**（2026-08-08）。
    *
@@ -667,6 +672,15 @@ export default function BoardCanvas({
   const scale = cam.z;
   scaleRef.current = scale;
   camApiRef.current = camera;
+
+  // 用户视点上报（2026-08-23 黑板）：相机/窗/选中变了就告诉服务端（节流）。
+  // 眼睛模式（agent 的 look_at_board 开的页）不上报 —— 那不是用户在看。
+  const eye = eyeParams();
+  useViewpointReport({
+    projectId, cam, viewport: camera.viewport, layer: winDir || '',
+    openWindow: winDir ? `folder:${winDir}` : openWindow, selectedIds, enabled: !eye,
+  });
+  useEyeMode({ eye, camRef: camApiRef, positionedRef });
 
   // ── 画布工具（选择 / 文字 / 笔 / 评论）────────────────────────────────
   //
@@ -1831,7 +1845,7 @@ export default function BoardCanvas({
                 x: cx, y: cy, mode: 'edit', bindingId: bid,
                 from: { id: b.from, title: titleOfId(b.from) },
                 to: { id: b.to, title: titleOfId(b.to) },
-                type: b.type, label: b.label || '',
+                type: b.type, label: b.label || '', material: b.material || 'ink',
               });
             }}
           />
@@ -1994,25 +2008,9 @@ export default function BoardCanvas({
           x={linkPop.x} y={linkPop.y} mode={linkPop.mode}
           fromTitle={linkPop.from.title} toTitle={linkPop.to.title}
           initialType={linkPop.type || 'link'} initialLabel={linkPop.label || ''}
-          onSubmit={({ type, label }) => {
-            if (linkPop.mode === 'edit') {
-              const old = bindings[linkPop.bindingId];
-              if (!old) return;
-              const b = { ...old, type, by: old.by || 'user' };
-              if (label) b.label = label; else delete b.label;
-              setBindings(prev => ({ ...prev, [linkPop.bindingId]: b }));
-              Assets.patchBoard(projectId, { bindings: { [linkPop.bindingId]: b } }).catch(() => {});
-            } else {
-              const id = `b:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
-              const b = { type, from: linkPop.from.id, to: linkPop.to.id, by: 'user', ...(label ? { label } : {}) };
-              setBindings(prev => ({ ...prev, [id]: b }));
-              Assets.patchBoard(projectId, { bindings: { [id]: b } }).catch(() => {});
-            }
-          }}
-          onDelete={linkPop.mode === 'edit' ? (() => {
-            setBindings(prev => { const n = { ...prev }; delete n[linkPop.bindingId]; return n; });
-            Assets.patchBoard(projectId, { bindings: { [linkPop.bindingId]: null } }).catch(() => {});
-          }) : null}
+          initialMaterial={linkPop.material || 'ink'}
+          onSubmit={(r) => submitLinkPop({ linkPop, bindings, setBindings, projectId }, r)}
+          onDelete={linkPop.mode === 'edit' ? (() => deleteLinkPop({ linkPop, setBindings, projectId })) : null}
           onClose={() => setLinkPop(null)}
         />
       )}

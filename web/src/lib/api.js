@@ -253,6 +253,10 @@ export const Assets = {
   putBoard: (pid, board) => jsonRequest('PUT', `/api/projects/${pid}/board`, { board }),
   /** diff 合并写：{ size?, objects?: {id: obj|null}, zones?: {id: zone|null} }，null=删 */
   patchBoard: (pid, patch) => jsonRequest('PATCH', `/api/projects/${pid}/board`, { patch }),
+  /** 黑板（2026-08-23）：用户视点上报 / 草稿落定 / 按标签整组擦 */
+  reportViewpoint: (pid, viewpoint) => jsonRequest('POST', `/api/projects/${pid}/viewpoint`, { viewpoint }),
+  commitBoard: (pid, tag = null) => jsonRequest('POST', `/api/projects/${pid}/board/commit`, { tag }),
+  eraseBoardTag: (pid, tag) => jsonRequest('POST', `/api/projects/${pid}/board/erase`, { tag }),
   /**
    * 产物文件 URL（project 级，不依赖 session）。
    * relPath 是 artifacts 返回的 agent 视角路径，相对项目工作区根原样传递。

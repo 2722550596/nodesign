@@ -12,7 +12,8 @@
 import express from 'express';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
-import { readBoard, replaceBoard, patchBoard } from '../projects/board-store.js';
+import { readBoard, replaceBoard, patchBoard, commitStaging, removeByTag } from '../projects/board-store.js';
+import { setViewpoint } from '../projects/viewpoint-store.js';
 
 const router = express.Router();
 
@@ -52,6 +53,39 @@ router.put('/:pid/board', express.json({ limit: '600kb' }), async (req, res, nex
     if (err?.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
+});
+
+/**
+ * 用户视点上报（2026-08-23 黑板）：前端节流 POST，服务端只留最近一份。
+ * 不广播、不落盘；失败也不该打扰用户（前端 fire-and-forget）。
+ */
+router.post('/:pid/viewpoint', express.json({ limit: '16kb' }), async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const v = setViewpoint(req.params.pid, req.body?.viewpoint, req.user?.id || null);
+    res.json({ ok: !!v });
+  } catch (err) { next(err); }
+});
+
+/** 草稿落定（用户也可以按组落定：黑板上 agent 的草稿半透明，点一下变实） */
+router.post('/:pid/board/commit', express.json({ limit: '16kb' }), async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const tag = typeof req.body?.tag === 'string' ? req.body.tag : null;
+    const { board, committed } = await commitStaging(req.params.pid, { tag });
+    res.json({ ok: true, committed, board });
+  } catch (err) { next(err); }
+});
+
+/** 黑板擦：按 #tag 整组删（只删画布原生物件与线；产物卡只摘标签） */
+router.post('/:pid/board/erase', express.json({ limit: '16kb' }), async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const tag = typeof req.body?.tag === 'string' ? req.body.tag : '';
+    if (!tag) return res.status(400).json({ error: 'tag required' });
+    const { board, removed } = await removeByTag(req.params.pid, tag);
+    res.json({ ok: true, removed, board });
+  } catch (err) { next(err); }
 });
 
 export default router;
