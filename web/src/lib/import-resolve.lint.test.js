@@ -141,7 +141,8 @@ describe('import 路径可解析', () => {
     }
     expect(broken, `这些 import 指向不存在的文件（生产会 ERR_MODULE_NOT_FOUND 起不来）:\n${broken.join('\n')}`)
       .toEqual([]);
-  });
+    // 全仓 babel 解析，耗时跟着代码量长；默认 5 秒在忙的时候不够（跟 no-undef.lint 同一惯例）
+  }, 60_000);
 
   it('⭐ 具名导入的名字在目标模块里真的导出了（路径对不代表名字对）', () => {
     const missing = [];
@@ -176,5 +177,5 @@ describe('import 路径可解析', () => {
     }
     expect(missing, `这些具名导入的名字目标模块没导出（生产会 SyntaxError 起不来）:\n${missing.join('\n')}`)
       .toEqual([]);
-  });
+  }, 60_000);
 });

@@ -1,3 +1,5 @@
+**简体中文** | [English](https://github.com/Xiaokebuyu/Nodesign/blob/main/README.en.md)
+
 # NoDesign
 
 一张无限画布，一个始终在场的 Agent。
@@ -127,7 +129,7 @@ Agent 不只是把做完的产物放上画布，也把想法放上去。它会�
 
 ## 项目状态
 
-个人项目，2026 年 4 月底起步，目前仍在快速迭代。本地发行版当前是 `0.0.3`，核心功能已在内测中稳定使用。
+个人项目，2026 年 4 月底起步，目前仍在快速迭代。本地发行版当前是 `0.0.4`，核心功能已在内测中稳定使用。
 
 ### 功能
 
@@ -180,26 +182,3 @@ npm test                    # server 测试 + web 测试
 ## 许可
 
 AGPL-3.0。可以使用，可以修改，可以自行部署。对外提供服务时，修改需要一并开源。
-
----
-
-## English overview
-
-**NoDesign** is an agent workbench for independent creators. An infinite canvas serves as your workspace: describe what you want, and the agent builds websites, slide decks, images, video and Word documents as real files on disk, right on the canvas. You can edit text in place, circle a region and annotate, drag elements around, and draw relations between cards. The agent picks all of that up on its next turn.
-
-```bash
-npx @xiaobuyu/nodesign
-```
-
-Requires Node.js 20+ and at least one model provider: a Claude subscription (`npx @xiaobuyu/nodesign login`), an Anthropic API key, or any OpenAI-compatible endpoint (DeepSeek, OpenAI, OpenRouter, local Ollama, etc.). Runs on your machine with your own key. No subscription fee, no markup on model calls. Project files stay local; when using cloud models, task context is sent to the provider you configured. A hosted instance is available at [nodesign.xiaobuyu.trade](https://nodesign.xiaobuyu.trade) for trying it without installing.
-
-What makes it different from a chat interface:
-
-- **The canvas is a real workspace.** Every card is a file, every folder is a directory. Dragging a card into a folder actually moves the file on disk.
-- **The agent is present.** It appears next to the card it's editing, and you can see code being written in real time.
-- **The canvas is also a blackboard.** The agent sketches its plan onto the canvas, writes notes as real markdown files, and draws lines between the things they refer to. You can edit any of it in place.
-- **Your actions feed back.** Direct text edits, region selections, element dragging, and relation lines ("reference", "annotate", "continue") all become context for the next turn.
-- **The agent inspects its own work.** It captures screenshots at different viewport widths, reads computed styles, console errors, font loading status, and animation filmstrips, then continues editing based on what it finds.
-- **Memory is visible.** Decisions, style notes, and preferences live in the workspace as editable content, and can be crystallized into reusable Skills.
-
-Personal project, started late April 2026, actively developed. Version 0.0.3 is the current local release. 1021 Vitest cases as the deploy gate. Production runs on Linux; tested on Windows; macOS code paths exist but are not yet verified on real hardware. Licensed AGPL-3.0.
