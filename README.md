@@ -42,6 +42,10 @@ NoDesign 本身不收取订阅费，也不对模型调用加价。项目文件�
 | 图片 | 常见图片格式 | 生图、抠图 |
 | 视频 | 常见视频格式 | 视频导入、预览与转码 |
 
+![说一句话生成图片，再抠掉背景，得到透明底 PNG](https://raw.githubusercontent.com/Xiaokebuyu/Nodesign/main/docs/demo-image.gif)
+
+![Agent 生成 Word 文档，在画布上直接看排版](https://raw.githubusercontent.com/Xiaokebuyu/Nodesign/main/docs/demo-docx.gif)
+
 这些文件不依赖 NoDesign 的私有格式，可以使用其他工具继续编辑和下载。
 
 使用 NoDesign 完成的实际项目：一个乐队的研究站、一份 15 页的西藏攻略幻灯配站点、一套像素风服务器宣传页、一份改了六版的简历 .docx。也有实验性项目，比如一个在页面上选择剧情、在聊天里生成内容的互动视觉小说。已发布的一个站点：[spica-mix.share.xiaobuyu.trade](https://spica-mix.share.xiaobuyu.trade)。
@@ -57,6 +61,16 @@ NoDesign 本身不收取订阅费，也不对模型调用加价。项目文件�
 ### Agent 始终在场
 
 Agent 会出现在它正在处理的内容旁边。你可以看到它正在编辑哪个文件，以及内容如何逐步生成，而不是只能等待聊天框返回最终结果。
+
+### 画布也是黑板
+
+Agent 不只是把做完的产物放上画布，也把想法放上去。它会画草图、写板书、在相关的东西之间拉线，说明自己打算怎么做，或者把一件复杂的事情拆开摆出来。
+
+![拆《雷雨》的人物关系：八个人分成两家，关系线标出谁和谁是什么，主要人物的肖像当场生成后连回名字](https://raw.githubusercontent.com/Xiaokebuyu/Nodesign/main/docs/demo-blackboard.gif)
+
+板书是真文件，保存在项目的 `notes/板书/` 目录下。草图节点、连线和板书都可以双击直接改，改完 Agent 接着用改过的版本。
+
+![双击 Agent 写的板书，在画布上原地改字](https://raw.githubusercontent.com/Xiaokebuyu/Nodesign/main/docs/demo-chalk.gif)
 
 ### 你的操作会成为下一轮上下文
 
@@ -113,7 +127,7 @@ Agent 会出现在它正在处理的内容旁边。你可以看到它正在编�
 
 ## 项目状态
 
-个人项目，2026 年 4 月底起步，目前仍在快速迭代。版本号 `0.0.1` 是本地发行版的首个公开版本，核心功能已在内测中稳定使用。
+个人项目，2026 年 4 月底起步，目前仍在快速迭代。本地发行版当前是 `0.0.3`，核心功能已在内测中稳定使用。
 
 ### 功能
 
@@ -138,7 +152,7 @@ Agent 会出现在它正在处理的内容旁边。你可以看到它正在编�
 ## 技术架构
 
 - **前端**：React + Vite。无限画布的相机、命中检测、关系排布和产物能力系统为自研实现（web/src/lib，45 个纯函数模块，配有单测）。
-- **服务端**：Node.js ESM。Agent 会话以项目工作区作为执行目录，通过约 50 个进程内工具操作文件、浏览器和不同类型的产物。
+- **服务端**：Node.js ESM。Agent 会话以项目工作区作为执行目录，通过 56 个进程内工具操作文件、浏览器和不同类型的产物。
 - **会话同步**：服务端维护会话状态，支持流式输出、断线恢复和多标签页同步。
 - **模型兼容**：原生支持 Claude，并通过格式转换接入兼容 OpenAI API 的模型服务。无法匹配上游时直接返回错误，避免请求被发送到错误的模型服务。
 - **产物系统**：网站、演示稿和 Word 文档通过统一的注册机制接入预览、导出和发布流程。新增产物类型时，通过同一注册入口接入相关能力。
@@ -154,7 +168,7 @@ npm test                    # server 测试 + web 测试
 
 > 注意：完整运行需要配置模型接入（Claude 订阅或 API Key）以及部分本地工具依赖。设置页会列出缺少的依赖和安装方法。
 
-项目以 Vitest 测试套件作为发布前检查，server 和 web 合计 980 项用例，覆盖前后端契约、模块边界、权限能力表和关键用户文案。部分约束以静态测试固化，避免仅依赖注释和人工约定。例如：
+项目以 Vitest 测试套件作为发布前检查，server 和 web 合计 1021 项用例，覆盖前后端契约、模块边界、权限能力表和关键用户文案。部分约束以静态测试固化，避免仅依赖注释和人工约定。例如：
 
 - 前后端双份能力表逐项对账
 - 权限判断必须通过能力表查询
@@ -183,8 +197,9 @@ What makes it different from a chat interface:
 
 - **The canvas is a real workspace.** Every card is a file, every folder is a directory. Dragging a card into a folder actually moves the file on disk.
 - **The agent is present.** It appears next to the card it's editing, and you can see code being written in real time.
+- **The canvas is also a blackboard.** The agent sketches its plan onto the canvas, writes notes as real markdown files, and draws lines between the things they refer to. You can edit any of it in place.
 - **Your actions feed back.** Direct text edits, region selections, element dragging, and relation lines ("reference", "annotate", "continue") all become context for the next turn.
 - **The agent inspects its own work.** It captures screenshots at different viewport widths, reads computed styles, console errors, font loading status, and animation filmstrips, then continues editing based on what it finds.
 - **Memory is visible.** Decisions, style notes, and preferences live in the workspace as editable content, and can be crystallized into reusable Skills.
 
-Personal project, started late April 2026, actively developed. Version 0.0.1 is the first public local release. 980 Vitest cases as the deploy gate. Production runs on Linux; tested on Windows; macOS code paths exist but are not yet verified on real hardware. Licensed AGPL-3.0.
+Personal project, started late April 2026, actively developed. Version 0.0.3 is the current local release. 1021 Vitest cases as the deploy gate. Production runs on Linux; tested on Windows; macOS code paths exist but are not yet verified on real hardware. Licensed AGPL-3.0.
