@@ -13,7 +13,8 @@ import express from 'express';
 import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
 import { readBoard, replaceBoard, patchBoard, commitStaging, removeByTag } from '../projects/board-store.js';
-import { setViewpoint } from '../projects/viewpoint-store.js';
+import { setViewpoint, getViewpoint } from '../projects/viewpoint-store.js';
+import { exportGraph } from '../lib/board-graph-export.js';
 
 const router = express.Router();
 
@@ -67,6 +68,14 @@ router.post('/:pid/viewpoint', express.json({ limit: '16kb' }), async (req, res,
   } catch (err) { next(err); }
 });
 
+/** 读最近一份视点（排障用：看看服务端眼里"用户在看哪"；agent 走 read_user_view） */
+router.get('/:pid/viewpoint', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    res.json({ viewpoint: getViewpoint(req.params.pid) });
+  } catch (err) { next(err); }
+});
+
 /** 草稿落定（用户也可以按组落定：黑板上 agent 的草稿半透明，点一下变实） */
 router.post('/:pid/board/commit', express.json({ limit: '16kb' }), async (req, res, next) => {
   try {
@@ -86,6 +95,31 @@ router.post('/:pid/board/erase', express.json({ limit: '16kb' }), async (req, re
     const { board, removed } = await removeByTag(req.params.pid, tag);
     res.json({ ok: true, removed, board });
   } catch (err) { next(err); }
+});
+
+/**
+ * 连接图导出（2026-08-23 黑板）：?format=json|mermaid|svg&tag=&layer=
+ * 真相是 board.json，这里只派生。download=1 时带附件头。
+ */
+router.get('/:pid/board/graph', async (req, res, next) => {
+  try {
+    if (!guard(req, res)) return;
+    const format = String(req.query.format || 'json');
+    const tag = typeof req.query.tag === 'string' && req.query.tag ? req.query.tag.slice(0, 40) : null;
+    const layer = typeof req.query.layer === 'string' ? req.query.layer.slice(0, 300) : '';
+    const board = await readBoard(req.params.pid);
+    const { mime, body } = exportGraph(board, { format, tag, layer });
+    res.setHeader('Content-Type', mime);
+    if (req.query.download) {
+      const ext = format === 'mermaid' ? 'mmd' : format;
+      const name = `board${tag ? `-${tag}` : ''}.${ext}`;
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    }
+    res.send(body);
+  } catch (err) {
+    if (err?.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
 });
 
 export default router;

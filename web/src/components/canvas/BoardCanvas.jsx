@@ -23,6 +23,7 @@ import Minimap from './Minimap.jsx';
 import { useBoardCamera } from './useBoardCamera.js';
 import { useViewpointReport } from './useViewpointReport.js';
 import { submitLinkPop, deleteLinkPop } from './link-pop-actions.js';
+import { useBoardGroups } from './useBoardGroups.js';
 import { eyeParams, useEyeMode } from './eye-mode.js';
 import { boxUnion } from '../../lib/board-camera.js';
 import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
@@ -673,8 +674,7 @@ export default function BoardCanvas({
   scaleRef.current = scale;
   camApiRef.current = camera;
 
-  // 用户视点上报（2026-08-23 黑板）：相机/窗/选中变了就告诉服务端（节流）。
-  // 眼睛模式（agent 的 look_at_board 开的页）不上报 —— 那不是用户在看。
+  // 用户视点上报 + 眼睛模式（2026-08-23 黑板，useViewpointReport.js / eye-mode.js 有全注）
   const eye = eyeParams();
   useViewpointReport({
     projectId, cam, viewport: camera.viewport, layer: winDir || '',
@@ -1017,6 +1017,8 @@ export default function BoardCanvas({
   });
 
   const wasDrag = () => !!(dragRef.current?.moved || recentDragMovedRef.current);
+  // 黑板组三动作（整组选 / 落定 / 擦）→ useBoardGroups.js
+  const { selectGroup, commitGroup, eraseGroup, exportGraph } = useBoardGroups({ projectId, positionedRef, setSelectedIds, reload });
 
   // 打开语义（双击 / 加进上下文 / 删便签）→ useBoardOpen.js
   const {
@@ -1353,10 +1355,11 @@ export default function BoardCanvas({
         openObject: (o) => primaryOpenRef.current?.(o),
         openFolder, createFolderAt, createNoteAt,
         onAskAgent, tidyBoard, annotTargetOf, titleOfId,
+        selectGroup, commitGroup, eraseGroup, exportGraph,
       },
     );
     setMenu({ x: e.clientX, y: e.clientY, items });
-  }, [zoneAtPoint, createFolderAt, createNoteAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent]);
+  }, [zoneAtPoint, createFolderAt, createNoteAt, handleAdd, handleDeleteNote, handleDeleteFolder, tidyBoard, onAskAgent, selectGroup, commitGroup, eraseGroup, exportGraph]);
 
   // ── agent 正在写什么 → 视图跟过去（2026-08-13 从"自动展开"改剩这一半）──
   //

@@ -8,7 +8,7 @@
  */
 import {
   FolderOpen, FolderPlus, FolderInput, Plus, PencilLine, Trash2,
-  MessageSquarePlus, Link2, StickyNote, LayoutGrid,
+  MessageSquarePlus, Link2, StickyNote, LayoutGrid, Group, Check, Eraser, Download,
 } from 'lucide-react';
 import { canAddToContext, isFileBacked } from '../../lib/board-kinds.js';
 
@@ -17,6 +17,9 @@ import { canAddToContext, isFileBacked } from '../../lib/board-kinds.js';
  *   { mx, my, at, obj, zoneId, winIn, batch, sel, objs, zones }
  * @param {object} act 动作句柄（BoardCanvas 传入）
  */
+/** 黑板组标签：原生物件抬在顶层（board-objects.js），产物卡住 pos 上（pos = layout 条目）*/
+const groupTagOf = (o) => o?.tag || o?.pos?.tag || null;
+
 export function buildBoardMenu(ctx, act) {
   const { mx, my, at, obj, zoneId, winIn, batch, sel, objs, zones } = ctx;
 
@@ -79,6 +82,14 @@ export function buildBoardMenu(ctx, act) {
       // 连线：从这件东西拉一条关系线到画布上另一件。全类型都给 ——
       // 手写字/涂鸦也能当端点（标注全局化）。
       { id: 'linkto', icon: Link2, label: '连线到…', onClick: () => act.setLinkFrom({ id: obj.id, title: act.titleOfId(obj.id) }) },
+      // 黑板组（2026-08-23）：带 #tag 的东西（agent 一张草图 = 一组）可以整组选 / 落定 / 擦
+      ...(groupTagOf(obj) ? [
+        { divider: true },
+        { id: 'grp-sel', icon: Group, label: `选中整组 #${groupTagOf(obj)}`, onClick: () => act.selectGroup(groupTagOf(obj)) },
+        ...((obj.staging || obj.pos?.staging) ? [{ id: 'grp-commit', icon: Check, label: '落定这组草稿', hint: '半透明 → 实', onClick: () => act.commitGroup(groupTagOf(obj)) }] : []),
+        { id: 'grp-export', icon: Download, label: '导出这组（SVG）', onClick: () => act.exportGraph?.('svg', groupTagOf(obj)) },
+        { id: 'grp-erase', icon: Eraser, label: `擦掉整组 #${groupTagOf(obj)}`, danger: true, hint: '黑板擦', onClick: () => act.eraseGroup(groupTagOf(obj)) },
+      ] : []),
       // E3：就地标注 —— 在东西上写完一句，按发送 agent 立刻来。
       { id: 'ask', icon: MessageSquarePlus, label: '标注给 agent', hint: '发送即处理', onClick: () => act.setAnnotate({
         x: mx, y: my,
@@ -138,5 +149,10 @@ export function buildBoardMenu(ctx, act) {
     { divider: true },
     { id: 'ask', icon: MessageSquarePlus, label: '让 agent 在这儿做…', onClick: () => act.onAskAgent?.({ at }) },
     { id: 'tidy', icon: LayoutGrid, label: '整理这块画布', onClick: act.tidyBoard },
+    { divider: true },
+    // 连接图导出（2026-08-23 黑板）：节点 + 线 + 位置，真相是 board.json，这里只派生
+    { id: 'exp-svg', icon: Download, label: '导出连接图（SVG）', onClick: () => act.exportGraph?.('svg') },
+    { id: 'exp-mmd', icon: Download, label: '导出连接图（Mermaid）', onClick: () => act.exportGraph?.('mermaid') },
+    { id: 'exp-json', icon: Download, label: '导出连接图（JSON）', onClick: () => act.exportGraph?.('json') },
   ];
 }
