@@ -1,9 +1,9 @@
 {
   "name": "@xiaobuyu/nodesign",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": false,
   "type": "module",
-  "description": "NoDesign — 面向独立创作者的 agent 创作工作台（本地分发版：npx nodesign）",
+  "description": "NoDesign: an infinite canvas workbench for independent creators. An agent builds sites, decks, documents, images and video as real files, on your machine, with your own model key.",
   "bin": {
     "nodesign": "bin/nodesign.js"
   },
@@ -12,7 +12,7 @@
     "server/",
     "web/dist/",
     "README.md",
-    "README.en.md",
+    "README.zh-CN.md",
     "LICENSE",
     "!server/**/*.test.js",
     "!server/**/_probe-*",
@@ -95,11 +95,21 @@
   },
   "keywords": [
     "agent",
+    "ai-agent",
     "canvas",
-    "creative",
+    "infinite-canvas",
     "claude",
+    "anthropic",
     "deepseek",
-    "local-first"
+    "ollama",
+    "openai-compatible",
+    "local-first",
+    "byok",
+    "website-generator",
+    "slides",
+    "docx",
+    "creative-tools",
+    "self-hosted"
   ],
   "license": "AGPL-3.0-only"
 }
