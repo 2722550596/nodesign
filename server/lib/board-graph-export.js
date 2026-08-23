@@ -96,7 +96,7 @@ function edgePoint(a, b) {
   return { from: pt(a, ac, dx, dy), to: pt(b, bc, -dx, -dy) };
 }
 
-export function toSvg(g, board) {
+export function toSvg(g, board, { hrefOf = null } = {}) {
   if (!g.nodes.length) return '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60"><text x="10" y="35" font-size="14">（空）</text></svg>';
   const PAD = 40;
   const x0 = Math.min(...g.nodes.map(n => n.x)) - PAD; const y0 = Math.min(...g.nodes.map(n => n.y)) - PAD;
@@ -142,10 +142,50 @@ export function toSvg(g, board) {
       continue;
     }
     const title = nodeTitle(n, board);
-    out.push(`<g${op}><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10" fill="${PAPER.card}" stroke="rgba(43,33,23,0.18)"/>`
+    const href = hrefOf ? hrefOf(n) : null;
+    out.push(`${href ? `<a href="${esc(href)}">` : ''}<g${op}><rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10" fill="${PAPER.card}" stroke="rgba(43,33,23,0.18)"/>`
       + `<text x="${n.x + 12}" y="${n.y + 20}" font-size="13" fill="${PAPER.ink}">${esc(title)}</text>`
-      + `<text x="${n.x + 12}" y="${n.y + n.h - 10}" font-size="10" fill="${PAPER.pencil}">${esc(n.kind)}</text></g>`);
+      + `<text x="${n.x + 12}" y="${n.y + n.h - 10}" font-size="10" fill="${PAPER.pencil}">${esc(n.kind)}</text></g>${href ? '</a>' : ''}`);
   }
   out.push('</svg>');
   return out.join('\n');
+}
+
+/* ── 带产物的 zip（2026-08-23）────────────────────────────────────────────
+ * 真相仍是 board.json；zip 里：board/graph.json + graph.svg（卡片可点，链到 zip 里的文件）+
+ * graph.mmd + index.html（内嵌 svg 的静态重放页）+ 节点指向的产物文件（走 export-collect
+ * 同一套寻址：站点整目录、deck 的 html、图片、板书 .md…）。画布原生的手写字/涂鸦没有文件，
+ * 它们的内容都在 graph.json/svg 里。
+ */
+export async function exportGraphZip(board, { workspaceRoot, tag = null, layer = '', projectName = '画布' } = {}) {
+  const [{ default: JSZip }, { collectCards }, fsm] = await Promise.all([
+    import('jszip'), import('./export-collect.js'), import('node:fs/promises'),
+  ]);
+  const g = pick(board, { tag, layer });
+  const fileIds = g.nodes.filter(n => n.kind !== 'text' && n.kind !== 'scribble').map(n => n.id);
+  const { bundles, skipped } = await collectCards({ workspaceRoot, cardIds: fileIds });
+  const zip = new JSZip();
+  const relOfNode = new Map();
+  for (const b of bundles) {
+    for (const f of [...(b.files || []), ...(b.assets || [])]) {
+      try { zip.file(f.rel, await fsm.readFile(f.abs)); } catch { /* 读不到就跳，写进 manifest */ }
+    }
+  }
+  // collectCard 不回 cardId：按顺序对齐（collectCards 按 cardIds 顺序 push，跳过的在 skipped）
+  const skippedIds = new Set(skipped.map(s => s.cardId));
+  let bi = 0;
+  for (const id of fileIds) {
+    if (skippedIds.has(id)) continue;
+    const b = bundles[bi++]; if (!b) break;
+    relOfNode.set(id, b.files?.[0]?.rel || b.assets?.[0]?.rel || null);
+  }
+  const hrefOf = (n) => { const r = relOfNode.get(n.id); return r ? `../${r.split('/').map(encodeURIComponent).join('/')}` : null; };
+  const svg = toSvg(g, board, { hrefOf });
+  zip.file('board/graph.json', JSON.stringify({ version: 1, tag, layer, ...g, files: Object.fromEntries(relOfNode), skipped }, null, 2));
+  zip.file('board/graph.svg', svg);
+  zip.file('board/graph.mmd', toMermaid(g, board));
+  zip.file('index.html', `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>${esc(projectName)} · 画布</title>
+<style>html,body{margin:0;background:#F0EADB;font-family:'Kaiti SC','KaiTi',serif}header{padding:12px 20px;color:#2B2117;font-size:14px}main{overflow:auto;padding:0 20px 20px}svg{max-width:100%;height:auto;display:block}a:hover rect{stroke:#b08c4f;stroke-width:2}</style></head>
+<body><header>${esc(projectName)} · 画布导出${tag ? ` · #${esc(tag)}` : ''} · ${g.nodes.length} 件 ${g.edges.length} 线 · 点卡片打开文件</header><main>${svg.replace(/\.\.\//g, '')}</main></body></html>`);
+  return { zip, skipped, count: { nodes: g.nodes.length, edges: g.edges.length, files: relOfNode.size } };
 }

@@ -9,6 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SessionConfig } from '../../lib/api.js';
+import { useGlobalStore } from '../../stores/globalStore.js';
 import { useViewpointReport } from './useViewpointReport.js';
 import { eyeParams, useEyeMode } from './eye-mode.js';
 
@@ -31,23 +32,27 @@ export function useBlackboardMode({ projectId, focusRequest, camRef }) {
     });
   }, [projectId]);
 
-  // 跟随：只认新的 focusRequest（按 at 去重），且只在开着时
+  // 新板书/新草图可感知：
+  //   - 黑板模式开着 & 不是 soft（整张草图）→ 镜头飞过去框住
+  //   - 其余情况：在视口里就不打扰；在视口外 → 一条带「看一眼」的提示，点了再飞（不劫持镜头）
   const seen = useRef(0);
   useEffect(() => {
-    if (!on || !focusRequest?.rect || !focusRequest.at || focusRequest.at === seen.current) return;
+    if (!focusRequest?.rect || !focusRequest.at || focusRequest.at === seen.current) return;
     seen.current = focusRequest.at;
     const r = focusRequest.rect;
-    // soft（板书）：已经在视口里就别动镜头 —— 回一句话不该把人拽走；整张草图照旧框住
-    if (focusRequest.soft) {
-      const cam = camRef.current?.cam; const vp = camRef.current?.viewport;
-      if (cam && vp?.w) {
-        const z = cam.z || 1;
-        const view = { x: -cam.x, y: -cam.y, w: vp.w / z, h: vp.h / z };
-        const inside = r.x >= view.x && r.y >= view.y && r.x + r.w <= view.x + view.w && r.y + r.h <= view.y + view.h;
-        if (inside) return;
-      }
+    const box = { x: r.x - 40, y: r.y - 40, w: r.w + 80, h: r.h + 80 };
+    const fly = () => camRef.current?.flyToBox?.(box, { force: true, maxZoom: 1 });
+    const cam = camRef.current?.cam; const vp = camRef.current?.viewport;
+    let inside = false;
+    if (cam && vp?.w) {
+      const z = cam.z || 1;
+      const view = { x: -cam.x, y: -cam.y, w: vp.w / z, h: vp.h / z };
+      inside = r.x >= view.x && r.y >= view.y && r.x + r.w <= view.x + view.w && r.y + r.h <= view.y + view.h;
     }
-    camRef.current?.flyToBox?.({ x: r.x - 40, y: r.y - 40, w: r.w + 80, h: r.h + 80 }, { force: true, maxZoom: 1 });
+    if (on && !focusRequest.soft) { fly(); return; }
+    if (inside) return;
+    const what = focusRequest.chalk ? '写了一条板书' : '画了一张草图';
+    useGlobalStore.getState().showToast(`agent 在画布上${what}（视野之外）`, 'info', { action: { label: '看一眼', onClick: fly } });
   }, [on, focusRequest, camRef]);
 
   return { blackboardMode: on, toggleBlackboard: toggle };

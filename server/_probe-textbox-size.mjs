@@ -15,7 +15,7 @@ const rows = await p.evaluate(() => {
     const id = el.getAttribute('data-board-object');
     if (!/^text:/.test(id)) continue;
     const r = el.getBoundingClientRect();
-    const inner = el.querySelector('.nd-mdink') || el.firstElementChild;
+    const inner = el.querySelector('[data-text-body]') || el.firstElementChild;
     const ir = inner ? inner.getBoundingClientRect() : null;
     // 正文真实宽：取最宽的一行（range）
     let textW = 0;

@@ -75,8 +75,14 @@ function BoardObject({
   // 一张白卡 —— 而它自己的注释写着"没有卡片外观，就是一段字浮在纸上"。
   // 每加一种画布原生物件就漏一次，这种判据就该住在表里。
   const isInk = chromeOf(o) === 'bare';
+  // 纯手写字：块宽由正文决定（max-content，封顶 26em），存档的 w 只是回写的镜像 —— 估宽不准
+  // 就折行/留白，用户点到空白也算点到字（08-23 误触案）。md 节点和板书仍按 w 折行。
+  const plainText = o.type === 'text' && o.data?.format !== 'md';
   const base = {
-    position: 'absolute', left: o.pos.x, top: o.pos.y, width: sz.w,
+    position: 'absolute', left: o.pos.x, top: o.pos.y,
+    ...(plainText
+      ? { width: 'max-content', maxWidth: 26 * (TEXT_SIZE_PX[o.data?.size] || TEXT_SIZE_PX.md) + 12 }
+      : { width: sz.w }),
     zIndex: o.pos.z || 1,
     borderRadius: isInk ? 4 : RADIUS.xl,
     background: isInk ? (hover ? alpha(CANVAS.brass, 0.10) : 'transparent') : COLOR.bgCard,
@@ -300,7 +306,7 @@ function BoardObject({
 
       {o.type === 'text' && o.data?.format === 'md' && (
         /* md 档（2026-08-23 黑板）：同一块纸上的字，只是排版认 markdown/KaTeX/mermaid */
-        <div style={{ padding: '4px 6px', pointerEvents: 'none', userSelect: 'none' }}>
+        <div data-text-body style={{ padding: '4px 6px', pointerEvents: 'none', userSelect: 'none' }}>
           <MdInk
             text={o.data?.t || ''}
             fontFamily={TEXT_FONT_CSS[o.data?.font] || TEXT_FONT_CSS.kai}
@@ -312,7 +318,7 @@ function BoardObject({
       {o.type === 'text' && o.data?.format !== 'md' && (
         /* 画布手写文字：没有卡片外观（同涂鸦），就是一段字浮在纸上。
            白名单字体表在 lib/text-fonts.js，跟服务端那份校验对齐。 */
-        <div style={{
+        <div data-text-body style={{
           fontFamily: TEXT_FONT_CSS[o.data?.font] || TEXT_FONT_CSS.kai,
           fontSize: TEXT_SIZE_PX[o.data?.size] || TEXT_SIZE_PX.md,
           lineHeight: 1.6,
@@ -343,7 +349,7 @@ function BoardObject({
       {o.type === 'note' && !o.chalk && <NoteFaces o={o} />}
       {o.type === 'note' && o.chalk && (
         /* 板书：agent/用户写在画布上的话 —— 裸 md 文字浮在纸上（同手写字的 md 档） */
-        <div style={{ padding: '4px 6px', pointerEvents: 'none', userSelect: 'none' }}>
+        <div data-text-body style={{ padding: '4px 6px', pointerEvents: 'none', userSelect: 'none' }}>
           <MdInk text={o.text || ''} fontFamily={TEXT_FONT_CSS.kai} fontSize={TEXT_SIZE_PX.md} color={PAPER.ink} />
         </div>
       )}

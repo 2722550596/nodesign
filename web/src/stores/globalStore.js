@@ -19,8 +19,9 @@ export const useGlobalStore = create((set) => ({
 
   // ── Toast ──
   toasts: [],
-  showToast: (msg, kind = 'info') => set((s) => ({
-    toasts: [...s.toasts, { id: Date.now() + Math.random(), msg, kind }],
+  /** opts.action = { label, onClick }（点了即关）；opts.ttl 毫秒（默认 3500；带 action 默认 8000）*/
+  showToast: (msg, kind = 'info', opts = null) => set((s) => ({
+    toasts: [...s.toasts, { id: Date.now() + Math.random(), msg, kind, ...(opts?.action ? { action: opts.action } : {}), ...(opts?.ttl ? { ttl: opts.ttl } : {}) }],
   })),
   dismissToast: (id) => set((s) => ({
     toasts: s.toasts.filter(t => t.id !== id),

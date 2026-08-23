@@ -17,6 +17,7 @@ import { useCallback, useState } from 'react';
 import { Assets } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { sizeOf } from '../../lib/board-kinds.js';
+import { estimateTextBox } from '../../lib/text-fonts.js';
 import { pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
 
 export function useBoardAuthoring({
@@ -44,16 +45,13 @@ export function useBoardAuthoring({
     const id = `text:${Date.now().toString(36)}${Math.floor(performance.now() % 1000)}`;
     // 尺寸按字数估：一行约 26 个全角字符，行高 1.6。估不准也没关系 ——
     // 卡体是 height:auto，这个值只用来定命中区和避让矩形（同涂鸦那条教训）。
-    const cols = Math.min(26, Math.max(6, t.length));
-    const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
-    const px = { sm: 13, md: 16, lg: 22, xl: 30 }[canvasFont.size] || 16;
+    const box = estimateTextBox(t, canvasFont.size);
     // 归属跟涂鸦同一条规则：落点被谁的文件夹卡框住就归谁。原来这里漏写 zone，
     // 在文件夹层里写的字会静默归到根上（2026-08-13 查实补齐）
     const zid = zoneAtPoint({ x: at.x, y: at.y });
     patchLayout(id, {
       x: Math.round(at.x), y: Math.round(at.y), z: ++zMaxRef.current,
-      w: Math.round(cols * px * 1.05) + 12,
-      h: Math.round(lines * px * 1.6) + 10,
+      w: box.w, h: box.h,
       kind: 'text',
       data: { t, font: canvasFont.font, size: canvasFont.size, color: 'ink' },
       ...(zid ? { zone: zid } : {}),
@@ -80,15 +78,9 @@ export function useBoardAuthoring({
       scheduleSave();
       return;
     }
-    // 尺寸按新内容重估（跟创建同一套公式 —— 它只定命中区和避让矩形）
-    const cols = Math.min(26, Math.max(6, t.length));
-    const lines = Math.ceil(t.length / cols) + (t.match(/\n/g)?.length || 0);
-    const px = { sm: 13, md: 16, lg: 22, xl: 30 }[old.data?.size] || 16;
-    patchLayout(ed.id, {
-      w: Math.round(cols * px * 1.05) + 12,
-      h: Math.round(lines * px * 1.6) + 10,
-      data: { ...old.data, t },
-    });
+    // 尺寸按新内容重估（只定命中区和避让矩形；渲染后 useMeasuredSize 会按真值回写）
+    const box = estimateTextBox(t, old.data?.size);
+    patchLayout(ed.id, { w: box.w, h: box.h, data: { ...old.data, t } });
   }, [editingText, patchLayout, scheduleSave]);
 
   /** 写一张便利贴 → `notes/*.md`（**这条是给 agent 看的**，走右键菜单） */

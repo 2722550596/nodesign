@@ -1253,11 +1253,12 @@ export default function ProjectWorkspace() {
       // board 是 project 级状态，不属于某个 run）
       case 'board.updated': {
         setBoardVersion(v => v + 1);
-        if (evt.summary) showToast(`工作台：${evt.summary}`, 'info');
+        // 板书/草图的提示由 board.focus 那条带「看一眼」的接管（在视野里就不吵）
+        if (evt.summary && !/板书|草图/.test(evt.summary)) showToast(`工作台：${evt.summary}`, 'info');
         break;
       }
       case 'board.focus': {
-        if (evt.rect) setBoardFocus({ rect: evt.rect, tag: evt.tag || null, layer: evt.layer || '', soft: !!evt.soft, at: Date.now() });
+        if (evt.rect) setBoardFocus({ rect: evt.rect, tag: evt.tag || null, layer: evt.layer || '', soft: !!evt.soft, chalk: evt.chalk || null, at: Date.now() });
         break;
       }
 

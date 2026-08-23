@@ -29,3 +29,17 @@ export const TEXT_FONT_LABELS = { pen: '手写', kai: '楷体', sans: '黑体', 
 
 export const TEXT_SIZE_PX = { sm: 13, md: 16, lg: 22, xl: 30 };
 export const TEXT_SIZE_LABELS = { sm: '小', md: '中', lg: '大', xl: '特大' };
+
+/**
+ * 手写字的块尺寸估算（创建 / 编辑共用；渲染后 useMeasuredSize 按真值回写，这里只管"第一下
+ * 落在哪、命中区多大"）。字宽按 em：CJK/全角 1em，其余 0.62em；最长一行封顶 26em 再折行。
+ * 2026-08-23 之前 create/edit 各抄一份 `t.length` 口径，CJK 全错（12 个汉字 200px 装不下）。
+ */
+export function estimateTextBox(t, sizeKey) {
+  const px = TEXT_SIZE_PX[sizeKey] || TEXT_SIZE_PX.md;
+  const em = (l) => [...l].reduce((n, c) => n + (/[\u3000-\u9fff\uff00-\uffef]/.test(c) ? 1 : 0.62), 0);
+  const rows = String(t || '').split('\n');
+  const longest = Math.min(26, Math.max(4, ...rows.map(em)));
+  const lines = rows.reduce((n, l) => n + Math.max(1, Math.ceil(em(l) / longest)), 0);
+  return { w: Math.round(longest * px * 1.06) + 12, h: Math.round(lines * px * 1.6) + 10 };
+}

@@ -39,9 +39,9 @@ function Toast({ toast, onDismiss }) {
   const Icon = cfg.icon;
 
   useEffect(() => {
-    const t = setTimeout(onDismiss, 3500);
+    const t = setTimeout(onDismiss, toast.ttl || (toast.action ? 8000 : 3500));
     return () => clearTimeout(t);
-  }, [onDismiss]);
+  }, [onDismiss, toast.ttl, toast.action]);
 
   return (
     <div style={{
@@ -62,6 +62,16 @@ function Toast({ toast, onDismiss }) {
         lineHeight: 1.4,
         wordBreak: 'break-word',
       }}>{toast.msg}</span>
+      {toast.action && (
+        <button
+          onClick={() => { try { toast.action.onClick?.(); } finally { onDismiss(); } }}
+          style={{
+            flexShrink: 0, padding: '2px 10px', borderRadius: RADIUS.pill,
+            border: `1px solid ${COLOR.borderMd}`, background: 'transparent',
+            fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.text, cursor: 'pointer',
+          }}
+        >{toast.action.label}</button>
+      )}
       <button
         onClick={onDismiss}
         style={{

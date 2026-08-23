@@ -88,6 +88,7 @@ export function buildBoardMenu(ctx, act) {
         { id: 'grp-sel', icon: Group, label: `选中整组 #${groupTagOf(obj)}`, onClick: () => act.selectGroup(groupTagOf(obj)) },
         ...((obj.staging || obj.pos?.staging) ? [{ id: 'grp-commit', icon: Check, label: '落定这组草稿', hint: '半透明 → 实', onClick: () => act.commitGroup(groupTagOf(obj)) }] : []),
         { id: 'grp-export', icon: Download, label: '导出这组（SVG）', onClick: () => act.exportGraph?.('svg', groupTagOf(obj)) },
+        { id: 'grp-export-zip', icon: Download, label: '导出这组 + 产物（zip）', onClick: () => act.exportGraph?.('zip', groupTagOf(obj)) },
         { id: 'grp-erase', icon: Eraser, label: `擦掉整组 #${groupTagOf(obj)}`, danger: true, hint: '黑板擦', onClick: () => act.eraseGroup(groupTagOf(obj)) },
       ] : []),
       // E3：就地标注 —— 在东西上写完一句，按发送 agent 立刻来。
@@ -154,5 +155,6 @@ export function buildBoardMenu(ctx, act) {
     { id: 'exp-svg', icon: Download, label: '导出连接图（SVG）', onClick: () => act.exportGraph?.('svg') },
     { id: 'exp-mmd', icon: Download, label: '导出连接图（Mermaid）', onClick: () => act.exportGraph?.('mermaid') },
     { id: 'exp-json', icon: Download, label: '导出连接图（JSON）', onClick: () => act.exportGraph?.('json') },
+    { id: 'exp-zip', icon: Download, label: '导出连接图 + 产物（zip）', hint: '可离线打开', onClick: () => act.exportGraph?.('zip') },
   ];
 }

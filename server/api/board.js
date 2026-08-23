@@ -14,7 +14,8 @@ import { validateProjectId, getProject } from '../projects/store.js';
 import { guardProject } from './_guard.js';
 import { readBoard, replaceBoard, patchBoard, commitStaging, removeByTag } from '../projects/board-store.js';
 import { setViewpoint, getViewpoint } from '../projects/viewpoint-store.js';
-import { exportGraph } from '../lib/board-graph-export.js';
+import { exportGraph, exportGraphZip } from '../lib/board-graph-export.js';
+import { getSharedDir } from '../projects/workspace.js';
 
 const router = express.Router();
 
@@ -108,6 +109,14 @@ router.get('/:pid/board/graph', async (req, res, next) => {
     const tag = typeof req.query.tag === 'string' && req.query.tag ? req.query.tag.slice(0, 40) : null;
     const layer = typeof req.query.layer === 'string' ? req.query.layer.slice(0, 300) : '';
     const board = await readBoard(req.params.pid);
+    if (format === 'zip') {
+      const projectName = getProject(req.params.pid)?.name || '画布';
+      const { zip } = await exportGraphZip(board, { workspaceRoot: getSharedDir(req.params.pid), tag, layer, projectName });
+      const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(`board${tag ? `-${tag}` : ''}.zip`)}`);
+      return res.send(buf);
+    }
     const { mime, body } = exportGraph(board, { format, tag, layer });
     res.setHeader('Content-Type', mime);
     if (req.query.download) {
