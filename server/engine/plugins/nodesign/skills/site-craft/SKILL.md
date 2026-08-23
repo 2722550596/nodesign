@@ -321,3 +321,10 @@ Read `patterns/page-transitions.md` —— **动手写第一个转场之前先�
 > 目录约定、产物根、`_drafts/`、导出交付在站点技术参考（首次写站点 html 时注入）。
 > 抠图叠层配方按需 Read 本 skill 目录下的 `patterns/cutout-collage.md`。
 > 构建道（React / vite / Tailwind / 组件库）配方 Read `patterns/build-lane.md`。
+
+## 板书（交稿纪律）
+做完这一轮的东西，在它旁边写一条板书（`write_on_board near=那张卡`）：这版是什么 / 为什么这么做 /
+看哪里。改了几处就写几条要点，一条说一件事。同一件东西出了新版本，画一条「改自」线
+（`relate_on_board` derives-from）；有参考来源画「取材」。用户在你的板书上标注了，用
+`write_on_board reply_to=` 接在那条下面回。多步任务先 TodoWrite 列步骤 —— 步骤清单会自动上板、
+每步的产物自动连过去。
