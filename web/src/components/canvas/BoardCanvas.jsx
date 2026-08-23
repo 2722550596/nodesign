@@ -37,6 +37,7 @@ import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
 import TagHullLayer from './TagHullLayer.jsx';
+import TextDraft from './TextDraft.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import LinkPopover from './LinkPopover.jsx';
 import AnnotatePopover from './AnnotatePopover.jsx';
@@ -1957,10 +1958,10 @@ export default function BoardCanvas({
         {/* 改字输入框：双击一段字 / 文字工具点在字上，预填原文（清空=删除） */}
         {editingText && (
           <TextDraft
-            screen={{
-              x: (editingText.at.x + cam.x) * scale,
-              y: (editingText.at.y + cam.y) * scale,
-            }}
+            screen={{ x: (editingText.at.x + cam.x) * scale, y: (editingText.at.y + cam.y) * scale }}
+            // 就地编辑（2026-08-23）：框的宽、字体、字号跟被改的那块一致（世界尺寸 × 相机缩放），
+            // 看起来就是在原位改字，不是弹一张小卡
+            inPlace={editingText.style ? { width: (editingText.w || 260) * scale, fontFamily: editingText.style.fontFamily, fontSize: editingText.style.fontSize * scale, color: editingText.style.color } : null}
             initial={editingText.initial}
             placeholder="改成什么…（⌘/Ctrl+Enter 落笔，清空=删除）"
             onCommit={commitTextEdit}
@@ -2121,50 +2122,5 @@ export default function BoardCanvas({
  * 用 Enter 直接提交是错的 —— 用户在画布上写的多半是一段话不是一个词，
  * 单行提交会把"想写三行"变成"写了三次"。
  */
-function TextDraft({ screen, onCommit, onCancel, placeholder = '写点什么…（⌘/Ctrl+Enter 落笔）', initial = '' }) {
-  const [value, setValue] = useState(initial);
-  const ref = useRef(null);
-  // 「点别处 = 提交」靠 onBlur 实现，但**创建它的那一次点击自己就会触发 blur**：
-  // mousedown 开框 → 自动聚焦 → 同一次点击的 mouseup 把焦点抢回画布 → blur →
-  // 当成"写完了"，空内容，框当场消失。所以 blur 要等这一拍过去才算数。
-  const settledRef = useRef(false);
-  useEffect(() => {
-    ref.current?.focus();
-    const t = setTimeout(() => { settledRef.current = true; }, 150);
-    return () => clearTimeout(t);
-  }, []);
-  return (
-    <div
-      data-no-pan
-      onPointerDown={(e) => e.stopPropagation()}
-      style={{
-        position: 'absolute', left: screen.x, top: screen.y,
-        zIndex: 420, width: 260,
-        ...paperCard('near'), padding: GAP.sm,
-        animation: POP_IN,
-      }}
-    >
-      <textarea
-        ref={ref}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => { if (settledRef.current) onCommit(value); else ref.current?.focus(); }}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
-          else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onCommit(value); }
-        }}
-        placeholder={placeholder}
-        rows={3}
-        style={{
-          width: '100%', border: 'none', outline: 'none', resize: 'none',
-          background: 'transparent', color: PAPER.ink,
-          fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, lineHeight: 1.6,
-        }}
-      />
-    </div>
-  );
-}
-
-
 // Overlay / toolBtn 随浮层族住 BoardOverlays.jsx（B5）。formatTime / formatSize
 // 两个孤儿 helper 同批删除 —— 全文件零调用（BoardObject.jsx 有自己的一对）。

@@ -17,8 +17,12 @@ import { useCallback, useState } from 'react';
 import { Assets } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { sizeOf } from '../../lib/board-kinds.js';
-import { estimateTextBox } from '../../lib/text-fonts.js';
+import { estimateTextBox, TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
+import { PAPER } from '../../lib/paper.js';
+import { CANVAS } from '../../lib/theme.js';
 import { pointsToPath, pointsBounds, pathPoints, translatePath } from './useCanvasTools.js';
+
+const SCRIBBLE_INK = { ink: PAPER.ink, red: PAPER.red, pencil: PAPER.pencil, brass: CANVAS.brass };
 
 export function useBoardAuthoring({
   projectId, canvasFont,
@@ -59,16 +63,47 @@ export function useBoardAuthoring({
     return id;
   }, [patchLayout, canvasFont, zoneAtPoint]);
 
-  /** 打开某段字的内容编辑（双击 / 文字工具点在字上，两个入口共用） */
-  const openTextEditor = useCallback((o) => {
-    setEditingText({ id: o.id, at: { x: o.pos.x, y: o.pos.y }, initial: o.data?.t || '' });
-  }, []);
+  /**
+   * 打开某段字的就地编辑（双击 / 文字工具点在字上，两个入口共用）。
+   * 手写字：预填 data.t；板书（文件）：先把文件拉下来，frontmatter 留在 head 里、正文进编辑框
+   * （o.text 是 4KB 截断的展示副本，不能当原文改）。框的宽/字体/字号照着这块来（style）。
+   */
+  const openTextEditor = useCallback(async (o) => {
+    const sz = sizeOf(o);
+    const isMd = o.chalk || o.data?.format === 'md';
+    const style = {
+      fontFamily: TEXT_FONT_CSS[o.chalk ? 'kai' : (o.data?.font || 'kai')] || TEXT_FONT_CSS.kai,
+      fontSize: TEXT_SIZE_PX[o.chalk ? 'md' : (o.data?.size || 'md')] || TEXT_SIZE_PX.md,
+      color: o.chalk ? PAPER.ink : (SCRIBBLE_INK[o.data?.color] || PAPER.ink),
+    };
+    if (o.chalk) {
+      let head = ''; let body = o.text || '';
+      try {
+        const raw = await (await fetch(Assets.artifactFileUrl(projectId, o.path))).text();
+        head = /^---\n[\s\S]{0,800}?\n---\n?/.exec(raw)?.[0] || '';
+        body = raw.slice(head.length).replace(/^\n+/, '').replace(/\n+$/, '');
+      } catch { /* 拉不到原文就用展示副本 */ }
+      setEditingText({ id: o.id, at: { x: o.pos.x, y: o.pos.y }, initial: body, w: sz.w, style, chalk: { name: o.name, head } });
+      return;
+    }
+    setEditingText({ id: o.id, at: { x: o.pos.x, y: o.pos.y }, initial: o.data?.t || '', w: isMd ? sz.w : null, style });
+  }, [projectId]);
 
-  const commitTextEdit = useCallback((text) => {
+  const commitTextEdit = useCallback(async (text) => {
     const ed = editingText;
     setEditingText(null);
     if (!ed) return;
     const t = String(text || '').trim();
+    // 板书：写回文件（frontmatter 拼回去）；清空 = 删（连座位一起，服务端 DELETE 管）
+    if (ed.chalk) {
+      try {
+        if (!t) await Assets.removeChalk(projectId, ed.chalk.name);
+        else if (t !== String(ed.initial || '').trim()) await Assets.putChalk(projectId, ed.chalk.name, `${ed.chalk.head || ''}${t}\n`);
+        else return;
+        reload();
+      } catch (err) { console.warn('[board] save chalk failed:', err.message); }
+      return;
+    }
     const old = layoutRef.current[ed.id];
     if (!old) return;
     if (!t) {

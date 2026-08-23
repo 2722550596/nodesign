@@ -234,7 +234,7 @@ export const KINDS = {
      * 的 .md（删/导出/寻址全沿用便签），只是脸不同 —— 裸 md 文字浮在纸上，没有卡
      * 片外观；尺寸由落盘时的估算 w/h 定（见 sizeOf）。
      */
-    variant: (o) => (o?.chalk ? { chrome: 'bare', label: '板书', category: 'ink', actions: ['read', 'delete'] } : null),
+    variant: (o) => (o?.chalk ? { chrome: 'bare', label: '板书', category: 'ink', primary: 'editText', actions: ['read', 'delete'] } : null),
   },
 
   /**
