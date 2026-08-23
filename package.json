@@ -1,6 +1,6 @@
 {
   "name": "@xiaobuyu/nodesign",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": false,
   "type": "module",
   "description": "NoDesign — 面向独立创作者的 agent 创作工作台（本地分发版：npx nodesign）",
