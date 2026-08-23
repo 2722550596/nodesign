@@ -94,7 +94,8 @@ export function useBoardOpen({
     try {
       // 便利贴落点从 `tasks/<任务>/notes/` 收敛成工作区的 `notes/` 之后，
       // 删除只认文件名（不再需要先知道它属于哪个任务）
-      if (o.noteTask) await Assets.removeTaskNote(projectId, o.name);
+      if (o.chalk) await Assets.removeChalk(projectId, o.name);
+      else if (o.noteTask) await Assets.removeTaskNote(projectId, o.name);
       else await Assets.removeNote(projectId, o.name);
       reload();
     } catch (err) { console.warn('[board] delete note failed:', err.message); }

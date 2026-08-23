@@ -20,6 +20,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getSharedDir, ensureProjectWorkspace, gitRenamesSince } from './workspace.js';
+import { CHALK_DIR } from '../lib/chalk.js';
 
 export {
   DEFAULT_BOARD_SIZE, MAX_BOARD_BYTES, MAX_OBJECTS, MAX_ZONES, MAX_BINDINGS,
@@ -186,8 +187,8 @@ export function commitStaging(pid, { tag = null } = {}) {
 
 /**
  * 按标签整组删除（物件 + 线）。黑板擦 —— 用户或 agent 把一次头脑风暴整块抹掉。
- * 只删画布原生物件（text/scribble）；带同一标签的产物卡只摘标签不删座位，
- * 产物的本体是文件，不归黑板擦管。
+ * 删画布原生物件（text/scribble）和这组的板书文件（notes/板书/，它们是这组自己的话）；
+ * 带同一标签的产物卡只摘标签不删座位，产物的本体不归黑板擦管。
  */
 export function removeByTag(pid, tag) {
   const t = sanitizeTag(tag);
@@ -198,8 +199,13 @@ export function removeByTag(pid, tag) {
     const gone = new Set();
     for (const [id, o] of Object.entries(board.objects || {})) {
       if (o.tag !== t) continue;
-      if (o.kind) { delete board.objects[id]; gone.add(id); removed += 1; }
-      else delete o.tag;
+      if (o.kind) { delete board.objects[id]; gone.add(id); removed += 1; continue; }
+      // 板书（notes/板书/*.md）是这组自己的话，擦组连文件一起删；其它文件只摘标签
+      if (id.startsWith(`${CHALK_DIR}/`)) {
+        try { await fs.unlink(path.join(getSharedDir(pid), id)); } catch { /* 已经没了 */ }
+        delete board.objects[id]; gone.add(id); removed += 1; continue;
+      }
+      delete o.tag;
     }
     for (const [id, b] of Object.entries(board.bindings || {})) {
       if (b.tag === t || gone.has(b.from) || gone.has(b.to)) { delete board.bindings[id]; removed += 1; }

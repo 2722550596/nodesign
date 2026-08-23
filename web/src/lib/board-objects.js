@@ -112,6 +112,8 @@ export function deriveBoardObjects({ tasks = [], artifacts = [], layout = {}, br
           // 头注释里点名允许的那一个（标记必须写在**同一行**，它查的是同位行）
           noteTask: a.path.startsWith('notes/') || a.path.startsWith('tasks/'),   // legacy-ok
           ...a,
+          // 板书（2026-08-23）：frontmatter nd: chalk 的便签 —— 同一形态，另一张脸（裸 md 文字）
+          ...(a.chalk ? { chalk: a.chalk } : {}),
         });
       }
       else if (a.isImage) out.push({ id: a.path, type: 'image', sid, ...a });

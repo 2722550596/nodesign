@@ -229,6 +229,12 @@ export const KINDS = {
     primary: 'read',
     actions: ['add', 'read', 'delete'],
     legacyBucket: 'art',
+    /**
+     * 板书（2026-08-23 黑板三期）：agent/用户写在画布上的话。本体仍是 notes/板书/ 下
+     * 的 .md（删/导出/寻址全沿用便签），只是脸不同 —— 裸 md 文字浮在纸上，没有卡
+     * 片外观；尺寸由落盘时的估算 w/h 定（见 sizeOf）。
+     */
+    variant: (o) => (o?.chalk ? { chrome: 'bare', label: '板书', category: 'ink', actions: ['read', 'delete'] } : null),
   },
 
   /**
@@ -403,7 +409,8 @@ export function traitsOf(o) {
  */
 export function sizeOf(o) {
   const k = kindOf(o);
-  if (k.backing === 'canvas' && o?.pos?.w > 0 && o?.pos?.h > 0) {
+  // 板书（文件本体）也带落盘尺寸：agent 写入时按正文估好写进 layout.w/h
+  if ((k.backing === 'canvas' || o?.chalk) && o?.pos?.w > 0 && o?.pos?.h > 0) {
     return { w: o.pos.w, h: o.pos.h };
   }
   // 主角档（tier 由入座时的 pickHero 标）：预览区 ×HERO_SCALE、顶栏原高
@@ -426,7 +433,7 @@ export function labelOf(o) {
 }
 
 export function chromeOf(o) {
-  return kindOf(o).chrome || 'card';
+  return traitsOf(o).chrome || 'card';
 }
 
 /** 卡体由哪个渲染器画（缺省 = BoardObject 里各画各的）。 */
@@ -499,12 +506,18 @@ export const SIZES = Object.fromEntries(
  * `path` 那行的意思：卡 id 可能带形态前缀（`site:` / `deck:`），标注要的是真路径。
  */
 export function annotTargetOf(o) {
+  // 摘录（2026-08-23 黑板）：用户在 agent 写的字上回应时，agent 得看见那段字写了什么
+  // —— 画布原生手写字 agent 读不回来，板书虽是文件但一句摘录省它一次 Read
+  const raw = o.type === 'text' ? (o.data?.t || '') : (o.chalk ? (o.text || '') : '');
+  const excerpt = raw ? raw.replace(/\s+/g, ' ').trim().slice(0, 120) : null;
   return {
     kind: 'object',
     id: o.id,
     path: o.path || (typeof o.id === 'string' && /^[a-z]+:/.test(o.id) ? o.id.slice(o.id.indexOf(':') + 1) : o.id),
     title: o.title || o.name || o.id,
     typeLabel: labelOf(o),
+    ...(excerpt ? { excerpt } : {}),
+    ...(o.chalk ? { chalk: true, by: o.chalk.by || 'agent' } : (o.native && (o.pos?.by || o.by) === 'agent' ? { by: 'agent' } : {})),
   };
 }
 

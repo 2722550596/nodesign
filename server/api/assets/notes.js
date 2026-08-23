@@ -13,6 +13,7 @@ import express from 'express';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { safeSegment, parseNoteFrontmatter } from './helpers.js';
+import { patchBoard } from '../../projects/board-store.js';
 
 /**
  * @param {object} deps
@@ -123,6 +124,47 @@ export function mountNotesRoutes({ router, guardProject, getSharedDir, ensurePro
     } catch (err) { next(err); }
   });
   
+  /**
+   * 板书（notes/板书/<name>.md，2026-08-23）：用户侧改 / 删。名字是单段文件名，
+   * 目录固定 —— 跟便利贴同一套 safeNoteSegment 闸。
+   */
+  const resolveChalk = (pid, name) => {
+    const base = path.join(getSharedDir(pid), 'notes', '板书');
+    const file = path.resolve(base, name);
+    return file.startsWith(base + path.sep) ? file : null;
+  };
+  router.put('/:pid/chalk/:name', express.json(), async (req, res, next) => {
+    try {
+      if (!guardProject(req, res)) return;
+      const { name } = req.params;
+      if (!safeNoteSegment(name, { md: true })) return res.status(400).json({ error: 'invalid filename' });
+      const text = String(req.body?.text ?? '');
+      if (!text.trim()) return res.status(400).json({ error: 'text required' });
+      if (text.length > 20_000) return res.status(400).json({ error: 'too long (max 20k chars)' });
+      const file = resolveChalk(req.params.pid, name);
+      if (!file) return res.status(400).json({ error: 'invalid path' });
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, text, 'utf8');
+      res.json({ ok: true, path: `notes/板书/${name}` });
+    } catch (err) { next(err); }
+  });
+  router.delete('/:pid/chalk/:name', async (req, res, next) => {
+    try {
+      if (!guardProject(req, res)) return;
+      const { name } = req.params;
+      if (!safeNoteSegment(name, { md: true })) return res.status(400).json({ error: 'invalid filename' });
+      const file = resolveChalk(req.params.pid, name);
+      if (!file) return res.status(400).json({ error: 'invalid path' });
+      try { await fs.unlink(file); } catch (err) {
+        if (err.code === 'ENOENT') return res.status(404).json({ error: 'not found' });
+        throw err;
+      }
+      // 座位和线一起清，别留指向已删文件的幽灵条目（read_board 会把它当"摆过的"列出来）
+      try { await patchBoard(req.params.pid, { objects: { [`notes/板书/${name}`]: null } }); } catch { /* 清不掉不挡删除 */ }
+      res.status(204).end();
+    } catch (err) { next(err); }
+  });
+
   /** DELETE /:pid/task-notes/:filename — 删便利贴 */
   router.delete('/:pid/task-notes/:filename', async (req, res, next) => {
     try {

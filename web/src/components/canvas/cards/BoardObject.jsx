@@ -333,7 +333,13 @@ function BoardObject({
         </svg>
       )}
 
-      {o.type === 'note' && <NoteFaces o={o} />}
+      {o.type === 'note' && !o.chalk && <NoteFaces o={o} />}
+      {o.type === 'note' && o.chalk && (
+        /* 板书：agent/用户写在画布上的话 —— 裸 md 文字浮在纸上（同手写字的 md 档） */
+        <div style={{ padding: '4px 6px', pointerEvents: 'none', userSelect: 'none' }}>
+          <MdInk text={o.text || ''} fontFamily={TEXT_FONT_CSS.kai} fontSize={TEXT_SIZE_PX.md} color={PAPER.ink} />
+        </div>
+      )}
 
       {o.type === 'video' && (
         <div>

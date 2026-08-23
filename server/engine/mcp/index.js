@@ -67,6 +67,7 @@ import { makeArrangeOnBoardTool } from './tools/arrange-on-board.js';
 import { makeCreateOnBoardTool } from './tools/create-on-board.js';
 import { makeSketchOnBoardTool, makeFinishSketchTool } from './tools/sketch-on-board.js';
 import { makeEditSketchTool } from './tools/edit-sketch.js';
+import { makeWriteOnBoardTool } from './tools/write-on-board.js';
 import { makeLookAtBoardTool } from './tools/look-at-board.js';
 import { makeReadUserViewTool } from './tools/read-user-view.js';
 import { makeOrganizeBoardTool } from './tools/organize-board.js';
@@ -313,6 +314,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       makeSketchOnBoardTool({ projectId, ctx }),
       makeFinishSketchTool({ projectId, ctx }),
       makeEditSketchTool({ projectId, ctx }),
+      makeWriteOnBoardTool({ projectId, sharedRoot: workspaceRoot || sharedRoot, sessionId, ctx }),
       makeLookAtBoardTool({ projectId, ctx }),
       makeReadUserViewTool({ projectId }),
 

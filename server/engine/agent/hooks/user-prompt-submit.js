@@ -27,6 +27,7 @@ import { readUiConfigFile } from '../../../projects/ui-config.js';
 import { readAssetsSummary } from '../../../projects/assets-summary.js';
 import { relationsDigest } from '../../../lib/board-relations.js';
 import { getViewpoint, describeViewpoint } from '../../../projects/viewpoint-store.js';
+import { recentChalk, CHALK_DIR } from '../../../lib/chalk.js';
 import { readBoard } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
 import { layerOf } from '../../../lib/canvas-id.js';
@@ -160,16 +161,24 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
   } catch { /* 扫不动就不说 */ }
 
   // tweaks 开关：文件不存在 = 用户没碰过 = 沉默
+  // 最近板书（2026-08-23）：你/用户在画布上说过的最近几句 —— 对话在板上，得记得板上说了什么
+  try {
+    const recent = await recentChalk(workspaceRoot, { limit: 8 });
+    if (recent.length) {
+      const lines = recent.map(c => `  ${c.path}（${c.by === 'user' ? '用户' : '你'}${c.anchor ? `，关于 ${c.anchor}` : ''}${c.replyTo ? `，回应 ${c.replyTo.replace(`${CHALK_DIR}/`, '')}` : ''}）「${c.first}」`);
+      sections.push({ key: 'chalk', title: '最近板书', text: `画布上最近的板书（${CHALK_DIR}/，新在前；正文 Read 文件）：\n${lines.join('\n')}`, items: recent.map(c => c.path) });
+    }
+  } catch { /* 板书读不到就沉默 */ }
   // 黑板模式（2026-08-23）：用户把画布当主窗口。这一节只在开着时注入，关着不提。
   try {
     const cfg = await readUiConfigFile(workspaceRoot);
     if (cfg?.blackboard_mode === true) {
       sections.push({ key: 'blackboard', title: '黑板模式', text:
-        '【黑板模式：开】用户此刻把画布当主窗口，侧栏只是旁白。这一轮的**主体内容必须落在画布上**'
-        + '（sketch_on_board 画新图 / edit_sketch 改旧图 / create_on_board 一条便签），聊天里只留 1~2 句：'
-        + '指出画了什么、问下一步。思考、对比、列要点、画关系，一律上板；不要把整段分析写在聊天里再"顺便"画一张。'
-        + '改动优先用 edit_sketch 原地改（挪/改字/加支/删线），不要擦掉重画。'
-        + '尺寸守规范（一张图 0.8 倍一屏可读，正文 md 起）；画完 look_at_board 看一眼再收。' });
+        '【黑板模式：开】用户此刻把画布当主窗口，侧栏只是日志。这一轮**给用户看的话写在画布上**：'
+        + '说明、结论、建议、问题用 write_on_board（贴着它说的那件东西 near=；回应用户标注的板书用 reply_to=），'
+        + '要画的用 sketch_on_board / edit_sketch。聊天里只留 1 句：指出板上写了什么。'
+        + '不要把整段分析写在聊天里再"顺便"抄一份上板。改动用 edit_sketch 原地改，不要擦掉重画。'
+        + '尺寸守规范（一张图 0.8 倍一屏可读，正文 md 起；板书一条 ≤1500 字、一条说一件事）；画完 look_at_board 看一眼再收。' });
     }
   } catch { /* 读失败：不注入 */ }
   try {

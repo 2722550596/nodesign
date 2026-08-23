@@ -214,6 +214,9 @@ export const Assets = {
   /** 删便签 */
   removeNote: (pid, filename) =>
     jsonRequest('DELETE', `/api/projects/${pid}/notes/${encodeURIComponent(filename)}`),
+  /** 板书（notes/板书/*.md，2026-08-23）：用户侧改 / 删 */
+  putChalk: (pid, name, text) => jsonRequest('PUT', `/api/projects/${pid}/chalk/${encodeURIComponent(name)}`, { text }),
+  removeChalk: (pid, name) => jsonRequest('DELETE', `/api/projects/${pid}/chalk/${encodeURIComponent(name)}`),
   /** 便利贴（notes/*.md，agent 和用户的共享头脑风暴层）*/
   putTaskNote: (pid, filename, text) =>
     jsonRequest('PUT', `/api/projects/${pid}/task-notes/${encodeURIComponent(filename)}`, { text }),

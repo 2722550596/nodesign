@@ -37,6 +37,16 @@ export function useBlackboardMode({ projectId, focusRequest, camRef }) {
     if (!on || !focusRequest?.rect || !focusRequest.at || focusRequest.at === seen.current) return;
     seen.current = focusRequest.at;
     const r = focusRequest.rect;
+    // soft（板书）：已经在视口里就别动镜头 —— 回一句话不该把人拽走；整张草图照旧框住
+    if (focusRequest.soft) {
+      const cam = camRef.current?.cam; const vp = camRef.current?.viewport;
+      if (cam && vp?.w) {
+        const z = cam.z || 1;
+        const view = { x: -cam.x, y: -cam.y, w: vp.w / z, h: vp.h / z };
+        const inside = r.x >= view.x && r.y >= view.y && r.x + r.w <= view.x + view.w && r.y + r.h <= view.y + view.h;
+        if (inside) return;
+      }
+    }
     camRef.current?.flyToBox?.({ x: r.x - 40, y: r.y - 40, w: r.w + 80, h: r.h + 80 }, { force: true, maxZoom: 1 });
   }, [on, focusRequest, camRef]);
 

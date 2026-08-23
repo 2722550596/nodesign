@@ -20,15 +20,19 @@ import { layerOf } from '../../../lib/canvas-id.js';
 import { relationsDigest, bindingLine } from '../../../lib/board-relations.js';
 import { groupObjects, asciiMinimap } from '../../../lib/board-groups.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
+import { chalkExcerpts, CHALK_DIR } from '../../../lib/chalk.js';
+import { getSharedDir } from '../../../projects/workspace.js';
 
 /** 同一"行"的 y 容差：入座算法一行内顶对齐，40 世界像素内视作同行 */
 const ROW_TOLERANCE = 40;
 
-function describeEntry(board, id, entry, glyph = null) {
+function describeEntry(board, id, entry, glyph = null, excerpts = null) {
   const sz = estimateSizeOn(board, id, entry);
   const at = `@(${Math.round(entry.x)},${Math.round(entry.y)}) ${Math.round(sz.w)}x${Math.round(sz.h)}`;
   const g = glyph ? `[${glyph}] ` : '';
   const flags = `${entry.staging ? ' 〔草稿〕' : ''}${entry.tag ? ` #${entry.tag}` : ''}`;
+  const ch = excerpts?.get(id);
+  if (ch) return `- ${g}[板书·${ch.by === 'user' ? '用户' : '你'}写的] 「${ch.first}」 ${at} (path: ${id})${ch.anchor ? ` 关于 ${ch.anchor}` : ''}${ch.replyTo ? ` 回应 ${ch.replyTo}` : ''}${flags}`;
   if (entry.kind === 'text') {
     const t = String(entry.data?.t || '').replace(/\s+/g, ' ').slice(0, entry.data?.format === 'md' ? 60 : 24);
     const md = entry.data?.format === 'md' ? 'md' : '手写';
@@ -74,8 +78,11 @@ on the minimap and listed with what is inside it.`,
       }
 
       const lines = [];
+      const excerpts = await chalkExcerpts(getSharedDir(projectId), (byLayer.get(want) || []).map(it => it.id));
       const items = (byLayer.get(want) || [])
         .filter(({ entry }) => !tag || entry.tag === tag)
+        // 板书条目但文件已经没了 = 幽灵座位，别列给 agent（删文件那条路会清座位，这是兜底）
+        .filter(({ id }) => !id.startsWith(`${CHALK_DIR}/`) || excerpts.has(id))
         .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
       const entryOf = new Map(items.map(it => [it.id, it.entry]));
 
@@ -104,7 +111,7 @@ on the minimap and listed with what is inside it.`,
           lines.push('', `组 ${i + 1}${tags ? ` ${tags}` : ''}（${g.members.length} 件 ${g.edges.length} 线${staging ? '，草稿' : ''}）：`);
           const sorted = g.members.map(id => ({ id, entry: entryOf.get(id) }))
             .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
-          for (const { id, entry } of sorted) lines.push(describeEntry(board, id, entry, glyphOf.get(id)));
+          for (const { id, entry } of sorted) lines.push(describeEntry(board, id, entry, glyphOf.get(id), excerpts));
           for (const bid of g.edges.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)} (line id: ${bid})`);
           if (g.edges.length > 12) lines.push(`    …还有 ${g.edges.length - 12} 条线`);
         });
@@ -118,7 +125,7 @@ on the minimap and listed with what is inside it.`,
               rowY = entry.y;
               lines.push(`— 行 y≈${Math.round(rowY)} —`);
             }
-            lines.push(describeEntry(board, id, entry, glyphOf.get(id)));
+            lines.push(describeEntry(board, id, entry, glyphOf.get(id), excerpts));
           }
         }
       }

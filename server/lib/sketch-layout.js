@@ -32,11 +32,13 @@ export function textBox(t, sizeKey, { md = false, wUnits = null } = {}) {
   if (md) {
     const raw = String(t);
     const lines = raw.split('\n');
-    const longest = Math.max(8, ...lines.map(l => l.length));
-    const w = wUnits ? wUnits * UNIT : Math.min(440, Math.max(200, Math.round(longest * px * 0.62) + 24));
-    const cols = Math.max(8, Math.floor((w - 12) / (px * 0.62)));
+    // 字宽按 em 估：CJK/全角 1em，其余 0.62em（"12 个汉字 200px 装不下"就是这么来的）
+    const em = (l) => [...l].reduce((n, c) => n + (/[\u3000-\u9fff\uff00-\uffef]/.test(c) ? 1 : 0.62), 0);
+    const longest = Math.max(8, ...lines.map(em));
+    const w = wUnits ? wUnits * UNIT : Math.min(440, Math.max(200, Math.round(longest * px) + 24));
+    const colsEm = Math.max(8, (w - 12) / px);
     let n = 0;
-    for (const l of lines) n += Math.max(1, Math.ceil(l.length / cols));
+    for (const l of lines) n += Math.max(1, Math.ceil(em(l) / colsEm));
     // mermaid 盒子：横向（LR/RL）矮、纵向按语句数长；都只是估，真高度由渲染定
     const mm = raw.match(/```mermaid\n([\s\S]*?)```/);
     if (mm) {

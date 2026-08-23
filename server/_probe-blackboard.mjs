@@ -11,6 +11,8 @@ import os from 'node:os';
 import { makeReadBoardTool } from './engine/mcp/tools/read-board.js';
 import { makeSketchOnBoardTool, makeFinishSketchTool } from './engine/mcp/tools/sketch-on-board.js';
 import { makeEditSketchTool } from './engine/mcp/tools/edit-sketch.js';
+import { makeWriteOnBoardTool } from './engine/mcp/tools/write-on-board.js';
+import { getSharedDir } from './projects/workspace.js';
 import { makeLookAtBoardTool } from './engine/mcp/tools/look-at-board.js';
 import { makeReadUserViewTool } from './engine/mcp/tools/read-user-view.js';
 import { readBoard } from './projects/board-store.js';
@@ -34,6 +36,7 @@ const read = makeReadBoardTool({ projectId });
 const sketch = makeSketchOnBoardTool({ projectId, ctx });
 const finish = makeFinishSketchTool({ projectId, ctx });
 const edit = makeEditSketchTool({ projectId, ctx });
+const write = makeWriteOnBoardTool({ projectId, sharedRoot: getSharedDir(projectId), sessionId: null, ctx });
 const look = makeLookAtBoardTool({ projectId, ctx });
 const view = makeReadUserViewTool({ projectId });
 
@@ -100,7 +103,18 @@ console.log('look (committed):', txt(l2).slice(0, 80), img(l2, `${tag}-committed
 const l3 = await look.handler({}, {});
 console.log('look (overview):', img(l3, `${tag}-overview.png`) || '(no image)');
 
+// ── 板书：贴着产物写一条 + 回一条（线程）──
+const w1 = await write.handler({ text: '**这一版改了什么**\n\n- 暗底换成纸本\n- 标题字重降一档\n\n看右上角那块留白够不够？', near: anchor || undefined, tag }, {});
+console.log('\n== write_on_board (near) ==\n' + txt(w1), w1.isError ? '(ERROR)' : '');
+const p1 = /board note (\S+) at/.exec(txt(w1))?.[1];
+const w2 = p1 ? await write.handler({ text: '补一句：留白是故意的，给第二版的标注留位置。', reply_to: p1, tag }, {}) : null;
+if (w2) console.log('== write_on_board (reply_to) ==\n' + txt(w2), w2.isError ? '(ERROR)' : '');
+console.log('\n== read_board {tag} (with chalk) ==\n' + txt(await read.handler({ tag }, {})).split('\n').filter(l => /板书|notes\/板书|组 /.test(l)).join('\n'));
+const l4 = await look.handler({ tag }, {});
+console.log('look (chalk):', img(l4, `${tag}-chalk.png`) || txt(l4));
+
 if (!keep) {
+  // 擦组连板书文件一起删（removeByTag 管），下面对账 objects 数该回原样
   console.log('\n== erase ==\n' + txt(await finish.handler({ tag, erase: true }, {})));
   const after = await readBoard(projectId);
   console.log('objects before/after:', Object.keys(before.objects).length, Object.keys(after.objects).length,

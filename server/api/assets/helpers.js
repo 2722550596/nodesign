@@ -7,10 +7,30 @@
  * 不会再随下一次拆分复发（谁也不用记得"这个函数该跟着谁走"）。
  */
 
+import { promises as fs } from 'node:fs';
+import { parseChalk } from '../../lib/chalk.js';
+
 /** 单层路径片段：不含分隔符、不含 `..`、不以点开头、长度可控 */
 export function safeSegment(s) {
   return typeof s === 'string' && !!s && s.length <= 200
     && !s.includes('/') && !s.includes('\\') && !s.includes('..') && !s.startsWith('.');
+}
+
+/**
+ * 便签/板书正文上卡（2026-08-23 从 assets.js 抽出）：frontmatter 带 nd: chalk 的是板书
+ * （agent/用户写在画布上的话，同一形态另一张脸），其余按便签头解析；正文 ≤4KB 截断。
+ * 读不到就静默（agent 正在写的文件可能半途消失）。
+ */
+export async function decorateNoteText(item, absPath) {
+  try {
+    const raw = await fs.readFile(absPath, 'utf8');
+    const parsed = parseChalk(raw);
+    const { body, sessionId } = parsed.chalk ? parsed : parseNoteFrontmatter(raw);
+    item.text = body.length > 4096 ? body.slice(0, 4096) + '…' : body;
+    if (sessionId) item.sessionId = sessionId;
+    if (parsed.chalk) item.chalk = parsed.chalk;
+  } catch { /* */ }
+  return item;
 }
 
 /** 便签 frontmatter：只认最简单的 `---\nsession: xxx\n---` 头，其余原样当正文 */

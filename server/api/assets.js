@@ -28,7 +28,8 @@ import { resolveArtifactFile, isServablePath } from '../lib/artifact-file-path.j
 import { getProjectCover } from '../lib/cover.js';
 import { makeDocxPageHandler, makeDocxPdfHandler } from './assets/docx-page.js';
 import { mountNotesRoutes } from './assets/notes.js';
-import { safeSegment, parseNoteFrontmatter } from './assets/helpers.js';
+import { safeSegment, decorateNoteText } from './assets/helpers.js';
+import { CHALK_DIR } from '../lib/chalk.js';
 import {
   sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY,
@@ -348,16 +349,8 @@ router.get('/:pid/artifacts', async (req, res, next) => {
             item.meta = JSON.parse(metaRaw);
           } catch { /* 无 sidecar（旧图）→ 无 meta */ }
         }
-        // 便签直接把正文带给前端渲卡片（≤4KB 截断，完整内容走 artifact-file）。
-        // frontmatter 里的 session 字段是分区归属（agent 写便签时按约定带上）。
-        if (kind === 'note' && ext === '.md') {
-          try {
-            const raw = await fs.readFile(path.join(dir, e.name), 'utf8');
-            const { body, sessionId } = parseNoteFrontmatter(raw);
-            item.text = body.length > 4096 ? body.slice(0, 4096) + '…' : body;
-            if (sessionId) item.sessionId = sessionId;
-          } catch { /* */ }
-        }
+        // 便签/板书把正文带给前端渲卡片（≤4KB 截断，完整内容走 artifact-file；见 helpers.decorateNoteText）
+        if (kind === 'note' && ext === '.md') await decorateNoteText(item, path.join(dir, e.name));
         artifacts.push(item);
       }
     };
@@ -497,6 +490,8 @@ router.get('/:pid/artifacts', async (req, res, next) => {
       // 24 条产物里 6 条重复，画布上就是一张卡叠着另一张同名卡。
       await scanDir(workspaceRoot, 'task-file', '', 0);
       await scanDir(path.join(workspaceRoot, 'notes'), 'note', 'notes');
+      // 板书住 notes/板书/（不进 notes/ 顶层：便利贴注入只列顶层，板书另有自己的注入）
+      await scanDir(path.join(workspaceRoot, CHALK_DIR), 'note', CHALK_DIR);
       for (const rel of folders) {
         await scanDir(path.join(workspaceRoot, rel), 'task-file', rel, 0);
       }

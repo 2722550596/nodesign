@@ -1257,7 +1257,7 @@ export default function ProjectWorkspace() {
         break;
       }
       case 'board.focus': {
-        if (evt.rect) setBoardFocus({ rect: evt.rect, tag: evt.tag || null, layer: evt.layer || '', at: Date.now() });
+        if (evt.rect) setBoardFocus({ rect: evt.rect, tag: evt.tag || null, layer: evt.layer || '', soft: !!evt.soft, at: Date.now() });
         break;
       }
 
@@ -1767,7 +1767,12 @@ export default function ProjectWorkspace() {
     const desc = list.map((t) => {
       const where = whereOf(t);
       const loc = where && where !== t.title ? `（${where}）` : '';
-      return `${t.typeLabel}「${t.title}」${loc}`;
+      // 板书/手写字带摘录与作者（2026-08-23）：用户在 agent 的字上回话，agent 得知道那段字
+      // 说的是什么、是不是自己写的 —— 是自己的板书就用 write_on_board reply_to 接在下面
+      const who = t.by === 'agent' ? '，agent 写的' : t.chalk ? '，用户写的' : '';
+      const ex = t.excerpt ? `，原文「${t.excerpt}」` : '';
+      const hint = t.chalk && t.by === 'agent' ? `；回应请 write_on_board reply_to=${t.path}` : '';
+      return `${t.typeLabel}「${t.title}」${loc}${who}${ex}${hint}`;
     }).join('、');
     await handleSend(`【画布标注】${desc}：${text}`);
   };
