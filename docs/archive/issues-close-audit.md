@@ -83,3 +83,20 @@ exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（�
 **留 open 13 条**（真问题，未修/待拍板）：画布一致性族 4（悬空 binding iss_mszz20zn_m8m0、read_board 近似 iss_mt38ucyq_b13k、拖板书移文件 iss_mt5qujy1_5vh4、arrange 跨层 iss_mt5t487g_bc1v）、organize+引用重写 idea iss_mt38uih6_ycnm、auto-memory 落位 iss_mt3j2st8_u29q、fullPage 联络表 idea iss_mt0365b8_bbgy、WebGL mobile 截图超时 iss_mt6tru7p_iis5 + iss_mt6tmwoa_b3l9、公文层级强化 iss_mt2t0bdy_nfwd、exit 144 iss_msxjylxd_po0y、web_search ZHIPU key 未配 iss_mt5z4s8j_pq1i、截图 clip 空区 iss_mszxp0zy_81r4。
 
 **08-24 追加**：iss_mt5qujy1_5vh4（拖板书移出目录）→ ack（6749cc6：move-entry 搬出拒+搬回恢复例外、前端 dragMovesFile 不给落点、drag-end 不再给旧 id 排写入）。
+
+## 2026-08-24 第二批清账（open 11 → 3；修复 commit 见当日 git log）
+
+| id | 判决 | 理由 |
+|---|---|---|
+| iss_mt3j2st8_u29q | ack | auto-memory 指示 vs 沙盒矛盾的真因=settings 静默互吞（7a5b943）；记忆体系改版后 autoMemoryDirectory 指画布可见的 记忆/，矛盾不复存在 |
+| iss_mszz20zn_m8m0 | ack | 悬空关系线：/artifacts 热路径挂 30s 节流清扫（pruneDanglingBindings，端点既无座位又无磁盘真身才剪）；relate_on_board 端点校验第一批已加 |
+| iss_mt38ucyq_b13k | ack | read_board 座位 vs 磁盘对账：过期条目逐条标 ⚠️「磁盘上已无此路径——别据此判失效或建议删除」，口径行同步 |
+| iss_mt5z4s8j_pq1i | ack | 点名 provider 没配 key 改为换配了的顶上（返回首行注明），不再硬失败白跑一轮；zhipu key 配不配另议 |
+| iss_mt6tru7p_iis5 / iss_mt6tmwoa_b3l9 | ack | WebGL 持续动画页截图 15s 超时→CDP Page.captureScreenshot 兜底抓当前帧（持续动画页本来就没有"稳定帧"），caption 注明降级 |
+| iss_mt0365b8_bbgy | ack | 超长页 fullPage（>12000px）自动改滚动位置联络表（5 帧视口 + 百分比/y 标注，胶片条同款版式）；要原尺寸段用 scrollTo |
+| iss_mszxp0zy_81r4 | ack | clip 落到成图之外（Chromium 整页光栅高度上限）→ 兜底滚到元素改视口坐标 clip |
+| iss_mt2t0bdy_nfwd | ack | 公文层级强化写进 docx-craft SKILL（严格国标 vs 强化变体二选一先问；实测参数 beforePt 8 / leftChars 200+bold） |
+
+留 open 3：exit 144（转录已清无从考证；自动层已改为把 Bash 命令记进 detail，下次再现可诊断）、organize+引用重写 idea（自动改写用户 HTML 引用需要独立一场带测试做）、arrange 跨层（真解绑在画布 zone/路径双真相一致性上，本批只把报错改成可行动指引）。
+
+另：报 issue 文化调成 beta 口径（prelude+工具描述：**beta 测试期、你是一线测试员、犹豫就报**；friction 绕一次就值得记；idea 明确收方法论；一次性抖动仍不收）。

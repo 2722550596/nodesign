@@ -22,11 +22,13 @@ import { groupObjects, asciiMinimap, bboxOfRects, relationOf, columnsOf, viewpor
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 import { chalkExcerpts, CHALK_DIR } from '../../../lib/chalk.js';
 import { getSharedDir } from '../../../projects/workspace.js';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
 /** 同一"行"的 y 容差：入座算法一行内顶对齐，40 世界像素内视作同行 */
 const ROW_TOLERANCE = 40;
 
-function describeEntry(board, id, entry, glyph = null, excerpts = null) {
+function describeEntry(board, id, entry, glyph = null, excerpts = null, staleIds = null) {
   const sz = estimateSizeOn(board, id, entry);
   const at = `@(${Math.round(entry.x)},${Math.round(entry.y)}) ${Math.round(sz.w)}x${Math.round(sz.h)}`;
   const g = glyph ? `[${glyph}] ` : '';
@@ -39,7 +41,9 @@ function describeEntry(board, id, entry, glyph = null, excerpts = null) {
     return `- ${g}[${md}] 「${t}」 ${at} (id: ${id})${entry.by === 'agent' ? ' ·你写的' : ''}${flags}`;
   }
   if (entry.kind === 'scribble') return `- ${g}[涂鸦] ${at} (id: ${id})${entry.by === 'agent' ? ' ·你画的' : ''}${flags}`;
-  return `- ${g}${id} ${at}${entry.by === 'agent' ? ' ·你摆的' : ''}${flags}`;
+  // 过期座位要明说（iss_mt38ucyq：旧路径条目被 agent 当"失效卡"差点建议删素材母版）
+  const stale = staleIds?.has(id) ? ' 〔⚠️磁盘上已无此路径 —— 多半被移动/改名了，以磁盘为准，别据此判失效或建议删除〕' : '';
+  return `- ${g}${id} ${at}${entry.by === 'agent' ? ' ·你摆的' : ''}${flags}${stale}`;
 }
 
 export function makeReadBoardTool({ projectId }) {
@@ -86,6 +90,16 @@ on the minimap and listed with what is inside it.`,
         .filter(({ id }) => !id.startsWith(`${CHALK_DIR}/`) || excerpts.has(id))
         .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
       const entryOf = new Map(items.map(it => [it.id, it.entry]));
+      // 座位 vs 磁盘对账（iss_mt38ucyq）：文件挪走后旧座位可能还挂几十秒
+      // （改名对账/前端回写有时差）。查一遍真身，过期的在条目上点名。
+      const root = getSharedDir(projectId);
+      const staleIds = new Set();
+      await Promise.all(items.map(async ({ id, entry }) => {
+        if (entry.kind === 'text' || entry.kind === 'scribble' || id === 'browse') return;
+        const bare = String(id).replace(/^(deck|site|docx):/, '');
+        if (!bare || bare.includes('..') || /^(text|scribble|b):/.test(bare)) return;
+        try { await fs.access(path.resolve(root, bare)); } catch { staleIds.add(id); }
+      }));
 
       // 小地图（用户视口画框）
       const vp = getViewpoint(projectId);
@@ -129,7 +143,7 @@ on the minimap and listed with what is inside it.`,
           lines.push('', `组 ${i + 1}${tags ? ` ${tags}` : ''}（${g.members.length} 件 ${g.edges.length} 线${staging ? '，草稿' : ''}）：`);
           const sorted = g.members.map(id => ({ id, entry: entryOf.get(id) }))
             .sort((a, b) => (a.entry.y - b.entry.y) || (a.entry.x - b.entry.x));
-          for (const { id, entry } of sorted) lines.push(describeEntry(board, id, entry, glyphOf.get(id), excerpts));
+          for (const { id, entry } of sorted) lines.push(describeEntry(board, id, entry, glyphOf.get(id), excerpts, staleIds));
           for (const bid of g.edges.slice(0, 12)) lines.push(`    ${bindingLine(board.bindings[bid], board)} (line id: ${bid})`);
           if (g.edges.length > 12) lines.push(`    …还有 ${g.edges.length - 12} 条线`);
         });
@@ -147,7 +161,7 @@ on the minimap and listed with what is inside it.`,
               rowY = entry.y;
               lines.push(`— 行 y≈${Math.round(rowY)} —`);
             }
-            lines.push(describeEntry(board, id, entry, glyphOf.get(id), excerpts));
+            lines.push(describeEntry(board, id, entry, glyphOf.get(id), excerpts, staleIds));
           }
         }
       }
@@ -183,7 +197,7 @@ on the minimap and listed with what is inside it.`,
         } catch { /* 关系读不到不挡座次 */ }
       }
 
-      lines.push('', '（口径：稀疏表只列摆过的；层归属为服务端近似；尺寸为形态估算）');
+      lines.push('', '（口径：稀疏表只列摆过的；层归属为服务端近似；尺寸为形态估算；带⚠️的条目=座位与磁盘对不上账）');
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     },
   );

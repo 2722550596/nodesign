@@ -505,3 +505,44 @@ export function pinToZone(pid, { objectId, zoneId = '' }) {
     return { board, zone: zid ? { id: zid } : null, placed: board.objects[oid] };
   });
 }
+
+/**
+ * 悬空关系线清扫（2026-08-24，iss_mszz20zn）：删掉产物后 board.json 里会留下
+ * 端点指向已不存在文件的 binding —— 关系线只能画不能删，agent 收尾时"我制造的
+ * 东西我清不掉"。关系线依附于产物存在：产物没了线自然该没。
+ *
+ * 端点合法 = 板上有座位（board.objects）或磁盘上真有这个路径（kind 前缀剥掉后）。
+ * 两条都不满足才剪 —— 宁可留一条可疑的，不错杀一条活的。30s 节流：挂在
+ * /artifacts 热路径上，每张板最多半分钟对账一次。
+ */
+const pruneStamp = new Map();   // pid → last run ms
+const PRUNE_INTERVAL_MS = 30_000;
+
+export function pruneDanglingBindings(pid) {
+  const now = Date.now();
+  if ((pruneStamp.get(pid) || 0) + PRUNE_INTERVAL_MS > now) return Promise.resolve({ pruned: 0 });
+  pruneStamp.set(pid, now);
+  return withBoardLock(pid, async () => {
+    const board = await readBoard(pid);
+    const entries = Object.entries(board.bindings || {});
+    if (!entries.length) return { pruned: 0 };
+    const root = getSharedDir(pid);
+    const alive = async (ep) => {
+      const id = String(ep || '');
+      if (!id) return false;
+      if (board.objects?.[id]) return true;
+      const bare = id.replace(/^(deck|site|docx|text|scribble):/, '');
+      if (!bare || bare.includes('..')) return false;
+      try { await fs.access(path.resolve(root, bare)); return true; } catch { return false; }
+    };
+    const dead = [];
+    for (const [bid, b] of entries) {
+      if (!(await alive(b?.from)) || !(await alive(b?.to))) dead.push(bid);
+    }
+    if (!dead.length) return { pruned: 0 };
+    for (const bid of dead) delete board.bindings[bid];
+    await writeBoard(pid, board);
+    console.log(`[board] ${pid} 清掉 ${dead.length} 条悬空关系线`);
+    return { pruned: dead.length };
+  });
+}

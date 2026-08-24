@@ -393,6 +393,7 @@ Suggested flow for image-led pages:
         //    - 普通模式：tavily/exa/baidu/zhipu auto-route by language（CJK→baidu, EN→tavily）
         //    - include_images：zhipu 不支持图，从候选中剔除；其余按语言 auto-route
         let providerId;
+        let providerNote = '';
         if (include_images) {
           if (provider === 'zhipu') {
             return {
@@ -418,15 +419,13 @@ Suggested flow for image-led pages:
               };
             }
           } else {
+            // 点名的 provider 没配 key：换配了的顶上别硬失败（结果>供应商身份，iss_mt5z4s8j）
             providerId = provider;
             if (!getKey(providerId)) {
-              return {
-                content: [{
-                  type: 'text',
-                  text: `web_search failed: ${PROVIDERS[providerId].keyEnv} not set in .env.`,
-                }],
-                isError: true,
-              };
+              const alt = ((looksChinese(query) ? PRIORITY_CJK : PRIORITY_NON_CJK).filter(id => id !== 'zhipu')).find(id => getKey(id)) || null;
+              if (!alt) return { content: [{ type: 'text', text: `web_search failed: ${PROVIDERS[providerId].keyEnv} not set, and no other image-capable provider configured.` }], isError: true };
+              providerNote = `（provider "${provider}" 没配 key，已换用 ${alt}）`;
+              providerId = alt;
             }
           }
         } else {
@@ -443,13 +442,10 @@ Suggested flow for image-led pages:
             };
           }
           if (!getKey(providerId)) {
-            return {
-              content: [{
-                type: 'text',
-                text: `web_search failed: ${PROVIDERS[providerId].keyEnv} not set in .env.`,
-              }],
-              isError: true,
-            };
+            const alt = autoSelectProvider(query);   // 只挑配了 key 的
+            if (!alt || !getKey(alt)) return { content: [{ type: 'text', text: `web_search failed: ${PROVIDERS[providerId].keyEnv} not set, and no other provider configured.` }], isError: true };
+            providerNote = `（provider "${providerId}" 没配 key，已换用 ${alt}）`;
+            providerId = alt;
           }
         }
 
@@ -518,7 +514,7 @@ Suggested flow for image-led pages:
         // count 张 + base64 体积。已在上一步通过 count 截断控量。
         const out = [{
           type: 'text',
-          text: formatMarkdown(query, providerId, hits, { images: downloadedImages }),
+          text: `${providerNote ? `${providerNote}\n` : ''}${formatMarkdown(query, providerId, hits, { images: downloadedImages })}`,
         }];
         for (const img of downloadedImages) {
           if (img.base64) {

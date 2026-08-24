@@ -278,3 +278,112 @@ export async function runBeforeShot(page, beforeShot) {
     return `beforeShot error: ${err?.message || err}`;
   }
 }
+
+/**
+ * 带兜底的整页/裁剪截图（iss_mt6tru7p：WebGL 持续动画页 + device:'mobile' 下
+ * page.screenshot 等稳定帧/字体 30s 必超时——rAF 每帧都在重绘，"稳定"永远
+ * 等不到）。先给 playwright 一次机会（15s，够正常页），超时改走 CDP
+ * Page.captureScreenshot：**抓当前帧不等任何东西**。持续动画页抓哪一帧都是
+ * 对的——它本来就没有"稳定帧"这回事。
+ *
+ * @returns {Promise<{buf: Buffer, degraded: boolean}>} degraded=true 走了 CDP 兜底
+ */
+export async function shotWithFallback(page, opts = {}) {
+  try {
+    return { buf: await page.screenshot({ ...opts, timeout: 15_000 }), degraded: false };
+  } catch (err) {
+    if (!/Timeout/i.test(String(err?.message))) throw err;
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      const params = { format: 'png', captureBeyondViewport: !!opts.fullPage };
+      // CDP 的 clip：captureBeyondViewport 下是文档坐标，与我们 fullPage+clip 的语义一致
+      if (opts.clip) params.clip = { x: opts.clip.x, y: opts.clip.y, width: opts.clip.width, height: opts.clip.height, scale: 1 };
+      const { data } = await cdp.send('Page.captureScreenshot', params);
+      return { buf: Buffer.from(data, 'base64'), degraded: true };
+    } finally {
+      await cdp.detach().catch(() => {});
+    }
+  }
+}
+
+/**
+ * 超长页 fullPage → 滚动位置联络表（iss_mt0365b8）：48000px 的整页压进 API 长边
+ * 上限后只剩 47px 宽，什么都看不见——工具自己承认不可读还是把废图塞给了模型。
+ * 超过阈值改成：按滚动位置取 5 帧视口，拼一张带位置标注的联络表（跟胶片条同一
+ * 套版式，横轴从时间换成滚动位置）。一次调用看清整页节奏；要某段的原尺寸用
+ * scrollTo 参数去截那一段。
+ */
+export const LONG_PAGE_LIMIT = 12_000;
+
+export async function longPageSheet(page, { positions = [0, 0.22, 0.45, 0.68, 0.9] } = {}) {
+  const dims = await page.evaluate(() => ({
+    docH: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
+    vpH: window.innerHeight, vpW: window.innerWidth, y0: window.scrollY,
+  }));
+  if (!(dims.docH > LONG_PAGE_LIMIT)) return null;
+  const shots = [];
+  for (const p of positions) {
+    const y = Math.round(p * (dims.docH - dims.vpH));
+    await page.evaluate((yy) => window.scrollTo(0, yy), y).catch(() => {});
+    await page.waitForTimeout(300);   // 给懒加载/reveal 一点点时间，不求全到
+    const { buf } = await shotWithFallback(page, { type: 'png' });
+    shots.push({ buf, label: `${Math.round(p * 100)}% y=${y}` });
+  }
+  await page.evaluate((yy) => window.scrollTo(0, yy), dims.y0).catch(() => {});
+
+  const { default: sharp } = await import('sharp');
+  const { sheetLayout } = await import('./motion-lab.js');
+  const meta = await sharp(shots[0].buf).metadata();
+  const L = sheetLayout(shots.length, meta.width, meta.height);
+  const composites = []; const labels = [];
+  for (let i = 0; i < shots.length; i += 1) {
+    const col = i % L.cols; const row = Math.floor(i / L.cols);
+    const left = L.gap + col * (L.cellW + L.gap);
+    const top = L.gap + row * (L.cellH + L.gap);
+    composites.push({ input: await sharp(shots[i].buf).resize(L.cellW, L.cellH, { fit: 'fill' }).png().toBuffer(), left, top });
+    labels.push({ left, top, label: shots[i].label });
+  }
+  const fontH = Math.max(13, Math.round(L.cellH * 0.055));
+  const escXml = (t) => String(t).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+  const svg = [`<svg xmlns="http://www.w3.org/2000/svg" width="${L.sheetW}" height="${L.sheetH}">`,
+    ...labels.map((l) => `<rect x="${l.left}" y="${l.top}" width="${(l.label.length * fontH * 0.62 + 12).toFixed(0)}" height="${fontH + 10}" fill="#000" fill-opacity="0.72"/>`
+      + `<text x="${l.left + 6}" y="${l.top + fontH + 2}" font-size="${fontH}" fill="#fff" font-family="monospace">${escXml(l.label)}</text>`),
+    '</svg>'].join('');
+  const buf = await sharp({ create: { width: L.sheetW, height: L.sheetH, channels: 3, background: '#15150f' } })
+    .composite([...composites, { input: Buffer.from(svg), left: 0, top: 0 }]).png().toBuffer();
+  return {
+    buf,
+    mode: `long-page contact sheet (doc ${dims.docH}px, ${shots.length} viewports)`,
+    note: `整页高 ${dims.docH}px，fullPage 会压成不可读的细条 —— 已改为 ${shots.length} 帧滚动位置联络表（标注=滚动百分比与 y）。要某一段的原尺寸，用 scrollTo 参数（像素/百分比/选择器）单独截那一屏。`,
+  };
+}
+
+/**
+ * fullPage+clip 的"Clipped area is either empty or outside the resulting image"
+ * 兜底（iss_mszxp0zy）：Chromium 整页光栅有高度上限（~16384px 纹理），元素落在
+ * 超高页更深处时文档坐标 clip 会落到成图之外。兜底=滚到元素处，改用**视口坐标**
+ * clip 截当前屏（clip 语义两套：fullPage 下文档坐标 / 非 fullPage 视口坐标，
+ * 本机探针 08-19 定过案）。
+ */
+export async function clipShotWithFallback(page, { clip, selector }) {
+  try {
+    return await shotWithFallback(page, { fullPage: true, clip, type: 'png' });
+  } catch (err) {
+    if (!/Clipped area/i.test(String(err?.message)) || !selector) throw err;
+    await page.locator(selector).first().scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+    const r = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return { x: b.x, y: b.y, width: b.width, height: b.height, vw: window.innerWidth, vh: window.innerHeight };
+    }, selector);
+    if (!r) throw err;
+    const vClip = {
+      x: Math.max(0, r.x), y: Math.max(0, r.y),
+      width: Math.max(1, Math.min(r.width, r.vw - Math.max(0, r.x))),
+      height: Math.max(1, Math.min(r.height, r.vh - Math.max(0, r.y))),
+    };
+    const out = await shotWithFallback(page, { clip: vClip, type: 'png' });
+    return { ...out, degraded: true };
+  }
+}

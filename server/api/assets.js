@@ -18,7 +18,7 @@ import { guardProject } from './_guard.js';
 import {
   getSharedDir, ensureProjectWorkspace, removeSessionWorkspace, commitWorkspace,
 } from '../projects/workspace.js';
-import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
+import { patchBoard, readBoard, reconcileBoardRenames, pruneDanglingBindings, forwardId, forwardPath, renameBoardPaths } from '../projects/board-store.js';
 import { moveEntry, MoveError } from '../projects/move-entry.js';
 import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE, docxClaimedFiles, isDirArtifact } from '../lib/artifact-target.js';
@@ -255,10 +255,10 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     // 那个接口，而迁移一旦晚于第一次渲染，用户会先看到一个叫 `tasks` 的文件夹
     // 套着他的文件夹。跑过之后是三次 stat 的事（幂等早退），不值得省。
     await ensureProjectWorkspace(req.params.pid);
-    // 跟上 agent 在画布背后做的改名（`mv` 之后卡片 id 就变了）。同上：挂在这里
-    // 是为了让用户看到的第一帧就是对齐过的。没有新 commit 时是一次 rev-parse。
+    // 跟上 agent 在画布背后做的改名（挂在这让第一帧就对齐；无新 commit 时只一次 rev-parse）
     await reconcileBoardRenames(req.params.pid).catch(
       (err) => console.warn('[board] 改名对账失败:', err.message));
+    await pruneDanglingBindings(req.params.pid).catch(() => {});   // 悬空线 30s 节流清扫（理由见 board-store）
 
     const assetsDir = path.join(getSharedDir(req.params.pid), 'assets');
     const artifacts = [];

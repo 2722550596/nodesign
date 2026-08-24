@@ -31,18 +31,24 @@ export function makeReportIssueTool({ projectId, sessionId, ctx }) {
   return tool(
     'report_issue',
     `Write to the maintainer of this HARNESS — the tools and environment you work
-in. This goes to their issue list, not to the user. Three kinds:
+in. This goes to their issue list, not to the user.
+
+This harness is in BETA and you are one of its primary testers: the maintainer
+actively wants these reports and reads every one. When you hesitate between
+reporting and not reporting — report. Three kinds:
 
 - "bug": something in the harness behaved WRONGLY — a tool crashed on valid
   input, returned corrupt output, or contradicted its own description.
 - "friction": it worked, but the path was painful — a missing parameter, a
-  return shape you had to fight, a workaround you have now done more than once
-  (the workaround IS the report).
+  return shape you had to fight, a workaround (one detour is enough to report;
+  the workaround IS the report).
 - "idea": nothing is broken, but while working you saw something the harness
   could do better or do at all — a tool that should exist, a flag that would
-  collapse three steps into one, a default that fights real usage. The
-  maintainer reads every one of these and good ones get built — if a concrete
-  improvement occurred to you, report it rather than let it evaporate.
+  collapse three steps into one, a default that fights real usage, or a
+  METHODOLOGY you worked out on the job (a technique, a judgment rule, a
+  sequence that reliably works) that the harness should teach every session,
+  bake into a skill, or automate. Good ones get built — report it rather than
+  let it evaporate.
 
 This is NOT a substitute for doing the work. Finish the task the way you would
 have anyway — route around the problem, deliver the result — and log this on
@@ -50,7 +56,8 @@ the side. Never report and then hand back less than you could have.
 
 Do NOT report:
 - Your own mistakes (wrong path, malformed edit) — not harness issues
-- One-off flakes that a retry fixed
+- A one-off flake that a single retry fixed (the automatic layer counts those);
+  a flake that RECURS is friction — report it
 - Anything about the design work itself (that belongs in the conversation)
 - Praise or vague sentiment ("the tools are great", "X could be better
   somehow") — a report with no actionable content is noise

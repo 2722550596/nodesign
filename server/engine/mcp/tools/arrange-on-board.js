@@ -90,7 +90,9 @@ drag things afterwards — their move wins, do not fight it.`,
       if (subjectEntry) {
         const subjectLayer = layerOf(subject, subjectEntry, known);
         if (subjectLayer !== anchorLayer) {
-          return err(`不同层（${subjectLayer || '根'} vs ${anchorLayer || '根'}）：先 mv 文件到同一个文件夹，画布跟着走。`);
+          return err(`不同层（${subjectLayer || '根'} vs ${anchorLayer || '根'}）：摆位只在同一层内有意义。`
+            + '要摆到一起：先把文件放进同一个文件夹（assets/ 里的素材用 cp 复制过去 —— 母版别挪走）；'
+            + '只是想表达"相关"，用 relate_on_board 连一条线更合适。');
         }
       }
 

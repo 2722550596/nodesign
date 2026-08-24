@@ -34,11 +34,14 @@ export function makePostToolUseFailureHandler({ ctx, projectId, sessionId }) {
     // 表面上活儿还是干完的，于是"某个工具本周失败 40 次"没人知道。
     // fail-soft：记录本身绝不能变成新的故障源。
     try {
+      // Bash 把命令带进 detail（不进指纹）：exit 144 那类静默死的命令，detail 里
+      // 只有一句 "Exit code N"，事后连是谁死的都考证不了（08-24 案，转录已清）
+      const cmd = tool === 'Bash' ? String(input?.tool_input?.command || '').slice(0, 300) : '';
       recordIssue({
         source: 'auto',
         toolName: tool,
         summary: `${tool} 失败：${error.slice(0, 120)}`,
-        detail: error,
+        detail: cmd ? `${error}\n[cmd] ${cmd}` : error,
         projectId,
         sessionId,
         signature: signatureOf(`${tool}|${error}`),

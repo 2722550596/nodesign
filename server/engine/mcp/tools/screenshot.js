@@ -19,7 +19,7 @@ import { can } from '../../../lib/kinds/index.js';
 import { screenshotDocx } from './screenshot-docx.js';
 import { SITE_DEVICE_W } from './helpers/perception-page.js';
 import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';
-import { normalizeShot, detectPaintTransform, attachPageDiagnostics, runWaitFor, runBeforeShot } from './helpers/shot-pipeline.js';
+import { normalizeShot, detectPaintTransform, attachPageDiagnostics, runWaitFor, runBeforeShot, shotWithFallback, longPageSheet, clipShotWithFallback } from './helpers/shot-pipeline.js';
 import { recordMotion, pickNearestFrames, composeSheet, encodeWebm, motionCaptionLines } from './helpers/motion-lab.js';
 import { wheelScroll, elementMotionReport, elementMotionLines } from './helpers/motion-scroll.js';
 
@@ -428,6 +428,8 @@ Do NOT use this tool when:
         // （系统 fit script 包 frame + scroll-snap），locator.screenshot 自动
         // 拿目标 section 的 bbox，不需要再操作 DOM。
         let buf;
+        let shotDegraded = false;
+        let longPageNote = null;
         let captureMode;
         const targetSelector = selector
           || (pageIndex ? `section[data-page="${pageIndex}"]` : null);
@@ -476,13 +478,19 @@ Do NOT use this tool when:
           };
           clip.width = Math.max(1, Math.min(rect.width, rect.docW - clip.x));
           clip.height = Math.max(1, Math.min(rect.height, rect.docH - clip.y));
-          buf = await page.screenshot({ fullPage: true, clip, type: 'png' });
+          ({ buf, degraded: shotDegraded } = await clipShotWithFallback(page, { clip, selector: targetSelector }));
           captureMode = `selector="${targetSelector}"`;
         } else {
-          buf = await page.screenshot({ fullPage: fp, type: 'png' });
-          captureMode = isSite
-            ? `site ${device || 'desktop'} ${vp.width}px, fullPage=${fp}`
-            : `fullPage=${fp}`;
+          // 超长页 fullPage → 滚动联络表（阈值与理由见 shot-pipeline.longPageSheet）
+          const sheet = fp ? await longPageSheet(page).catch(() => null) : null;
+          if (sheet) {
+            buf = sheet.buf; captureMode = sheet.mode; longPageNote = sheet.note;
+          } else {
+            ({ buf, degraded: shotDegraded } = await shotWithFallback(page, { fullPage: fp, type: 'png' }));
+            captureMode = isSite
+              ? `site ${device || 'desktop'} ${vp.width}px, fullPage=${fp}`
+              : `fullPage=${fp}`;
+          }
         }
         // live 页的 DPR 是会话的（1），detail:'normal' 的 0.6 光栅在这里事后缩
         if (acq.live && rasterScale < 1) {
@@ -537,7 +545,9 @@ Do NOT use this tool when:
         const shot = await normalizeShot(buf);
 
         const captionParts = [
-          `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode})`,
+          `Screenshot of ${target.relPath} (layout ${vp.width}x${vp.height} @${rasterScale}x raster, ${captureMode})`
+          + (shotDegraded ? '（常规截图等稳定帧超时——页面在持续动画（WebGL/rAF），已改抓当前帧：画面是真实的某一瞬间，动画中间态属正常）' : '')
+          + (longPageNote ? `（${longPageNote}）` : ''),
         ];
         // 加载通道写进 caption：agent 不用再靠"把 location.protocol 写进 DOM 再截一张"
         // 去反推自己被什么方式打开了（问题库 iss_msxk2oci_0v0v 就是这么查了四轮）
