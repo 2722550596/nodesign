@@ -56,7 +56,8 @@ export function estimateSize(id, entry) {
   }
   if (IMG_EXT.test(s)) return KIND_SIZES.image;
   if (VIDEO_EXT.test(s)) return KIND_SIZES.video;
-  if (/\.(md|txt)$/i.test(s)) return KIND_SIZES.note;
+  // 文本类文件卡带内容预览（08-24：md/json 等升级出预览体），身位=note
+  if (/\.(md|markdown|txt|json|csv|ya?ml)$/i.test(s)) return KIND_SIZES.note;
   return KIND_SIZES.file;
 }
 

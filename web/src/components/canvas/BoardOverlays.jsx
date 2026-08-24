@@ -18,8 +18,8 @@
 import { useState } from 'react';
 import MarkdownMath from '../ui/MarkdownMath.jsx';
 import { Plus, ExternalLink, X, BookOpen, PencilLine } from 'lucide-react';
-import { Assets } from '../../lib/api.js';
-import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS } from '../../lib/theme.js';
+import { Assets, Instruction } from '../../lib/api.js';
+import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, MODAL } from '../../lib/theme.js';
 import { POP_IN } from '../../lib/board-geometry.js';
 import { readerOf } from '../../lib/board-kinds.js';
 import InstructionsCard from '../project/InstructionsCard.jsx';
@@ -38,9 +38,23 @@ export function makeBoardReaders({ projectId, setViewer }) {
     // 普通 md 的 frontmatter 是内容的一部分，替用户删掉是自作主张。
     async file(o) {
       const title = o.name || o.title || 'markdown';
+      // 可编辑的两类（08-24 记忆体系改版）：记忆/*.md（服务端保 frontmatter，
+      // MEMORY.md 是索引不给编）和根 CLAUDE.md（项目档案，走 Instruction API）。
+      // editKind 是保存分支的判据 —— 别再让"能不能编辑"寄生在"是不是便签"上。
+      const p = String(o.path || '');
+      const editKind = (p.startsWith('记忆/') && !p.includes('/', 3) && o.name !== 'MEMORY.md') ? 'memory'
+        : (p === 'CLAUDE.md') ? 'instruction' : null;
       try {
         const res = await fetch(Assets.artifactFileUrl(projectId, o.path));
-        setViewer({ title, content: await res.text() });
+        const raw = await res.text();
+        if (editKind === 'memory') {
+          // frontmatter（SDK 的 name/description/metadata 头）藏起来只给正文；
+          // 保存时服务端以磁盘上的头为准（memory-notes PUT 的保头逻辑）
+          const head = /^---\n[\s\S]{0,1200}?\n---\n?/.exec(raw)?.[0] || '';
+          setViewer({ title, content: raw.slice(head.length), head, editKind, editName: o.name });
+        } else {
+          setViewer({ title, content: raw, editKind, editName: o.name });
+        }
       } catch {
         setViewer({ title, content: o.preview || '(读不出来)' });
       }
@@ -55,8 +69,8 @@ export function makeBoardReaders({ projectId, setViewer }) {
         // agent 下轮从注入清单看到文件、自己 Read 到新内容）。
         // head = frontmatter 原样留着（板书的 nd:chalk/anchor/reply_to 都在里面，保存时要拼回去）
         const head = /^---\n[\s\S]{0,800}?\n---\n?/.exec(raw)?.[0] || '';
-        setViewer({ title, content: raw.slice(head.length), head, note: o.noteTask ? o : null });
-      } catch { setViewer({ title, content: o.text || '', head: '', note: o.noteTask ? o : null }); }
+        setViewer({ title, content: raw.slice(head.length), head, note: o.noteTask ? o : null, editKind: o.noteTask ? (o.noteTask && o.chalk ? 'chalk' : 'tasknote') : null });
+      } catch { setViewer({ title, content: o.text || '', head: '', note: o.noteTask ? o : null, editKind: o.noteTask ? (o.chalk ? 'chalk' : 'tasknote') : null }); }
     },
   };
 
@@ -97,32 +111,32 @@ export function MarkdownViewerOverlay({ projectId, viewer, onClose, onSaved }) {
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: GAP.sm, flexShrink: 0 }}>
           <BookOpen size={14} color={COLOR.sub} />
           <span style={{ marginLeft: GAP.sm, fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.md, color: COLOR.text }}>{viewer.title}</span>
-          {viewer.note && draft === null && (
+          {viewer.editKind && draft === null && (
             <button title="编辑" onClick={() => setDraft(viewer.content)} style={{ ...toolBtn, marginLeft: 'auto' }}>
               <PencilLine size={12} />
             </button>
           )}
-          {viewer.note && draft !== null && (
+          {viewer.editKind && draft !== null && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: GAP.xs }}>
               <button onClick={async () => {
-                const o = viewer.note;
                 try {
-                  // ⚠️ api.js 的 putTaskNote 07-30 就改成 (pid, filename, text)
-                  // 三参了，这里曾一直是四参老签名 —— noteTask 当 filename、
-                  // 文件名当正文。恰好 noteTask 同期恒 null 让编辑按钮根本不
-                  // 出现，两个 bug 互相掩护（2026-08-14 一起修）。
-                  // 板书住 notes/板书/ 且 frontmatter 必须保住（丢了就降级成普通便利贴、也不知道它关于谁）
-                  if (o.chalk) await Assets.putChalk(projectId, o.name, `${viewer.head || ''}${draft}`);
-                  else await Assets.putTaskNote(projectId, o.name, draft);
+                  // 保存按 editKind 分流（08-24 起四类）。历史坑见 git blame：
+                  // putTaskNote 三参签名 + noteTask 恒 null 两个 bug 互相掩护过。
+                  // 板书/记忆的 frontmatter 由服务端保住（PUT 的保头逻辑），前端拼不拼都安全
+                  const o = viewer.note;
+                  if (viewer.editKind === 'chalk') await Assets.putChalk(projectId, o.name, `${viewer.head || ''}${draft}`);
+                  else if (viewer.editKind === 'tasknote') await Assets.putTaskNote(projectId, o.name, draft);
+                  else if (viewer.editKind === 'memory') await Assets.putMemoryNote(projectId, viewer.editName, draft);
+                  else if (viewer.editKind === 'instruction') await Instruction.write(projectId, draft);
                   onSaved(draft);
                   setDraft(null);
-                } catch (err) { console.warn('[board] save note failed:', err.message); }
+                } catch (err) { console.warn('[board] save failed:', err.message); }
               }} style={toolBtn}>保存</button>
               <button onClick={() => setDraft(null)} style={toolBtn}>取消</button>
             </div>
           )}
           <button onClick={onClose}
-            style={{ ...toolBtn, ...(viewer.note ? { marginLeft: GAP.xs } : { marginLeft: 'auto' }) }}><X size={12} /></button>
+            style={{ ...toolBtn, ...(viewer.editKind ? { marginLeft: GAP.xs } : { marginLeft: 'auto' }) }}><X size={12} /></button>
         </div>
         {draft === null ? (
           <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.sm, color: COLOR.text, lineHeight: 1.7 }}>
@@ -198,14 +212,19 @@ export function ImageDetailOverlay({ projectId, detail, onClose, onAdd }) {
  *
  * 原来是 position:fixed 铺满整个视口 —— 看图 / 读便签会把左栏对话和顶栏一起
  * 压暗，跟"编辑窗只在画布内最大化"（DeckWindow）的桌面语义打架。改成 absolute
- * 贴在 BoardCanvas 根上：只压暗桌面这一格，zIndex 压在 DeckWindow(120) 之下。
+ * 贴在 BoardCanvas 根上：只压暗桌面这一格。
+ *
+ * zIndex 走 MODAL 档（600）：阅读是专注型动作，要压过产物/文件夹窗（500）和
+ * 工具栏（510）。⛔ 08-24 前这里是写死的 110 —— 那是压在"DeckWindow(120)
+ * 之下"的老账，08-07 窗层抬到 500 后没人 rebase，于是文件夹窗里双击 .md
+ * 阅读器整个躲在窗后面，看起来"双击没反应"。层级要引用档位常量别写裸数。
  */
 function Overlay({ children, onClose }) {
   return (
     <div
       onClick={onClose}
       style={{
-        position: 'absolute', inset: 0, zIndex: 110, background: 'rgba(0,0,0,0.42)',
+        position: 'absolute', inset: 0, zIndex: MODAL.zIndex, background: 'rgba(0,0,0,0.42)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: GAP.page,
       }}
     >

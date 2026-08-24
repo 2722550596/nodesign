@@ -14,6 +14,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { safeSegment, parseNoteFrontmatter } from './helpers.js';
 import { patchBoard } from '../../projects/board-store.js';
+import { MEMORY_DIR_NAME } from '../../engine/agent/memory-config.js';
 
 /**
  * @param {object} deps
@@ -169,6 +170,55 @@ export function mountNotesRoutes({ router, guardProject, getSharedDir, ensurePro
       }
       // 座位和线一起清，别留指向已删文件的幽灵条目（read_board 会把它当"摆过的"列出来）
       try { await patchBoard(req.params.pid, { objects: { [`notes/板书/${name}`]: null } }); } catch { /* 清不掉不挡删除 */ }
+      res.status(204).end();
+    } catch (err) { next(err); }
+  });
+
+  /**
+   * 记忆（记忆/<name>.md，2026-08-24 记忆体系改版）：用户侧改 / 删。
+   * 记忆是 agent 的长期状态，画布可见的设计承诺是"用户看得到也**能改**、
+   * 改了算数"——这两条路由就是"能改"的那半。frontmatter（SDK 的
+   * name/description/metadata 头）与板书同一套保头逻辑：正文只收正文。
+   * ⚠️ MEMORY.md 是索引不在这条路上编辑（索引由 agent 按 SDK 合同维护）。
+   */
+  const resolveMemoryNote = (pid, name) => {
+    const base = path.join(getSharedDir(pid), MEMORY_DIR_NAME);
+    const file = path.resolve(base, name);
+    return file.startsWith(base + path.sep) ? file : null;
+  };
+  router.put('/:pid/memory-notes/:name', express.json(), async (req, res, next) => {
+    try {
+      if (!guardProject(req, res)) return;
+      const { name } = req.params;
+      if (!safeNoteSegment(name, { md: true })) return res.status(400).json({ error: 'invalid filename' });
+      if (name === 'MEMORY.md') return res.status(400).json({ error: 'MEMORY.md is the index — edit topic files instead' });
+      const text = String(req.body?.text ?? '');
+      if (!text.trim()) return res.status(400).json({ error: 'text required' });
+      if (text.length > 40_000) return res.status(400).json({ error: 'too long (max 40k chars)' });
+      const file = resolveMemoryNote(req.params.pid, name);
+      if (!file) return res.status(400).json({ error: 'invalid path' });
+      let head = '';
+      try { head = /^---\n[\s\S]{0,1200}?\n---\n?/.exec(await fs.readFile(file, 'utf8'))?.[0] || ''; } catch { /* 新文件 */ }
+      const incomingHead = /^---\n[\s\S]{0,1200}?\n---\n?/.exec(text)?.[0] || '';
+      const body = text.slice(incomingHead.length).replace(/^\n+/, '');
+      if (!body.trim()) return res.status(400).json({ error: 'text required' });
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, `${head || incomingHead}${head || incomingHead ? '\n' : ''}${body.replace(/\n+$/, '')}\n`, 'utf8');
+      res.json({ ok: true, path: `${MEMORY_DIR_NAME}/${name}` });
+    } catch (err) { next(err); }
+  });
+  router.delete('/:pid/memory-notes/:name', async (req, res, next) => {
+    try {
+      if (!guardProject(req, res)) return;
+      const { name } = req.params;
+      if (!safeNoteSegment(name, { md: true })) return res.status(400).json({ error: 'invalid filename' });
+      const file = resolveMemoryNote(req.params.pid, name);
+      if (!file) return res.status(400).json({ error: 'invalid path' });
+      try { await fs.unlink(file); } catch (err) {
+        if (err.code === 'ENOENT') return res.status(404).json({ error: 'not found' });
+        throw err;
+      }
+      try { await patchBoard(req.params.pid, { objects: { [`${MEMORY_DIR_NAME}/${name}`]: null } }); } catch { /* 清不掉不挡删除 */ }
       res.status(204).end();
     } catch (err) { next(err); }
   });

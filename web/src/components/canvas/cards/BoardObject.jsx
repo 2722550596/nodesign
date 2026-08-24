@@ -6,7 +6,7 @@ import {
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS, alpha } from '../../../lib/theme.js';
 import { PAPER, PAPER_SHADOW } from '../../../lib/paper.js';
 import { EASE, POP_IN } from '../../../lib/board-geometry.js';
-import { SIZES, sizeOf, actionsOf, chromeOf, cardOf } from '../../../lib/board-kinds.js';
+import { SIZES, sizeOf, actionsOf, chromeOf, cardOf, isTextPreview } from '../../../lib/board-kinds.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../../lib/text-fonts.js';
 import MdInk from './MdInk.jsx';
 import { useMeasuredSize } from './useMeasuredSize.js';
@@ -366,14 +366,29 @@ function BoardObject({
       )}
 
       {o.type === 'file' && (
-        <div
-          style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.md}px` }}
-        >
-          <FileText size={12} color={COLOR.sub} />
-          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-            {o.name}
-          </span>
-          <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{formatSize(o.size)}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, padding: `${GAP.sm}px ${GAP.md}px`, flexShrink: 0 }}
+          >
+            <FileText size={12} color={COLOR.sub} />
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+              {o.name}
+            </span>
+            <span style={{ fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, color: COLOR.sub }}>{formatSize(o.size)}</span>
+          </div>
+          {/* 文本文件预览体（08-24）：md 渲染、其余（json/csv/yaml）等宽原样。
+              服务端截 1KB 进 preview（frontmatter 已藏），完整内容双击进阅读器 */}
+          {o.preview && isTextPreview(o) && (
+            /\.(md|markdown)$/i.test(o.name || '') ? (
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: `0 ${GAP.md}px ${GAP.sm}px`, fontSize: FONT_SIZE.xs, lineHeight: 1.5, color: COLOR.text2, maskImage: 'linear-gradient(180deg, #000 70%, transparent)' }}>
+                <MdInk text={o.preview} fontSize={11} />
+              </div>
+            ) : (
+              <pre style={{ flex: 1, minHeight: 0, overflow: 'hidden', margin: 0, padding: `0 ${GAP.md}px ${GAP.sm}px`, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xxs, lineHeight: 1.5, color: COLOR.text2, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maskImage: 'linear-gradient(180deg, #000 70%, transparent)' }}>
+                {o.preview}
+              </pre>
+            )
+          )}
         </div>
       )}
 

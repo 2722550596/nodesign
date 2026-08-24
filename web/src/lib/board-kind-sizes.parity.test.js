@@ -30,5 +30,8 @@ describe('服务端身位镜像 parity', () => {
     expect(estimateSize('deck:海报/主稿.html')).toEqual(sizeOf({ type: 'deck' }));
     expect(estimateSize('assets/generated/x.webp')).toEqual(sizeOf({ type: 'image' }));
     expect(estimateSize('text:abc', { w: 180, h: 44 })).toEqual({ w: 180, h: 44 });
+    // 文本文件卡（08-24 预览体）：两边都按 note 身位
+    expect(estimateSize('记忆/style-anchor.md')).toEqual(sizeOf({ type: 'file', name: 'style-anchor.md' }));
+    expect(estimateSize('data/config.json')).toEqual(sizeOf({ type: 'file', name: 'config.json' }));
   });
 });

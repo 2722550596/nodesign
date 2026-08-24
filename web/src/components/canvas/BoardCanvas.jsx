@@ -13,7 +13,7 @@ import {
   EASE, POP_IN, newStackedZoneRect, packRow, ROW_GAP,
 } from '../../lib/board-geometry.js';
 import {
-  SIZES, sizeOf, actionsOf, isFileBacked, chromeOf, cardOf, annotTargetOf, cardIdOf, passesFilter, isDirArtifact,
+  SIZES, sizeOf, actionsOf, isFileBacked, dragMovesFile, chromeOf, cardOf, annotTargetOf, cardIdOf, passesFilter, isDirArtifact,
 } from '../../lib/board-kinds.js';
 import { deriveBoardObjects } from '../../lib/board-objects.js';
 import BoardObject from './cards/BoardObject.jsx';
@@ -889,8 +889,11 @@ export default function BoardCanvas({
       if (obj) {
         const sz = sizeOf({ ...obj, pos: layoutRef.current[d.id] || obj.pos });
         const cx = nx + sz.w / 2; const cy = ny + sz.h / 2;
+        // 板书拖拽不引发文件搬家（08-24 案）：它是画布上的**话**，位置自由、
+        // 归属钉死 notes/板书/。误触会丢 chalk 身份（判据住 board-kinds）
+        const canMoveFile = dragMovesFile(obj);
         // 一层里只有文件夹方卡，判据从两条（收起态窄条 / 展开态框）收成一条
-        const folder = folderView.find(z =>
+        const folder = !canMoveFile ? null : folderView.find(z =>
           cx >= z.x && cx < z.x + z.w && cy >= z.y && cy < z.y + z.h);
         /**
          * 没落在文件夹上 → 看是不是**摞在另一件东西上**：桌面语言里这就是
@@ -899,9 +902,9 @@ export default function BoardCanvas({
          * 判据用**被拖那张的中心**落在对方矩形里，跟落进文件夹同一套 ——
          * 用矩形相交会太灵敏，挨着摆一下就成夹。
          */
-        const over = folder ? null : positioned.find(it => {
+        const over = (folder || !canMoveFile) ? null : positioned.find(it => {
           if (it.id === d.id || it.native) return null;     // 涂鸦/文字不成夹
-          if (!isFileBacked(it)) return null;               // doc 那类没有磁盘位置
+          if (!dragMovesFile(it)) return null;              // 板书等：有磁盘位置但归属钉死
           const s2 = sizeOf(it);
           return cx >= it.pos.x && cx < it.pos.x + s2.w && cy >= it.pos.y && cy < it.pos.y + s2.h;
         });
@@ -977,14 +980,20 @@ export default function BoardCanvas({
             if (other) groupInto(obj, other);
             dropHintRef.current = null;
             setDropHint(null);
-            dirtyRef.current.objects.add(d.id);
-            scheduleSave();
+            // ⛔ 不再给旧 id 排写入：搬家发起后旧键的迟到 flush 会经 board-store
+            // 转发表把**新条目**删掉（null 删除也走 fwd，08-24 案）。位置与清账
+            // 由 moveEntry/groupInto 拿服务端回包处理。
             return;
           }
           if (hint?.kind === 'folder' || hint?.kind === 'zone') {
             if (hint.id !== prevZone) target = hint.id;
           }
-          if (target !== null) moveEntry(obj, target, { x: pos.x, y: pos.y });
+          if (target !== null) {
+            moveEntry(obj, target, { x: pos.x, y: pos.y });
+            dropHintRef.current = null;
+            setDropHint(null);
+            return;   // 同上：搬家路上不给旧 id 排写入
+          }
         }
       }
       dropHintRef.current = null;
@@ -1035,8 +1044,13 @@ export default function BoardCanvas({
       if (e.key !== 'Escape' || deckOpen) return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      // 先关浮层（项目区面板 / 阅读 / 图片详情），都没开着才退回项目区全景
+      // 先关浮层（项目区面板 / 阅读 / 图片详情），都没开着才退回项目区全景。
+      // 浮层开着时 stopImmediatePropagation：阅读器可能叠在文件夹窗上
+      // （z=MODAL > 窗 500），这一下 ESC 只该关最上面的阅读器，不该连窗一起
+      // 带走 —— ArtifactWindow 的 escToClose 也挂在 window 上，这里用 capture
+      // 抢在它前面（08-24 案：以前两个一起关，用户连"阅读器藏在窗后面"都发现不了）
       if (projectPanel || viewer || detail || orchestrate) {
+        e.stopImmediatePropagation();
         setProjectPanel(null); setViewer(null); setDetail(null); setOrchestrate(null);
         return;
       }
@@ -1045,8 +1059,9 @@ export default function BoardCanvas({
       // ⚠️ 文件夹窗的 ESC **不在这儿**：ArtifactWindow 自己挂了一条（escToClose），
       // 两边都挂的话按一下会同时收选中和关窗。
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // capture:true —— 浮层关闭要抢在 ArtifactWindow 的 bubble 监听之前
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [deckOpen, projectPanel, viewer, detail, orchestrate]);
 
   /**

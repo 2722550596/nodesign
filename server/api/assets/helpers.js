@@ -40,3 +40,21 @@ export function parseNoteFrontmatter(raw) {
   const sm = /(?:^|\n)session:\s*([A-Za-z0-9-]{8,64})\s*(?:\n|$)/.exec(m[1]);
   return { body: raw.slice(m[0].length).replace(/^\n+/, ''), sessionId: sm ? sm[1] : null };
 }
+
+/** 能上预览的文本类文件（08-24：md/json 等文件卡从细条升级成带内容预览的卡） */
+export const PREVIEW_EXTS = new Set(['.md', '.markdown', '.txt', '.json', '.csv', '.yaml', '.yml']);
+
+/**
+ * 文本文件预览上卡（08-24）：截前 1KB 进 `preview` 字段（不是 `text` —— 那是
+ * 便签卡的正文真相，复用会把 NoteFaces 的分面语义漏到文件卡上）。frontmatter
+ * 头藏掉（记忆/ 主题文件的 SDK 头对预览是噪音）。完整内容走 artifact-file。
+ */
+export async function decorateFilePreview(item, absPath) {
+  try {
+    const raw = await fs.readFile(absPath, 'utf8');
+    const head = /^---\n[\s\S]{0,1200}?\n---\n?/.exec(raw)?.[0] || '';
+    const body = raw.slice(head.length).trimStart();
+    item.preview = body.length > 1024 ? body.slice(0, 1024) + '…' : body;
+  } catch { /* 读不到就没有预览，卡退回细条 */ }
+  return item;
+}

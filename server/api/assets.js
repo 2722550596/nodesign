@@ -29,7 +29,7 @@ import { resolveArtifactFile, isServablePath } from '../lib/artifact-file-path.j
 import { getProjectCover } from '../lib/cover.js';
 import { makeDocxPageHandler, makeDocxPdfHandler } from './assets/docx-page.js';
 import { mountNotesRoutes } from './assets/notes.js';
-import { safeSegment, decorateNoteText } from './assets/helpers.js';
+import { safeSegment, decorateNoteText, decorateFilePreview, PREVIEW_EXTS } from './assets/helpers.js';
 import { CHALK_DIR } from '../lib/chalk.js';
 import {
   sendImage, isThumbPath, findOriginalForThumbnail, imageCacheControl,
@@ -350,8 +350,9 @@ router.get('/:pid/artifacts', async (req, res, next) => {
             item.meta = JSON.parse(metaRaw);
           } catch { /* 无 sidecar（旧图）→ 无 meta */ }
         }
-        // 便签/板书把正文带给前端渲卡片（≤4KB 截断，完整内容走 artifact-file；见 helpers.decorateNoteText）
+        // 便签/板书带正文、文本文件带 1KB 预览（完整内容都走 artifact-file；见 helpers）
         if (kind === 'note' && ext === '.md') await decorateNoteText(item, path.join(dir, e.name));
+        else if (kind === 'task-file' && PREVIEW_EXTS.has(ext)) await decorateFilePreview(item, path.join(dir, e.name));
         artifacts.push(item);
       }
     };
@@ -476,8 +477,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         if (!e.isDirectory() || e.name.startsWith('.')) continue;
         if (RESERVED_DIRS.has(e.name) || HARD_IGNORE_DIRS.has(e.name)) continue;
         if (e.name === DRAFTS_DIR) continue;      // 站点试作，由 site 解析器管
-        // 构建目录（dist 等）不当独立站/收纳夹（08-24 案：site:dist 重复卡）；
-        // 递归也吃工作区根 .ndignore —— 页面清单和桌面必须同一套规则
+        // 构建目录不当独立站/收纳夹（site:dist 案）；递归也吃根 .ndignore（与页面清单同规则）
         if (OUTPUT_DIRS.includes(e.name) || rootIgnore(under(rel, e.name), true)) continue;
         if (claimed.has(e.name)) continue;        // 已经是一件产物了
         folders.push(under(rel, e.name));

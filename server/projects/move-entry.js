@@ -19,6 +19,7 @@ import { getSharedDir } from './workspace.js';
 import { renameBoardPaths } from './board-store.js';
 import { taskManifest, KIND_SITE } from '../lib/artifact-target.js';
 import { RESERVED_DIRS } from '../lib/task-scan.js';
+import { CHALK_DIR } from '../lib/chalk.js';
 
 export class MoveError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -62,8 +63,17 @@ export async function moveEntry(pid, fromRaw, toRaw, { createFolder = false } = 
   if (NO_MOVE_OUT.has(guardSeg(from)) || guardSeg(from).startsWith('.')) {
     throw new MoveError(400, '这个位置的东西不参与搬家');
   }
+  // 板书不参与搬家（08-24，上报 iss_mt5qujy1）：它是画布上的**话**，不是文件产物。
+  // 拖拽误触把它挪出 notes/板书/ 会丢 chalk 身份渲染成普通细条卡，且没有正规
+  // 归位通道。搬出一律拒；搬回（下面目标守卫的例外）留给误逃文件的恢复。
+  if (from === CHALK_DIR || from.startsWith(`${CHALK_DIR}/`)) {
+    throw new MoveError(400, '板书是画布上的话，不参与搬家');
+  }
   if (to && (RESERVED_DIRS.has(guardSeg(to)) || guardSeg(to).startsWith('.'))) {
-    throw new MoveError(400, '不能搬进这个目录');
+    // 唯一例外：把误逃的 .md 送**回**板书目录（恢复通道；organize_board 同享。
+    // 不限根层 —— groupInto 误触会把板书埋进"新建文件夹/"里，也得捞得回来）
+    const isChalkReturn = to === CHALK_DIR && /\.md$/i.test(from);
+    if (!isChalkReturn) throw new MoveError(400, '不能搬进这个目录');
   }
   // 搬进自己肚子里（文件夹拖到它自己的子文件夹上）—— fs.rename 会报
   // EINVAL，但那时目录树已经没法自洽了，提前拦住

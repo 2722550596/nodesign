@@ -74,6 +74,11 @@ export function isMarkdown(o) {
   return /\.(md|markdown)$/i.test(o?.ext || o?.name || o?.path || '');
 }
 
+/** 带内容预览的文本文件（08-24：文件卡从细条升级；与服务端 PREVIEW_EXTS/estimateSize 同口径） */
+export function isTextPreview(o) {
+  return /\.(md|markdown|txt|json|csv|ya?ml)$/i.test(o?.ext || o?.name || o?.path || '');
+}
+
 /** 演出的编排配置（`编排.yaml`）——双击进图形设置页，跟 .md 进阅读器同路数。 */
 export function isOrchestration(o) {
   return /(^|\/)编排\.yaml$/.test(o?.path || o?.name || '');
@@ -410,6 +415,8 @@ export function sizeOf(o) {
       h: ARTIFACT_HEADER_H + Math.round(ARTIFACT_PREVIEW_H[o.type] * HERO_SCALE),
     };
   }
+  // 文本类文件卡带预览体（08-24），身位=note（服务端 estimateSize 同口径，parity 钉着）
+  if (o?.type === 'file' && isTextPreview(o)) return KINDS.note.size;
   // ⚠️ 这里曾经是 `(o.pos.expanded && k.sizeExpanded) || k.size`。展开态退役后
   // 存量数据里的 `expanded: true` 必须**读都不读** —— 读了老卡就会带着
   // 640×388 的隐形脚印参与命中和落点计算，渲染却只有 200 宽。
@@ -434,6 +441,17 @@ export function cardOf(o) {
 /** 真相在磁盘上吗（决定能否加入上下文 / 打开原始文件 / 按路径派生归属）。 */
 export function isFileBacked(o) {
   return kindOf(o).backing === 'file';
+}
+
+/**
+ * 拖拽落点能不能引发**文件搬家**（BoardCanvas 的落点提示与 drag-end 都问这条）。
+ * 板书（chalk）是画布上的"话"：位置自由、归属钉死 notes/板书/ —— 误触搬家会丢
+ * chalk 身份渲染成普通细条卡（08-24 案 iss_mt5qujy1；服务端 move-entry 同判据立闸，
+ * 这里是体验层：连落点提示都不给，用户就不会以为能搬）。
+ */
+export function dragMovesFile(o) {
+  if (o?.chalk) return false;
+  return isFileBacked(o);
 }
 
 /**

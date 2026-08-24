@@ -82,6 +82,11 @@ function legacySizeOf(o) {
   // 展开态存量数据**必须被忽略**：还读 `pos.expanded` 的话，收起/展开两个
   // 尺寸就又回来了，而布局系统靠"尺寸恒定"才敢不跑避让
   if (ONLY_SIZE[o.type]) return ONLY_SIZE[o.type];
+  // 08-24 有意的行为变化：文本类文件卡升级出预览体，身位=note（服务端
+  // estimateSize 同口径，parity 测试钉两边）。参照实现跟着新行为走。
+  if (o.type === 'file' && /\.(md|markdown|txt|json|csv|ya?ml)$/i.test(o?.ext || o?.name || '')) {
+    return expectedSize('note');
+  }
   return expectedSize(o.type) || expectedSize('file');
 }
 
