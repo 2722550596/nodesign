@@ -21,6 +21,7 @@ import { layerOf, normalizeCanvasId, tagEnvelope } from '../../../lib/canvas-id.
 import { textBox, findSpot, SKETCH_FIT } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 import { renderChalk, chalkFileName, writeChalkFile, CHALK_DIR } from '../../../lib/chalk.js';
+import { Events } from '../../agent/events.js';
 
 let seq = 0;
 const stamp = () => `${Date.now().toString(36)}${(seq++ % 1000).toString(36)}`;
@@ -125,7 +126,8 @@ Keep the chat reply short — a line pointing at the board is enough.`,
       const rect = { x: Math.round(pos.x), y: Math.round(pos.y), w: box.w, h: box.h };
       try {
         ctx?.emit?.({ type: 'board.updated', sessionId: null, summary: parentId ? '回了一条板书' : '写了一条板书' });
-        ctx?.emit?.({ type: 'board.focus', sessionId: null, tag: tag || null, rect, layer: zone, soft: true, chalk: rel });
+        // chalk 字段进精灵追踪链（08-24）：形状钉在 Events.boardFocus，别再内联对象
+        ctx?.emit?.(Events.boardFocus(rect, { tag: tag || null, layer: zone, soft: true, chalk: rel }));
       } catch { /* */ }
       const big = box.h > SKETCH_FIT.h * 0.6;
       return { content: [{ type: 'text', text:

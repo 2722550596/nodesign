@@ -14,7 +14,8 @@ import { useViewpointReport } from './useViewpointReport.js';
 import { eyeParams, useEyeMode } from './eye-mode.js';
 
 export function useBlackboardMode({ projectId, focusRequest, camRef }) {
-  const [on, setOn] = useState(false);
+  // 默认开（2026-08-24 用户拍板）；配置里显式关过的读回 false
+  const [on, setOn] = useState(true);
   useEffect(() => {
     let alive = true;
     if (!projectId) return undefined;

@@ -41,7 +41,7 @@
  *   run.rate_limit             { info }                                    rate limit 变化
  *   run.image_generated        { path, sizeBytes, prompt, assetRole, ... } generate_image 完成（Phase A）
  *   board.updated              { objectId, zoneId, summary }               pin_to_board 改画布布局（sessionId:null 广播，前端整份重拉 board.json）
- *   board.focus                { rect, tag, layer }                        agent 落了一张草图（sessionId:null 广播；前端只在黑板模式跟镜头）
+ *   board.focus                { rect, tag, layer, soft, chalk }           agent 落了草图/板书（sessionId:null 广播；黑板模式跟镜头，chalk 进精灵追踪）
  *   project.active_session     { activeSessionId }                         项目级会话指针变更（故意不带 sessionId —— 见构造器注释）
  *
  * 外层把 EventBus 桥接到：
@@ -270,6 +270,16 @@ export const Events = {
 
   // C4 FileChanged hook → 前端 reload iframe
   fileChanged: (filePath, event) => ({ type: 'run.file_changed', filePath, event }),
+
+  /**
+   * 板书/草图落定广播（sessionId:null）。原是 write-on-board / sketch-on-board
+   * 里两份内联对象 —— 08-24 板书进精灵追踪链后它有了第三个读者（在场 reducer
+   * 认 chalk 字段），形状收进构造器钉住（前端 parity 测试对着这里逐字校）。
+   * chalk = 板书文件的工作区相对路径（就是它的画布 id）；草图不传。
+   */
+  boardFocus: (rect, { tag = null, layer = '', soft = false, chalk = null } = {}) => (
+    { type: 'board.focus', sessionId: null, rect, tag, layer, soft, chalk }
+  ),
 
   // ── Phase 1 翻译补全 ──
 

@@ -166,6 +166,19 @@ export function reducePresence(table, evt, resolve) {
       return { ...table, [who]: { ...cur, message: msg } };
     }
 
+    // 板书落定（08-24 精灵体检 1a）：MCP 板上工具不产生 run.delta.tool_input /
+    // run.file_changed —— 上面那条链对板书整个沉默，精灵留在旧目标上，服务端
+    // 落位又看不见精灵（它不是 board object），于是"板书压精灵、精灵不让"。
+    // board.focus 是板书落定的唯一信号，chalk 字段就是画布 id。只在活跃时收编
+    //（草图没有单一对象 id，不进来 —— 它有黑板模式的镜头跟随）。
+    case 'board.focus': {
+      const cur = table[MAIN_AGENT_ID];
+      if (!cur?.active) return table;
+      const tid = evt.chalk || null;
+      if (!tid || cur.targetId === tid) return table;
+      return { ...table, [MAIN_AGENT_ID]: { ...cur, targetId: tid, zoneId: evt.layer || null, at: evt.at || cur.at } };
+    }
+
     case 'run.done':
     case 'run.error':
     case 'run.cancelled': {
@@ -237,4 +250,36 @@ export function rectFor(p, rectOf) {
   if (byZone) return byZone;
   const top = p.zoneId.includes('/') ? p.zoneId.split('/')[0] : null;
   return top ? rectOf(top) : null;
+}
+
+/**
+ * 就地标注发出瞬间的**本地合成在场**（E4，从 BoardCanvas 拆出 —— 行数棘轮）：
+ * 真事件（run.start / file_changed）要过服务端一圈才回来，先本地把精灵放到
+ * 目标上。message 固定为 HINT_MESSAGE —— 它就是"这是合成条目"的指纹，
+ * expireHint 靠它区分"真事件已接管"（接管必换 message）。
+ */
+export const HINT_MESSAGE = '收到，来了';
+
+export function hintPresence(prev, targetId, zoneId) {
+  const cur = prev[MAIN_AGENT_ID] || {};
+  return {
+    ...prev,
+    [MAIN_AGENT_ID]: {
+      id: MAIN_AGENT_ID, kind: 'main', name: 'Claude', color: colorFor(0),
+      at: null,
+      ...cur,
+      active: true, targetId, zoneId, message: HINT_MESSAGE,
+    },
+  };
+}
+
+/**
+ * 合成在场的看门狗收场（08-24 精灵体检）：合成的 active 没有 run.done 给它
+ * 收场 —— 标注 POST 失败 / run 压根没起时，精灵会永久钉在那张卡上。
+ * 只在还是合成条目（message 未被真事件换掉）时才下场。
+ */
+export function expireHint(prev) {
+  const cur = prev[MAIN_AGENT_ID];
+  if (!cur?.active || cur.message !== HINT_MESSAGE) return prev;
+  return { ...prev, [MAIN_AGENT_ID]: { ...cur, active: false } };
 }

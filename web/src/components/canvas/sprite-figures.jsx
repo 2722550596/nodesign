@@ -313,21 +313,51 @@ function OpenCodeFigure({ size, active }) {
  * onClick 给了就可点（对话通道）：按下先来一记"收缩回弹"（Web Animations API 直接在节点上放动画 ——
  * CSS 类名重触发要靠 remount，会把描线动画一起重播）。动作放在 pointerdown：画布容器的手势会
  * setPointerCapture，click 根本不生成（BindingLayer 2026-08-14 踩过的同一个坑）。
+ *
+ * onDragMove/onDragEnd 给了就可拖（08-24 用户报"精灵挪不走"）：pointerdown 先
+ * 观望，位移 >5px 判成拖（逐帧回报屏幕位移），松手回 onDragEnd；没动过才算
+ * 点击 —— 这时 onClick 从 pointerdown 挪到 pointerup 触发（自己捕获了指针，
+ * 不再受画布抢捕获那个坑的约束）。
  */
-export function SpriteFigure({ brand, size = 44, active = false, onClick }) {
+export function SpriteFigure({ brand, size = 44, active = false, onClick, onDragMove, onDragEnd }) {
   const wrapRef = useRef(null);
   const mark = MARKS[brand];
-  const pressable = typeof onClick === 'function';
-  const press = (e) => {
-    if (e.button !== 0) return;
-    e.stopPropagation(); e.preventDefault();
+  const pressable = typeof onClick === 'function' || typeof onDragMove === 'function';
+  const pop = () => {
     try {
       wrapRef.current?.animate([
         { transform: 'scale(1)' }, { transform: 'scale(0.72)', offset: 0.35 },
         { transform: 'scale(1.1)', offset: 0.7 }, { transform: 'scale(1)' },
       ], { duration: 260, easing: 'ease' });
     } catch { /* 老浏览器没有 WAAPI：没动画也得能点 */ }
-    onClick(e);
+  };
+  const press = (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    if (typeof onDragMove !== 'function') {   // 只可点：维持原有"pointerdown 即触发"
+      pop();
+      onClick?.(e);
+      return;
+    }
+    const el = wrapRef.current;
+    const sx = e.clientX; const sy = e.clientY;
+    let moved = false;
+    el?.setPointerCapture?.(e.pointerId);
+    const onMove = (ev) => {
+      const dx = ev.clientX - sx; const dy = ev.clientY - sy;
+      if (!moved && Math.abs(dx) + Math.abs(dy) > 5) moved = true;
+      if (moved) onDragMove(dx, dy);
+    };
+    const onUp = (ev) => {
+      el?.removeEventListener('pointermove', onMove);
+      el?.removeEventListener('pointerup', onUp);
+      el?.removeEventListener('pointercancel', onUp);
+      if (moved) onDragEnd?.();
+      else { pop(); onClick?.(ev); }
+    };
+    el?.addEventListener('pointermove', onMove);
+    el?.addEventListener('pointerup', onUp);
+    el?.addEventListener('pointercancel', onUp);
   };
   if (!mark) return null;
   let body;
@@ -340,13 +370,14 @@ export function SpriteFigure({ brand, size = 44, active = false, onClick }) {
     <span
       ref={wrapRef}
       onPointerDown={pressable ? press : undefined}
-      title={pressable ? '写一句给它' : undefined}
+      title={pressable ? (typeof onDragMove === 'function' ? '写一句给它 · 拖着可以挪走' : '写一句给它') : undefined}
       style={{
         display: 'block', flexShrink: 0,
         // 命中垫：镜头拉远只剩十几像素，裸命中区点不中很沮丧
         padding: 8, margin: -8,
         pointerEvents: pressable ? 'auto' : 'none',
-        cursor: pressable ? 'pointer' : undefined,
+        cursor: pressable ? (typeof onDragMove === 'function' ? 'grab' : 'pointer') : undefined,
+        touchAction: pressable ? 'none' : undefined,
       }}
     >
       {body}

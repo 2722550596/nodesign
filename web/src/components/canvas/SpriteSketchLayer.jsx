@@ -69,7 +69,7 @@ function Handwriting({ text, delay = MARK_DRAW_MS, size = 26, maxWidth = 340 }) 
  * 精灵本体：图标 + 手写行。`drawKey` 变化 = 整体重画（换了地方/重新出场）；
  * 只有 `text` 变 = 图标原地不动、那行字重写 —— 像在同一页上划掉重写。
  */
-export function SpriteSketch({ brand, drawKey = 0, text, size = 44, maxWidth = 340, active = false, quiet = false, onMarkClick }) {
+export function SpriteSketch({ brand, drawKey = 0, text, size = 44, maxWidth = 340, active = false, quiet = false, onMarkClick, onMarkDragMove, onMarkDragEnd }) {
   return (
     // ⚠️ width 必须显式给：世界容器是零宽的变换锚点（大家都显式传宽，BindingLayer
     // 的 width/height、舞台卡的 STAGE_CARD_W 同理），绝对定位 + auto 宽在里面会
@@ -78,7 +78,7 @@ export function SpriteSketch({ brand, drawKey = 0, text, size = 44, maxWidth = 3
     // 一律拿 size 当宽会让横的那枚把手写行挤出去
     <div key={drawKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: figureWidth(brand, size) + 10 + maxWidth, pointerEvents: 'none' }}>
       <style>{KEYFRAMES + FIGURE_KEYFRAMES}</style>
-      <SpriteFigure brand={brand} size={size} active={active} onClick={onMarkClick} />
+      <SpriteFigure brand={brand} size={size} active={active} onClick={onMarkClick} onDragMove={onMarkDragMove} onDragEnd={onMarkDragEnd} />
       {/* quiet = 用户正往输入行里写字：精灵的话让位（病例是当年 recap 长文
           盖住输入行；recap 已退役，但闲时问候一样会挡，而且"它闭嘴听你说"
           本来就是对的礼节） */}
@@ -157,22 +157,59 @@ const hitRect = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <=
 /**
  * 屏幕候选点 → **世界坐标**槽位。精灵住在画布层（2026-08-14 用户定的：
  * 和产物同一平面，不是覆在上面的现实层），所以槽位算出来就落成世界坐标，
- * 之后跟着纸走。身位也按世界单位算（镜头拉远它就跟着变小，纸上的东西
- * 本该如此）。第一个不压任何产物的槽赢；全占 = null。
+ * 之后跟着纸走。第一个不压任何产物的槽赢；全占 = null。
+ *
+ * ⚠️ 身位口径（08-24 体检修正）：精灵是世界层子节点，CSS px 就是世界单位，
+ * 真实脚印**恒为 SPRITE_W×SPRITE_H 世界单位**，跟镜头无关。老写法除了一次
+ * cam.z（"镜头拉远它跟着变小"的错误心智模型）——z>1 时脚印被低估，判"不压"
+ * 其实压着；z<1 时过度保守，六槽全占精灵凭空消失。slotVisible / findFrameSpot
+ * 一直是对的口径，这里跟它们对齐。
  */
 export function findAmbientSlot(cam, viewport, obstacles, candidates = SLOT_CANDIDATES) {
   if (!viewport?.w || !viewport?.h || !cam?.z) return null;
   for (const [fx, fy] of candidates) {
     const world = {
-      x: (viewport.w * fx - SPRITE_W / 2) / cam.z - cam.x,
-      y: (viewport.h * fy - SPRITE_H / 2) / cam.z - cam.y,
-      w: SPRITE_W / cam.z, h: SPRITE_H / cam.z,
+      x: (viewport.w * fx) / cam.z - cam.x - SPRITE_W / 2,
+      y: (viewport.h * fy) / cam.z - cam.y - SPRITE_H / 2,
+      w: SPRITE_W, h: SPRITE_H,
     };
     if (!(obstacles || []).some(o => hitRect(world, o))) {
       return { x: Math.round(world.x), y: Math.round(world.y) };
     }
   }
   return null;
+}
+
+/**
+ * 贴目标（工作态）的落点也要避让（08-24 体检的主病根之一：老写法一律
+ * "目标上方 WORK_GAP"，一次避让都不跑 —— 目标不在第一行时必压上一行的卡）。
+ * 候选按偏好序：头顶（老落点，底边吊在目标上沿之上）→ 右 → 左 → 脚下。
+ * 第一个不压别人的赢；全压就认最小遮挡（正在干活的精灵不能消失，跟
+ * findFrameSpot 同一条规矩）。目标自己不会和任何候选相交（候选都在它外侧）。
+ * @returns {{ x, y, hang: boolean }}  hang = 头顶位，渲染时底边吊装（translateY(-100%)）
+ */
+export function findWorkSpot(anchor, obstacles) {
+  if (!anchor) return null;
+  const aw = anchor.w || 0; const ah = anchor.h || 0;
+  const candidates = [
+    { x: anchor.x - 14, y: anchor.y - WORK_GAP, hang: true },
+    { x: anchor.x + aw + 24, y: anchor.y, hang: false },
+    { x: anchor.x - SPRITE_W - 24, y: anchor.y, hang: false },
+    { x: anchor.x - 14, y: anchor.y + ah + WORK_GAP, hang: false },
+  ];
+  let best = candidates[0]; let bestCost = Infinity;
+  for (const c of candidates) {
+    const rect = { x: c.x, y: c.hang ? c.y - SPRITE_H : c.y, w: SPRITE_W, h: SPRITE_H };
+    let cost = 0;
+    for (const o of obstacles || []) {
+      const ow = Math.min(rect.x + rect.w, o.x + o.w) - Math.max(rect.x, o.x);
+      const oh = Math.min(rect.y + rect.h, o.y + o.h) - Math.max(rect.y, o.y);
+      if (ow > 0 && oh > 0) cost += ow * oh;
+    }
+    if (cost === 0) return c;
+    if (cost < bestCost) { bestCost = cost; best = c; }
+  }
+  return best;
 }
 
 /** 这个世界矩形当前在不在视口里（world_visible = screen/z - cam） */
@@ -243,18 +280,49 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
   const [drawKey, setDrawKey] = useState(0);
   const stateRef = useRef({});
   stateRef.current = { cam, viewport, obstacles };
+  const slotRef = useRef(null);
+  slotRef.current = slot;
   const offTimer = useRef(null);
+  const healTimer = useRef(null);
+  /** 用户亲手拖过（08-24）：拖过的位置不自愈不追随 —— 他放哪就是哪；离屏重落时释放 */
+  const userPinnedRef = useRef(false);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     if (workAnchor || !viewport?.w || !cam?.z) {
       // 贴着目标时槽位冻结：回到无目标态再说
       clearTimeout(offTimer.current); offTimer.current = null;
+      clearTimeout(healTimer.current); healTimer.current = null;
       return undefined;
     }
     if (!slot) {
       const first = findAmbientSlot(cam, viewport, obstacles);
       if (first) { setDrawKey(k => k + 1); setSlot(first); }
       return undefined;
+    }
+    /**
+     * 占位自愈（08-24 体检主修）：脚下被压了（新产物排进这一带 / agent 落了
+     * 板书）→ 短防抖后重找空槽。**活跃时也让** —— "工作中不跟镜头"只是不
+     * 追随用户视线，不是可以压着别人的作品不动；run.done 弹回旧槽正压着新
+     * 产物这条主复现路径就靠它治。用户亲手拖过的位置不自愈（他放哪是哪）。
+     * 找不到空槽就原地不动 —— 干活/对话中的精灵消失比压着更糟。
+     */
+    const meRect = { x: slot.x, y: slot.y, w: SPRITE_W, h: SPRITE_H };
+    const pressed = !userPinnedRef.current && (obstacles || []).some(o => hitRect(meRect, o));
+    if (pressed) {
+      if (!healTimer.current) {
+        healTimer.current = setTimeout(() => {
+          healTimer.current = null;
+          const { cam: c, viewport: vp, obstacles: obs } = stateRef.current;
+          const cur = slotRef.current;
+          const still = cur && (obs || []).some(o => hitRect({ x: cur.x, y: cur.y, w: SPRITE_W, h: SPRITE_H }, o));
+          if (!still) return;
+          const next = findAmbientSlot(c, vp, obs);
+          if (next) { setDrawKey(k => k + 1); setSlot(next); }
+        }, 400);
+      }
+    } else {
+      clearTimeout(healTimer.current); healTimer.current = null;
     }
     // 工作中不跟镜头（2026-08-14 用户定的规则）：agent 干活的地方就是它站的
     // 地方，用户把镜头挪去看别处，它不追过来 —— 追随只是闲时的礼节。
@@ -269,6 +337,7 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
       // 用户持续平移时 3 秒永远数不满。只在可见/换态时显式清。
       offTimer.current = setTimeout(() => {
         offTimer.current = null;
+        userPinnedRef.current = false;   // 用户都把镜头挪走 3 秒了：钉住解除，跟过去
         const { cam: c, viewport: vp, obstacles: obs } = stateRef.current;
         const next = findAmbientSlot(c, vp, obs);
         if (next) { setDrawKey(k => k + 1); setSlot(next); }
@@ -278,18 +347,38 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
   }, [workAnchor, agentActive, cam, viewport, obstacles, slot]);
 
   // 卸载兜底：不走上面的显式清理路径时别让计时器对着空组件开枪
-  useEffect(() => () => clearTimeout(offTimer.current), []);
+  useEffect(() => () => { clearTimeout(offTimer.current); clearTimeout(healTimer.current); }, []);
 
-  // 贴目标时：以**精灵的下沿**吊在目标上边线之上（transform: translateY(-100%)），
-  // 而不是把它的上沿钉在目标上方固定 56px —— 手写行是一到三行不等的，按上沿钉
-  // 就等于"句子越长压产物越多"（2026-08-15 用户报：摘要经常和产物重叠）。
-  // 下沿吊法与句长无关，留白恒定。
+  /**
+   * 用户拖精灵（08-24 用户报"挪不走"）：闲时可以直接拽走。屏幕位移 ÷ cam.z
+   * 换成世界位移。第一下移动就钉住（自愈让路，别跟用户抢）；拖完留在原地。
+   * 贴目标（工作态）不给拖 —— 那时它跟着 workAnchor，拖了也会被拽回去。
+   */
+  const dragBase = useRef(null);
+  const onMarkDragMove = (dx, dy) => {
+    const base = dragBase.current || (dragBase.current = { ...(slotRef.current || { x: 0, y: 0 }) });
+    userPinnedRef.current = true;
+    setDragging(true);
+    const z = stateRef.current.cam?.z || 1;
+    setSlot({ x: Math.round(base.x + dx / z), y: Math.round(base.y + dy / z) });
+  };
+  const onMarkDragEnd = () => { dragBase.current = null; setDragging(false); };
+
+  // 贴目标时：落点过 findWorkSpot 避让（头顶→右→左→脚下，全压认最小遮挡）。
+  // 头顶位以**精灵的下沿**吊在目标上边线之上（translateY(-100%)）—— 手写行
+  // 一到三行不等，按上沿钉就等于"句子越长压产物越多"（2026-08-15 用户报）。
   const anchored = !!workAnchor;
+  const workSpot = useMemo(
+    () => (anchored ? findWorkSpot(workAnchor, obstacles) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [anchored, workAnchor?.x, workAnchor?.y, workAnchor?.w, workAnchor?.h, obstacles],
+  );
+  const hang = anchored && !!workSpot?.hang;
   const at = anchored
-    ? { x: Math.round(workAnchor.x - 14), y: Math.round(workAnchor.y - WORK_GAP) }
+    ? (workSpot ? { x: Math.round(workSpot.x), y: Math.round(workSpot.y) } : null)
     : slot;
   // 输出框和输入行要的是精灵**外接框的左上角**：吊着的时候它在 at 之上一个身位
-  const box = at && anchored ? { x: at.x, y: at.y - SPRITE_H } : at;
+  const box = at && hang ? { x: at.x, y: at.y - SPRITE_H } : at;
 
   // 输出框落位：精灵在哪它就绕着哪找位。obstacles 变一次（产物增删/拖动落盘）
   // 才重算 —— 流式打字每拍都重排的话框会来回蹦。
@@ -305,16 +394,20 @@ export function AmbientSpriteLayer({ agentActive = false, workAnchor = null, cam
     <>
       <div style={{
         position: 'absolute', left: at.x, top: at.y, zIndex: 305, pointerEvents: 'none',
-        // 贴目标时整块往上吊一个自身高度：留白就跟手写行有几行无关了
-        transform: anchored ? 'translateY(-100%)' : undefined,
-        // 目标间移动是"走过去"；槽位重落走 drawKey 重画（定格换场），过渡不碍事
-        transition: 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
+        // 头顶位整块往上吊一个自身高度：留白就跟手写行有几行无关了
+        transform: hang ? 'translateY(-100%)' : undefined,
+        // 目标间移动是"走过去"；槽位重落走 drawKey 重画（定格换场），过渡不碍事。
+        // 用户拖着走时关过渡 —— 300ms 缓动会让它像橡皮筋一样追手
+        transition: dragging ? 'none' : 'left 300ms cubic-bezier(0.32,0.72,0,1), top 300ms cubic-bezier(0.32,0.72,0,1)',
       }}>
         <SpriteSketch
           brand={brand} drawKey={drawKey} text={text} active={agentActive} quiet={quiet}
           // 对话通道：点星芒 → 在它脚下写一句（输入行位置 = 图标右下，
           // 从**当前落点**算 —— 长文遮挡输入行的病由 quiet 让位治）
           onMarkClick={onAsk ? () => onAsk({ x: box.x + 54, y: box.y + 50 }) : undefined}
+          // 闲时可拖走（工作态跟着目标，不给拖）
+          onMarkDragMove={anchored ? undefined : onMarkDragMove}
+          onMarkDragEnd={anchored ? undefined : onMarkDragEnd}
         />
       </div>
       {/* 输出框（代码直播/终端）：跟着精灵走，绕它找不压产物的方位

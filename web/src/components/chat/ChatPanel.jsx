@@ -3,13 +3,14 @@ import { ChevronDown, XCircle, SquarePen, History, PanelRightClose, Pin, PinOff 
 import MessageList from './MessageList.jsx';
 import ChatComposer from './ChatComposer.jsx';
 import ContextMeter from './ContextMeter.jsx';
-import TodoPanel from './TodoPanel.jsx';
 import { COLOR, CHROME, GAP, RADIUS, FONT_SIZE, FONT_KAI } from '../../lib/theme.js';
 
 /**
  * Chat Panel — 左栏整体壳
  *
- * 结构：header → TodoPanel（可选，agent 计划清单）→ MessageList → ChatComposer
+ * 结构：header → MessageList → ChatComposer
+ *（TodoPanel 2026-08-24 退役：TodoWrite 的计划清单已经上板成看板贴，
+ *  侧栏再吸顶一份是同一件东西两个实例。）
  *
  * S4：header 显示当前 session 标题（来自 SDK SDKSessionInfo.summary /
  * customTitle / firstPrompt），点击触发 SessionListModal 切换/fork/rename/tag/delete。
@@ -33,7 +34,6 @@ export default function ChatPanel({
   agentProgress,
   thinkingTokens = null,      // run.status thinking 心跳的累计 tokens（null = 非思考期）
   onStop,
-  todos,
   sessionTitle,
   onOpenSessionList,
   onCloseSession,            // streamInput 重构：用户主动结束当前 session（终结 query）
@@ -216,7 +216,6 @@ export default function ChatPanel({
         )}
       </div>
 
-      <TodoPanel todos={todos} />
       <MessageList
         onOpenSessionList={onOpenSessionList}
         messages={shownMessages}

@@ -8,7 +8,7 @@
  * 调用方仍然要用 useMemo 包住它，而且**镜头动作必须先经 ref 转一手**：理由
  * 记在 BoardCanvas 那个 memo 的头上（每帧换身份 → 死循环，build 和单测都照不出来）。
  */
-import { Maximize2, Minus, Plus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid, Presentation } from 'lucide-react';
+import { Maximize2, Minus, Plus, MousePointer2, Move, Hand, Type, PenLine, LayoutGrid, Presentation, NotebookPen } from 'lucide-react';
 
 /**
  * @param {object} p
@@ -24,6 +24,7 @@ export function buildBoardToolGroups({
   tool, setTool, drawMode, setDrawMode, scale,
   tidyBoard, zoomFit, zoomBy, zoomTo, filterGroup,
   blackboardMode = false, toggleBlackboard = null,
+  chalkEditMode = false, toggleChalkEdit = null,
 }) {
   return ([
     ...(filterGroup ? [filterGroup] : []),
@@ -47,6 +48,15 @@ export function buildBoardToolGroups({
             ? '黑板模式：开 —— agent 把想法画在画布上、聊天只旁白、镜头跟着新图走。点一下关'
             : '黑板模式：关 —— 开了以后 agent 默认把讨论画到画布上，聊天只留一两句，镜头跟着新图走',
           onClick: toggleBlackboard,
+        }] : []),
+        // 板书编辑开关（2026-08-24 用户提，防误触）：关着（默认）时板书对单击/
+        // 拖拽是空地，双击才武装成可拖可编辑；开着时板书随时可选中、双击进编辑
+        ...(toggleChalkEdit ? [{
+          id: 'chalkEdit', icon: NotebookPen, label: '改板书', active: chalkEditMode,
+          title: chalkEditMode
+            ? '板书编辑：开 —— 板书随时可选中拖动，双击进编辑。点一下关（关着时要双击先武装，防误触）'
+            : '板书编辑：关 —— 板书防误触：单击/拖它不动（挪镜头照常），双击武装后才能拖和编辑。要频繁整理板书就点开',
+          onClick: toggleChalkEdit,
         }] : []),
       ],
     },

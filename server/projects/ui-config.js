@@ -26,8 +26,9 @@ export const DEFAULT_UI_CONFIG = Object.freeze({
    * 黑板模式（2026-08-23）：用户专注头脑风暴时，画布取代侧栏成为主交互窗口 ——
    * agent 每轮的主体内容落画布（sketch_on_board / edit_sketch），聊天里只留一两句；
    * 草图落定时服务端广播 board.focus，前端把镜头带过去。
+   * 2026-08-24 用户拍板默认开（老项目没写过这个键的也按开算；关过的尊重文件里的 false）。
    */
-  blackboard_mode: false,
+  blackboard_mode: true,
 });
 
 /**

@@ -215,7 +215,7 @@ describe('事件形状 parity（2026-08-13 事故的钉子）', () => {
 
   it('reducer 里消费的事件类型没有一个是编出来的', () => {
     const reducerSrc = fs.readFileSync(new URL('./board-presence.js', import.meta.url), 'utf8');
-    const consumed = [...reducerSrc.matchAll(/case '(run\.[\w.]+)'/g)].map(m => m[1]);
+    const consumed = [...reducerSrc.matchAll(/case '((?:run|board)\.[\w.]+)'/g)].map(m => m[1]);
     expect(consumed.length).toBeGreaterThan(0);
     for (const t of consumed) expect(eventsSrc).toContain(`'${t}'`);
   });
@@ -227,7 +227,7 @@ describe('事件形状 parity（2026-08-13 事故的钉子）', () => {
     // 这里直接吃真名单（比 grep 源码强：改名/挪家都跟得上）。
     const { STAGE_EVENTS } = await import('./event-router.js');
     const reducerSrc = fs.readFileSync(new URL('./board-presence.js', import.meta.url), 'utf8');
-    const consumed = [...reducerSrc.matchAll(/case '(run\.[\w.]+)'/g)].map(m => m[1]);
+    const consumed = [...reducerSrc.matchAll(/case '((?:run|board)\.[\w.]+)'/g)].map(m => m[1]);
     expect(consumed.length).toBeGreaterThan(0);
     for (const t of consumed) {
       expect(STAGE_EVENTS.has(t), `${t} 不在转发名单`).toBe(true);
@@ -275,5 +275,24 @@ describe('新文件挂账（2026-08-14 "从 0 产物到有产物追踪不靠谱"
     t2 = reducePresence(t2, { type: 'run.done' }, null);
     expect(t2[MAIN_AGENT_ID].pendingFile).toBe(null);
     expect(resolvePending(t2, () => ({ objectId: 'x', zoneId: '' }))).toBe(t2);
+  });
+});
+
+describe('板书追踪（08-24 体检 1a：板上工具不走 Write/Edit，file_changed 对它沉默）', () => {
+  it('活跃中 board.focus 带 chalk → 收编为目标；闲时不收', () => {
+    let t = reducePresence(emptyPresence(), { type: 'run.start' }, null);
+    t = reducePresence(t, { type: 'board.focus', chalk: 'notes/板书/2026-08-24-想法.md', layer: '', rect: { x: 0, y: 0, w: 100, h: 40 } }, null);
+    expect(t[MAIN_AGENT_ID].targetId).toBe('notes/板书/2026-08-24-想法.md');
+
+    // 闲时（没有活跃 run）广播来的 board.focus 不动在场表
+    const idle = emptyPresence();
+    expect(reducePresence(idle, { type: 'board.focus', chalk: 'notes/板书/x.md' }, null)).toBe(idle);
+  });
+
+  it('草图的 board.focus 没有 chalk 字段 → 不收编（它有黑板模式的镜头跟随）', () => {
+    let t = reducePresence(emptyPresence(), { type: 'run.start' }, null);
+    const before = t[MAIN_AGENT_ID].targetId;
+    t = reducePresence(t, { type: 'board.focus', tag: 'sketch-1', rect: { x: 0, y: 0, w: 500, h: 300 } }, null);
+    expect(t[MAIN_AGENT_ID].targetId).toBe(before);
   });
 });

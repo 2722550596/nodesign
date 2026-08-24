@@ -42,6 +42,8 @@ function BoardObject({
   renaming = false, onRenameCommit, onRenameCancel,
   /** 文字类真实高度回写（useMeasuredSize）：(id, { h }) → 写 layout */
   onMeasured = null,
+  /** 板书防误触（2026-08-24）：闲置板书 —— 手势层把它当空地，双击才武装 */
+  chalkIdle = false,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus, onOrchestrate,
   onAnnotate,
   onExport,
@@ -97,7 +99,8 @@ function BoardObject({
       const parts = [stack, paper].filter(Boolean);
       return parts.length ? parts.join(', ') : 'none';
     })(),
-    cursor: 'grab', userSelect: 'none',
+    // 闲置板书不给抓手光标 —— 它此刻对手势就是空地，别暗示"能拖"
+    cursor: chalkIdle ? 'default' : 'grab', userSelect: 'none',
     touchAction: 'none',
     animation: POP_IN,
     // 草稿态（2026-08-23 黑板）：agent 这一轮还在打草稿的东西半透明，落定变实
@@ -226,6 +229,8 @@ function BoardObject({
       ref={rootRef}
       data-board-object={o.id}
       data-board-type={o.type}
+      // 闲置板书打标：board-hit.onObject 见到它按空地算（平移/框选/取消选中照旧）
+      data-chalk-idle={chalkIdle ? '1' : undefined}
       onPointerDown={onPointerDown}
       onDoubleClick={(e) => {
         if (e.target.closest('[data-board-action]')) return;

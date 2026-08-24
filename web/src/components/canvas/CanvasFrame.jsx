@@ -1,9 +1,11 @@
-import { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import { MessageSquarePlus } from 'lucide-react';
 import { Assets } from '../../lib/api.js';
 import { versionOfFile } from '../../lib/file-versions.js';
 import { COLOR } from '../../lib/theme.js';
 import BoardCanvas from './BoardCanvas.jsx';
 import FloatingToolbar from '../ui/FloatingToolbar.jsx';
+import AnnotatePopover from './AnnotatePopover.jsx';
 
 // 懒加载（2026-07-28 重构 4）：DeckWindow 拖着 Monaco 全家，是首屏包的大头，
 // 但只在用户 ✏️ 开编辑窗时才需要 —— 动态 import 让它单独分 chunk
@@ -215,6 +217,48 @@ export default function CanvasFrame({
   const windowOpen = (deckOpen && (sessionId || deckTaskSrc)) || !!siteSrc || !!docxSrc || !!browseWin;
   useEffect(() => { onWindowOpenChange?.(!!windowOpen); }, [windowOpen, onWindowOpenChange]);
 
+  /**
+   * 窗口态的常驻「评论」按钮（2026-08-24 用户提）：窗开着时画布被盖住，卡片
+   * 右上角的标注入口够不着，用户想说句话只能去开侧栏 —— 所以窗开着时工具栏
+   * 常驻一颗评论钮，就地弹 AnnotatePopover，目标就是这扇窗里的东西。
+   *（AnnotatePopover 头注里"标注不进工具栏"的判据没被推翻：那说的是画布态
+   *  ——对象不明。窗开着时对象是唯一的，判据的前提反过来了。）
+   */
+  const [winNote, setWinNote] = useState(null);
+  useEffect(() => { if (!windowOpen) setWinNote(null); }, [windowOpen]);   // 窗关了，纸别留
+  const openWinNote = useCallback(() => {
+    let target = null;
+    if (deckOpen && (sessionId || deckTaskSrc)) {
+      const rel = deckRelPath || 'canvas.html';
+      target = { kind: 'object', id: `deck:${rel}`, path: rel, title: deckTaskSrc?.title || project?.name || '幻灯', typeLabel: '幻灯' };
+    } else if (siteSrc) {
+      target = { kind: 'object', id: `site:${siteSrc.base || siteSrc.task || ''}`, path: siteSrc.entry || siteSrc.base || siteSrc.task, title: siteSrc.title || '站点', typeLabel: '站点' };
+    } else if (docxSrc) {
+      target = { kind: 'object', id: docxSrc.cardId || `docx:${docxSrc.file || ''}`, path: docxSrc.file, title: docxSrc.title || '文稿', typeLabel: '文稿' };
+    } else if (browseWin) {
+      target = { kind: 'object', id: 'browse', path: browseWin.url || null, title: '浏览器画面', typeLabel: '浏览器' };
+    }
+    if (!target) return;
+    const r = toolbarHostRef.current?.getBoundingClientRect();
+    setWinNote({
+      x: Math.round((r ? r.left + r.width / 2 : window.innerWidth / 2) - 160),
+      y: Math.round(r ? r.bottom - 56 : window.innerHeight - 120),
+      target,
+    });
+  }, [deckOpen, sessionId, deckTaskSrc, deckRelPath, siteSrc, docxSrc, browseWin, project?.name]);
+
+  const toolbarGroups = useMemo(() => {
+    if (!winGroups) return boardGroups;
+    return [...winGroups, {
+      id: 'wincomment',
+      items: [{
+        id: 'comment', icon: MessageSquarePlus, label: '评论',
+        title: '对这扇窗里的东西说一句：发给 agent 立刻处理，或先攒着从右下角一起发',
+        onClick: openWinNote,
+      }],
+    }];
+  }, [winGroups, boardGroups, openWinNote]);
+
   return (
     <div style={{
       flex: 1, minHeight: 0,
@@ -382,8 +426,19 @@ export default function CanvasFrame({
           // 鼠标到底缘那条带就出来；末尾的图钉钉住 = 常驻
           autoHide
           pinnable
-          groups={winGroups || boardGroups}
+          groups={toolbarGroups}
         />
+
+        {/* 工具栏评论钮弹出的那张纸：目标 = 开着的这扇窗。「留在画布」不给
+            （窗把画布盖着，落一段看不见的字没有意义） */}
+        {winNote && (
+          <AnnotatePopover
+            x={winNote.x} y={winNote.y} target={winNote.target}
+            onClose={() => setWinNote(null)}
+            onSubmit={(text) => onAnnotate?.({ target: winNote.target, text })}
+            onQueue={(text) => onAnnotate?.({ target: winNote.target, text, queue: true })}
+          />
+        )}
 
       </div>
     </div>

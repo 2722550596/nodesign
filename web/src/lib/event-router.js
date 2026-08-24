@@ -32,6 +32,10 @@ export const STAGE_EVENTS = new Set([
   //（run.recap 2026-08-19 移出名单：收场 recap 随那条 haiku 小结线路一起退役，
   //  服务端不再 emit —— 名单里留着就是"等一个永远不来的事件"的空壳）
   'run.sprite_summary',
+  // 板书落定（08-24 精灵体检 1a）：write_on_board 不走 Write/Edit，file_changed
+  // 整条追踪链对它沉默 —— 精灵不知道 agent 在板上写了话。board.focus 带着
+  // chalk 路径（= 画布 id），进在场 reducer 收编成目标。
+  'board.focus',
   // （run.task.* / run.subagent.stop 2026-08-18 移出名单：子代理便利贴与
   //   在场徽记退役，画布不再消费它们 —— 聊天侧栏的 Task 抽屉行走
   //   ProjectWorkspace 自己的 switch，不经这份名单。）

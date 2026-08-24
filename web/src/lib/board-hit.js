@@ -47,7 +47,13 @@ export function onChrome(e) {
 
 /** 落在画布物件上（卡片 / 工作区）。 */
 export function onObject(e) {
-  return !!e?.target?.closest?.(OBJECT_SELECTOR);
+  const hit = e?.target?.closest?.(OBJECT_SELECTOR);
+  if (!hit) return false;
+  // 板书防误触（2026-08-24 用户提）：板书编辑模式关着时，没被双击武装的板书
+  // 对手势来说就是空地 —— 单击不选中、拖不挪动（挪镜头照常），双击才武装。
+  // 属性由 BoardObject 按「chalk && 编辑模式关 && 未选中」打上。
+  if (hit.hasAttribute?.('data-chalk-idle')) return false;
+  return true;
 }
 
 /** 落在真正的空地上（既不是控件也不是物件）—— 相机平移的判据。 */

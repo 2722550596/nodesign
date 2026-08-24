@@ -23,6 +23,7 @@ import { layerOf, normalizeCanvasId, tagEnvelope } from '../../../lib/canvas-id.
 import { BINDING_TYPE_IDS, BINDING_MATERIALS } from '../../../lib/binding-types.js';
 import { UNIT, SKETCH_FIT, SKETCH_MAX, textBox, shapePath, layoutNodes, bboxOf, findSpot, fitFor } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
+import { Events } from '../../agent/events.js';
 
 const MAX_NODES = 40;
 const MAX_SHAPES = 30;
@@ -300,7 +301,7 @@ Per sketch: ≤${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges (spl
       try {
         ctx?.emit?.({ type: 'board.updated', sessionId: null, summary: `画了一张草图 #${tag}` });
         // 镜头提示（前端只在黑板模式跟随；不是劫持，是"黑板是主窗口"的约定）
-        ctx?.emit?.({ type: 'board.focus', sessionId: null, tag, rect: world, layer: zone });
+        ctx?.emit?.(Events.boardFocus(world, { tag, layer: zone }));
       } catch { /* fail-soft */ }
       const lines = [
         `Sketch #${tag} landed${staging ? ' as STAGING (半透明)' : ''}: ${Object.keys(objects).length - shapes.length} nodes, ${shapes.length} shapes, ${Object.keys(bindings).length} lines; layout ${tpl}; at world (${world.x},${world.y}) ${world.w}x${world.h}${anchor ? ` (${spot.side} of ${args.near})` : ' (below current content)'}.`,

@@ -23,7 +23,7 @@
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { readUiConfigFile } from '../../../projects/ui-config.js';
+import { readUiConfigFile, withUiDefaults } from '../../../projects/ui-config.js';
 import { readAssetsSummary } from '../../../projects/assets-summary.js';
 import { relationsDigest } from '../../../lib/board-relations.js';
 import { getViewpoint, describeViewpoint } from '../../../projects/viewpoint-store.js';
@@ -136,6 +136,28 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
       sections.push({ key: 'artifacts', title: '产物', text: `现有产物：\n${lines.join('\n')}` });
     }
   } catch { /* 扫不动就不说 */ }
+
+  // 最近板书（2026-08-23；08-24 记忆改版时被误删，同日修回）：你/用户在画布上
+  // 说过的最近几句 —— 对话在板上，得记得板上说了什么
+  try {
+    const recent = await recentChalk(workspaceRoot, { limit: 8 });
+    if (recent.length) {
+      const lines = recent.map(c => `  ${c.path}（${c.by === 'user' ? '用户' : '你'}${c.anchor ? `，关于 ${c.anchor}` : ''}${c.replyTo ? `，回应 ${c.replyTo.replace(`${CHALK_DIR}/`, '')}` : ''}）「${c.first}」`);
+      sections.push({ key: 'chalk', title: '最近板书', text: `画布上最近的板书（${CHALK_DIR}/，新在前；正文 Read 文件）：\n${lines.join('\n')}`, items: recent.map(c => c.path) });
+    }
+  } catch { /* 板书读不到就沉默 */ }
+
+  // 黑板模式（2026-08-23；08-24 起默认开 —— 没写过这个键的按开算，显式 false 才算关）
+  try {
+    const cfg = withUiDefaults(await readUiConfigFile(workspaceRoot));
+    if (cfg.blackboard_mode === true) {
+      sections.push({ key: 'blackboard', title: '黑板模式', text:
+        '【黑板模式：开】用户此刻在画布上专注思考。这一轮默认这么做：想事情就画成图（sketch_on_board，'
+        + '小改动用 edit_sketch 原地改别重画）；做完一件东西在它旁边写一条板书（write_on_board near=）；'
+        + '用户标注了板上的东西就接在那条下面回（reply_to=）。侧栏照常回复，但板上已经写的别大段重复。'
+        + '尺寸守规范（0.8 倍一屏可读、正文 md 起、一条板书说一件事）；画完 look_at_board 看一眼再收。' });
+    }
+  } catch { /* 读失败：不注入 */ }
 
   // （tweaks 开关注入 2026-08-24 随 expose_tweaks 暂退役一起摘除；工具升级后再回来）
 

@@ -5,7 +5,7 @@
  * 留在组件里只是三个 ref 加一个 state 在两千行中间飘着。
  */
 import { useRef, useState } from 'react';
-import { onChrome } from '../../lib/board-hit.js';
+import { onChrome, onObject } from '../../lib/board-hit.js';
 import { sizeOf } from '../../lib/board-kinds.js';
 
 /**
@@ -45,7 +45,9 @@ export function useMarquee({
   const armMarquee = (e) => {
     if (toolRef.current !== 'select' || e.button !== 0) return;
     if (onChrome(e)) return;
-    if (e.target.closest?.('[data-board-object],[data-board-zone],[data-transform-handle]')) return;
+    // onObject 而不是裸 selector：未武装的板书算空地（board-hit 的 chalk-idle 判据），
+    // 在它上面长按框选照常起
+    if (onObject(e) || e.target.closest?.('[data-transform-handle]')) return;
     clearTimeout(pressRef.current?.timer);
     const sx = e.clientX; const sy = e.clientY;
     const { pointerId } = e;

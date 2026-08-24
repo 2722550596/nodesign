@@ -26,14 +26,14 @@ import { useBoardGroups } from './useBoardGroups.js';
 import { useBlackboardWiring } from './useBlackboardMode.js';
 import { eyeParams } from './eye-mode.js';
 import { boxUnion } from '../../lib/board-camera.js';
-import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor } from '../../lib/board-presence.js';
+import { emptyPresence, reducePresence, resolvePending, followTarget, rectFor as presenceRectFor, MAIN_AGENT_ID, colorFor, hintPresence, expireHint } from '../../lib/board-presence.js';
 import { useStageState, splitStageCards, StageBoardLayer, StageDock, StageCardBody } from './StageLayer.jsx';
 import { AmbientSpriteLayer, SpriteAskInput, useSpriteAmbient } from './SpriteSketchLayer.jsx';
 import { usePhantoms, claimPhantomSeat, phantomRects, PhantomCards } from './PhantomLayer.jsx';
 import { useBoardMoves } from './useBoardMoves.js';
 import { buildBoardMenu } from './canvas-menus.js';
 import { zoneOfObjectId, resolveObjectId } from '../../lib/stage.js';
-import { onChrome } from '../../lib/board-hit.js';
+import { onChrome, onObject } from '../../lib/board-hit.js';
 import { TEXT_FONT_CSS, TEXT_SIZE_PX } from '../../lib/text-fonts.js';
 import { splitNoteFaces, faceParts } from '../../lib/note-faces.js';
 import BindingLayer from './BindingLayer.jsx';
@@ -234,6 +234,15 @@ export default function BoardCanvas({
   const selectedIdRef = useRef(null);
   selectedIdRef.current = selectedId;
   const setSelectedId = useCallback((id) => setSelectedIds(id ? [id] : []), []);
+  /**
+   * 板书编辑模式（2026-08-24 用户提）：关着（默认）时板书防误触 —— 单击/拖
+   * 它就是空地（挪镜头照常），**双击**才武装成可拖可编辑；开着时板书随时可
+   * 选中、双击进编辑。开关住工具栏（board-tool-groups）。
+   */
+  const [chalkEditMode, setChalkEditMode] = useState(false);
+  const chalkEditModeRef = useRef(false);
+  chalkEditModeRef.current = chalkEditMode;
+  const toggleChalkEdit = useCallback(() => setChalkEditMode(v => !v), []);
   /** 框选：{ a:{sx,sy,wx,wy}, b:{…} }（sx/sy 是画布视口内像素，wx/wy 是世界坐标）*/
   const handleDeleteNoteRef = useRef(null);   // Delete 键 effect 挂得早，函数定义在下面
   const [hoveredBinding, setHoveredBinding] = useState(null);
@@ -830,6 +839,9 @@ export default function BoardCanvas({
     // 挂在外层，事件是**先卡片后画布**冒泡上去的 —— 卡片不主动让路的话，
     // 按在卡片上会同时起一个物件拖拽和一次平移，两边各拽各的。
     if (camApiRef.current?.isHandMode?.()) return;
+    // 板书防误触：编辑模式关着且这条板书没被双击武装 → 这一下不归卡
+    //（事件照常冒泡到画布层，board-hit 把它当空地 —— 平移/框选都照旧）
+    if (o.chalk && !chalkEditModeRef.current && !selectedIdsRef.current.includes(o.id)) return;
     // 工具在手（画笔/批注）时这一下归工具：按在卡上是要在卡上画、标，不是要
     // 拖卡。少了这条，笔画起点落在卡上会同时武装一次物件拖拽 —— 抬 z、写盘，
     // 而笔画提交又吞掉抬手，dragRef 残骸让那张卡黏住光标
@@ -958,10 +970,11 @@ export default function BoardCanvas({
     // click/dblclick 在 pointerup 之后才派发，此时 dragRef 已清 —— 拖完的
     // "余韵"记在这个 ref 上，让点击类 handler 能区分"拖完松手"和"真点击"
     recentDragMovedRef.current = !!d?.moved;
-    // 点了一下没拖动 = 选中（只有墨类进选中态，产物卡的动作是开窗/拖动）
+    // 点了一下没拖动 = 选中（墨类进选中态；板书也进 —— 武装态点一下不该掉，
+    // 编辑模式开着时更是"随时可选中"。产物卡的动作是开窗/拖动，不选中）
     if (d?.kind === 'object' && !d.moved) {
       const obj = positioned.find(o => o.id === d.id);
-      setSelectedId(obj?.native ? d.id : null);
+      setSelectedId((obj?.native || obj?.chalk) ? d.id : null);
     }
     if (d?.kind === 'object') {
       // 落点判定 → **真的搬文件**（2026-08-08）：
@@ -1539,8 +1552,18 @@ export default function BoardCanvas({
       const sz = sizeOf(o);
       out.push({ id: o.id, x: o.pos.x, y: o.pos.y, w: sz.w, h: sz.h, folder: false });
     }
+    // 生图幻影也是"桌面上有的东西"（08-24 精灵体检）：这份表同时喂精灵避让，
+    // 漏了它精灵会一屁股坐在正在生成的图上。dep 用 phantoms（表本体在 ref 上，
+    // phantoms state 是它的重渲染扳机）。
+    let i = 0;
+    for (const r of phantomRects(phantomsRef)) out.push({ id: `ph:${i += 1}`, ...r, folder: false });
     return out;
-  }, [visibleZones, visibleObjects]);
+  }, [visibleZones, visibleObjects, phantoms]);
+
+  // presenceHint 的看门狗计时器（挂 ref：apiRef 的 effect 每渲染都重跑，
+  // 计时器不能跟着它的闭包走）
+  const hintWatchdogRef = useRef(null);
+  useEffect(() => () => clearTimeout(hintWatchdogRef.current), []);
 
   // ── 外层工具栏桥（工具栏合并：控件画在 CanvasToolbar，操作从这里走）──
   useEffect(() => {
@@ -1562,18 +1585,10 @@ export default function BoardCanvas({
        */
       presenceHint: (targetId) => {
         if (!targetId) return;
-        setPresence(prev => {
-          const cur = prev[MAIN_AGENT_ID] || {};
-          return {
-            ...prev,
-            [MAIN_AGENT_ID]: {
-              id: MAIN_AGENT_ID, kind: 'main', name: 'Claude', color: colorFor(0),
-              at: null,
-              ...cur,
-              active: true, targetId, zoneId: zoneOfObjectId(targetId), message: '收到，来了',
-            },
-          };
-        });
+        setPresence(prev => hintPresence(prev, targetId, zoneOfObjectId(targetId)));
+        // 看门狗（08-24 精灵体检）：合成 active 没人收场时 30s 自己下场
+        clearTimeout(hintWatchdogRef.current);
+        hintWatchdogRef.current = setTimeout(() => setPresence(expireHint), 30000);
       },
     };
     return () => { apiRef.current = null; };
@@ -1640,7 +1655,8 @@ export default function BoardCanvas({
     tool, setTool, drawMode, setDrawMode, scale,
     tidyBoard, zoomFit: zoomFitStable, zoomBy: zoomByStable, zoomTo: zoomToStable, filterGroup,
     blackboardMode, toggleBlackboard,
-  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable, filterGroup, blackboardMode, toggleBlackboard]);
+    chalkEditMode, toggleChalkEdit,
+  }), [tool, drawMode, scale, tidyBoard, zoomFitStable, zoomByStable, zoomToStable, filterGroup, blackboardMode, toggleBlackboard, chalkEditMode, toggleChalkEdit]);
 
   useEffect(() => { onToolbarGroups?.(boardToolGroups); }, [boardToolGroups, onToolbarGroups]);
 
@@ -1679,7 +1695,16 @@ export default function BoardCanvas({
         onMeasured={win ? null : patchLayout}
         onPointerDown={win ? undefined : (e) => onObjectPointerDown(e, obj)}
         wasDrag={win ? () => false : wasDrag}
-        onPrimary={() => primaryOpen(obj)}
+        // 板书防误触：闲置板书（编辑模式关 + 未武装）双击先武装（选中），
+        // 武装态再双击才进编辑 —— 单击已经在 board-hit 里被当成空地了
+        chalkIdle={!win && !!obj.chalk && !chalkEditMode && !selectedIds.includes(obj.id)}
+        onPrimary={() => {
+          if (!win && obj.chalk && !chalkEditModeRef.current && !selectedIdsRef.current.includes(obj.id)) {
+            setSelectedId(obj.id);
+            return;
+          }
+          primaryOpen(obj);
+        }}
         onAdd={() => handleAdd(obj)}
         onOpenViewer={() => openViewer(obj)}
         onOpenFile={() => openFile(obj)}
@@ -1754,7 +1779,9 @@ export default function BoardCanvas({
           // 点到既不是物件也不是变换手柄的地方 → 取消选中（选中态的唯一出口
           // 之一；另一个是 Esc）。放在工具分派**之前**：不管手里拿什么，点空白
           // 都该收掉选框。
-          if (selectedIdsRef.current.length && !e.target.closest('[data-board-object],[data-board-zone],[data-transform-handle]')) {
+          // onObject 而不是裸 selector：未武装的板书算空地 —— 点它也收掉选框
+          //（这正是武装态的退出路之一；另一条是 Esc）
+          if (selectedIdsRef.current.length && !onObject(e) && !e.target.closest('[data-transform-handle]')) {
             setSelectedIds([]);
           }
           // 顺序即优先级：工具在手就归工具，工具没接才轮到相机平移。

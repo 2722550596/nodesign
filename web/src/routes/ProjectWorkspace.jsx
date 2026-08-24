@@ -211,9 +211,8 @@ export default function ProjectWorkspace() {
   // 否则 stale 事件（WS 重放 / 后端慢）会清掉新一 turn 的状态。
   const currentRunIdRef = useRef(null);
   useEffect(() => { currentRunIdRef.current = currentRunId; }, [currentRunId]);
-  // SDK TodoWrite 工具的实时计划清单（run.todo.updated 推）
-  // 新一轮 run.start 清空；done/cancelled/error 保留作"上一轮完成情况"
-  const [todos, setTodos] = useState([]);
+  // （TodoPanel 2026-08-24 退役：TodoWrite 计划清单已上板成看板贴，侧栏那份撤了；
+  //   run.todo.updated 事件保留不消费 —— 板贴走服务端落盘那条线，跟这里无关）
   // H1：currentSessionId 来自 URL（urlSid，已在 useParams 上面）
   // title 用 list session 后 match URL sid 拿到
   const [currentSessionTitle, setCurrentSessionTitle] = useState('');
@@ -492,7 +491,6 @@ export default function ProjectWorkspace() {
     currentRunIdRef.current = null;
     setCurrentRunId(null);
     setActiveRun(null);
-    setTodos([]);
     wsHydratedSidRef.current = null;   // 换 session = 重新等这条 sid 的 WS hydrate
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, currentSessionId]);
@@ -741,7 +739,6 @@ export default function ProjectWorkspace() {
           setCurrentRunId(evt.runId);
           setActiveRun({ pid: id, runId: evt.runId });
         }
-        if (Array.isArray(evt.todos) && evt.todos.length > 0) setTodos(evt.todos);
         if (evt.contextUsage) mergeProjectContextUsage(id, evt.contextUsage);
         break;
       }
@@ -750,7 +747,6 @@ export default function ProjectWorkspace() {
         if (isStale) break;
         setIsStreaming(true);
         setThinkingTokens(null);
-        setTodos([]);
         // API / 多 tab 触发的 turn 也要能答题（AskUserQuestion 卡 POST /answer 要
         // activeRun）：run.start 即认领。handleSend 已设过时同值幂等；跨会话/旧 run
         // 已被 isStale 滤掉。
@@ -777,8 +773,7 @@ export default function ProjectWorkspace() {
         setQueueDepth(0);
         break;
       case 'run.todo.updated':
-        if (isStale) break;
-        setTodos(Array.isArray(evt.todos) ? evt.todos : []);
+        // TodoPanel 08-24 退役：计划看板走画布上的看板贴，这个事件前端不再消费
         break;
       case 'run.done': {
         dropPendingCompactCard();
@@ -2173,7 +2168,6 @@ export default function ProjectWorkspace() {
             agentProgress={agentProgress}
             thinkingTokens={thinkingTokens}
             onStop={currentRunId ? handleStop : null}
-            todos={todos}
             sessionTitle={currentSessionTitle}
             onOpenSessionList={() => setSessionListOpen(true)}
             onCloseSession={handleCloseSession}
