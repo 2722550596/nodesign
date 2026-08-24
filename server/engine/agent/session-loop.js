@@ -543,22 +543,8 @@ export async function runSession({
     persistSession: true,
     settingSources: ['project'],
 
-    // skipWebFetchPreflight 来自 runtime/platform.js（gateway key 模式永远关）
-    // 详细因果链见 platform.js 的 skipWebFetchPreflight 注释
-    settings: {
-      skipWebFetchPreflight: platform.skipWebFetchPreflight,
-      // 项目 memory（2026-07-28 正式启用）：骑 SDK 原生 auto-memory ——
-      // 二级索引（MEMORY.md 常驻 + 主题文件按需召回）、召回监督器
-      // （run.memory_recall 前端已渲染）、auto-dream 后台固化全由 SDK 包办。
-      // ⚠️ 目录必须显式指到项目共享区：默认按 cwd 派生，而 cwd 是会话级的，
-      // 不指定则每个会话一座记忆孤岛；指定后全项目所有会话共享一套。
-      ...(sharedRoot ? {
-        autoMemoryEnabled: true,
-        // 落在 .claude/agent-memory/auto —— 跟前端记忆卡读的是同一棵树
-        // （2026-07-28 修：之前指到 shared/agent-memory/auto，SDK 记了前端也看不到）
-        autoMemoryDirectory: path.join(sharedRoot, '.claude', 'agent-memory', 'auto'),
-      } : {}),
-    },
+    // settings 在下面跟 isolationOptions.settings **深合并**后一次性传 —— 见
+    // buildIsolationOptions 展开处的 ⛔ 注释（两处 settings 静默互吞案）。
 
     includePartialMessages: STREAMING_ENABLED,
     // 子代理时间轴（2026-07-28）：转发子代理完整对话（text/thinking 也带
@@ -595,7 +581,34 @@ export async function runSession({
 
     // 隔离两道闸（sandbox 管 Bash，permissions.deny 管 Read/Write 这类进程内工具）
     // 全在 agent/isolation.js 里，改之前读那份文件头上的四条实测教训。
-    ...buildIsolationOptions({ cwdRoot, sharedRoot, ...agentDirs, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv }),
+    //
+    // ⛔ settings 必须在这里跟 isolationOptions.settings 深合并（08-24 案）：
+    // 08-15 起 buildIsolationOptions 的返回值里也有 settings 键，对象展开写在
+    // 后面就把上面独立写的 settings 整个覆盖 —— autoMemoryEnabled /
+    // autoMemoryDirectory / skipWebFetchPreflight 八天没送到 SDK 手里，
+    // agent 照 SDK 默认路径写记忆被沙盒拒、~/.claude 下堆了 187 个空目录。
+    // 「两处同名键静默互吞」没有任何报错，出口断言在下方兜着。
+    ...(() => {
+      const isolation = buildIsolationOptions({ cwdRoot, sharedRoot, ...agentDirs, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv });
+      const settings = {
+        ...isolation.settings,
+        // skipWebFetchPreflight 来自 runtime/platform.js（gateway key 模式永远关）
+        skipWebFetchPreflight: platform.skipWebFetchPreflight,
+        // 项目 memory：骑 SDK 原生 auto-memory（MEMORY.md 常驻索引 + 主题文件
+        // 按需召回 + pinned 全文注入 + auto-dream 后台固化全由 SDK 包办）。
+        // ⚠️ 目录必须显式指到项目共享区：默认按 cwd 派生，而提示词、写入、
+        // 索引加载、权限放行全跟着这一个值走（探明于 08-24，二进制 yh()）。
+        ...(sharedRoot ? {
+          autoMemoryEnabled: true,
+          autoMemoryDirectory: path.join(sharedRoot, '.claude', 'agent-memory', 'auto'),
+        } : {}),
+      };
+      // 出口断言：记忆配置必须真的在最终 settings 里（防第二次被吞）
+      if (sharedRoot && !settings.autoMemoryDirectory) {
+        throw new Error('[session-loop] settings.autoMemoryDirectory 被吞了 —— 检查 settings 合并处');
+      }
+      return { ...isolation, settings };
+    })(),
 
     toolConfig: {
       askUserQuestion: { previewFormat: 'html' },
