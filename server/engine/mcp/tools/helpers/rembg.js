@@ -39,13 +39,18 @@ export const REMBG_SETUP_HINT = IS_WIN
   : 'cd server && python3 -m venv .venv-rembg && .venv-rembg/bin/python3 -m pip install rembg onnxruntime';
 const DEFAULT_PYTHON = REMBG_VENV_PYTHON;
 const DEFAULT_HELPER = path.join(__dirname, 'rembg-bridge.py');
-const DEFAULT_SOCKET = '/tmp/nodesign-rembg.sock';
 // fallback spawn 的 timeout——首次冷启 + 模型 load 留余量
 const DEFAULT_FALLBACK_TIMEOUT_MS = 60_000;
 
 function resolvePython() { return process.env.NODESIGN_REMBG_PYTHON || DEFAULT_PYTHON; }
 function resolveHelper() { return process.env.NODESIGN_REMBG_HELPER || DEFAULT_HELPER; }
-function resolveSocket() { return process.env.NODESIGN_REMBG_SOCKET || DEFAULT_SOCKET; }
+// socket 默认按**端口**派生（08-24 案：prod/exp 共用一个默认路径，exp 启动把生产的
+// 抠图服务当 stale 杀掉再自己占坑）。端口一实例一个，是现成的实例身份。
+// 这里是全仓唯一一份真相源，rembg-launcher.js import 它。
+export function resolveRembgSocket() {
+  return process.env.NODESIGN_REMBG_SOCKET || `/tmp/nodesign-rembg-${process.env.PORT || '4001'}.sock`;
+}
+function resolveSocket() { return resolveRembgSocket(); }
 
 // service health check 缓存（避免每次 request 都探一遍 /health）
 let serviceHealthCache = { ok: false, checkedAt: 0 };

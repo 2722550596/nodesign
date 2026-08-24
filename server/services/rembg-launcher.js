@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import http from 'node:http';
 import { promises as fs, readFileSync, writeFileSync } from 'node:fs';
-import { REMBG_VENV_PYTHON, REMBG_SETUP_HINT } from '../engine/mcp/tools/helpers/rembg.js';
+import { REMBG_VENV_PYTHON, REMBG_SETUP_HINT, resolveRembgSocket } from '../engine/mcp/tools/helpers/rembg.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // services/ 在 server/services/，server root 上溯 1 层
@@ -46,7 +46,10 @@ const DEFAULT_SERVICE = path.join(__dirname, 'rembg-service.py');
 // 改回多模型预热：env NODESIGN_REMBG_PRELOAD=isnet-general-use,birefnet-general-lite
 const DEFAULT_PRELOAD = 'isnet-general-use';
 
-const DEFAULT_SOCKET = '/tmp/nodesign-rembg.sock';
+// 按端口派生的实例私有 socket（真相源在 helpers/rembg.js 的 resolveRembgSocket；
+// 08-24 案：prod/exp 共用一个默认路径时，killStaleServices 按 socket 判"自己人"
+// 形同虚设，exp 一启动就把生产的抠图服务当 stale 杀掉再自己占坑）
+const DEFAULT_SOCKET = resolveRembgSocket();
 const MAX_RSS_MB = Number(process.env.NODESIGN_REMBG_MAX_RSS_MB ?? 900);
 const WATCH_MS = Number(process.env.NODESIGN_REMBG_WATCH_MS ?? 60_000);
 
