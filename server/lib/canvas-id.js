@@ -17,6 +17,27 @@ export function normalizeCanvasId(raw) {
 }
 
 /**
+ * 一个 tag 下所有座位的包络（08-23 案：near 只认节点 id 不认 tag，可 tag 本来
+ * 就是"一片东西的名字"——刚用 tag 画完草图，把 tag 传给 near 是自然写法）。
+ * 返回 { x, y, w, h, anchorId, ids } 或 null；anchorId = 最右那个（贴右侧摆用）。
+ * sizeOf(id, entry) 由调用方给（estimateSizeOn 绑着 board，不在这层 import）。
+ */
+export function tagEnvelope(board, tag, sizeOf) {
+  const hits = Object.entries(board?.objects || {})
+    .filter(([, e]) => e?.tag === tag && Number.isFinite(e?.x));
+  if (!hits.length) return null;
+  let x1 = Infinity; let y1 = Infinity; let x2 = -Infinity; let y2 = -Infinity;
+  let anchorId = null; let rightEdge = -Infinity;
+  for (const [id, e] of hits) {
+    const s = sizeOf(id, e) || { w: 0, h: 0 };
+    x1 = Math.min(x1, e.x); y1 = Math.min(y1, e.y);
+    x2 = Math.max(x2, e.x + s.w); y2 = Math.max(y2, e.y + s.h);
+    if (e.x + s.w > rightEdge) { rightEdge = e.x + s.w; anchorId = id; }
+  }
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1, anchorId, ids: hits.map(([id]) => id) };
+}
+
+/**
  * 它住在哪一层（服务端近似版）：显式 zone 字段优先，其次沿路径往上找第一个
  * 已知文件夹。已知集 = board.zones 的 key —— 比前端少了"服务端扫出来的任务
  * 目录"这一路，没摆过的深层目录会归到根。read_board 的输出里写明这是近似。

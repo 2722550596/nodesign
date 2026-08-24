@@ -21,10 +21,15 @@
 
 （旧项目里工作区根上直接放 index.html 的「根站」仍被识别和支持，但**新站一律入夹**。）
 
-**构建型站点**（Astro / 11ty / 自写 build 脚本）：源随便组织，构建产物落
-`dist/`（或 `out/` `build/` `_site/`，有 index.html 的那个自动被认作**产物根**；
-也可在 `.nd-project.json` 加 `"root": "<目录>"` 显式指定）。预览、截图、`list_pages`、
+**构建型站点**（Vite / React / Vue / Astro / 11ty / 自写 build 脚本）：源随便组织，
+构建产物落 `dist/`（或 `out/` `build/` `_site/` `public/`，有 index.html 的那个自动
+被认作**产物根**）。现代工程源码里的 `index.html`（引 `/src/main.tsx` 那种 dev 入口）
+**不会**被误当产物 —— 构建完系统自动优先 dist。`.nd-project.json` 的 `"root": "<目录>"`
+可显式指定产物根：**放站点文件夹里，路径相对该文件夹**（如 `观察日志/.nd-project.json`
+写 `{"root":"dist"}`）；根站的放工作区根。预览、截图、`list_pages`、
 导出、发布看的**全是产物根** —— 改完源必须重新构建，否则用户看到的还是旧的。
+构建必须用绝对路径或 `(cd <站点文件夹> && npm run build)` 子 shell 跑，**build 完
+`ls` 确认产物真的落在了站点文件夹里的 dist/**（cwd 漂了会把 dist 建到别处）。
 `node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
 
 手写起手：`mkdir 观察日志`，然后 Write `观察日志/index.html`（文件夹名换成真站名；

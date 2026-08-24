@@ -30,7 +30,9 @@ import docx from './docx.js';
 
 export const KINDS = Object.freeze({ [deck.id]: deck, [site.id]: site, [docx.id]: docx });
 
-export { RESERVED_DIRS, isReservedFile } from '../task-scan.js';
+import { readTaskMarker } from '../task-scan.js';
+
+export { RESERVED_DIRS, isReservedFile, readTaskMarker } from '../task-scan.js';
 
 export function kindDef(kind) {
   return KINDS[kind] || null;
@@ -57,21 +59,9 @@ export function can(kind, cap) {
   return !!KINDS[kind]?.capabilities?.includes(cap);
 }
 
-/**
- * 读产物标记（`.nd-project.json`）。没有 / 读不动 → null。
- *
- * 2026-08-07 从 `.nd-task.json` 改名。旧文件里有两个字段：`sessionId`（这个
- * 任务属于哪次对话 —— 正是要废的那条绑定，迁移时直接删）和 `root`（构建型
- * 站点显式声明产物根，agent 刚写完源还没 build 的窗口期靠它认出"站已经在了"）。
- * 后者还有用，所以标记本身留着，只是不再承载归属。
- */
-export async function readTaskMarker(root) {
-  try {
-    const raw = await fs.readFile(path.join(root, '.nd-project.json'), 'utf8');
-    const parsed = JSON.parse(raw);
-    return (parsed && typeof parsed === 'object') ? parsed : null;
-  } catch { return null; }
-}
+// readTaskMarker 本体 2026-08-24 迁去 task-scan.js（site.js 要按子目录读 marker，
+// 住这里会循环 import）。上面 re-export 保住老调用方。历史注释一并搬走：
+// `.nd-project.json` 2026-08-07 从 `.nd-task.json` 改名，只剩 `root` 字段有用。
 
 /**
  * 任务的完整 manifest —— 服务端唯一的解析器，前端、感知工具、导出都吃这份。

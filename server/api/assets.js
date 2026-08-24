@@ -22,7 +22,8 @@ import { patchBoard, readBoard, reconcileBoardRenames, forwardId, forwardPath, r
 import { moveEntry, MoveError } from '../projects/move-entry.js';
 import { reconcileAutoRefsThrottled } from '../lib/auto-relations.js';
 import { taskManifest, ENTRY_FILE, KIND_SITE, docxClaimedFiles, isDirArtifact } from '../lib/artifact-target.js';
-import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile } from '../lib/task-scan.js';
+import { RESERVED_DIRS, HARD_IGNORE_DIRS, DRAFTS_DIR, isReservedFile, loadIgnore } from '../lib/task-scan.js';
+import { OUTPUT_DIRS } from '../lib/kinds/site.js';
 import { listReferences } from '../lib/reference-assets.js';
 import { resolveArtifactFile, isServablePath } from '../lib/artifact-file-path.js';
 import { getProjectCover } from '../lib/cover.js';
@@ -376,6 +377,7 @@ router.get('/:pid/artifacts', async (req, res, next) => {
     // 磁盘上的位置是同一个字符串 —— 这样 agent `mv` 一个文件之后，git 的改名
     // 检测能直接翻译成画布 id 的改名（见 board-store 的 reconcileBoardRenames）。
     const workspaceRoot = getSharedDir(req.params.pid);
+    const rootIgnore = await loadIgnore(workspaceRoot);
     const tasks = [];
     let hasRootSite = false;
     // 根站认领的一级子目录（pages 顶层段）—— 散文件过滤要用同一口径
@@ -474,6 +476,9 @@ router.get('/:pid/artifacts', async (req, res, next) => {
         if (!e.isDirectory() || e.name.startsWith('.')) continue;
         if (RESERVED_DIRS.has(e.name) || HARD_IGNORE_DIRS.has(e.name)) continue;
         if (e.name === DRAFTS_DIR) continue;      // 站点试作，由 site 解析器管
+        // 构建目录（dist 等）不当独立站/收纳夹（08-24 案：site:dist 重复卡）；
+        // 递归也吃工作区根 .ndignore —— 页面清单和桌面必须同一套规则
+        if (OUTPUT_DIRS.includes(e.name) || rootIgnore(under(rel, e.name), true)) continue;
         if (claimed.has(e.name)) continue;        // 已经是一件产物了
         folders.push(under(rel, e.name));
         await collect(path.join(dir, e.name), under(rel, e.name), depth + 1);

@@ -121,7 +121,7 @@ and reopens on the next call — the profile survives, so you stay logged in.
 The user has a browser card on their desktop and can watch, or take over.`,
     {
       url: z.string().min(4).describe('Absolute http(s) URL.'),
-      waitUntil: z.enum(['domcontentloaded', 'load', 'networkidle']).optional()
+      waitUntil: z.enum(['commit', 'domcontentloaded', 'load', 'networkidle']).optional()
         .describe("How long to wait. Default 'domcontentloaded' — fastest and enough to read; measured on this machine, 'networkidle' costs an extra 1.6-4s per page, so do not reach for it by reflex. Use it only when a JS-built page comes back empty."),
       digest: z.boolean().optional()
         .describe('Include the page digest (default true). Set false only when you are navigating purely to screenshot and do not want the text.'),
@@ -175,9 +175,31 @@ The user has a browser card on their desktop and can watch, or take over.`,
             ].filter(Boolean).join('\n'), true);
           }
           if (navErr) {
+            // 超时 ≠ 全失败：commit 之后页面往往已有内容。半张页面也交回去 ——
+            // agent 拿到骨架就能决定继续还是换站（08-19 上报：原建议「试
+            // waitUntil:"load"」是往错方向推 —— load 比 domcontentloaded 严，
+            // 连 DOMContentLoaded 都没到换 load 只会更慢地再失败一次）
+            const timedOut = /Timeout/i.test(navErr);
+            let landedUrl = null;
+            try { const u = page.url(); if (timedOut && u !== before && /^https?:/.test(u)) landedUrl = u; } catch { /* */ }
+            if (landedUrl) {
+              let lines = [];
+              try {
+                const data = await collectPage(page);
+                if (!data.missing) lines = formatPage(data, { compact: true });
+              } catch { /* 半张页面读不出摘要也照样交回 */ }
+              try { ctx?.emit?.({ type: 'run.browser_opened', url: landedUrl, ts: new Date().toISOString() }); } catch { /* */ }
+              return asText([
+                `⚠️ 等待超时（${navErr}），但页面已部分加载 —— 当前状态如下，够用就继续（read/screenshot 都可），不够就换站：`,
+                ...lines,
+                gate,
+              ].filter(Boolean).join('\n'));
+            }
             return asText([
               `导航失败：${navErr}`,
-              '如果是超时：站点可能慢或者在挡自动化访问；试 waitUntil:"load"，或者换一个参考站。',
+              timedOut
+                ? '超时多半是广告/追踪脚本卡死或站点反自动化，不是"等得不够久"。别换 waitUntil:"load"（更严只会更慢地失败）；可试 waitUntil:"commit"（一有响应就接手，配 read/screenshot 看拿到多少），或者直接换一个参考站。'
+                : '站点可能在挡自动化访问；换一个参考站。',
               gate,
             ].filter(Boolean).join('\n'), true);
           }

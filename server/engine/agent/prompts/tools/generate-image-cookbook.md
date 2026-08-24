@@ -344,6 +344,24 @@ Step 3: 给角色起名锚定（"Maya, character from Reference 1"）
 
 每次只改一处，改完再看，别一轮里改五件事。
 
+### G1. variationOf 模式 —— 系列图一致性用参数，别手写咒语
+
+上面那套 "Change only… Keep… unchanged" 的骨架，工具已经内置成结构化参数：
+
+```json
+{ "variationOf": "assets/generated/A1.png",
+  "change": "裙子换成薄荷绿短裙，长度到膝盖以上",
+  "preserve": ["pose","framing","face","hair","top","shoes"] }
+```
+
+- `variationOf` 就是编辑基底（自动成为第 1 张 reference），`change` 是唯一要动的那处，
+  `preserve` 是必须一致的方面（**省略 = 全保，最安全**）。工具会展开成完整骨架并
+  自动追加通用禁止项（不凭空加背带/发饰、缺席也要保持 —— 都是真实翻过车的）。
+- 何时用它而不是手写 § G 模板：**做系列**（换装矩阵、多页同角色、多帧同场景）。
+  组织成一棵树：先出一张锚图，之后每次调用只沿一个轴变一处。
+- 手写 prompt 仍然适合单次精修（改光线、删元素这类一次性编辑）。
+- 此模式下 `prompt` 可省略；传了就当补充说明附在骨架后。
+
 ## H. 连续帧的能力边界（实测，别重新踩）
 
 | 用法 | 结果 |

@@ -329,8 +329,21 @@ export async function runSession({
   // npm 缓存 + 沙盒可写 tmp（$TMPDIR / pip 缓存）：细节与教训见 isolation.js
   const agentDirs = await prepareAgentDirs({ dataRoot: PROJECTS_DATA_ROOT, projectId, sessionId });
 
+  // ⛔ 服务器自己的运行姿态不许漏进 agent 环境（08-24 案）：
+  //   - NODE_ENV=production（pm2 注的）会让 agent 沙盒里的 npm install 静默跳过
+  //     devDependencies —— 返回 0 还报 "up to date"，vite/typescript 根本没装上，
+  //     构建道当场断。npm_config_production / npm_config_omit 是同一开关的旁路。
+  //   - PWD 是 pm2 进程的 cwd（仓库根）；spawn({cwd}) 不更新它，bash 会自校正但
+  //     python/node/构建工具读 $PWD 拿到的就是错目录 ——"cwd 被重置到父目录"的
+  //     另一半病根。下面显式钉成 cwdRoot。
+  const {
+    NODE_ENV: _dropNodeEnv, npm_config_production: _dropNpmProd,
+    npm_config_omit: _dropNpmOmit, OLDPWD: _dropOldpwd,
+    ...inheritedEnv
+  } = process.env;
   const sdkEnv = {
-    ...process.env,
+    ...inheritedEnv,
+    PWD: cwdRoot,
     ANTHROPIC_BASE_URL: baseUrlForBinary,
     // 订阅模型：apiKeyForBinary = process.env 原值（通常 undefined）——binary 见到
     // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth，所以订阅路绝不能注入。

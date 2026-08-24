@@ -304,7 +304,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 关系线（2026-08-07）：agent 把「这版改自那版」「这两个是对照」这类
       // **只有它知道**的关系画到画布上。画布知道每个产物是什么，但不知道它们
       // 之间是什么关系 —— 那是北极星（排出有版面感的布局）真正缺的那一块。
-      makeRelateOnBoardTool({ projectId, ctx }),
+      makeRelateOnBoardTool({ sharedRoot, projectId, ctx }),
       // agent 摆位四件（2026-08-14）：看版面 / 语义摆位·立主角 / 落手写便签 / 归纳收纳
       makeReadBoardTool({ projectId }),
       makeArrangeOnBoardTool({ projectId, ctx }),

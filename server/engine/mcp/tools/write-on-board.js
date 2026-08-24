@@ -17,7 +17,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { readBoard, patchBoard } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
-import { layerOf, normalizeCanvasId } from '../../../lib/canvas-id.js';
+import { layerOf, normalizeCanvasId, tagEnvelope } from '../../../lib/canvas-id.js';
 import { textBox, findSpot, SKETCH_FIT } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
 import { renderChalk, chalkFileName, writeChalkFile, CHALK_DIR } from '../../../lib/chalk.js';
@@ -91,10 +91,17 @@ Keep the chat reply short — a line pointing at the board is enough.`,
       } else if (near) {
         const nid = normalizeCanvasId(near);
         const e = nid ? board.objects?.[nid] : null;
-        if (!e || !Number.isFinite(e.x)) return err(`锚点 ${near} 还没有座位（read_board 里看不到就锚不上）。`);
-        anchorId = nid; zone = layerOf(nid, e, known);
-        const as = estimateSizeOn(board, nid, e);
-        pos = avoid({ x: e.x + as.w + 24, y: e.y }, obstaclesOf(zone), box.w, box.h);
+        if (e && Number.isFinite(e.x)) {
+          anchorId = nid; zone = layerOf(nid, e, known);
+          const as = estimateSizeOn(board, nid, e);
+          pos = avoid({ x: e.x + as.w + 24, y: e.y }, obstaclesOf(zone), box.w, box.h);
+        } else {
+          // near 也认 tag（08-23 案）：落到那片东西的包络右侧，锚线连最右那个
+          const env = tagEnvelope(board, near, (id2, e2) => estimateSizeOn(board, id2, e2));
+          if (!env) return err(`锚点 ${near} 还没有座位，也不是板上任何 tag（read_board 里看不到就锚不上）。`);
+          anchorId = env.anchorId; zone = layerOf(env.anchorId, board.objects[env.anchorId], known);
+          pos = avoid({ x: env.x + env.w + 24, y: env.y }, obstaclesOf(zone), box.w, box.h);
+        }
       } else {
         const obstacles = obstaclesOf('');
         let bottom = 0; for (const o of obstacles) bottom = Math.max(bottom, o.y + o.h);

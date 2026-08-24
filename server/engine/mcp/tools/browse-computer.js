@@ -179,7 +179,8 @@ async function zoomShot(page, region, frame, lead) {
   }
   const [x0, y0, x1, y1] = region.map(Math.round);
   if (x0 < 0 || y0 < 0 || x1 > frame.w || y1 > frame.h || x1 - x0 < 8 || y1 - y0 < 8) {
-    return asText(`Error: zoom region [${region.join(', ')}] must lie inside the ${frame.w}×${frame.h} screenshot and be at least 8×8.`, true);
+    return asText(`Error: zoom region [${region.join(', ')}] must lie inside the ${frame.w}×${frame.h} LIVE VIEWPORT and be at least 8×8. `
+      + 'zoom takes viewport pixels — coordinates from a fullPage screenshot are in page space and do NOT work here; scroll the target into view first, or subtract the scroll offset.', true);
   }
   const clip = { x: toPage(x0, frame), y: toPage(y0, frame), width: toPage(x1 - x0, frame), height: toPage(y1 - y0, frame) };
   const buf = await page.screenshot({ type: 'png', clip });

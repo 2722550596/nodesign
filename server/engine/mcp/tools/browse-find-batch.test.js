@@ -57,10 +57,15 @@ describe('browser_batch', () => {
     expect(log).toEqual(['computer:left_click', 'computer:boom', 'shot']);
     expect(r.isError).toBe(true);
     const texts = r.content.filter(b => b.type === 'text').map(b => b.text);
-    expect(texts[1]).toBe('[2/4] browser_computer boom: Error: boom');
-    expect(texts[2]).toBe(`[3/4] browser_computer type: ${HALT_TEXT}`);
-    expect(texts[3]).toBe(`[4/4] browser_find: ${HALT_TEXT}`);
-    expect(texts[4]).toMatch(/stopped early/);
+    // 头块 = 失败摘要（08-24：错误必须排最前 —— 记账层截前 120/500 字符、
+    // 模型扫返回，都先看到真报错而不是成功步骤的输出）+ 别整批重跑的钉子
+    expect(texts[0]).toMatch(/^FAILED at step 2\/4 \(browser_computer boom\): Error: boom/);
+    expect(texts[0]).toMatch(/do NOT re-run the whole batch/);
+    expect(texts[1]).toBe('[1/4] browser_computer left_click: did left_click');
+    expect(texts[2]).toBe('[2/4] browser_computer boom: Error: boom');
+    expect(texts[3]).toBe(`[3/4] browser_computer type: ${HALT_TEXT}`);
+    expect(texts[4]).toBe(`[4/4] browser_find: ${HALT_TEXT}`);
+    expect(texts[5]).toMatch(/stopped early/);
   });
 
   it('最后一项已出图就不再补；screenshotAfter:false 也不补', async () => {
@@ -79,13 +84,15 @@ describe('browser_batch', () => {
       { name: 'browser_find', input: { query: 'x' } },
     ] }, {});
     expect(log).toEqual(['shot']);
-    expect(r.content[0].text).toMatch(/not batchable/);
-    expect(r.content[1].text).toBe(`[2/2] browser_find: ${HALT_TEXT}`);
+    expect(r.content[0].text).toMatch(/^FAILED at step 1\/2 .*not batchable/s);
+    expect(r.content[1].text).toMatch(/not batchable/);
+    expect(r.content[2].text).toBe(`[2/2] browser_find: ${HALT_TEXT}`);
 
     const s = rig();
     const r2 = await s.batch.handler({ actions: [{ name: 'browser_find', input: { query: '' } }] }, {});
     expect(s.log).toEqual(['shot']);
-    expect(r2.content[0].text).toMatch(/invalid input — query/);
+    expect(r2.content[0].text).toMatch(/^FAILED at step 1\/1 .*invalid input — query/s);
+    expect(r2.content[1].text).toMatch(/invalid input — query/);
   });
 });
 

@@ -54,6 +54,11 @@ export const RESERVED_FILES = new Set([
   '.nd-project.json',  // 产物标记（形态兜底）
   '.gitignore',
   '.ndignore',
+  // 下面三个是基础设施不是用户产物，上墙就是「画布把自己的存档画在自己身上」
+  // 家族（08-24 清账补齐；ui-config.json 是黑板模式开关，曾以 .json 卡上墙）
+  'ui-config.json',
+  'spec.json',
+  'pending-changes.json',
 ]);
 
 /** 永远不扫的目录名（任何深度命中即剪枝） */
@@ -67,6 +72,19 @@ export const HARD_IGNORE_DIRS = new Set([
 export const DRAFTS_DIR = '_drafts';
 
 export const NDIGNORE_FILE = '.ndignore';
+
+/**
+ * 读产物标记（`.nd-project.json`）。没有 / 读不动 → null。
+ * 2026-08-24 从 kinds/index.js 迁来：site.js 现在要按子目录读 marker（构建型
+ * 子目录站），住 kinds/index.js 会循环 import。kinds/index.js 原样 re-export。
+ */
+export async function readTaskMarker(root) {
+  try {
+    const raw = await fs.readFile(path.join(root, '.nd-project.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : null;
+  } catch { return null; }
+}
 
 /** gitignore 子集 → RegExp。认不出的行按字面量处理（转义后精确匹配）。 */
 function compilePattern(line) {

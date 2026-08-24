@@ -145,7 +145,9 @@ export async function collectCard({ workspaceRoot, cardId }) {
     const m = await taskManifest(workspaceRoot).catch(() => null);
     const rootSite = (m?.artifacts || []).find(a => a.kind === 'site' && !a.single && !a.srcRoot);
     for (const pg of (rootSite?.pages || [])) {
-      const pRel = String(pg).replace(/\\/g, '/');
+      // ⚠️ pages 是**产物根相对**（构建型根站 root='dist' 时是 'index.html' 不是
+      // 'dist/index.html'）——对着工作区根解析会抓到源文件或落空（08-24 对齐）
+      const pRel = (rootSite.root ? `${rootSite.root}/` : '') + String(pg).replace(/\\/g, '/');
       const pAbs = await safeResolve(workspaceRoot, pRel);
       if (!pAbs) continue;
       try { if ((await fs.stat(pAbs)).isFile()) files.push({ abs: pAbs, rel: pRel }); } catch { /* 页面刚被删 */ }

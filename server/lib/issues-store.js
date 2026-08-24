@@ -59,7 +59,9 @@ db.exec(`
  */
 export function signatureOf(text) {
   const norm = String(text || '')
-    .replace(/[/~][\w.\-/@ 一-鿿]+/g, '<path>')   // 路径
+    // 字符类里不能有空格：不然一个孤立的 "/" 会贪婪吞掉后面一整串词（08-24 案，
+    // artifact_find 输出里的 "→ https://…" 之后的文字被不定长吃掉，指纹漂移不聚合）
+    .replace(/[/~][\w.\-/@一-鿿]+/g, '<path>')    // 路径
     .replace(/\b[0-9a-f]{8,}\b/gi, '<hash>')      // id / hash
     .replace(/\d+/g, 'N')                          // 行号、字节数、耗时
     .replace(/\s+/g, ' ')

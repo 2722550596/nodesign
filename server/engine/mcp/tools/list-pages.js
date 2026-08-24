@@ -152,8 +152,8 @@ async function listSiteStructure(target) {
     return {
       content: [{
         type: 'text',
-        text: `${target.task} 里这个站点（${art?.root ? `产物根 ${art.root}/` : '任务根'}）还没有 html 页面。`
-          + (art?.root ? '（源写完了的话，先跑构建让产物落进去。）' : ''),
+        text: `这个站点（${art?.root ? `产物根 ${art.root}/` : '任务根'}）还没有 html 页面。`
+          + (art?.root ? '（源写完了的话，先跑构建让产物落进去；构建后确认产物真的落在这个目录。）' : ''),
       }],
     };
   }
@@ -186,6 +186,9 @@ async function listSiteStructure(target) {
     });
   }
 
+  // 输出统一成**工作区相对**路径：screenshot_canvas / artifact_open 收的就是这种。
+  // 以前 file 是产物根相对（index.html），agent 原样回喂必然 not found（08-24 案）
+  const prefix = art?.root ? `${art.root}/` : '';
   const known = new Set(pages);
   const broken = [];
   for (const p of out) {
@@ -199,7 +202,7 @@ async function listSiteStructure(target) {
         if (seg === '..') stack.pop();
         else stack.push(seg);
       }
-      if (!known.has(stack.join('/'))) broken.push(`${p.file} → ${href}`);
+      if (!known.has(stack.join('/'))) broken.push(`${prefix}${p.file} → ${href}`);
     }
   }
   const brokenNote = broken.length
@@ -212,11 +215,14 @@ async function listSiteStructure(target) {
     ? `\n\n同任务的其他产物（平等，各自寻址）：${siblings.map(a => a.entryRel).join(' / ')}`
     : '';
 
+  const outWs = prefix ? out.map(p => ({ ...p, file: prefix + p.file })) : out;
+
   return {
     content: [{
       type: 'text',
-      text: `站点 ${target.task} · ${out.length} 个页面（入口 ${pages[0]}）${rootNote}：\n\n`
-        + `${JSON.stringify(out, null, 2)}${brokenNote}${siblingNote}`,
+      text: `站点${art?.title ? ` ${art.title}` : ''} · ${out.length} 个页面（入口 ${prefix}${pages[0]}）${rootNote}`
+        + '，file 是工作区相对路径，可直接传给 screenshot_canvas / artifact_open：\n\n'
+        + `${JSON.stringify(outWs, null, 2)}${brokenNote}${siblingNote}`,
     }],
   };
 }

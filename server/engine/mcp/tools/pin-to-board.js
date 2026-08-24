@@ -102,6 +102,31 @@ Paths are workspace-relative, exactly as they are on disk. Accepted forms:
           if (/\.html?$/i.test(objectId)) objectId = `deck:${objectId}`;
         }
 
+        // 可见性预检（08-21 案：钉 assets/ 深处的图报成功，用户画布上根本没有）。
+        // 画布扫描只认 assets 顶层 / assets/generated / assets/notes 这三个口，
+        // 更深的（references/web/… 之类）有座位也不渲染 —— 钉了等于没钉。
+        // doc: 两份项目文档同病：前端没有 doc: 渲染分支（走顶栏卡，不上画布）。
+        if (objectId.startsWith('doc:')) {
+          return {
+            content: [{
+              type: 'text',
+              text: `${objectId} 是项目文档（顶栏「⋯」里那套卡），不渲染在画布上 —— pin 了用户也看不到。要给用户看内容，就 write_on_board 摘要或把内容写成 notes/ 便签。`,
+            }],
+            isError: true,
+          };
+        }
+        if (/^assets\//.test(objectId)
+          && !/^assets\/[^/]+$/.test(objectId)
+          && !/^assets\/(generated|notes)\/[^/]+$/.test(objectId)) {
+          return {
+            content: [{
+              type: 'text',
+              text: `${objectId} 在画布扫描范围之外（assets/ 只有顶层、generated/、notes/ 三个口上墙），pin 了用户也看不到。`
+                + '先把文件 cp 到工作区根或某个文件夹里再 pin（用户要看的素材放看得见的地方）。',
+            }],
+            isError: true,
+          };
+        }
         const zoneId = folderOfObjectId(objectId);
         const { zone: placedZone, placed } = await pinToZone(projectId, { objectId, zoneId });
 

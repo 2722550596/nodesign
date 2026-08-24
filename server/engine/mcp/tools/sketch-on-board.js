@@ -19,7 +19,7 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { readBoard, patchBoard, commitStaging, removeByTag, TEXT_FONTS } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';
-import { layerOf, normalizeCanvasId } from '../../../lib/canvas-id.js';
+import { layerOf, normalizeCanvasId, tagEnvelope } from '../../../lib/canvas-id.js';
 import { BINDING_TYPE_IDS, BINDING_MATERIALS } from '../../../lib/binding-types.js';
 import { UNIT, SKETCH_FIT, SKETCH_MAX, textBox, shapePath, layoutNodes, bboxOf, findSpot, fitFor } from '../../../lib/sketch-layout.js';
 import { getViewpoint } from '../../../projects/viewpoint-store.js';
@@ -248,9 +248,16 @@ Per sketch: ≤${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges (spl
       if (args.near) {
         const nid = normalizeCanvasId(args.near);
         const e = nid ? board.objects?.[nid] : null;
-        if (!e || !Number.isFinite(e.x)) return err(`锚点 ${args.near} 还没有座位（read_board 里看不到就锚不上）。`);
-        zone = layerOf(nid, e, known);
-        anchor = { x: e.x, y: e.y, ...estimateSizeOn(after, nid, e) };
+        if (e && Number.isFinite(e.x)) {
+          zone = layerOf(nid, e, known);
+          anchor = { x: e.x, y: e.y, ...estimateSizeOn(after, nid, e) };
+        } else {
+          // near 也认 tag（08-23 案，同 write_on_board）
+          const env = tagEnvelope(board, args.near, (id2, e2) => estimateSizeOn(after, id2, e2));
+          if (!env) return err(`锚点 ${args.near} 还没有座位，也不是板上任何 tag（read_board 里看不到就锚不上）。`);
+          zone = layerOf(env.anchorId, board.objects[env.anchorId], known);
+          anchor = { x: env.x, y: env.y, w: env.w, h: env.h };
+        }
       }
       const obstacles = [];
       let contentBottom = 0;

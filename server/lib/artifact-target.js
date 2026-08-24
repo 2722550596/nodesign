@@ -108,13 +108,9 @@ function insideWorkspace(workspaceRoot, absPath) {
   return absPath === root || absPath.startsWith(root + path.sep);
 }
 
-/**
- * 站点的页面清单（相对产物根）。
- */
-export async function listSitePages(workspaceRoot) {
-  const m = await KINDS[KIND_SITE].manifest(workspaceRoot, null);
-  return m.pages;
-}
+// （listSitePages 2026-08-24 拆除：调用 KINDS.site.manifest 这个不存在的方法，
+//  一调必 TypeError，全仓无调用方 —— 死代码假装公开 API。页面清单读
+//  taskManifest().artifacts[].pages。）
 
 /**
  * 推断某个 html 路径的产物形态。
@@ -209,11 +205,28 @@ export async function resolveArtifactTarget(workspaceRoot, relPath, sessionId) {
     const hit = await tryPath(relPath);
     if (hit) { setActiveArtifact(sessionId, hit.relPath, hit.kind); return hit; }
     const abs = path.resolve(workspaceRoot, relPath);
+    if (!insideWorkspace(workspaceRoot, abs)) return { ok: false, message: 'path escapes workspace' };
+    // 回退：agent 常拿**产物根相对**或**源目录相对**路径来喂（'index.html'、
+    // 'dist/index.html'），而这里收的是工作区相对（'jet-engine/dist/index.html'）。
+    // 没命中时按各站点实例的 root / srcRoot 补前缀再试一轮，省一次注定失败的
+    // 往返（08-24 案：三个工具三种写法全 not found）。
+    const m = await taskManifest(workspaceRoot);
+    const rel = normalizeRel(relPath);
+    const prefixes = new Set();
+    for (const a of (m?.artifacts || [])) {
+      if (a.kind !== KIND_SITE || a.single) continue;
+      if (a.root) prefixes.add(a.root);
+      if (a.srcRoot && a.srcRoot !== a.root) prefixes.add(a.srcRoot);
+    }
+    for (const pre of prefixes) {
+      const hit2 = await tryPath(`${pre}/${rel}`);
+      if (hit2) { setActiveArtifact(sessionId, hit2.relPath, hit2.kind); return hit2; }
+    }
+    const candidates = (m?.artifacts || []).map(a => a.entryRel).filter(Boolean);
     return {
       ok: false,
-      message: insideWorkspace(workspaceRoot, abs)
-        ? `${relPath} not found. Write it first, or check the path.`
-        : 'path escapes workspace',
+      message: `${relPath} not found. Write it first, or check the path (workspace-relative).`
+        + (candidates.length ? `\nExisting artifact entries:\n${candidates.map(c => `- ${c}`).join('\n')}` : ''),
     };
   }
 
@@ -272,9 +285,10 @@ export function requireBrowsable(target) {
 
 /** 给各工具复用的 path 参数描述（保持措辞一致） */
 export const ARTIFACT_PATH_DESC =
-  'Relative path of the artifact entry (deck: "canvas.html", site: "index.html" '
-  + 'or its built output like "dist/index.html", word: "文档.docx"). '
-  + 'Omit to use the artifact you are currently working on.';
+  'WORKSPACE-relative path of the artifact entry (deck: "canvas.html", '
+  + 'root site: "index.html" or "dist/index.html", site in a folder: full path '
+  + 'like "my-site/dist/index.html", word: "文档.docx"). All artifact tools share '
+  + 'this one convention. Omit to use the artifact you are currently working on.';
 
 // ── 兼容层：老名字继续可用，内部全部走上面的实现 ────────────────────────────
 export const CANVAS_PATH_DESC = ARTIFACT_PATH_DESC;

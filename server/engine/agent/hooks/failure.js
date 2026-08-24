@@ -70,6 +70,13 @@ export function makePostToolUseFailureHandler({ ctx, projectId, sessionId }) {
         + '  1. sandbox 拦截（命令访问越界文件 / 不允许的网络）→ 换 Read / Glob / Grep / MCP 工具\n'
         + '  2. cwd 越界 → 路径相对 workspace\n'
         + '  3. 命令本身错（参数 / 文件不存在）→ 检查 stderr';
+    } else if (/_batch$/.test(tool)) {
+      // batch 一步失败整批标错，但失败步之前的动作（click / type 这类非幂等的）
+      // **已经执行过了** —— 兜底那句"先重试 1 次"对 batch 是错的，会重放前面的步骤。
+      advice =
+        `${tool} 失败：${error.slice(0, 200)}\n`
+        + '返回文本第一行标了失败在第几步。**不要整批重跑** —— 失败步之前的动作已经执行过了；\n'
+        + '看当前状态（返回末尾的截图），只从失败那一步起继续（单独调用或开一个新 batch）。';
     } else if (tool === 'Write' || tool === 'Edit') {
       advice =
         `${tool} 失败。检查：\n`

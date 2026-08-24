@@ -12,12 +12,16 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { walkTaskFiles, loadIgnore, DRAFTS_DIR, RESERVED_DIRS } from '../task-scan.js';
+import { walkTaskFiles, loadIgnore, readTaskMarker, DRAFTS_DIR, RESERVED_DIRS } from '../task-scan.js';
 
 const ENTRY = 'index.html';
 
-/** 构建产物的约定目录，按序探测（谁有 index.html 认谁）。任务根有 index.html 时不看这些 */
-const OUTPUT_DIRS = ['dist', 'out', 'build', '_site', 'public'];
+/**
+ * 构建产物的约定目录，按序探测（谁有 index.html 认谁）。
+ * export：assets.js 的文件夹递归要用同一张表把构建目录挡在"独立站点/文件夹"之外
+ * （08-24 案：dist/ 被递归成第二张 site 卡）。
+ */
+export const OUTPUT_DIRS = ['dist', 'out', 'build', '_site', 'public'];
 
 /** 站点页面扫描深度（产物根之下；子页 / posts/ / pages/ 够用） */
 const PAGE_DEPTH = 4;
@@ -32,17 +36,35 @@ function normRoot(r) {
 }
 
 /**
+ * 根 index.html 是不是**构建源**（vite / react / vue 工程的开发入口）：
+ * module script 引用 src/ 目录或 .tsx/.jsx/.ts/.vue 源文件。构建源不是可浏览的
+ * 产物 —— 浏览器直接打开是白屏（脚本路径只有 dev server / 构建器认识）。
+ * 只认强证据；读不动 / 不确定一律按"真产物"处理（老行为）。
+ */
+async function isBuildSourceEntry(dirAbs) {
+  try {
+    const html = await fs.readFile(path.join(dirAbs, ENTRY), 'utf8');
+    return /<script[^>]+src=["'](?:\.?\/)?src\/[^"']+["']/i.test(html)
+      || /<script[^>]+src=["'][^"']+\.(?:tsx|jsx|ts|vue)["']/i.test(html);
+  } catch { return false; }
+}
+
+/**
  * 产物根（相对任务目录，'' = 任务根）。
  * marker.root 是显式声明，最优先 —— 哪怕入口还没构建出来（agent 刚写完源、
  * 还没跑 build 的窗口期），寻址也该指向将要出现的地方而不是源目录。
+ * 任务根的 index.html 是构建源且约定目录里已有构建产物时，优先产物
+ * （08-24 案：vite 工程源码 index.html 引 /src/main.tsx，预览白屏）。
  */
 async function artifactRoot(taskDir, marker) {
   const declared = normRoot(marker?.root);
   if (declared) return declared;
-  if (await exists(path.join(taskDir, ENTRY))) return '';
+  const hasRootEntry = await exists(path.join(taskDir, ENTRY));
+  if (hasRootEntry && !(await isBuildSourceEntry(taskDir))) return '';
   for (const d of OUTPUT_DIRS) {
     if (await exists(path.join(taskDir, d, ENTRY))) return d;
   }
+  // 构建源但还没 build 出产物：退回任务根（至少寻址不落空；build 完自动切换）
   return '';
 }
 
@@ -67,7 +89,10 @@ async function discoverInstances(taskDir, marker) {
   if (rootSite) {
     out.push({ srcRoot: '', root, single: false });
   } else {
-    // 无根站：一级子目录各自为站
+    // 无根站：一级子目录各自为站。每个子目录按自己的 marker + 构建证据算产物根
+    // （08-24 案：jet-engine/ 里的 .nd-project.json 以前读不到、dist/ 轮不上，
+    //  构建型子目录站没有干净路径）。root 是**任务根相对**（jet-engine/dist），
+    //  srcRoot 是子目录名 —— 卡片身份挂 srcRoot 那个文件夹，寻址走 root。
     let entries = [];
     try { entries = await fs.readdir(taskDir, { withFileTypes: true }); } catch { /* */ }
     const ignore = await loadIgnore(taskDir);
@@ -75,8 +100,16 @@ async function discoverInstances(taskDir, marker) {
       if (!e.isDirectory() || e.name.startsWith('.') || e.name === DRAFTS_DIR) continue;
       if (RESERVED_DIRS.has(e.name)) continue;
       if (ignore(e.name, true)) continue;
-      if (await exists(path.join(taskDir, e.name, ENTRY))) {
-        out.push({ srcRoot: e.name, root: e.name, single: false });
+      const subDir = path.join(taskDir, e.name);
+      const subMarker = await readTaskMarker(subDir);
+      const subRoot = await artifactRoot(subDir, subMarker);
+      const subDeclared = normRoot(subMarker?.root);
+      if (subDeclared || await exists(path.join(subDir, subRoot || '.', ENTRY))) {
+        out.push({
+          srcRoot: e.name,
+          root: subRoot ? `${e.name}/${subRoot}` : e.name,
+          single: false,
+        });
       }
     }
   }

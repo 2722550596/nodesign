@@ -104,6 +104,7 @@ export function makeBatchTool({ name, description, tools, batchable, finalShot }
       const out = [];
       const n = actions.length;
       let failedAt = -1;
+      let failText = '';
       let lastHadImage = false;
       for (let i = 0; i < n; i += 1) {
         const { name: toolName, input } = actions[i];
@@ -112,14 +113,16 @@ export function makeBatchTool({ name, description, tools, batchable, finalShot }
         const def = byName.get(toolName);
         if (!def) {
           failedAt = i;
-          out.push({ type: 'text', text: `${label}: Error: "${toolName}" is not batchable here (use one of ${names.join(', ')}).` });
+          failText = `"${toolName}" is not batchable here (use one of ${names.join(', ')}).`;
+          out.push({ type: 'text', text: `${label}: Error: ${failText}` });
           continue;
         }
         const parsed = z.object(def.inputSchema).safeParse(input || {});
         if (!parsed.success) {
           failedAt = i;
           const why = parsed.error.issues.map(is => `${is.path.join('.') || '(root)'}: ${is.message}`).join('; ');
-          out.push({ type: 'text', text: `${label}: Error: invalid input — ${why}` });
+          failText = `invalid input — ${why}`;
+          out.push({ type: 'text', text: `${label}: Error: ${failText}` });
           continue;
         }
         let r;
@@ -135,7 +138,21 @@ export function makeBatchTool({ name, description, tools, batchable, finalShot }
           if (b.type === 'text' && !prefixed) { out.push({ type: 'text', text: `${label}: ${b.text}` }); prefixed = true; }
           else out.push(b);
         }
-        if (r?.isError) failedAt = i;
+        if (r?.isError) {
+          failedAt = i;
+          failText = blocks.find(b => b.type === 'text')?.text || '(no error text)';
+        }
+      }
+      // 失败时把错误行提到最前面：下游（记账层截 120/500 字符、模型扫返回）都先看到
+      // 真正的报错，而不是前面成功步骤的输出。同时钉死"别整批重跑"——前面的步骤
+      // （click/type 这类非幂等动作）已经执行过了。
+      if (failedAt >= 0) {
+        const step = actions[failedAt];
+        out.unshift({
+          type: 'text',
+          text: `FAILED at step ${failedAt + 1}/${n} (${step.name}${step.input?.action ? ` ${step.input.action}` : ''}): ${String(failText).split('\n')[0]}\n`
+            + `Steps 1-${failedAt} already ran — do NOT re-run the whole batch; continue from the failed step.`,
+        });
       }
       if (finalShot && screenshotAfter !== false && !lastHadImage) {
         const shotDef = byName.get(finalShot.name);

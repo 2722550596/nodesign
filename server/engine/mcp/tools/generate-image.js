@@ -41,7 +41,6 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { spawn } from 'node:child_process';
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { Events } from '../../agent/events.js';
 import { z } from 'zod';
@@ -49,6 +48,9 @@ import sharp from 'sharp';
 import {
   THUMBNAIL_MAX_DIM, THUMBNAIL_QUALITY, writeWebpSibling,   // 预热由 writeWebpSibling 顺带做
 } from '../../../lib/image-variant.js';
+import {
+  buildCodexBridgePrompt, runCodexImageGen, buildVariationPrompt, PRESERVE_KEYS,
+} from './helpers/codex-imagegen.js';
 
 // Thumbnail 配置（env 可调）。**原图不动**——保留 Gemini 输出的全分辨率（通常
 // 1080×1920+ PNG，6-8MB）让用户最终交付不损失质量。仅生成低清 thumbnail 给
@@ -136,71 +138,9 @@ const DEFAULT_DMXAPI_BASE = 'https://www.dmxapi.cn';
 const DEFAULT_CHANNEL = 'DMX';
 
 // ── codex 生图桥（2026-07-27：NoDesk 网关退役，codex 成为默认 provider）──
-// 骑 codex CLI 订阅（零 API 费）：spawn `codex exec` 让它调自带图像生成工具，
-// 图直接落到我们指定的绝对路径。实测单张 ~45-60s，参考图走 -i 附件（同样实测
-// 风格参照有效）。桥接 prompt 必须写死"逐字传递零改写"——codex agent 默认会
-// 按自己的 Augmentation rules 润色 prompt。
+// 桥的 prompt 组装 + 子进程执行 + 变体模式骨架都在 helpers/codex-imagegen.js
+// （2026-08-24 迁出）。这里只留 provider 分流开关。
 const IMAGE_PROVIDER = () => (process.env.NODESIGN_IMAGE_PROVIDER || 'codex').toLowerCase();
-const CODEX_BIN = process.env.NODESIGN_CODEX_BIN || 'codex';
-const CODEX_IMAGE_TIMEOUT_MS = Number(process.env.NODESIGN_CODEX_IMAGE_TIMEOUT_MS) || 240_000;
-
-function buildCodexBridgePrompt({ prompt, aspectRatio, absOut, refCount }) {
-  return [
-    '你是图像生成管道的执行端，只做下面几件事，不做任何多余动作：',
-    '1. 调用你的图像生成工具生成一张图。<image-prompt> 标签内的内容必须逐字作为生成 prompt，禁止改写、增删、翻译或润色。',
-    `2. 输出比例：${aspectRatio}。优先用工具的比例/尺寸参数；工具没有对应参数时，作为补充说明传给工具，但不修改 <image-prompt> 原文。`,
-    refCount > 0
-      ? `3. 本消息附带 ${refCount} 张参考图，把它们作为图像生成的参考输入（风格 / 主体一致性参照）。`
-      : '3. 本次无参考图。',
-    `4. 生成后把图片文件复制到精确路径 ${absOut}（目录已存在）。`,
-    '5. 最后只回复该绝对路径。',
-    '<image-prompt>',
-    prompt,
-    '</image-prompt>',
-  ].join('\n');
-}
-
-/**
- * 跑一次 codex exec 生图，以目标文件落盘为成功标准（codex 的文本回复不可信），
- * 失败自动重试一次。abort signal / 超时都 SIGKILL 子进程。
- */
-async function runCodexImageGen({ bridgePrompt, refPaths, cwd, signal, expectFile, timeoutMs = CODEX_IMAGE_TIMEOUT_MS }) {
-  const args = ['exec', '--skip-git-repo-check', '-s', 'workspace-write', '-C', cwd, bridgePrompt];
-  for (const p of refPaths) args.push('-i', p);
-
-  const runOnce = () => new Promise((resolve, reject) => {
-    const child = spawn(CODEX_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
-    let stderrTail = '';
-    child.stdout.on('data', () => { /* 排空防背压 */ });
-    child.stderr.on('data', (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
-    const killTimer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* */ }
-      reject(new Error(`codex exec timeout after ${Math.round(timeoutMs / 1000)}s`));
-    }, timeoutMs);
-    const onAbort = () => { try { child.kill('SIGKILL'); } catch { /* */ } };
-    signal?.addEventListener?.('abort', onAbort, { once: true });
-    child.on('error', (err) => { clearTimeout(killTimer); reject(err); });
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
-      signal?.removeEventListener?.('abort', onAbort);
-      if (signal?.aborted) return reject(new Error('aborted'));
-      if (code !== 0) return reject(new Error(`codex exec exited ${code}: ${stderrTail.slice(-300) || 'no stderr'}`));
-      resolve();
-    });
-  });
-
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      await runOnce();
-      const st = await fs.stat(expectFile).catch(() => null);
-      if (st && st.size > 0) return;
-      throw new Error(`codex finished but target file missing/empty: ${expectFile}`);
-    } catch (err) {
-      if (attempt === 2 || signal?.aborted) throw err;
-      console.warn(`[generate-image] codex attempt ${attempt} failed (${err.message}), retrying once`);
-    }
-  }
-}
 
 const PASSTHROUGH_PATH = '/default/passthrough';
 // model id 在 callGateway 时动态拼，因为支持 flash / pro 路由
@@ -413,6 +353,15 @@ REFERENCES:
   conversation. To iterate on a previous image, pass it back in referenceImages
   and restate the invariants every round.
 
+VARIATION MODE (series consistency — outfit swaps, one-detail edits):
+  Instead of hand-writing "change only X, keep Y" prompts, pass
+  variationOf (path of the base image) + change (the ONE thing to alter)
+  + optional preserve (which aspects must stay identical; default all).
+  The tool expands these into a battle-tested skeleton incl. standard
+  prohibitions (no invented straps/ornaments, absences preserved). Build
+  series as a tree: one anchor, then vary one axis per call. In this mode
+  prompt is optional (used as extra notes).
+
 WHEN TO USE:
   - You're building a deck / landing / report and want real imagery
   - You need a backdrop that pure CSS gradient can't achieve
@@ -432,7 +381,22 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
         .string()
         .min(4)
         .max(3500)
-        .describe('Natural-language scene description. Describe, don\'t list keywords.'),
+        .optional()
+        .describe('Natural-language scene description. Describe, don\'t list keywords. Required unless variationOf is set (then it is appended as extra notes).'),
+      variationOf: z
+        .string()
+        .optional()
+        .describe('VARIATION MODE: workspace-relative path of the base image to reproduce with ONE change. Becomes the first reference image (edit target).'),
+      change: z
+        .string()
+        .min(4)
+        .max(500)
+        .optional()
+        .describe('VARIATION MODE: the single thing to alter, e.g. "裙子换成薄荷绿短裙，长度到膝盖以上". Required with variationOf.'),
+      preserve: z
+        .array(z.enum(PRESERVE_KEYS))
+        .optional()
+        .describe('VARIATION MODE: aspects that must stay identical. Omit = all of them (safest).'),
       aspectRatio: z
         .enum(ASPECT_RATIOS)
         .optional()
@@ -476,6 +440,9 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
     },
     async ({
       prompt,
+      variationOf,
+      change,
+      preserve,
       aspectRatio = '16:9',
       imageSize = '1K',
       referenceImages,
@@ -495,6 +462,19 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
           }],
           isError: true,
         };
+      }
+      // 变体模式归一化：variationOf 只是 referenceImages[0] 的语义化别名，
+      // prompt 换成固定骨架 —— 下游（ref 解析 / -i 附件 / gateway inline）零改动。
+      const isVariation = Boolean(variationOf);
+      if (isVariation && !change) {
+        return { content: [{ type: 'text', text: 'generate_image failed: variationOf requires `change` (the ONE thing to alter).' }], isError: true };
+      }
+      if (!isVariation && !prompt) {
+        return { content: [{ type: 'text', text: 'generate_image failed: `prompt` is required (or use variationOf + change).' }], isError: true };
+      }
+      if (isVariation) {
+        prompt = buildVariationPrompt({ change, preserve, extra: prompt });
+        referenceImages = [variationOf, ...(referenceImages || [])];
       }
       // 1. provider 分流（2026-07-27：NoDesk 网关退役，默认 codex 订阅生图；
       //    gateway 分支保留给显式 NODESIGN_IMAGE_PROVIDER=gateway 的场景）
@@ -550,7 +530,7 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
         fileName = `${finalName}.png`;
         absOut = path.join(outDir, fileName);
         const bridgePrompt = buildCodexBridgePrompt({
-          prompt, aspectRatio, absOut, refCount: resolvedRefs.length,
+          prompt, aspectRatio, absOut, refCount: resolvedRefs.length, variation: isVariation,
         });
         try {
           await runCodexImageGen({
@@ -706,6 +686,7 @@ rationale (both required), scope, alternatives — there is no "topic" param.`,
           provider,
           model: provider === 'codex' ? 'codex' : model,
           referenceImageCount: resolvedRefs.length,
+          variationOf: variationOf || null,   // 变体血缘：产物墙 / 引用层能顺出系列树
           sessionId: ctx?.sessionId || null,
           runId: ctx?.runId || null,
           ts: new Date().toISOString(),

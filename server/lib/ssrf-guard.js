@@ -267,6 +267,14 @@ export function blockReason(rawIp) {
 /** 只允许这两个 scheme 发起网络请求；data:/blob: 不出网所以另算 */
 const NET_SCHEMES = new Set(['http:', 'https:']);
 const OFFLINE_SCHEMES = new Set(['data:', 'blob:', 'about:']);
+/**
+ * Chromium 内置 PDF viewer（component extension，id 硬编码在 Chromium 源里）。
+ * 它渲染 PDF 时会加载自己的静态资源（pdf_embedder.css 等）——不出网、出不了扩展
+ * 包目录，跟 file:// 不是一个量级。不放行的话浏览器里所有 PDF 都渲染不出来
+ * （08-24 案）。⚠️ 只放这个 id：别的 chrome-extension:// 照旧拒 + 记账，
+ * 将来谁 --load-extension 也不会自动继承放行。
+ */
+const PDF_VIEWER_ORIGIN = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/';
 
 /**
  * 一个 URL 能不能让浏览器去。**解析 DNS 后逐个 IP 判**。
@@ -297,6 +305,7 @@ export async function checkUrl(raw, { timeoutMs = 4000 } = {}) {
   try { u = new URL(String(raw)); } catch { return { ok: false, reason: `not a valid URL: ${raw}` }; }
 
   if (OFFLINE_SCHEMES.has(u.protocol)) return { ok: true, ips: [] };   // 不出网
+  if (String(raw).startsWith(PDF_VIEWER_ORIGIN)) return { ok: true, ips: [] };  // 内置 PDF viewer 自身资源，不出网
   if (!NET_SCHEMES.has(u.protocol)) {
     return { ok: false, reason: `scheme ${u.protocol} is not allowed (only http/https; file:// would read local files)` };
   }

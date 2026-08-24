@@ -264,16 +264,23 @@ export default {
   async describe(taskDir, artifact) {
     const label = `word ${artifact.entryRel}`;
     const src = artifact.sourceFile;
+    // 文件夹里的**全部**成员都要点名（08-19 案：目录里 v3/v4 两份，清单只报
+    // 默认那份，agent 对着过时的 v3 干了一整轮 —— 注入的清单让人默认它是全的，
+    // 半份状态比没状态更误导）
+    const others = (artifact.members || [])
+      .map(m => m.file)
+      .filter(f => f && f !== artifact.entryRel);
+    const memberNote = others.length ? ` · 同夹还有：${others.join(' / ')}` : '';
     try {
       const stat = await fs.stat(path.join(taskDir, artifact.entryRel));
       const kb = (stat.size / 1024).toFixed(0);
       return src
-        ? `${label} · ${kb}KB · 源 ${src}（改源重建，别直接改 .docx）`
-        : `${label} · ${kb}KB · 外来文档，没有 token 源`;
+        ? `${label} · ${kb}KB · 源 ${src}（改源重建，别直接改 .docx）${memberNote}`
+        : `${label} · ${kb}KB · 外来文档，没有 token 源${memberNote}`;
     } catch {
       return src
-        ? `${label} · 还没构建（源 ${src} 已就位）`
-        : `${label} · 入口读不到`;
+        ? `${label} · 还没构建（源 ${src} 已就位）${memberNote}`
+        : `${label} · 入口读不到${memberNote}`;
     }
   },
 
