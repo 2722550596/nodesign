@@ -32,6 +32,11 @@
 `ls` 确认产物真的落在了站点文件夹里的 dist/**（cwd 漂了会把 dist 建到别处）。
 `node_modules` / 构建缓存系统永远不扫，不用进 .ndignore。
 
+WebGL/Three.js（含 R3F）的一个静默坑：渲染器属性（如剖切要的
+`localClippingEnabled`）传给 `<Canvas gl={{…}}>` 构造参数会被**静默忽略**（无报错
+无效果），要在 `onCreated={({gl}) => { gl.localClippingEnabled = true }}` 里设；
+`clippingPlanes` 裁掉的是法线**负**侧，"看起来没剖"先怀疑法线方向。
+
 手写起手：`mkdir 观察日志`，然后 Write `观察日志/index.html`（文件夹名换成真站名；
 没有起手模板，骨架从需求推、样式从风格名推）。**唯一硬要求是产物根上有 `index.html`**；
 样式文件怎么拆怎么叫你定，按站的体量来。

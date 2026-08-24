@@ -95,7 +95,10 @@ export function clearActiveArtifact(sessionId) {
 }
 
 function normalizeRel(p) {
-  return String(p).replace(/\\/g, '/').replace(/^\.\//, '');
+  // 尾部 ?query / #hash 一并剥掉：agent 常把预览 URL 原样拿来当 path
+  //（'dist/index.html?t=18&panel=0' 落 not found，08-24 清账两案）。
+  // 磁盘文件名里合法出现 ? # 的场景在这套产物约定里不存在。
+  return String(p).replace(/\\/g, '/').replace(/^\.\//, '').replace(/[?#].*$/, '');
 }
 
 async function exists(p) {

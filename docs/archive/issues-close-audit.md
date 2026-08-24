@@ -36,3 +36,48 @@ exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（�
 | id | 判决 | 理由 |
 |---|---|---|
 | iss_mszv782a_toab | closed | 上报要的胶片条照单做了并往前推了一步。screenshot_canvas 新增 frames+trigger+click：CDP screencast 录制（帧带真时间戳，取帧语义=last-≤-want，即"该时刻屏幕真正显示的帧"）→ 拼一张带时刻标注的 contact sheet；caption 附带帧健康（fps/p95/最长帧，覆盖上报第 3 类"按帧衰减/卡顿"）与音频事件表（play()/bufferSource.start() 时刻——听不见但看得见"何时试图出声"）；saveVideo:true 出真时序 webm 落 exports/motion/ 给用户过目。另开 trace_motion 工具（deferred）：逐 rAF 采样任意 JS 表达式，量出过冲%/稳定时刻/单帧硬切并出曲线图——上报里"位姿写到镜头背后/绕错轴/tween 硬切"三类从赌静帧变成量出来。验收：纯函数 14 测 + _motion-lab-check.mjs 29 项全绿（对照组=已知过冲 9.7%/已知 800ms 瞬移/已知 130ms 忙等/已知 300ms play()，量出 10.0%/826ms/136ms/309ms） |
+
+## 2026-08-24 全库清账（100 open → 13；修复分支 feat/issues-cleanup-0824，commit 6eddc90 起）
+
+**ack = 本分支已修、等部署上生产后关单**（36 条）：
+
+| id | 理由 |
+|---|---|
+| iss_msc4620y_0z3r | generate_image 变体模式照单做了：variationOf/change/preserve 参数（helpers/codex-imagegen.js 骨架+通用禁止项），cookbook § G1 |
+| iss_mszz142b_55l6 | token-schema.md 补对象型键属性级深合并语义（LO 真渲染实证：样式 exact 行距 + 块级只写 beforePt，行距不掉）+ indent 例外讲清 |
+| iss_mszz2kfa_sihb | docx describe 点名文件夹全部成员（「同夹还有：…」），注入清单不再只报默认那份 |
+| iss_mt034wbm_npw5 | 网络闸放行内置 PDF viewer 固定 id（真跑验证：PDF 完整渲染零拦截；其余扩展 id / file:// 照拒） |
+| iss_mt035di4_tp3x | browser_navigate 超时不再推荐 load：半张页面连摘要交回；建议改向 commit / 换站；waitUntil 加 commit 档 |
+| iss_mt3ggl11_wz8a / iss_mt3j336k_4p90 | zoom 报错讲清坐标系（实时视口 ≠ fullPage 像素）+ 给出滚动/换算指引 |
+| iss_mt3j2kfp_y75j | pin_to_board 可见性预检：assets 深处/doc: 直接报错并指路，不再假成功 |
+| iss_mt5t4873_6472 | relate_on_board 端点校验（座位或真实路径；报错列现有座位），与 write_on_board 锚点口径对齐 |
+| iss_mt5t4879_k70g / iss_mt5qvle4_1mh0 / iss_mt5qvpym_jdea | write/sketch 的 near 认 tag（tagEnvelope 包络右侧落位，锚线连最右节点） |
+| iss_mt5t487c_7r2m | ui-config.json（连带 spec.json / pending-changes.json）进 RESERVED_FILES，基础设施不再上墙 |
+| iss_mt5t487f_gccs | docx-craft SKILL 写明 references 相对 SKILL 目录 + 用加载时给的路径拼绝对路径，禁 find / 全盘扫 |
+| iss_mt6trh3f_dgpf | sdkEnv 剥 NODE_ENV / npm_config_production / npm_config_omit（pm2 泄漏链坐实：ecosystem env 段 → process.env → SDK 全量继承） |
+| iss_mt6trjoy_811v | 半根治：env.PWD 钉成会话 cwd（原值是 pm2 的仓库根，bash 外的消费方全读错）；SDK 侧 cwd reset 本体改不了，prelude 规避已在 |
+| iss_mt6trroz_cz08 / iss_mt70mc1i_8un3 | 构建型站点全套：构建源 index.html 不当产物（已 build 自动优先 dist）、子目录站读自己的 marker、dist 不再二次建卡、list_pages 输出工作区相对路径、寻址回退补前缀；kinds-check 新增 3 夹具。附真因：该会话 jet-engine/dist 从未存在，build 被 cwd 漂移带到工作区根（env 修同治） |
+| iss_mt6trwd8_ycbp | R3F localClippingEnabled 坑写进站点技术参考（onCreated 设法 + 法线方向） |
+| iss_mt61guse_dpba / iss_mt01a1wd_dhet | 路径归一化剥 ?query/#hash（agent 拿预览 URL 当 path 落 not found） |
+| iss_mt6slccd_6kja iss_mt6slqv8_1mhf iss_mt6sm4vb_irez iss_mt6smf15_u2yx iss_mt6spyfu_nduv iss_mt6ss2kw_5794 | NODE_ENV/cwd 病的自动层回声（同一会话 npm/ls 连环失败），病根见上两条 |
+| iss_mt6szt5w_m9aj iss_mt6t09mm_tjdm iss_mt6t0jty_3vxq iss_mt6te79t_u7ex | path 语义不一致的自动层回声，寻址回退+路径口径统一后此形不再 |
+| iss_mt5wfir2_lj2w iss_mt6tktwr_34zd iss_mt6tllx6_s2pt | batch 记账正文病的实锤样本：batch 真失败但记账截到成功步骤输出。已修（失败摘要提最前+不整批重跑钉子+指纹正则去空格）；原始失败本身为一次性 |
+| iss_msyoej2o_6ftd / iss_mt5kd9pi_uzyc | 外站超时本身外因，但恢复路径已改（半页交回+建议改向），此签名的「必然二次失败」形不再 |
+
+**closed**（4 条）：
+
+| id | 理由 |
+|---|---|
+| iss_mszz1428_1n0f / iss_mt00i6j7_59jz | 参数标签泄漏 08-19 已修（param-sanitizer chokepoint），当时漏关单 |
+| iss_msoulncx_nus2 | tasks/ 时代的旧路径，扁平化后此路已废 |
+| iss_mt1hbkb0_lp5y | 一次性（08-20 部署窗），且这正是开局契约自检按设计杀会话——闸在工作，不是缺陷 |
+
+**ignored**（47 条，按戒律不占信箱）：
+
+- agent 自产脚本/路径错（一次性、无平台可改点）：iss_msk8kh1a_fx7k iss_mskixhtg_fc3m iss_msxkf702_3tet iss_mszx825l_zr9u iss_mszzbyl9_8is8 iss_mt01d8pd_h6t7 iss_mt02c8i5_x0fi iss_mt0f8693_mm66 iss_mt0gh8e3_xzk3 iss_mt0gj614_1tv0 iss_mt0k8fcm_wnjf iss_mt1gr1ba_2hrq iss_mt1gr8ju_p73u iss_mt5rs79o_dlqi iss_mt6yeu05_ik3l iss_mt6ygjj2_24bq iss_mt70dg3n_3eo0 iss_mt70q7ys_hzp1
+- agent 参数错、schema 正常拒（zoom origin/scroll_amount/'6000' selector）：iss_mt2j718w_ti1w iss_mt2kpz9v_ur66 iss_mt2knqjo_giyj iss_mt2l26b1_guq4 iss_mt4dia1a_4fvt iss_mt4d8xq2_k4gv
+- 按设计的拒绝（错误文案在教下一步）：iss_mt2h1gf0_6q4n iss_mt2h3z8p_o2lh iss_mt2h41fs_io07（text= 教学）iss_mt61gnuc_9dth（127.0.0.1 闸）iss_mt5olo3e_tur8（档位闸）iss_mt0h5ioy_l15g（tavern 判形）iss_mt5r9u81_vgk9（锚点无座位）iss_mt5qnnih_q1ao（多产物要 path）iss_mt4jd2go_vn1k（站点页无 data-page）iss_mt5rpzyo_5dub（零尺寸元素）iss_mt6z8bjy_w193（未 artifact_open 先 computer）
+- 外因（校网 DNS/外站/配额/盒端）：iss_mt5z500i_fsn6 iss_mt5z57qe_oqd5 iss_mt5z4npc_8hhy iss_mt4dbwd3_x13l iss_mt5zd4j9_fhwl iss_mt6ve3d9_ksvh iss_mt0bipcc_ls4t iss_mt0c6aep_mqc0 iss_mt0dmduz_gueh iss_mt0edihn_vg2v
+- 已知偶发：iss_mt5rmzf7_picz（codex 240s）iss_msrz56gv_pg2a（rembg balanced）
+
+**留 open 13 条**（真问题，未修/待拍板）：画布一致性族 4（悬空 binding iss_mszz20zn_m8m0、read_board 近似 iss_mt38ucyq_b13k、拖板书移文件 iss_mt5qujy1_5vh4、arrange 跨层 iss_mt5t487g_bc1v）、organize+引用重写 idea iss_mt38uih6_ycnm、auto-memory 落位 iss_mt3j2st8_u29q、fullPage 联络表 idea iss_mt0365b8_bbgy、WebGL mobile 截图超时 iss_mt6tru7p_iis5 + iss_mt6tmwoa_b3l9、公文层级强化 iss_mt2t0bdy_nfwd、exit 144 iss_msxjylxd_po0y、web_search ZHIPU key 未配 iss_mt5z4s8j_pq1i、截图 clip 空区 iss_mszxp0zy_81r4。
