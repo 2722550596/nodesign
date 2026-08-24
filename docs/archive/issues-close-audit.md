@@ -81,3 +81,5 @@ exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（�
 - 已知偶发：iss_mt5rmzf7_picz（codex 240s）iss_msrz56gv_pg2a（rembg balanced）
 
 **留 open 13 条**（真问题，未修/待拍板）：画布一致性族 4（悬空 binding iss_mszz20zn_m8m0、read_board 近似 iss_mt38ucyq_b13k、拖板书移文件 iss_mt5qujy1_5vh4、arrange 跨层 iss_mt5t487g_bc1v）、organize+引用重写 idea iss_mt38uih6_ycnm、auto-memory 落位 iss_mt3j2st8_u29q、fullPage 联络表 idea iss_mt0365b8_bbgy、WebGL mobile 截图超时 iss_mt6tru7p_iis5 + iss_mt6tmwoa_b3l9、公文层级强化 iss_mt2t0bdy_nfwd、exit 144 iss_msxjylxd_po0y、web_search ZHIPU key 未配 iss_mt5z4s8j_pq1i、截图 clip 空区 iss_mszxp0zy_81r4。
+
+**08-24 追加**：iss_mt5qujy1_5vh4（拖板书移出目录）→ ack（6749cc6：move-entry 搬出拒+搬回恢复例外、前端 dragMovesFile 不给落点、drag-end 不再给旧 id 排写入）。
