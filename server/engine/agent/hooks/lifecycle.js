@@ -4,7 +4,6 @@
  */
 import { Events } from '../events.js';
 import { getQuery } from '../../runs/active-runs.js';
-import { mutateSpecJson } from '../../../projects/workspace.js';
 import { listWorkspaceArtifacts } from '../../../lib/artifact-target.js';
 import { resetTurnMemory } from './turn-state-memory.js';
 
@@ -104,11 +103,11 @@ export function makeStopReflectionHandler({ ctx, workspaceRoot }) {
                 const remain = Math.max(0, realMax - used).toLocaleString();
                 let body;
                 if (hit.tone === 'soft') {
-                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr} tokens），还能再写一阵；下一个段落收尾时把当前进度落一张便利贴（record_decision 或 Write notes/<slug>.md），避免后续 compact 丢上下文。`;
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr} tokens），还能再写一阵；下一个段落收尾时把当前进度记进记忆（记忆/ 主题文件+MEMORY.md 一行）或落一张便利贴（Write notes/<slug>.md），避免后续 compact 丢上下文。`;
                 } else if (hit.tone === 'firm') {
                   body = `上下文已用 ${percent}%（${usedStr}/${maxStr}，剩 ~${remain}）。从下一轮开始整理结论 / 落档，避免被自动 compact 硬切。`;
                 } else {
-                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr}）。已逼近 SDK auto-compact 触发线（90%）；立即收尾或把结论落进便利贴（record_decision / notes/），否则下一轮可能被压缩中断当前思路。`;
+                  body = `上下文已用 ${percent}%（${usedStr}/${maxStr}）。已逼近 SDK auto-compact 触发线（90%）；立即收尾并把结论存进记忆（记忆/）或便利贴（notes/），否则下一轮可能被压缩中断当前思路。`;
                 }
                 warnContextUsage = `<system-reminder>\n[context-usage] ${body}\n</system-reminder>`;
               }
@@ -129,46 +128,18 @@ export function makeStopReflectionHandler({ ctx, workspaceRoot }) {
 }
 
 /**
- * PostCompact handler（P0+ s1 C7）—— SDK 自动 compact 后把 summary 持久化到 spec.json。
+ * PostCompact handler —— compact 后重置每轮注入的状态指纹（摘要把上一轮状态吞了，
+ * "同上轮"没有所指，下一轮要重新全量）。
  *
- * input: PostCompactHookInput (sdk.d.ts:1879)
- *   - trigger: 'manual' | 'auto'
- *   - compact_summary: string
- *
- * 失败 fail-soft：spec.json 写不进去 console.warn 但不抛错（不阻塞 query）。
+ * 历史：这里曾把 compact_summary 持久化进 spec.history[]（auto-memory 启用前的
+ * 平行记忆方案）。2026-08-24 记忆体系改版拆除 —— 压缩前的要点保存交给 SDK 的
+ * auto-memory（系统提示明写"存记忆要在本轮回复里完成"），spec.json 不再当记忆载体。
+ * run.compact_persisted 事件随之停发（前端消费已同批拆）。
  */
-export function makePostCompactHandler({ ctx, workspaceRoot, sessionId }) {
-  return async (input, _toolUseId, _options) => {
+export function makePostCompactHandler({ ctx: _ctx, workspaceRoot: _ws, sessionId }) {
+  return async (_input, _toolUseId, _options) => {
     try {
-      // 压缩后上一轮的状态块已经被摘要吞了，"同上轮"没有所指 —— 让下一轮重新全量
       resetTurnMemory(sessionId);
-      if (!workspaceRoot) return {};
-      const summary = input?.compact_summary;
-      if (!summary || typeof summary !== 'string') return {};
-
-      // 串行 read-modify-write 防 spec.json 三路并发覆盖（详见 workspace.js mutateSpecJson）
-      // historyCount 在回调内 capture 出去 —— 之前 emit 里直接引用 spec 是 ReferenceError，
-      // 整段被 try 静默吞，导致 run.compact_persisted 事件永远不发。
-      let historyCount = 0;
-      await mutateSpecJson(workspaceRoot, (spec) => {
-        if (!Array.isArray(spec.history)) spec.history = [];
-        spec.history.push({
-          ts: new Date().toISOString(),
-          source: 'compact',
-          trigger: input.trigger || 'auto',
-          summary,
-        });
-        historyCount = spec.history.length;
-      });
-
-      try {
-        ctx.emit({
-          type: 'run.compact_persisted',
-          trigger: input.trigger || 'auto',
-          summaryLength: summary.length,
-          historyCount,
-        });
-      } catch { /* emit fail-safe */ }
     } catch (err) {
       console.warn(`[hooks/PostCompact] handler threw:`, err.message);
     }

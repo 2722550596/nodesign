@@ -6,7 +6,7 @@
  * 没映射的落 Wrench —— 新加工具记得来这里登记，否则用户在时间线上只看到一把扳手。
  */
 import {
-  Activity, Aperture, Binoculars, BookOpen, Bookmark, Bot,
+  Activity, Aperture, Binoculars, BookOpen, Bot,
   Bug, Camera, Clapperboard, Compass, Crosshair, Download,
   FileCode2, FileOutput, FilePlus, FileSearch2, FileText, Focus,
   FolderInput, FolderOpen, FolderTree, Gauge, Globe, Hammer,
@@ -73,7 +73,6 @@ export const TOOL_ICONS = {
   // ── 反馈 / 决策 ──
   'mcp__nodesign__get_pending_changes': Inbox,
   'mcp__nodesign__clear_pending_changes': Trash2,
-  'mcp__nodesign__record_decision': Bookmark,
   'mcp__nodesign__report_issue': Bug,
   'mcp__nodesign__crystallize_skill': Sparkles,
   // ── 产线（生成 / 构建 / 交付）──

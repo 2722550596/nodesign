@@ -1,7 +1,7 @@
 /**
  * server/api/instruction.js — 项目 Instruction 文件读写
  *
- * Instruction = workspace/.claude/CLAUDE.md。SDK 启用 settingSources:
+ * Instruction = workspace/CLAUDE.md（2026-08-24 挪到工作区根：画布可见 + SDK 根目录也原生注入）。SDK 启用 settingSources:
  * ['project'] 后 agent 进每次 session 自动读到 system prompt。S1 已经
  * 在 ensureProjectWorkspace 写入模板 starter，本阶段加 GET/PUT 让前端
  * "项目背景" tab 直接编辑该文件。
@@ -37,7 +37,7 @@ router.get('/:pid/instruction', async (req, res, next) => {
     // ensureProjectWorkspace 幂等补齐（老 project 第一次进 instruction tab 也能读到）
     await ensureProjectWorkspace(req.params.pid);
 
-    const filePath = path.join(getSharedDir(req.params.pid), '.claude', INSTRUCTION_FILE);
+    const filePath = path.join(getSharedDir(req.params.pid), INSTRUCTION_FILE);
     try {
       const content = await fs.readFile(filePath, 'utf8');
       res.json({ content, exists: true });
@@ -66,7 +66,7 @@ router.put('/:pid/instruction', async (req, res, next) => {
     }
 
     await ensureProjectWorkspace(req.params.pid);
-    const filePath = path.join(getSharedDir(req.params.pid), '.claude', INSTRUCTION_FILE);
+    const filePath = path.join(getSharedDir(req.params.pid), INSTRUCTION_FILE);
     await fs.writeFile(filePath, content, 'utf8');
     res.json({ ok: true });
   } catch (err) { next(err); }

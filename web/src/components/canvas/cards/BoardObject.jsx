@@ -238,20 +238,7 @@ function BoardObject({
       {Actions}
       <NoteBadge count={noteCount} />
 
-      {o.type === 'doc' && (
-        <div style={{ padding: GAP.md }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, marginBottom: GAP.xs }}>
-            <BookOpen size={13} color="#7c6f5a" />
-            <span style={{ fontFamily: FONT_SANS, fontWeight: 600, fontSize: FONT_SIZE.sm, color: COLOR.text }}>{o.title}</span>
-          </div>
-          <div style={{
-            fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub, lineHeight: 1.5,
-            display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-          }}>
-            {o.preview || o.sub}
-          </div>
-        </div>
-      )}
+      {/* （doc 卡分支 2026-08-24 拆除：记忆/品牌/指引画布分身退役） */}
 
       {/* deck / 站点 / 世界共用一张方卡（cards/ArtifactCard.jsx）。
           在这之前这里是六个分支约 180 行 —— 三种形态 × 收起/展开两态，骨架

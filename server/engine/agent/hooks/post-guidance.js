@@ -9,7 +9,6 @@
  * SDK 默认行为。如未来观察到 agent 反复 record_decision 信号稀释，再考虑
  * 加回（那时改成更精准的 anti-loop 检测，不是无脑注引导）。
  */
-import path from 'node:path';
 
 /**
  * PostToolUse(screenshot_canvas) handler — agent 截图后引导它做视觉自检。
@@ -167,40 +166,7 @@ export function makePostToolUseGenerateImageRegenWatchdog() {
   };
 }
 
-/**
- * PostToolUse(record_decision) —— 锚定风格那一笔之后提醒落两处长期资产
- * （2026-07-28，配合"记忆归 SDK / 品牌归我们 / 指引归用户"的分工）
- *
- * 只在这一笔上注、每 session 一次：
- *   - 品牌档案 `agent-memory/brand/memory.md` —— 前端 BrandCard 会把色板 /
- *     字体渲染出来，是结构化资产，agent 不写就永远空着
- *   - 项目指引 `.claude/CLAUDE.md` —— SDK 每次 session 自动读进 system prompt，
- *     但只有用户能决定要不要固化，所以是"问一句"不是"直接写"
- *
- * 通用偏好不在这儿管：那是 SDK 自动记忆的活（autoMemoryDirectory 已指到
- * .claude/agent-memory/auto，前端记忆卡直接显示）。
- */
-export function makePostToolUseStyleAnchorNudge({ sharedRoot }) {
-  let nudged = false;
-  const ANCHOR_RE = /(style-anchor|风格锚|锚定|视觉基调|palette|配色方案)/i;
-  return async (input, _toolUseId, _options) => {
-    if (nudged) return {};
-    const t = input?.tool_input || {};
-    const blob = `${t.topic || ''} ${t.title || ''} ${t.decision || ''} ${t.rationale || ''}`;
-    if (!ANCHOR_RE.test(blob)) return {};
-    nudged = true;
-    const guidePath = sharedRoot ? path.join(sharedRoot, '.claude', 'CLAUDE.md') : '.claude/CLAUDE.md';
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
-        additionalContext:
-          '这一笔看起来是在锚定这个项目的视觉方向。顺手做两件事（都只做一次）：\n'
-        + '1. 把这版风格写进 `.claude/agent-memory/brand/memory.md`（色号 / 字体链 / 版式语言 / 动效预算；⚠️ 带 .claude/ 前缀，写错位置 BrandCard 读不到），'
-        + '前端品牌档案卡会把色板和字体渲染出来给用户看，不写就一直空着。\n'
-        + `2. 如果这次定下来的还包含**项目级约束**（不只这一个 deck 适用，比如"这个项目一律不用 emoji"），`
-        + `在收尾时问用户一句要不要写进项目指引（${guidePath}，SDK 每次 session 自动读它）。用户点头你再写。\n`
-        + '用户的通用偏好不用你手动记，系统的自动记忆会管。',
-      },
-    };
-  };
-}
+// （makePostToolUseStyleAnchorNudge 2026-08-24 随 record_decision 一起拆除：
+//  风格落盘提醒并进 auto-memory 追加指导；品牌档案文件本身已并入工作区根
+//  CLAUDE.md 的「风格档案」节，BrandCard 同批退役。）
+

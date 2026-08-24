@@ -137,7 +137,7 @@ export function createAgents({ mainModel, sdkModel, fastModel } = {}) {
     //   - TodoWrite（多步研究列计划）
     // 不给：Write/Edit（不写代码）/ Bash（不要 shell shenanigans）/
     //       AskUserQuestion（子代理不直接跟用户说话）/ screenshot/export/
-    //       record_decision（不是它的角色）/ Task（不允许嵌套子代理）
+    //       Task（不允许嵌套子代理）
     // ⏸ explorer 研究员（2026-08-14 用户暂时停用："有点没用"）。定义与
     // prompt（explorer.md）原样保留，恢复 = 取消注释 + prelude 补回子代理
     // 清单那两行。停用期间搜索/读外链由主 agent 直接用 web_search / WebFetch。

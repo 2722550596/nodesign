@@ -148,7 +148,7 @@ export default function BoardCanvas({
   // 数据层（加载 / 持有 / 落盘）—— 2026-08-13 拆进 useBoardData.js（刀 4 续）。
   // 派生（objects/folderView）留在本组件：它跟拖拽、影子区缠在一起。
   const {
-    artifacts, tasks, folders, sessions, memoryDocs, browse, filter, filterGroup,
+    artifacts, tasks, folders, sessions, browse, filter, filterGroup,
     layout, setLayout, zones, setZones, bindings, setBindings, boardHero,
     guideText, fileCount,
     reload, scheduleSave, patchLayout,
@@ -253,7 +253,7 @@ export default function BoardCanvas({
   const [viewer, setViewer] = useState(null);       // { title, content, note? } markdown 阅读；note = 可编辑的任务便利贴
   const [orchestrate, setOrchestrate] = useState(null); // { dir } 演出编排设置页（编排.yaml 双击进）
   // （编辑草稿态住 MarkdownViewerOverlay 本地 —— 浮层关闭即弃稿，B5 抽出时下沉）
-  const [projectPanel, setProjectPanel] = useState(null);   // 'memory'|'guide'|'brand'|'files'
+  const [projectPanel, setProjectPanel] = useState(null);   // 'guide'|'files'（08-24 起记忆/风格卡退役）
   // 拖拽实时落点提示：{ kind:'zone'|'folder', id, ghost?:{x,y,w,h} }（ghost=吸附预览格）
   const [dropHint, setDropHint] = useState(null);
   const dropHintRef = useRef(null);
@@ -286,18 +286,12 @@ export default function BoardCanvas({
   // 它是纯数据变换（/artifacts 载荷 → 画布物件），没有 React、可单独测。
   const objects = useMemo(() => deriveBoardObjects({ tasks, artifacts, layout, browse }).filter(o => passesFilter(o, filter)), [tasks, artifacts, layout, browse, filter]);
 
-  // 顶带四张卡的一行摘要
-  const bandSummaries = useMemo(() => {
-    // SDK 自动记忆优先（它才是真的在长的那份），没有再退回手写偏好
-    const mem = memoryDocs.find(d => d.agentType === 'auto') || memoryDocs.find(d => d.agentType === null);
-    const brand = memoryDocs.find(d => d.agentType === 'brand');
-    return {
-      memory: mem?.preview || '还没有内容，agent 会自己往里记',
-      guide: guideText.trim() ? guideText.trim().slice(0, 60) : '还没写，点开写项目约束',
-      brand: brand?.preview || '还没有档案，点开让 agent 整理',
-      files: fileCount == null ? '' : (fileCount ? `${fileCount} 个文件` : '还没有文件，点开上传'),
-    };
-  }, [memoryDocs, guideText, fileCount]);
+  // 顶带摘要（08-24 记忆体系改版：记忆/风格卡退役 —— 记忆住 记忆/、风格并进
+  // 根 CLAUDE.md，都是画布上的普通文件；这里只剩项目档案与文件两张）
+  const bandSummaries = useMemo(() => ({
+    guide: guideText.trim() ? guideText.trim().slice(0, 60) : '还没写，点开写项目档案',
+    files: fileCount == null ? '' : (fileCount ? `${fileCount} 个文件` : '还没有文件，点开上传'),
+  }), [guideText, fileCount]);
 
   const sessionTitles = useMemo(() => {
     const map = new Map();
@@ -465,7 +459,7 @@ export default function BoardCanvas({
       const stored = layout[o.id];
       if (stored && stored.zone !== undefined) return stored.zone || '';
       if (o.native) return stored?.zone || '';        // 画布原生物件跟着字段走
-      if (typeof o.id !== 'string' || o.id.startsWith('doc:')) return '';
+      if (typeof o.id !== 'string') return '';
       const c = o.id.indexOf(':');
       const path = (c > 0 && /^[a-z]+$/.test(o.id.slice(0, c))) ? o.id.slice(c + 1) : o.id;
       return homeOf(path);

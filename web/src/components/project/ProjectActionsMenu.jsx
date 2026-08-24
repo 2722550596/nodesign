@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight, RotateCcw,
-  BookOpen, ScrollText, Palette, Files } from 'lucide-react';
+  ScrollText, Files } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
 /**
@@ -94,10 +94,9 @@ export default function ProjectActionsMenu({
   );
 }
 
+// 08-24 记忆体系改版：记忆/风格卡退役（记忆住画布上的 记忆/，风格并进根 CLAUDE.md）
 const PROJECT_PANELS = [
-  { key: 'memory', label: '记忆', icon: BookOpen, hint: 'agent 按需记的长期记忆' },
-  { key: 'guide', label: '项目指引', icon: ScrollText, hint: '每次 session 进 system prompt' },
-  { key: 'brand', label: '风格档案', icon: Palette, hint: '视觉风格基线' },
+  { key: 'guide', label: '项目档案', icon: ScrollText, hint: '指引/风格/习惯，每次 session 进 system prompt' },
   { key: 'files', label: '项目文件', icon: Files, hint: 'agent 能直接 Read 的素材' },
 ];
 

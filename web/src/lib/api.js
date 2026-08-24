@@ -374,21 +374,8 @@ export const Instruction = {
 };
 
 // ── Memory（项目级 shared/.claude/agent-memory/<agentType>/） ──
-export const Memory = {
-  /** 列所有 agent 的 memory 概要 */
-  list: (pid) => jsonRequest('GET', `/api/projects/${pid}/memory`),
-  /** 读单个 agent 全文（agentType='_root' 表示顶层 main agent memory.md） */
-  read: (pid, agentType) =>
-    jsonRequest('GET', `/api/projects/${pid}/memory/${encodeURIComponent(agentType)}`),
-  /** 覆盖写 memory.md */
-  write: (pid, agentType, content) =>
-    jsonRequest('PUT', `/api/projects/${pid}/memory/${encodeURIComponent(agentType)}`, { content }),
-  /** 删整个 agent memory 子目录 / 顶层 memory.md */
-  remove: (pid, agentType) =>
-    jsonRequest('DELETE', `/api/projects/${pid}/memory/${encodeURIComponent(agentType)}`),
-};
+// （Memory API 2026-08-24 退役：记忆住画布可见的 记忆/，服务端 /api/projects/*/memory 已拆）
 
-// ── Sessions（薄壳走 SDK listSessions / getSessionMessages / forkSession / ...）──
 export const Sessions = {
   /** 列项目下所有 session（按 lastModified 倒序，SDK 默认） */
   list: (pid, { limit, offset } = {}) => {

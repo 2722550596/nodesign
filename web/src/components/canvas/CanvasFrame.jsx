@@ -36,7 +36,7 @@ export default function CanvasFrame({
   onAddCandidate,
   onRemoveCandidate,
   onRenameCandidate,
-  project, deckSpec, projectId, sessionId, decisionsReloadKey,
+  project, deckSpec, projectId, sessionId,
   // 浏览器窗（2026-08-18）：画面是活的，但**入口是桌面上那张 browse 卡**
   // （2026-08-18 用户拍板加的）。所以开关由这一层管：事件能开（agent 举手）、
   // 双击卡片也能开。`onBrowse(null)` = 关。
@@ -281,7 +281,6 @@ export default function CanvasFrame({
             deckSpec={deckSpec}
             projectId={projectId}
             sessionId={sessionId}
-            decisionsReloadKey={decisionsReloadKey}
             comments={comments}
             onAddComment={onAddComment}
             onResolveComment={onResolveComment}

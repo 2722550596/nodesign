@@ -19,9 +19,9 @@ describe('normalizeCanvasId', () => {
     expect(normalizeCanvasId('site:鉴赏页')).toBe('site:鉴赏页');
   });
 
-  it('记忆/品牌文档固定 id', () => {
-    expect(normalizeCanvasId('.claude/agent-memory/memory.md')).toBe('doc:_root');
-    expect(normalizeCanvasId('.claude/agent-memory/brand/memory.md')).toBe('doc:brand');
+  it('记忆文件就是普通路径 id（doc: 特例 08-24 拆除）', () => {
+    expect(normalizeCanvasId('记忆/style-anchor.md')).toBe('记忆/style-anchor.md');
+    expect(normalizeCanvasId('CLAUDE.md')).toBe('CLAUDE.md');
   });
 
   it('空 / 越界拒收', () => {

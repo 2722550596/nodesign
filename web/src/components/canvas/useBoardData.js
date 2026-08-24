@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Assets, Sessions, Memory, Instruction, Browse } from '../../lib/api.js';
+import { Assets, Sessions, Instruction, Browse } from '../../lib/api.js';
 import { useBoardFilter } from './board-filter.jsx';
 
 /**
@@ -44,7 +44,6 @@ export function useBoardData({ projectId, listVersion, boardVersion, readOnly = 
   // 它**要能变回 null** —— 项目从没逛过站时服务端给 null，那时桌面上就不该有这张卡。
   const [browse, setBrowse] = useState(null);
   const [sessions, setSessions] = useState([]);
-  const [memoryDocs, setMemoryDocs] = useState([]);
   // 布局（saved + 本地改动合一）：{ [id]: {x,y,z} }；zones：{ [路径]: {x,y} }
   //（zones 存档 2026-08-13 瘦身只剩坐标；存量的 w/h/expanded 读进来不用）
   const [layout, setLayout] = useState({});
@@ -66,10 +65,9 @@ export function useBoardData({ projectId, listVersion, boardVersion, readOnly = 
   const reloadSeqRef = useRef(0);
   const reload = useCallback(async () => {
     const seq = ++reloadSeqRef.current;
-    const [a, s, m, b] = await Promise.all([
+    const [a, s, b] = await Promise.all([
       Assets.artifacts(projectId).catch(() => null),
       Sessions.list(projectId, { limit: 30 }).catch(() => null),
-      Memory.list(projectId).catch(() => null),
       layoutLoadedRef.current ? Promise.resolve(null) : Assets.getBoard(projectId).catch(() => null),
     ]);
     if (seq !== reloadSeqRef.current) return;   // 已经有更新的一轮在跑，这份作废
@@ -82,7 +80,6 @@ export function useBoardData({ projectId, listVersion, boardVersion, readOnly = 
     // 一份浏览痕迹，跟磁盘扫描不是一回事。见 server/api/browse.js 头注。
     Browse.state(projectId).then(r => setBrowse(r?.url ? r : null)).catch(() => {});
     if (Array.isArray(s?.sessions)) setSessions(s.sessions);
-    if (Array.isArray(m?.memory)) setMemoryDocs(m.memory);
     if (b?.board && !layoutLoadedRef.current) {
       layoutLoadedRef.current = true;
       setLayout(b.board.objects || {});
@@ -144,7 +141,7 @@ export function useBoardData({ projectId, listVersion, boardVersion, readOnly = 
   }, [scheduleSave]);
 
   return {
-    artifacts, tasks, folders, sessions, memoryDocs, browse, filter, filterGroup,
+    artifacts, tasks, folders, sessions, browse, filter, filterGroup,
     layout, setLayout, zones, setZones, bindings, setBindings, boardHero,
     guideText, fileCount,
     reload, scheduleSave, patchLayout,

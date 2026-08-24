@@ -202,8 +202,6 @@ export default function ProjectWorkspace() {
   // 思考心跳（run.status status='thinking' 的累计 tokens）——ChatPanel header
   // "思考中 · ~N tokens" 显示；正文/工具事件到达即清（思考段结束）
   const [thinkingTokens, setThinkingTokens] = useState(null);
-  // C29：DecisionsTab 自动刷新触发器（agent 调 record_decision / compact 后 bump）
-  const [decisionsReloadKey, setDecisionsReloadKey] = useState(0);
   // C5：TweaksPanel 自动刷新触发器（agent 调 expose_tweaks 后 bump）
   const [tweaksReloadKey, setTweaksReloadKey] = useState(0);
   // 终止生成：当前活跃 run 的 id（Turn.send 返回时记，run.done/error/cancelled 清）
@@ -1081,24 +1079,8 @@ export default function ProjectWorkspace() {
         break;
       }
 
-      case 'run.decision_recorded':
-        if (isStale) break;
-        // MCP record_decision 调用成功 —— agent 沉淀了一条设计决策
-        // 不弹 toast 避免噪音（agent 可能频繁调）；
-        // 触发 DecisionsTab 自动刷新 + console 留痕
-        setDecisionsReloadKey(k => k + 1);
-        if (typeof window !== 'undefined') {
-          // eslint-disable-next-line no-console
-          console.log(`[decision] ${evt.title} (now ${evt.decisionsCount} decisions)`);
-        }
-        break;
-
-      case 'run.compact_persisted':
-        if (isStale) break;
-        // PostCompact hook 写完 spec.json → DecisionsTab 也更新
-        setDecisionsReloadKey(k => k + 1);
-        showToast(`已沉淀 compact 摘要（${evt.summaryLength || '?'} chars）`, 'info');
-        break;
+      // （run.decision_recorded / run.compact_persisted 2026-08-24 拆除：
+      //  决策贴与 spec.history 退役，事件已停发）
 
       case 'run.tweaks_exposed':
         if (isStale) break;
@@ -2067,7 +2049,6 @@ export default function ProjectWorkspace() {
             deckSpec={deckSpec}
             projectId={id}
             sessionId={currentSessionId}
-            decisionsReloadKey={decisionsReloadKey}
             browseWin={browseWin} onBrowse={setBrowseWin}
             // 产物窗只吃**元素标注**：画布标注的锚点是一件东西不是一个元素，
             // 混进去会让窗里的「评论 (N)」多算，也会让标记层拿着 {board:…}

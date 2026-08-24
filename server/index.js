@@ -33,7 +33,6 @@ import turnRouter from './api/turn.js';
 import exportsRouter from './api/exports.js';
 import sessionsRouter from './api/sessions.js';
 import instructionRouter from './api/instruction.js';
-import memoryRouter from './api/memory.js';
 import boardRouter from './api/board.js';
 import pendingChangesRouter from './api/pending-changes.js';
 import browseRouter from './api/browse.js';
@@ -118,7 +117,6 @@ app.use('/api/projects', turnRouter);
 app.use('/api/projects', exportsRouter);
 app.use('/api/projects', sessionsRouter);
 app.use('/api/projects', instructionRouter);
-app.use('/api/projects', memoryRouter);
 app.use('/api/projects', boardRouter);
 app.use('/api/projects', pendingChangesRouter);  // C4: 用户直接编辑 + 评论 buffer
 app.use('/api/projects', browseRouter);          // 刷新后拿回浏览器窗/求助状态

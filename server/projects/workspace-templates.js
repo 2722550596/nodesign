@@ -36,18 +36,21 @@ export const DEFAULT_SPEC_JSON = JSON.stringify(
   null, 2,
 ) + '\n';
 
-export const DEFAULT_CLAUDE_MD = `# Project Instructions
+// 2026-08-24 记忆体系改版：CLAUDE.md 挪到工作区根（画布可见），承载三类
+// **人工筛选过的**长期事实——项目指引 / 风格档案 / 用户习惯。每会话被 SDK
+// 确定性全量注入（settingSources 'project' 原生行为，二进制实证根目录也读）。
+// 生长中的记忆（agent 自动记）住 记忆/，两层各干各的。
+export const DEFAULT_CLAUDE_MD = `# 项目档案
 
-This file is read by the AI agent at the start of every session as part of its
-system prompt. Write project-specific guidance here — design intent,
-constraints, vocabulary, must-do / must-not-do.
+这份文件每次会话都会完整进入 agent 的上下文。放**定了就不常变**的东西；
+会生长的记忆 agent 自己记在 记忆/ 里。改这份文件里的硬约束要经用户点头。
 
-The agent will see this verbatim. Keep it concise and actionable.
+## 项目指引
+（设计意图、硬约束、必须做/不许做。例：主色永远不用红色。）
 
-## Examples
-- Design tone: minimal, editorial, generous whitespace
-- Hard constraints: never use red as a primary color
-- Vocabulary: refer to the user as "the team"
+## 风格档案
+（定案的视觉锚：调色板 / 字体 / 材质 / 艺术方向。）
 
-(Edit this file from the NoDesign UI — the agent picks up changes on next session.)
+## 用户习惯
+（称呼、语气、工作方式偏好。）
 `;

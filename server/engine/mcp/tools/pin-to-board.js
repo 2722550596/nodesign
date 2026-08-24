@@ -8,7 +8,6 @@
  *   - 普通文件（图片 / 便签 / 数据）：路径本身，`assets/generated/a.webp`
  *   - deck：`deck:<路径>`，如 `deck:稿件/主稿.html`
  *   - 站点：`site:<目录>`
- *   - 项目文档：`doc:_root`（记忆）/ `doc:brand`（品牌档案）
  *
  * ## 2026-08-13：这个工具的职权范围缩小了
  *
@@ -34,7 +33,6 @@ import { pinToZone } from '../../../projects/board-store.js';
 
 /** 物件 id → 它住在哪个文件夹（与前端 stage.js 的 zoneOfObjectId 同一套规则） */
 function folderOfObjectId(objectId) {
-  if (objectId.startsWith('doc:')) return '';
   const c = objectId.indexOf(':');
   const p = (c > 0 && /^[a-z]+$/.test(objectId.slice(0, c))) ? objectId.slice(c + 1) : objectId;
   const i = p.lastIndexOf('/');
@@ -55,7 +53,7 @@ folder it lives in. The canvas is their desktop: whatever you write appears
 there automatically — you do NOT need this tool for your own outputs.
 Use it only to deliberately surface something:
 
-- Pull a reference (an uploaded asset, the brand doc, an older image) into view
+- Pull a reference (an uploaded asset, a memory note, an older image) into view
 - Restore something the user dragged off-screen, when they ask for it back
 
 This does NOT change which folder the item belongs to — that is decided by
@@ -64,8 +62,7 @@ where the file is on disk. To move it, \`mv\` the file; the canvas follows.
 Paths are workspace-relative, exactly as they are on disk. Accepted forms:
 - any file path: 'assets/generated/hero.webp', 'notes/灵感.md', '稿件/数据.csv'
 - a deck: 'deck:<path>.html'   a site: 'site:<dir>'
-  (a bare '<path>.html' is read as a deck)
-- '.claude/agent-memory/memory.md' (project memory) / '.../brand/memory.md' (brand doc)`,
+  (a bare '<path>.html' is read as a deck)`,
     {
       path: z
         .string()
@@ -84,9 +81,7 @@ Paths are workspace-relative, exactly as they are on disk. Accepted forms:
         if (!objectId || objectId.includes('..')) {
           return { content: [{ type: 'text', text: 'Invalid path.' }], isError: true };
         }
-        if (objectId.endsWith('agent-memory/brand/memory.md')) objectId = 'doc:brand';
-        else if (objectId.endsWith('agent-memory/memory.md')) objectId = 'doc:_root';
-        else if (!/^(deck|site|doc):/.test(objectId)) {
+        if (!/^(deck|site):/.test(objectId)) {
           // 裸路径：.html 是一份 deck，其余（图片 / 便签 / 数据文件）id 就是路径。
           // 站点的目录要显式写 `site:` —— 光看路径分不出
           // "一个收纳文件夹"和"一件目录型产物"，猜错了钉上去的是个不存在的 id。
@@ -105,16 +100,6 @@ Paths are workspace-relative, exactly as they are on disk. Accepted forms:
         // 可见性预检（08-21 案：钉 assets/ 深处的图报成功，用户画布上根本没有）。
         // 画布扫描只认 assets 顶层 / assets/generated / assets/notes 这三个口，
         // 更深的（references/web/… 之类）有座位也不渲染 —— 钉了等于没钉。
-        // doc: 两份项目文档同病：前端没有 doc: 渲染分支（走顶栏卡，不上画布）。
-        if (objectId.startsWith('doc:')) {
-          return {
-            content: [{
-              type: 'text',
-              text: `${objectId} 是项目文档（顶栏「⋯」里那套卡），不渲染在画布上 —— pin 了用户也看不到。要给用户看内容，就 write_on_board 摘要或把内容写成 notes/ 便签。`,
-            }],
-            isError: true,
-          };
-        }
         if (/^assets\//.test(objectId)
           && !/^assets\/[^/]+$/.test(objectId)
           && !/^assets\/(generated|notes)\/[^/]+$/.test(objectId)) {

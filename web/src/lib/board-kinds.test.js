@@ -40,7 +40,6 @@ import {
  */
 
 const LEGACY_SIZES = {
-  doc: { w: 200, h: 96 },
   deck: { w: 240, h: 88 },
   deckExpanded: { w: 640, h: 28 + 360 },
   image: { w: 200, h: 176 },
@@ -90,7 +89,7 @@ function legacyActions(o) {
   const md = /\.(md|markdown)$/i.test(o?.ext || o?.name || o?.path || '');
   const a = [];
   if (o.type !== 'deck') a.push('add');
-  if (o.type === 'doc' || o.type === 'note') a.push('read');
+  if (o.type === 'note') a.push('read');
   if (o.type === 'image') a.push('detail');
   if (o.type === 'file' && md) a.push('read');
   if (o.type === 'file') a.push('open');
@@ -100,7 +99,7 @@ function legacyActions(o) {
 
 function legacyPrimary(o) {
   const md = /\.(md|markdown)$/i.test(o?.ext || o?.name || o?.path || '');
-  if (o.type === 'doc' || o.type === 'note') return 'read';
+  if (o.type === 'note') return 'read';
   if (o.type === 'image') return 'detail';
   if (o.type === 'file') return md ? 'read' : 'openFile';
   if (o.type === 'deck' || o.type === 'site') return 'open';
@@ -109,7 +108,6 @@ function legacyPrimary(o) {
 
 /** 覆盖全部 type × 展开态 × markdown 变体的样本。 */
 const SAMPLES = [
-  { label: 'doc', o: { type: 'doc', title: '记忆' } },
   { label: 'deck', o: { type: 'deck', pos: {} } },
   // 存量 expanded:true —— 断言它跟没有这个字段的完全一样（不再有隐形脚印）
   { label: 'deck 带存量 expanded', o: { type: 'deck', pos: { expanded: true } } },
@@ -171,7 +169,7 @@ describe('两条轴', () => {
    * 这条不是"记录现状"，是**闸门**：canvas-backed 意味着 agent 读不到它
    * （它没有文件）。往这个集合里加东西是产品决定，不能顺手加。
    *
-   * - `doc`   记忆/品牌/指引三张卡的画布分身，正文在服务端不在磁盘产物里
+   * - （doc 形态 08-24 拆除：项目文档并入根 CLAUDE.md / 记忆/，普通文件卡）
    * - `scribble` 涂鸦，2026-08-07 加，用户给自己做的记号
    * - `text`  画布手写文字，2026-08-08 加。**这是一次产品决定的翻转**：
    *   在那之前画布上打的字一律落成 .md 便签，理由正是"agent 读得到"。
@@ -181,13 +179,12 @@ describe('两条轴', () => {
   it('canvas-backed 是白名单，加成员要过这一关', () => {
     const canvasBacked = Object.entries(KINDS)
       .filter(([, v]) => v.backing === 'canvas').map(([k]) => k);
-    expect(canvasBacked.sort()).toEqual(['doc', 'scribble', 'text']);
+    expect(canvasBacked.sort()).toEqual(['scribble', 'text']);
   });
 
   it('canvas-backed 一律不能加入上下文（没有 path 可给）', () => {
     for (const [name, k] of Object.entries(KINDS)) {
       if (k.backing !== 'canvas') continue;
-      if (name === 'doc') continue;   // doc 有 readKey，是特例
       expect(actionsOf({ type: name }), `${name} 不该有 add`).not.toContain('add');
     }
   });
@@ -238,7 +235,7 @@ describe('派生判定', () => {
    * 这条轴 2026-08-13 才立起来，起因是它漏过一次：判据原本硬编码在 BoardObject
    * 里写 `o.type === 'scribble'`，`text` 加进来时没人想起改那一行，于是画布上
    * 手写的字外面套着一张白卡 —— 而它自己的注释写着"没有卡片外观"。
-   * **不能用 backing 代替**：`doc` 也是 canvas backing，但它要卡片外观。
+   * **不能用 backing 代替**：canvas backing 不等于要涂鸦外观。
    */
   it('bare（一笔墨）是白名单', () => {
     const bare = Object.entries(KINDS).filter(([, v]) => v.chrome === 'bare').map(([k]) => k);
@@ -256,15 +253,15 @@ describe('派生判定', () => {
     expect(actionsOf({ type: 'deck' })).toEqual([]);
   });
 
-  it('doc 不是磁盘产物，其余都是', () => {
-    expect(isFileBacked({ type: 'doc' })).toBe(false);
+  it('canvas 形态不是磁盘产物，其余都是', () => {
+    expect(isFileBacked({ type: 'text' })).toBe(false);
     expect(isFileBacked({ type: 'note' })).toBe(true);
     expect(isFileBacked({ type: 'deck' })).toBe(true);
   });
 
   it('收纳带分摞与重构前一致', () => {
-    // 老代码：doc→doc、deck→deck、file→file、其余→art
-    for (const t of ['doc', 'deck', 'file']) expect(legacyBucketOf({ type: t })).toBe(t);
+    // 老代码：deck→deck、file→file、其余→art（doc 摞 08-24 随形态拆除）
+    for (const t of ['deck', 'file']) expect(legacyBucketOf({ type: t })).toBe(t);
     for (const t of ['note', 'image', 'site']) expect(legacyBucketOf({ type: t })).toBe('art');
     expect(legacyBucketOf({ type: 'wat' })).toBe('file');   // 未知按 file
   });

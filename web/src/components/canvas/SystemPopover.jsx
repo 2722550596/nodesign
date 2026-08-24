@@ -5,7 +5,6 @@ import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_MONO, FONT_SANS } from '../
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { TEXT_FONT_CSS, TEXT_FONT_LABELS, TEXT_SIZE_LABELS } from '../../lib/text-fonts.js';
 import SystemTab from '../context-panel/SystemTab.jsx';
-import DecisionsTab from '../context-panel/DecisionsTab.jsx';
 
 /**
  * SystemPopover — 项目档案 popover（贴 toolbar Settings 按钮）
@@ -15,12 +14,11 @@ import DecisionsTab from '../context-panel/DecisionsTab.jsx';
  * 内容：
  *   - 顶部 Canvas 工具（A11y）
  *   - 中部 SystemTab 4 段（Skill / DS / Model / Spec 摘要）
- *   - 底部"项目档案"折叠（默认收起）：展开后嵌 DecisionsTab（含 decisions + history）
  */
 export default function SystemPopover({
   anchorRef, onClose,
   project, deckSpec,
-  projectId, sessionId, decisionsReloadKey = 0,
+  projectId, sessionId,
   onA11yClick,
   // Tweaks 模式开关（2026-08-07 从工具栏挪进来）：它是**会话设置**不是工具 ——
   // 决定后端给 agent 注入哪一版提示词，设一次管一整段，不该常驻占工具位。
@@ -31,7 +29,6 @@ export default function SystemPopover({
   const setFollowAgent = useGlobalStore(st => st.setFollowAgent);
   const setCanvasFont = useGlobalStore(st => st.setCanvasFont);
   const ref = useRef(null);
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const anchored = useAnchoredPosition(anchorRef, 360);
 
   // 点外面关
@@ -195,56 +192,7 @@ export default function SystemPopover({
 
         <SystemTab project={project} deckSpec={deckSpec} projectId={projectId} />
 
-        {/* 项目档案 折叠 — 默认收起（agent 内部知识，用户偶尔翻） */}
-        <div style={{
-          borderTop: `1px solid ${COLOR.borderLt}`,
-          padding: `${GAP.md}px ${GAP.lg}px 0`,
-        }}>
-          <button
-            onClick={() => setArchiveOpen(o => !o)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: GAP.xs,
-              width: '100%', padding: `${GAP.xs}px 0`,
-              background: 'transparent', border: 'none',
-              fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
-              color: COLOR.sub, textTransform: 'uppercase', letterSpacing: '0.05em',
-              cursor: 'pointer',
-            }}
-          >
-            <ChevronRight
-              size={11}
-              style={{
-                transform: archiveOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-                transition: 'transform 0.12s ease',
-              }}
-            />
-            项目档案 — Decisions / History
-          </button>
-          {!archiveOpen && (
-            <div style={{
-              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub,
-              padding: `${GAP.xs}px 0 ${GAP.md}px ${GAP.lg}px`,
-              lineHeight: 1.5,
-            }}>
-              展开看 agent 记录的设计决策 + compact 摘要历史。
-            </div>
-          )}
-        </div>
-
-        {archiveOpen && (
-          <div style={{
-            background: 'rgba(0,0,0,0.015)',
-            margin: `0 ${GAP.lg}px ${GAP.md}px`,
-            border: `1px solid ${COLOR.borderLt}`,
-            borderRadius: RADIUS.md,
-          }}>
-            <DecisionsTab
-              projectId={projectId}
-              sessionId={sessionId}
-              reloadKey={decisionsReloadKey}
-            />
-          </div>
-        )}
+        {/* （项目档案折叠区 2026-08-24 拆除：决策贴/spec.history 退役，长期事实住根 CLAUDE.md 与 记忆/） */}
       </div>
 
       {/* Footer hint */}

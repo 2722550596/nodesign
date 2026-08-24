@@ -373,9 +373,8 @@ WHEN NOT TO USE:
   - Data charts — use Recharts/ECharts/Mermaid via React mount
   - Simple inline icons (≤5 per page) — use lucide-react inline SVG
 
-ALWAYS pair generation with mcp__nodesign__record_decision so the prompt + role
-land on the shared decision sticky (notes/decisions). Its params are title +
-rationale (both required), scope, alternatives — there is no "topic" param.`,
+After a generation that settles style direction, record the settled anchor as a
+memory (记忆/, type: project) so later sessions inherit it.`,
     {
       prompt: z
         .string()

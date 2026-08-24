@@ -1,7 +1,7 @@
 /**
  * UserPromptSubmit handler — 每次用户输入前注入工作区**状态**（2026-08-21 重做）
  *
- * 注的是状态不是指令：cwd、素材清单、旧决策、便利贴、画布关系线、产物清单、tweaks 开关。
+ * 注的是状态不是指令：cwd、素材清单、便利贴、画布关系线、产物清单。
  * 怎么用这些东西（路径表、"先看有没有现成的素材"、工具怎么选）住 prelude，那是缓存的
  * system prompt；每轮再说一遍是上下文里的 N 倍重复。
  *
@@ -37,11 +37,6 @@ import {
 } from '../../../lib/artifact-target.js';
 import { getTurnMemory, setTurnMemory, fingerprint, diffItems } from './turn-state-memory.js';
 
-/** UserPromptSubmit hook 读取 spec.json 时的最大字节数 */
-const SPEC_JSON_MAX_BYTES = 200 * 1024;
-/** spec.json.decisions 注入摘要时取最近 N 条 */
-const SPEC_DECISIONS_TAIL = 5;
-
 /** PDF/Office 文档的解法（系统自带工具；python 包没装且装不上 —— 08-19 上报实锤）。只在首次出现二进制文档时说一遍。 */
 const BINARY_DOC_HINT = 'PDF / PPTX / DOCX / XLSX 直接 Read 拿不到结构化内容（二进制或 zip 包）。用系统自带的工具解'
   + '（pdfplumber/PyPDF2/python-docx/openpyxl 这些 python 包**没装且装不上**，别试）：'
@@ -72,25 +67,7 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
     }
   } catch { /* 素材读不到就沉默 */ }
 
-  // spec.json 遗产决策：取最近 N 条
-  try {
-    const specPath = path.join(workspaceRoot, 'spec.json');
-    const stat = await fs.stat(specPath);
-    if (stat.size <= SPEC_JSON_MAX_BYTES) {
-      const spec = JSON.parse(await fs.readFile(specPath, 'utf8'));
-      const decisions = Array.isArray(spec?.decisions) ? spec.decisions : [];
-      if (decisions.length > 0) {
-        const recent = decisions.slice(-SPEC_DECISIONS_TAIL);
-        const lines = recent.map((d, i) => {
-          const idx = decisions.length - recent.length + i + 1;
-          const title = (d?.title || '(无标题)').slice(0, 80);
-          const rationale = (d?.rationale || '').slice(0, 200);
-          return `  ${idx}. ${title}${rationale ? ` — ${rationale}` : ''}`;
-        }).join('\n');
-        sections.push({ key: 'decisions', title: '旧决策档案', text: `旧决策档案（spec.json 遗产，共 ${decisions.length} 条，最近 ${recent.length} 条；新决策一律走 record_decision → 任务便利贴）：\n${lines}` });
-      }
-    }
-  } catch { /* spec.json 不存在 / 解析失败：noop */ }
+  // （spec.json 决策档案注入 2026-08-24 拆除：决策体系退役，长期事实走 CLAUDE.md/记忆）
 
   // 便利贴：metadata-not-content，只列文件和首行标题
   try {
@@ -160,35 +137,7 @@ async function collectSections({ workspaceRoot, sessionId, projectId }) {
     }
   } catch { /* 扫不动就不说 */ }
 
-  // tweaks 开关：文件不存在 = 用户没碰过 = 沉默
-  // 最近板书（2026-08-23）：你/用户在画布上说过的最近几句 —— 对话在板上，得记得板上说了什么
-  try {
-    const recent = await recentChalk(workspaceRoot, { limit: 8 });
-    if (recent.length) {
-      const lines = recent.map(c => `  ${c.path}（${c.by === 'user' ? '用户' : '你'}${c.anchor ? `，关于 ${c.anchor}` : ''}${c.replyTo ? `，回应 ${c.replyTo.replace(`${CHALK_DIR}/`, '')}` : ''}）「${c.first}」`);
-      sections.push({ key: 'chalk', title: '最近板书', text: `画布上最近的板书（${CHALK_DIR}/，新在前；正文 Read 文件）：\n${lines.join('\n')}`, items: recent.map(c => c.path) });
-    }
-  } catch { /* 板书读不到就沉默 */ }
-  // 黑板模式（2026-08-23）：用户在画布上专注思考时开。这一节只在开着时注入，关着不提。
-  try {
-    const cfg = await readUiConfigFile(workspaceRoot);
-    if (cfg?.blackboard_mode === true) {
-      sections.push({ key: 'blackboard', title: '黑板模式', text:
-        '【黑板模式：开】用户此刻在画布上专注思考。这一轮默认这么做：想事情就画成图（sketch_on_board，'
-        + '小改动用 edit_sketch 原地改别重画）；做完一件东西在它旁边写一条板书（write_on_board near=）；'
-        + '用户标注了板上的东西就接在那条下面回（reply_to=）。侧栏照常回复，但板上已经写的别大段重复。'
-        + '尺寸守规范（0.8 倍一屏可读、正文 md 起、一条板书说一件事）；画完 look_at_board 看一眼再收。' });
-    }
-  } catch { /* 读失败：不注入 */ }
-  try {
-    const cfg = await readUiConfigFile(workspaceRoot);
-    if (cfg) {
-      const on = cfg?.tweaks_mode_enabled !== false;
-      sections.push({ key: 'tweaks', title: 'Tweaks 开关', text: on
-        ? '【Tweaks 模式：启用】用户偏好"可调产品"——deck 形态稳定后，建议调 expose_tweaks 暴露核心微调参数（颜色 / 字号 / 排版密度等）让用户拖滑杆即时改样式。'
-        : '【Tweaks 模式：禁用】用户在 toolbar 关闭了 Tweaks——这次跳过 expose_tweaks，按对话方式让用户提需求你来 Edit。已暴露的 controls 保留不动，不新增 / 不重 expose。' });
-    }
-  } catch { /* 读失败：默认行为，不注入 */ }
+  // （tweaks 开关注入 2026-08-24 随 expose_tweaks 暂退役一起摘除；工具升级后再回来）
 
   return sections;
 }

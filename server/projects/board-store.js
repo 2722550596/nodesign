@@ -473,7 +473,7 @@ export function pinToZone(pid, { objectId, zoneId = '' }) {
      */
     const CELL_W = 320; const CELL_H = 220; const PAD = 10;
     const dirOf = (id) => {
-      if (typeof id !== 'string' || id.startsWith('doc:')) return '';
+      if (typeof id !== 'string') return '';
       const c = id.indexOf(':');
       const path = (c > 0 && /^[a-z]+$/.test(id.slice(0, c))) ? id.slice(c + 1) : id;
       const i = path.lastIndexOf('/');

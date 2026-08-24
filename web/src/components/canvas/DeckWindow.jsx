@@ -71,7 +71,7 @@ export default function DeckWindow({
   onAddCandidate,
   onRemoveCandidate,
   onRenameCandidate,
-  project, deckSpec, projectId, sessionId, decisionsReloadKey,
+  project, deckSpec, projectId, sessionId,
   comments = [],
   onAddComment, onResolveComment, onDeleteComment,
   onRegionComment = null,   // 圈选评论（要会话才有）
@@ -521,7 +521,6 @@ export default function DeckWindow({
             deckSpec={deckSpec}
             projectId={projectId}
             sessionId={sessionId}
-            decisionsReloadKey={decisionsReloadKey}
             onA11yClick={() => { setSystemOpen(false); setA11yOpen(true); }}
             tweaksEnabled={tweaksEnabled}
             onTweaksEnabledChange={handleTweaksEnabledChange}

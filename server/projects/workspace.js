@@ -6,12 +6,9 @@
  * 结构：
  *   <PROJECTS_DATA_ROOT>/<projectId>/
  *     ├── shared/                    ← **项目工作区**：agent 的 cwd，产物的家
- *     │   ├── .claude/
- *     │   │   ├── CLAUDE.md          项目指引（用户写）
- *     │   │   ├── settings.json      项目 SDK config
- *     │   │   ├── skills/ agents/    项目级 skill / 子代理
- *     │   │   ├── agent-memory/      长期记忆（agent 写）
- *     │   │   └── projects/          SDK 转录落点（.gitignore）
+ *     │   ├── CLAUDE.md              项目档案（指引/风格/习惯；08-24 挪到根，画布可见）
+ *     │   ├── 记忆/                   SDK auto-memory（08-24 起，画布可见）
+ *     │   ├── .claude/               settings.json · skills/ agents/ · projects/（SDK 转录）
  *     │   ├── assets/                上传素材 + 生成图
  *     │   ├── .nd/<sid>/             会话私档（spec.json / design-plan.md）
  *     │   ├── .git/                  项目历史
@@ -51,12 +48,9 @@ import { resolveModelContextWindow } from '../engine/agent/model-context.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Per-sessionRoot read-modify-write 串行 utility。
- *
- * 解决：record_decision / expose_tweaks / PostCompact 3 处都 readFile→mutate→writeFile
- * 同 spec.json，无锁 → 后写者 silent 覆盖前写者全量内容（"刚 record 的 decision 没了"
- * 类 bug）。三处统一通过本 helper 写，async-mutex-lite 是 module-singleton，所有
- * import 共享 lock map，按 key 串行。
+ * Per-sessionRoot read-modify-write 串行 utility（spec.json）。
+ * 08-24 起唯一写入方 = 暂退役的 expose_tweaks（决策贴/PostCompact 摘要已拆）；
+ * 锁留着 —— tweaks 升级回归时并发结构不变。
  *
  * @param {string} workspaceRoot - sessions/<sid>/ 路径
  * @param {(spec: object) => (object|void|Promise<object|void>)} mutator
@@ -93,8 +87,9 @@ export function validateSessionId(sid) {
 }
 
 import {
-  DEFAULT_GITIGNORE, DEFAULT_SPEC_JSON, DEFAULT_CLAUDE_MD,
+  DEFAULT_GITIGNORE, DEFAULT_CLAUDE_MD,
 } from './workspace-templates.js';
+import { migrateMemoryLayout } from './memory-migration.js';
 
 /**
  * NoDesign 全局默认 settings.json — 代码是 source of truth。
@@ -247,8 +242,13 @@ export async function ensureProjectWorkspace(projectId) {
   // .gitignore 每次比对而不是"不存在才写"：扁平化新增了 .claude/projects/ 和
   // .nd/ 两条，老项目的文件里没有，不补的话 SDK 转录会被 commit 进项目历史。
   await ensureGitignore(path.join(root, '.gitignore'));
-  if (!(await fileExists(path.join(root, '.claude', 'CLAUDE.md')))) {
-    await fs.writeFile(path.join(root, '.claude', 'CLAUDE.md'), DEFAULT_CLAUDE_MD, 'utf8');
+  // 记忆体系改版迁移（2026-08-24，幂等：源不在了就什么都不做）——
+  // CLAUDE.md 从 .claude/ 挪到工作区根（画布可见，SDK 两处都读、根优先级同级），
+  // 老的偏好/风格档案并进去，SDK auto-memory 的存量从 .claude/agent-memory/auto
+  // 搬到画布可见的 记忆/。三步全是"搬走后源删除"，跑几遍结果一样。
+  await migrateMemoryLayout(root, { fileExists });
+  if (!(await fileExists(path.join(root, 'CLAUDE.md')))) {
+    await fs.writeFile(path.join(root, 'CLAUDE.md'), DEFAULT_CLAUDE_MD, 'utf8');
   }
   // settings.json：每次 merge defaults 让代码层 default 升级时现存 project 自动跟上
   // （用户字段优先，缺失的 NoDesign default 字段补进去）

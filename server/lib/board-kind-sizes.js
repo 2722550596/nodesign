@@ -19,7 +19,6 @@ export const ARTIFACT_PREVIEW_H = { deck: 360, site: 400, docx: 420, browse: 360
 // file 是 224x32 的细条卡（parity 测试上岗第一天就逮住我猜成 160x120 ——
 // 那是涂鸦的默认身位。别猜，抄表）
 export const KIND_SIZES = {
-  doc: { w: 200, h: 96 },
   image: { w: 200, h: 176 },
   video: { w: 240, h: 160 },
   note: { w: 200, h: 148 },
@@ -44,7 +43,6 @@ export function estimateSize(id, entry) {
     return { w: entry.w, h: entry.h };
   }
   const s = String(id || '');
-  if (s.startsWith('doc:')) return KIND_SIZES.doc;
   // 浏览器卡是**单例**，id 就是 'browse'（没有路径可挂 —— 它背后不是文件）。
   // 不给这条分支的话它会掉到最后的 file 兜底（224×32 的细条），agent 摆位时
   // 就会拿一个错的矩形去算"挨着谁摆、会不会压到谁"。

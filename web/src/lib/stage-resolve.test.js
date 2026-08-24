@@ -35,9 +35,9 @@ describe('resolveObjectId — 文件落到哪张卡', () => {
     expect(resolveObjectId('/tmp/x.md', [])).toBeNull();
   });
 
-  it('记忆 / 品牌两份文档有固定 id，不按路径派生', () => {
-    expect(resolveObjectId('.claude/agent-memory/memory.md', ROOTS)).toBe('doc:_root');
-    expect(resolveObjectId('.claude/agent-memory/brand/memory.md', ROOTS)).toBe('doc:brand');
+  it('记忆文件按普通路径派生（doc: 特例 08-24 拆除）', () => {
+    expect(resolveObjectId('记忆/style-anchor.md', ROOTS)).toBe('记忆/style-anchor.md');
+    expect(resolveObjectId('CLAUDE.md', ROOTS)).toBe('CLAUDE.md');
   });
 
   it('站点目录里的一切都贴同一张站点卡', () => {
@@ -151,8 +151,6 @@ describe('zoneOfObjectId — 物件住在哪个文件夹', () => {
   });
 
   it('项目区的文档不归任何文件夹', () => {
-    expect(zoneOfObjectId('doc:_root')).toBe(null);
-    expect(zoneOfObjectId('doc:brand')).toBe(null);
   });
 
   /**

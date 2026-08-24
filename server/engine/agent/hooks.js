@@ -84,7 +84,6 @@ import {
   makePostToolUseScreenshotHandler,
   makePostToolUseExportHandler,
   makePostToolUseGenerateImageRegenWatchdog,
-  makePostToolUseStyleAnchorNudge,
 } from './hooks/post-guidance.js';
 import { makePostToolUseCanvasValidationHandler } from './hooks/canvas-validate.js';
 import { makePostToolUseSiteValidationHandler } from './hooks/site-validate.js';
@@ -294,13 +293,10 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
           makePostToolUseSiteValidationHandler({ workspaceRoot }),
         ],
       },
-      // record_decision 一般**不注** additionalContext（"继续主任务"那种跟 SDK
-      // preset 重复，agent 自己懂）。唯一例外是"锚定风格"这一笔：那是项目级
-      // 长期资产该落盘的时刻，而品牌档案 / 项目指引这两处 SDK 不知道。
-      {
-        matcher: 'mcp__nodesign__record_decision',
-        hooks: [makePostToolUseStyleAnchorNudge({ sharedRoot })],
-      },
+      // （record_decision 及其 style-anchor nudge 2026-08-24 整条目拆除 ——
+      //  风格落盘的提醒并进 auto-memory 的追加指导（session-loop 的
+      //  CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES）。删的是**整个 {matcher, hooks}
+      //  条目**，空壳条目会让 SDK initialize 静默灭门，见 assertHooksWellFormed。）
     ],
 
     // PostToolUseFailure —— 任意工具失败时统一处理：emit 事件 + 给 agent

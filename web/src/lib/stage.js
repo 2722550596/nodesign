@@ -66,8 +66,7 @@ export function resolveObjectId(filePath, artifactRoots) {
   if (norm.startsWith('/')) return null;
   const p = norm.replace(/\/+$/g, '');
   if (!p) return null;
-  if (p.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
-  if (p.endsWith('agent-memory/memory.md')) return 'doc:_root';
+  // （doc:brand / doc:_root 映射 2026-08-24 拆除：项目文档并入根 CLAUDE.md/记忆/）
   for (const r of (artifactRoots || [])) {
     if (r?.path == null) continue;
     // 根站（2026-08-14 空串病族又一例）：站住在工作区根上时 path 合法地是
@@ -116,7 +115,6 @@ export function resolveObjectId(filePath, artifactRoots) {
  */
 export function zoneOfObjectId(objectId) {
   if (!objectId || typeof objectId !== 'string') return null;
-  if (objectId.startsWith('doc:')) return null;
   // kind 前缀只认字母（`deck:` `site:`）—— 路径里的冒号不算前缀，
   // 判据跟 server/projects/board-store.js 的 mapId 保持一致
   const c = objectId.indexOf(':');

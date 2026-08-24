@@ -10,7 +10,7 @@
  *   反馈层（用户在 canvas 上的直接编辑 + 评论 buffer）：
  *     get_pending_changes / clear_pending_changes
  *   产物层（NoDesign 差异化能力）：
- *     expose_tweaks / export_handoff / record_decision
+ *     export_handoff …（expose_tweaks 08-24 暂退役待升级；record_decision 08-24 拆除，记忆体系接棒）
  *   研究层：
  *     web_search（4 provider，CJK auto baidu）
  *
@@ -33,7 +33,6 @@ import { withCapabilityGate } from './capability-gate.js';
 import { makeScreenshotCanvasTool } from './tools/screenshot.js';
 import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
 import { makeExportHandoffTool } from './tools/export-handoff.js';
-import { makeRecordDecisionTool } from './tools/record-decision.js';
 import { makeWebSearchTool } from './tools/web-search.js';
 import { withTierGate } from './tools/tier-gate.js';   // 档位闸包装器（auth/tier.js；按项目 owner）
 import { makeReadPageTool } from './tools/read-page.js';
@@ -55,7 +54,7 @@ import { makeNavigateToPageTool } from './tools/navigate-to-page.js';
 import { makeHighlightTool } from './tools/highlight.js';
 import { makePreviewDeckTool } from './tools/preview-deck.js';
 import { makeBuildDocxTool } from './tools/build-docx.js';
-import { makeExposeTweaksTool } from './tools/expose-tweaks.js';
+// expose-tweaks 08-24 暂退役（能力不足待升级再加回）：本体与前端 TweaksPanel 留档休眠，不注册
 import { makeGetPendingChangesTool } from './tools/get-pending-changes.js';
 import { makeClearPendingChangesTool } from './tools/clear-pending-changes.js';
 import { makeGenerateImageTool } from './tools/generate-image.js';
@@ -103,7 +102,7 @@ import { makeLookupTagsTool } from './tools/lookup-tags.js';
 const ALWAYS_LOAD_TOOLS = new Set([
   'screenshot_canvas', 'read_page', 'list_pages', 'query_elements',
   'get_computed_styles', 'navigate_to_page', 'highlight', 'preview_deck',
-  'record_decision', 'get_pending_changes', 'clear_pending_changes',
+  'get_pending_changes', 'clear_pending_changes',
   // screenshot_url 常驻：explorer 显式 tools 列表没有 ToolSearch，defer 了它就
   // 永远拉不到 schema；schema 本身很小（4 字段），常驻成本可忽略
   'screenshot_url',
@@ -181,9 +180,6 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
 
       // C10 export_handoff — 复用 exports.js 的 buildHandoffZip，写到 workspace/exports/
       makeExportHandoffTool({ workspaceRoot, sharedRoot, projectId, sessionId, ctx }),
-
-      // C11 record_decision — 写入 spec.json decisions[] 设计意图档案
-      makeRecordDecisionTool({ workspaceRoot, sessionId, ctx }),
 
       // crystallize_skill — 把探索出来的方法论固化成用户自己的 skill + 作品进橱窗
       // （2026-07-30）。用户明确要求才调；写的是判断依据不是成品 HTML。
@@ -283,9 +279,6 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 前端在 chat 时由 turn.js 注入 system 提示，agent 主动调下面两个工具读 + 清
       makeGetPendingChangesTool({ workspaceRoot, ctx }),
       makeClearPendingChangesTool({ workspaceRoot, ctx }),
-
-      // Tweaks 协议：agent 暴露 deck 专属可调参数 schema → 前端按 schema 渲染控件
-      makeExposeTweaksTool({ workspaceRoot, ctx }),
 
       // 图片生成（gemini-3.1-flash-image-preview / Nano Banana 2，via NoDesk passthrough）
       // 落档优先 sharedRoot/assets/generated/，fallback workspaceRoot/assets/generated/。

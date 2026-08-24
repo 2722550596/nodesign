@@ -4,10 +4,9 @@
 > 注入，每 session 只注一次。SKILL.md 已含精简版核心要点，本文是深度参考。
 >
 > ⚠️ Gemini gateway 时代的参数段（imageSize / thinkingLevel / model 路由 flash-pro /
-> Image Search Grounding / PDF 文档输入 / NB2 model card 失败模式）**已整体移出本文**，
-> 存在同目录 `generate-image-cookbook.gemini-gateway.md`，不再注入。那些旋钮在当前
-> 后端上传了不报错也没效果，留在这里只会让你花心思拨一个不存在的开关。
-> `NODESIGN_IMAGE_PROVIDER=gateway` 重开时再把那份取回来。
+> Image Search Grounding / PDF 文档输入 / NB2 model card 失败模式）**已整体移出本文**
+> （那份存档 08-24 已删：全仓无引用的孤儿文件；要复活 gateway 从 git 历史里捞）。
+> 那些旋钮在当前后端上传了不报错也没效果，留在这里只会让你花心思拨一个不存在的开关。
 
 ## 前置 · 后端事实 —— 先读这节，它决定下面所有写法
 
@@ -408,9 +407,9 @@ Step 3: 给角色起名锚定（"Maya, character from Reference 1"）
 
 ## J. 调完必做
 
-1. **`record_decision`** —— 把 prompt + role + path + 用户评价记进任务便利贴
-   （`notes/决策.md`）。重生时能查回，用户在画布上也看得到。
-   ⚠️ 入参是 `title`（必填）/ `rationale`（必填）/ `scope` / `alternatives`，**没有 `topic`**。
+1. **记进记忆** —— 定案的 anchor（prompt 骨架 + role + 产物路径 + 用户评价）写一条
+   `type: project` 记忆（`记忆/` 主题文件 + MEMORY.md 一行）。重生时能查回，
+   用户在画布上也看得到。
 2. **关键节点的反馈循环**：cover / 第一个 portrait / logo 嵌入这种会被当跨页种子的 anchor，
    生完在自然回话里邀请用户看一眼方向（生图的 image block 已自动渲染在 chat，他直接看得到）。
    种子早定早收益。

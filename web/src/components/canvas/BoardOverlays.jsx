@@ -18,13 +18,11 @@
 import { useState } from 'react';
 import MarkdownMath from '../ui/MarkdownMath.jsx';
 import { Plus, ExternalLink, X, BookOpen, PencilLine } from 'lucide-react';
-import { Assets, Memory } from '../../lib/api.js';
+import { Assets } from '../../lib/api.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS, CANVAS } from '../../lib/theme.js';
 import { POP_IN } from '../../lib/board-geometry.js';
 import { readerOf } from '../../lib/board-kinds.js';
-import MemoryCard from '../project/MemoryCard.jsx';
 import InstructionsCard from '../project/InstructionsCard.jsx';
-import BrandCard from '../project/BrandCard.jsx';
 import FilesCard from '../project/FilesCard.jsx';
 
 /**
@@ -33,12 +31,6 @@ import FilesCard from '../project/FilesCard.jsx';
  */
 export function makeBoardReaders({ projectId, setViewer }) {
   const READERS = {
-    // 记忆 / 品牌 / 指引三张卡的画布分身：正文在服务端，不在磁盘产物里
-    async memory(o) {
-      const r = await Memory.read(projectId, o.readKey).catch(() => null);
-      setViewer({ title: o.title, content: r?.content || o.preview || '(空)' });
-    },
-
     // 普通 .md 产物（世界.md / 正文章节 / agent 写的任何 markdown）。
     // 2026-08-03 之前这类文件只有「打开」= window.open 原始 URL，浏览器给一坨
     // 纯文本 —— 41KB 的正文点开满屏 `**` 和 `##`。阅读器本来就是现成的，
@@ -82,9 +74,7 @@ export function ProjectPanelOverlay({ projectId, panel, onClose, reload }) {
         width: 'min(560px, 100%)', maxHeight: '100%', minHeight: 0, overflow: 'auto',
         background: COLOR.bg, borderRadius: RADIUS.xxl, padding: GAP.lg,
       }}>
-        {panel === 'memory' && <MemoryCard projectId={projectId} />}
         {panel === 'guide' && <InstructionsCard projectId={projectId} />}
-        {panel === 'brand' && <BrandCard projectId={projectId} />}
         {panel === 'files' && <FilesCard projectId={projectId} />}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: GAP.md }}>
           <button onClick={() => { onClose(); reload(); }} style={toolBtn}>关闭</button>

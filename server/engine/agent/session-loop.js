@@ -54,6 +54,7 @@ import {
 import { loadInstalledPlugins } from './plugin-loader.js';
 import { createHooks } from './hooks.js';
 import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isolation.js';
+import { MEMORY_EXTRA_GUIDELINES, mergeAgentSettings } from './memory-config.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { assertInitContract } from './init-contract.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
@@ -354,6 +355,8 @@ export async function runSession({
     // auto-memory 强制开启分支（binary gate：DISABLE 置 falsy 值 = force on，
     // 绕过 CLAUDE_CODE_SIMPLE 等后置门；前置门 U$/zl 若拦住则此招无效 → 走自建 B 计划）
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+    // 记忆指导追加段（保留 SDK 原合同只追加产品口径，理由见 memory-config.js）
+    CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES: MEMORY_EXTRA_GUIDELINES,
     // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
     // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
     ENABLE_TOOL_SEARCH: 'true',
@@ -543,8 +546,6 @@ export async function runSession({
     persistSession: true,
     settingSources: ['project'],
 
-    // settings 在下面跟 isolationOptions.settings **深合并**后一次性传 —— 见
-    // buildIsolationOptions 展开处的 ⛔ 注释（两处 settings 静默互吞案）。
 
     includePartialMessages: STREAMING_ENABLED,
     // 子代理时间轴（2026-07-28）：转发子代理完整对话（text/thinking 也带
@@ -581,33 +582,17 @@ export async function runSession({
 
     // 隔离两道闸（sandbox 管 Bash，permissions.deny 管 Read/Write 这类进程内工具）
     // 全在 agent/isolation.js 里，改之前读那份文件头上的四条实测教训。
-    //
-    // ⛔ settings 必须在这里跟 isolationOptions.settings 深合并（08-24 案）：
-    // 08-15 起 buildIsolationOptions 的返回值里也有 settings 键，对象展开写在
-    // 后面就把上面独立写的 settings 整个覆盖 —— autoMemoryEnabled /
-    // autoMemoryDirectory / skipWebFetchPreflight 八天没送到 SDK 手里，
-    // agent 照 SDK 默认路径写记忆被沙盒拒、~/.claude 下堆了 187 个空目录。
-    // 「两处同名键静默互吞」没有任何报错，出口断言在下方兜着。
+    // ⛔ settings 必须与 isolationOptions.settings 深合并 —— 08-15 起两处 settings
+    // 静默互吞八天（autoMemory*/skipWebFetchPreflight 全丢）。合并+出口断言在
+    // memory-config.js 的 mergeAgentSettings。
     ...(() => {
       const isolation = buildIsolationOptions({ cwdRoot, sharedRoot, ...agentDirs, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv });
-      const settings = {
-        ...isolation.settings,
-        // skipWebFetchPreflight 来自 runtime/platform.js（gateway key 模式永远关）
-        skipWebFetchPreflight: platform.skipWebFetchPreflight,
-        // 项目 memory：骑 SDK 原生 auto-memory（MEMORY.md 常驻索引 + 主题文件
-        // 按需召回 + pinned 全文注入 + auto-dream 后台固化全由 SDK 包办）。
-        // ⚠️ 目录必须显式指到项目共享区：默认按 cwd 派生，而提示词、写入、
-        // 索引加载、权限放行全跟着这一个值走（探明于 08-24，二进制 yh()）。
-        ...(sharedRoot ? {
-          autoMemoryEnabled: true,
-          autoMemoryDirectory: path.join(sharedRoot, '.claude', 'agent-memory', 'auto'),
-        } : {}),
+      return {
+        ...isolation,
+        settings: mergeAgentSettings(isolation.settings, {
+          skipWebFetchPreflight: platform.skipWebFetchPreflight, sharedRoot,
+        }),
       };
-      // 出口断言：记忆配置必须真的在最终 settings 里（防第二次被吞）
-      if (sharedRoot && !settings.autoMemoryDirectory) {
-        throw new Error('[session-loop] settings.autoMemoryDirectory 被吞了 —— 检查 settings 合并处');
-      }
-      return { ...isolation, settings };
     })(),
 
     toolConfig: {

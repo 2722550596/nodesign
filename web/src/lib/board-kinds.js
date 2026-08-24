@@ -95,7 +95,7 @@ export function isOrchestration(o) {
  * - `chrome`       `'card'` = 一张纸（底色/描边/影子/大圆角）/ `'bare'` = 一笔墨
  * - `card`         卡体渲染器：`'artifact'` = 三种产物共用的方卡；
  *                  缺省 = 仍在 BoardObject 里各画各的
- * - `reader`       双击/「阅读」进哪个阅读器：`'memory'` 走 Memory.read、
+ * - `reader`       双击/「阅读」进哪个阅读器：
  *                  `'file'` 拉原始文件正文、`'note'` 剥 frontmatter 后读、
  *                  `null` 没有阅读器
  * - `primary`      双击的默认动作：`'read'|'detail'|'open'|'openFile'`
@@ -103,19 +103,9 @@ export function isOrchestration(o) {
  * - `legacyBucket` 没有工作区可归时掉进桌面底部收纳带的哪一摞
  * - `category`     **内容轴**：这东西是什么。桌面过滤的两条轴之一，见 CATEGORIES
  */
+// （doc 形态 2026-08-24 拆除：记忆/品牌/指引的画布分身退役 —— 记忆住 记忆/、
+//  档案在根 CLAUDE.md，都是普通文件卡）
 export const KINDS = {
-  doc: {
-    chrome: 'card',
-    label: '文档',
-    category: 'doc',
-    backing: 'canvas',
-    size: { w: 200, h: 96 },
-    reader: 'memory',
-    primary: 'read',
-    actions: ['add', 'read'],
-    legacyBucket: 'doc',
-  },
-
   deck: {
     label: '幻灯',
     category: 'work',

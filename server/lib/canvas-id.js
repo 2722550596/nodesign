@@ -10,8 +10,8 @@
 export function normalizeCanvasId(raw) {
   let id = String(raw || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+|\/+$/g, '');
   if (!id || id.includes('..')) return null;
-  if (id.endsWith('agent-memory/brand/memory.md')) return 'doc:brand';
-  if (id.endsWith('agent-memory/memory.md')) return 'doc:_root';
+  // （doc:brand / doc:_root 映射 2026-08-24 拆除：项目文档并进根 CLAUDE.md，
+  //   记忆住 记忆/，都是普通画布文件，没有特殊 id 了）
   if (!/^(deck|site|doc|text|scribble):/.test(id) && /\.html?$/i.test(id)) return `deck:${id}`;
   return id;
 }
@@ -45,7 +45,6 @@ export function tagEnvelope(board, tag, sizeOf) {
 export function layerOf(id, entry, knownFolders) {
   if (entry && typeof entry.zone === 'string') return entry.zone;
   const s = String(id);
-  if (s.startsWith('doc:')) return '';
   const c = s.indexOf(':');
   const p = (c > 0 && /^[a-z]+$/.test(s.slice(0, c))) ? s.slice(c + 1) : s;
   let d = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
