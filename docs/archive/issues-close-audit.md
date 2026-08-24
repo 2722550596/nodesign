@@ -102,3 +102,5 @@ exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（�
 另：报 issue 文化调成 beta 口径（prelude+工具描述：**beta 测试期、你是一线测试员、犹豫就报**；friction 绕一次就值得记；idea 明确收方法论；一次性抖动仍不收）。
 
 **08-24 第三批**：iss_mt38uih6_ycnm → ack（organize_board 默认附带引用改写：lib/rewrite-refs.js，非搬文件=只改指向被搬条目的引用、自搬文本文件=整体换基准；逐文件上报改动数可核对；9 项单测含端到端）。iss_mt5t487g_bc1v → ack（真因=pin_to_board 按 dirname 硬算把 assets/generated 当 zone 写进座位，前端根本不把它当层渲染 —— 改问 layerOf+board.zones 与渲染同口径；layerOf 只认真实存在的层，存量错标签自愈；arrange 对真跨层仍拒但报错给 cp/relate 指引）。open 只剩 exit 144（等再现，命令已会记进 detail）。
+
+**08-24 部署关单**：feat/issues-cleanup-0824（9 commits，ff 至 0acd73a）已上生产（服务端 restart + 前端 deploy），48 条 ack 全部转 closed。生产 rembg 服务随重启复活并绑实例私有 socket /tmp/nodesign-rembg-4001.sock。open 仅剩 exit 144（等再现，自动层已记命令）。
