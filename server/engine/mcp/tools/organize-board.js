@@ -16,6 +16,8 @@
 import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { moveEntry, MoveError } from '../../../projects/move-entry.js';
+import { rewriteWorkspaceRefs } from '../../../lib/rewrite-refs.js';
+import { getSharedDir } from '../../../projects/workspace.js';
 import { Events } from '../../agent/events.js';
 
 export function makeOrganizeBoardTool({ projectId, ctx }) {
@@ -26,20 +28,29 @@ export function makeOrganizeBoardTool({ projectId, ctx }) {
 Use for: grouping generated images into a folder, collecting a site's materials into <site>/assets/, un-cluttering the desktop root. Sticky notes (notes/*.md) may move too, but they become plain .md file cards outside notes/ — lose the flippable sticky form.
 Not for: site roots as destination (they are artifacts, not storage — a site takes materials in its assets/ subfolder).
 
+After moving, references across the workspace (src/href in html/css/md pointing
+at the moved items) are rewritten to the new paths automatically — the count of
+rewritten spots is reported per file so you can verify. Pass rewrite_refs:false
+to move only.
+
 Batch: up to 16 items, moved in order, stops at first failure.`,
     {
       items: z.array(z.string().min(1)).min(1).max(16)
         .describe('Workspace-relative paths to move (files or folders), e.g. ["assets/generated/a.png", "旧稿.html"]'),
       into: z.string()
         .describe('Destination folder (workspace-relative), e.g. "素材" or "观察日志/assets". Created if missing. "" = workspace root (un-nest).'),
+      rewrite_refs: z.boolean().optional()
+        .describe('Also rewrite references to the moved items across workspace text files (default true).'),
     },
-    async ({ items, into }) => {
+    async ({ items, into, rewrite_refs: rewriteRefs }) => {
       const lines = [];
+      const moves = [];
       let moved = 0;
       for (const item of items) {
         try {
           const out = await moveEntry(projectId, item, into, { createFolder: true });
           moved += 1;
+          if (out.moved) moves.push({ from: out.from, to: out.to });
           lines.push(out.moved ? `✓ ${out.from} → ${out.to}` : `· ${out.from}（已在原地）`);
           if (out.moved) {
             try {
@@ -53,6 +64,20 @@ Batch: up to 16 items, moved in order, stops at first failure.`,
           lines.push(`✗ ${item}：${why}`);
           lines.push(`（后面 ${items.length - moved - 1} 件没动 —— 修正后重调）`);
           break;
+        }
+      }
+      // 「新建文件夹然后改个索引」的后半件（iss_mt38uih6）：把全工作区指向
+      // 被搬条目的引用改到新路径。改了多少处逐文件上报 —— 自动改写用户内容
+      // 必须可核对；报 0 也说一声，agent 不用再自己 grep。
+      if (moves.length > 0 && rewriteRefs !== false) {
+        try {
+          const rw = await rewriteWorkspaceRefs(getSharedDir(projectId), moves);
+          lines.push(rw.hits > 0
+            ? `引用改写：${rw.hits} 处 / ${rw.files} 个文件`
+            : '引用改写：全工作区没有指向这些条目的文本引用（0 处）');
+          lines.push(...rw.lines.slice(0, 12));
+        } catch (err) {
+          lines.push(`⚠️ 引用改写失败（文件已搬成，引用要自己 grep 修）：${err?.message || err}`);
         }
       }
       try {

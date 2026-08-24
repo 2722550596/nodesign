@@ -100,3 +100,5 @@ exit 1 JSON、rembg balanced 偶发、旧路径不存在、iss_msc4620y_0z3r（�
 留 open 3：exit 144（转录已清无从考证；自动层已改为把 Bash 命令记进 detail，下次再现可诊断）、organize+引用重写 idea（自动改写用户 HTML 引用需要独立一场带测试做）、arrange 跨层（真解绑在画布 zone/路径双真相一致性上，本批只把报错改成可行动指引）。
 
 另：报 issue 文化调成 beta 口径（prelude+工具描述：**beta 测试期、你是一线测试员、犹豫就报**；friction 绕一次就值得记；idea 明确收方法论；一次性抖动仍不收）。
+
+**08-24 第三批**：iss_mt38uih6_ycnm → ack（organize_board 默认附带引用改写：lib/rewrite-refs.js，非搬文件=只改指向被搬条目的引用、自搬文本文件=整体换基准；逐文件上报改动数可核对；9 项单测含端到端）。iss_mt5t487g_bc1v → ack（真因=pin_to_board 按 dirname 硬算把 assets/generated 当 zone 写进座位，前端根本不把它当层渲染 —— 改问 layerOf+board.zones 与渲染同口径；layerOf 只认真实存在的层，存量错标签自愈；arrange 对真跨层仍拒但报错给 cp/relate 指引）。open 只剩 exit 144（等再现，命令已会记进 detail）。

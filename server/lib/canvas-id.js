@@ -43,7 +43,12 @@ export function tagEnvelope(board, tag, sizeOf) {
  * 目录"这一路，没摆过的深层目录会归到根。read_board 的输出里写明这是近似。
  */
 export function layerOf(id, entry, knownFolders) {
-  if (entry && typeof entry.zone === 'string') return entry.zone;
+  // 显式 zone 只认**真实存在的层**（'' 或 zones 里有的文件夹）。历史上
+  // pin_to_board 往 zone 里写过 'assets/generated' 这类前端根本不当层渲染的
+  // 路径（iss_mt5t487g：pin 上来的图被判在"assets 层"，arrange 跟根层的草图
+  // 节点一比就拒）——错标签直接落回按路径推，存量脏数据顺带自愈。
+  if (entry && typeof entry.zone === 'string'
+    && (entry.zone === '' || knownFolders?.has?.(entry.zone))) return entry.zone;
   const s = String(id);
   const c = s.indexOf(':');
   const p = (c > 0 && /^[a-z]+$/.test(s.slice(0, c))) ? s.slice(c + 1) : s;

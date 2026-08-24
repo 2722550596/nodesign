@@ -29,15 +29,11 @@ import { tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import path from 'path';
 import { promises as fs } from 'fs';
-import { pinToZone } from '../../../projects/board-store.js';
+import { pinToZone, readBoard } from '../../../projects/board-store.js';
+import { layerOf } from '../../../lib/canvas-id.js';
 
-/** 物件 id → 它住在哪个文件夹（与前端 stage.js 的 zoneOfObjectId 同一套规则） */
-function folderOfObjectId(objectId) {
-  const c = objectId.indexOf(':');
-  const p = (c > 0 && /^[a-z]+$/.test(objectId.slice(0, c))) ? objectId.slice(c + 1) : objectId;
-  const i = p.lastIndexOf('/');
-  return i > 0 ? p.slice(0, i) : '';
-}
+// （folderOfObjectId 08-24 拆除：它按 dirname 硬算，会给 assets/generated 这类
+//  前端不当层渲染的路径发"层"标签 —— 改问 layerOf + board.zones，跟渲染同口径）
 
 /**
  * @param {object} deps
@@ -112,7 +108,10 @@ Paths are workspace-relative, exactly as they are on disk. Accepted forms:
             isError: true,
           };
         }
-        const zoneId = folderOfObjectId(objectId);
+        // 层归属按**真实存在的层**算（'' 或 zones 里的文件夹）——跟前端渲染同口径。
+        // dirname 硬算的老写法会把 assets/generated 当层写进 zone，arrange 就此拒摆
+        const boardNow = await readBoard(projectId);
+        const zoneId = layerOf(objectId, null, new Set(Object.keys(boardNow.zones || {})));
         const { zone: placedZone, placed } = await pinToZone(projectId, { objectId, zoneId });
 
         try {
