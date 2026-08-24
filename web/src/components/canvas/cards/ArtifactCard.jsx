@@ -8,6 +8,7 @@ import { versionOfFile, versionOfSitePage } from '../../../lib/file-versions.js'
 import { formatClock } from '../../../lib/helpers.js';
 import { Assets } from '../../../lib/api.js';
 import { joinRel } from '../../../lib/paths.js';
+import { freezeWin, thawWin } from '../../../lib/frame-freeze.js';
 import LiveFrame from '../LiveFrame.jsx';
 
 /**
@@ -87,9 +88,11 @@ export const ARTIFACT_FACES = {
       return t ? `幻灯 · ${t}` : '幻灯';
     },
     /** 16:9 设计稿按 1920 宽等比缩：640/1920 恰好落成 360 高，不裁不留边 */
-    Preview: ({ o, projectId, fileVersions, box }) => (
+    Preview: ({ o, projectId, fileVersions, box, frameRef, onActive }) => (
       <LiveFrame
         title={`deck-${o.id}`}
+        frameRef={frameRef}
+        onActive={onActive}
         src={`${Assets.artifactFileUrl(projectId, o.deckFile)}?v=${versionOfFile(fileVersions, o.deckFile)}`}
         style={{
           width: 1920, height: 1080, border: 0,
@@ -111,7 +114,7 @@ export const ARTIFACT_FACES = {
     /** 滚轮策略（2026-08-14）：站点是长页，预览态的滚动条以前形同虚设 ——
      *  iframe pointerEvents:none，滚轮全被相机吃掉。现在滚轮转发进 iframe。 */
     wheel: 'iframe',
-    Preview: ({ o, projectId, fileVersions, box, frameRef }) => {
+    Preview: ({ o, projectId, fileVersions, box, frameRef, onActive }) => {
       const deviceW = SITE_VIEWPORTS[0].w;
       const scale = box.w / deviceW;
       // 根站的 base 合法地是空串（扁平化后站点长在工作区根上），硬拼 `/` 会造出
@@ -122,6 +125,7 @@ export const ARTIFACT_FACES = {
         <LiveFrame
           title={`site-${o.id}`}
           frameRef={frameRef}
+          onActive={onActive}
           src={`${Assets.artifactFileUrl(projectId, joinRel(base, entry))}?v=${versionOfSitePage(fileVersions, base, entry)}`}
           style={{
             width: deviceW, height: Math.round(box.h / scale), border: 0,
@@ -239,15 +243,43 @@ export function useInViewport(ref) {
 /** 镜头比这个还远时预览什么都看不清，挂 iframe 是纯浪费 */
 const PREVIEW_MIN_SCALE = 0.35;
 
+/**
+ * 活预览的定格延时（08-24 站点卡性能案）：首屏/入场动画跑完这么久之后把
+ * iframe 的 rAF 链冻住（见 lib/frame-freeze.js）—— three.js 站点在卡片里
+ * 60fps 跑真身，一张卡就能拖垮主画布。悬停解冻、移开再冻（短延时）。
+ */
+const FREEZE_AFTER_MS = 2500;
+const REFREEZE_AFTER_MS = 900;
+
 export default function ArtifactCard({
   o, projectId, fileVersions, scale = 1,
   /** 就地改名：名字位换成输入框（与文件夹卡同一套交互） */
   renaming = false, onRenameCommit, onRenameCancel,
+  /** 产物窗开着（08-24）：底下的卡立刻定格 —— 不然窗里窗外是双实例全速跑 */
+  previewPaused = false,
 }) {
   const face = ARTIFACT_FACES[o.type];
   const boxRef = useRef(null);
   const frameRef = useRef(null);
   const inView = useInViewport(boxRef);
+
+  // ── 定格（deck/site 这两张活 iframe 脸才有 contentWindow；图脸上全是 no-op）──
+  const settleTimer = useRef(null);
+  const armFreeze = (delay) => {
+    clearTimeout(settleTimer.current);
+    settleTimer.current = setTimeout(() => { freezeWin(frameRef.current?.contentWindow); }, delay);
+  };
+  // LiveFrame 前台文档就绪（首载 + 版本换代提升）：新窗是热的，跑一会儿再冻。
+  // 窗开着时（paused）只给首帧留个短窗口 —— 反正被盖着，没人在看动画
+  const handleFrameActive = () => armFreeze(previewPaused ? 800 : FREEZE_AFTER_MS);
+  useEffect(() => () => clearTimeout(settleTimer.current), []);
+  useEffect(() => {
+    if (previewPaused) {
+      clearTimeout(settleTimer.current);
+      freezeWin(frameRef.current?.contentWindow);
+    }
+    // 窗关了不自动解冻 —— 定格是常态，想看动的悬停上去
+  }, [previewPaused]);
 
   /**
    * 预览态的滚轮（2026-08-14）：以前这块的滚动条形同虚设 —— 相机在祖先节点上
@@ -333,6 +365,9 @@ export default function ArtifactCard({
         {...(face.scrollable && live
           ? { 'data-board-action': true, onPointerDown: (e) => e.stopPropagation() }
           : null)}
+        // 悬停解冻 / 移开再冻：定格是常态，凑近看它才动
+        onPointerEnter={() => { clearTimeout(settleTimer.current); thawWin(frameRef.current?.contentWindow); }}
+        onPointerLeave={() => armFreeze(REFREEZE_AFTER_MS)}
         style={{
           width: box.w, height: box.h, position: 'relative',
           overflowX: 'hidden', overflowY: face.scrollable && live ? 'auto' : 'hidden',
@@ -341,7 +376,7 @@ export default function ArtifactCard({
         }}
       >
         {live
-          ? <face.Preview o={o} projectId={projectId} fileVersions={fileVersions} box={box} frameRef={frameRef} />
+          ? <face.Preview o={o} projectId={projectId} fileVersions={fileVersions} box={box} frameRef={frameRef} onActive={handleFrameActive} />
           : (
             /* 没挂预览时不留一块空白 —— 空白看着像"这件东西坏了"。
                给一张空白横线纸加形态图标（同首页那张 .ndd-shot.empty），

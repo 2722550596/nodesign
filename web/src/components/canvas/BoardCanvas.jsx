@@ -1698,6 +1698,9 @@ export default function BoardCanvas({
         // 板书防误触：闲置板书（编辑模式关 + 未武装）双击先武装（选中），
         // 武装态再双击才进编辑 —— 单击已经在 board-hit 里被当成空地了
         chalkIdle={!win && !!obj.chalk && !chalkEditMode && !selectedIds.includes(obj.id)}
+        // 产物窗开着 = 桌面被盖住：底下的活预览立刻定格（IO 不认遮挡，
+        // 不冻的话窗里窗外是同一个站点的双实例全速跑 —— 08-24 性能案）
+        previewPaused={deckOpen}
         onPrimary={() => {
           if (!win && obj.chalk && !chalkEditModeRef.current && !selectedIdsRef.current.includes(obj.id)) {
             setSelectedId(obj.id);

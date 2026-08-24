@@ -44,6 +44,8 @@ function BoardObject({
   onMeasured = null,
   /** 板书防误触（2026-08-24）：闲置板书 —— 手势层把它当空地，双击才武装 */
   chalkIdle = false,
+  /** 产物窗开着（08-24）：卡片活预览立刻定格，别跟窗里的实例抢核 */
+  previewPaused = false,
   onPointerDown, wasDrag, onPrimary, onAdd, onOpenViewer, onOpenFile, onDetail, onDeleteNote, onFocus, onOrchestrate,
   onAnnotate,
   onExport,
@@ -252,6 +254,7 @@ function BoardObject({
         <ArtifactCard
           o={o} projectId={projectId} fileVersions={fileVersions} scale={scale}
           renaming={renaming} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+          previewPaused={previewPaused}
         />
       )}
 
