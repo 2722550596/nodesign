@@ -326,7 +326,7 @@ describe('NVIDIA build · Kimi K3 行（08-25）', () => {
     expect(w.wireModel).toBe('moonshotai/kimi-k3');
     expect(w.protocol).toBe('openai-chat');
     expect(w.thinking).toBe('strip');
-    expect(w.reasoningEffort).toBe('high');
+    expect(w.reasoningEffort).toBe('max');   // 08-25 拍板给满：这家限并发不限 token，想多久不额外花钱
     expect(w.helperReasoningEffort).toBe('low');
     // ⛔ medium 上游直接 400（Unsupported Kimi K3 thinking_effort="medium"）—— 改档只能在 low|high|max 里选
     expect(['low', 'high', 'max']).toContain(w.reasoningEffort);

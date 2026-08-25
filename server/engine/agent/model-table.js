@@ -377,7 +377,7 @@ export const MODELS_BUILTIN = Object.freeze([
     // ⚠️ 先 gate localGen（admin + 获批），理由是**限流**：全站共用一把 nvapi 钥匙 = 一个限流桶，
     // 而 agent 一轮会连着发好几发。08-25 实测串行 5 秒间隔的小请求 6 发里就撞了 1 发 429。
     // 开闸只要删掉 gate 这一处（清单、PUT /model、turn.js 三个消费方都走 selectableModelsFor）。
-    select: { label: 'Kimi K3（免费）', desc: '免费 · 有视觉 · 272k 上下文 · 上游限流，偶尔要等自动重试', gate: 'localGen' },
+    select: { label: 'Kimi K3（免费）', desc: '免费 · 有视觉 · 272k 上下文 · 思考档 max，首字可能等 · 上游限流，偶尔要等自动重试', gate: 'localGen' },
     api: {
       upstream: 'nvidia', wireModel: 'moonshotai/kimi-k3',
       // sdkAlias 不写 = 共用别名走会话路由（08-25 起的默认写法，见 SHARED_SDK_ALIAS）
@@ -385,7 +385,12 @@ export const MODELS_BUILTIN = Object.freeze([
       // 交给 /zen/go 那条常驻的 helper 行（跨上游做 helper 有先例：deepseek 视觉行用的是 Ox 的 helper）
       fastModel: 'deepseek-v4-flash-helper',
       thinking: 'strip',            // 转换层按 reasoningEffort 发 thinking_effort，Anthropic 的 thinking 字段出口删掉
-      reasoningEffort: 'high',      // 三档 low|high|max；helper 那行走自己的档，不受这里影响
+      // 三档 low|high|max（没有 medium）。给满档的理由是**这家限的是并发不是 token**（用户 08-25 拍板）：
+      // 想多久都不额外花钱，那就别省。⚠️ 代价是首字更慢 —— Ox 那行的 max 在真会话里想过 4 分 20 秒才出
+      // 第一个字（用户看到的是"只有绿点没有回复"），所以 desc 里写明了；而且想得久就占着并发槽更久，
+      // 全站共用一把 nvapi 钥匙，这也是它先 gate localGen 的原因之一。想改回快档就是这一个字段。
+      // helper 那行走自己的档（deepseek-v4-flash-helper 的 low），不受这里影响。
+      reasoningEffort: 'max',
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },   // 开发者档不计费，真限流的是速率不是钱
     },
   },
