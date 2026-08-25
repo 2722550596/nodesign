@@ -254,7 +254,7 @@ and move on.`,
       shots: z.array(z.object({
         prompt: z.string().describe('H3 three-field English prompt'),
         duration: z.number().min(5.2).max(12.25).default(8),
-        name: z.string().regex(/^[\w-]{1,40}$/).describe('shot slug, unique in batch'),
+        name: z.string().regex(/^[\w一-鿿぀-ヿ-]{1,40}$/).describe('shot slug, unique in batch'),
         first_frame: z.string().optional(),
         last_frame: z.string().optional(),
         steps: z.number().int().min(4).max(8).optional().describe('default 8; 4 = fast draft'),

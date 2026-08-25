@@ -17,6 +17,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isAvailable as rembgAvailable, REMBG_SETUP_HINT } from '../engine/mcp/tools/helpers/rembg.js';
+// 盒子开没开机只有一个判据 —— h3box-ssh.localBoxEnabled。这里曾经自己写了一遍
+// `=== 'on'`，跟那边 `!== 'off'`（默认开）的默认值正好相反，同一个变量两套读法。
+import { localBoxEnabled } from '../engine/mcp/tools/h3box-ssh.js';
 
 const isWin = process.platform === 'win32';
 
@@ -96,8 +99,9 @@ export const CAPABILITY_DEFS = Object.freeze([
     } },
   { id: 'localBox', kind: 'service', level: 'feature', label: '本地 GPU 盒子（paint_still / roll_film）', uses: '自部署生图 / 文生视频',
     fix: 'NODESIGN_LOCAL_BOX=on + NODESIGN_H3BOX_SSH（站主自己的 5090 盒子；一般用户用不上）',
-    probe: () => (process.env.NODESIGN_LOCAL_BOX === 'on' && process.env.NODESIGN_H3BOX_SSH
-      ? { available: true, detail: process.env.NODESIGN_H3BOX_SSH } : { available: false, detail: process.env.NODESIGN_LOCAL_BOX === 'on' ? 'NODESIGN_H3BOX_SSH 为空' : 'NODESIGN_LOCAL_BOX 未开' }) },
+    probe: () => (localBoxEnabled() && process.env.NODESIGN_H3BOX_SSH
+      ? { available: true, detail: process.env.NODESIGN_H3BOX_SSH }
+      : { available: false, detail: !localBoxEnabled() ? '站主标记为关机（NODESIGN_LOCAL_BOX=off）' : 'NODESIGN_H3BOX_SSH 为空' }) },
 ]);
 
 function bin(name, extra = []) {

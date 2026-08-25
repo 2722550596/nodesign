@@ -25,6 +25,7 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import { platform } from '../../runtime/platform.js';
 import { autoModeSettings } from './auto-mode-rules.js';
+import { MCP_ALLOW_RULE } from '../mcp/server-name.js';
 
 /**
  * 会话要用的缓存/临时目录一次备齐（2026-08-19 从 session-loop 下沉）。
@@ -149,7 +150,21 @@ export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, agentT
       },
     },
     settings: {
-      permissions: { deny: platform.protectedPathRules({ dataRoot }) },
+      permissions: {
+        deny: platform.protectedPathRules({ dataRoot }),
+        // 本平台自己的 MCP 工具整服务放行，不过 auto 模式分类器（2026-08-25 用户拍板）。
+        //
+        // 为什么：这些工具是我们自己写的，每一件的边界在服务端**已经**有闸
+        //   —— 出网走 ssrf-guard，publish_site / 本地产线走 owner + 档位闸，
+        //   生图走额度闸，路径走 permissions.deny + 沙盒。让一个模型分类器
+        //   再判一遍 `read_board` 安不安全，既判不出新东西，还多一次外部依赖。
+        // 真实账：真用户会话里分类器**从没拦下过一次真越界**（唯一那条是
+        //   Stage 2 classifier error 误伤 deliver_files 交稿），却因为自身不可用
+        //   挡掉过 8 个会话的正经活（08-24 一天 15 次）。闸门的净效用是负的。
+        // Bash **不在**名单里：它跑的是任意命令，语义判断正是分类器的本职。
+        //   内置的 Read/Write/Edit/WebFetch 等也照旧不动。
+        allow: [MCP_ALLOW_RULE],
+      },
       // auto 模式的分类器规则（只在开了 auto 时注入，省得白占 settings）。
       // ⚠️ 按节替换不是追加 —— 为什么只覆盖 environment / hard_deny 两节，
       // 见 auto-mode-rules.js 文件头。

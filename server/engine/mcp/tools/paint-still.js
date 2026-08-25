@@ -398,7 +398,7 @@ breakage; do not burn high-detail on every frame.`,
         negative: z.string().optional().describe('overrides the per-model default; no-op for krea2'),
         size: z.string().regex(/^\d{3,4}x\d{3,4}$/).default('1344x768'),
         seed: z.number().int().optional().describe('omit for fresh random per still; batch uses seed, seed+1, ...'),
-        name: z.string().regex(/^[\w-]{1,40}$/).default('still'),
+        name: z.string().regex(/^[\w一-鿿぀-ヿ-]{1,40}$/).default('still'),
         batch: z.number().int().min(1).max(8).optional()
           .describe('variations of this same prompt in one pass (default 1). Use 4-8 to roll for a keeper.'),
         lora: z.string().optional()

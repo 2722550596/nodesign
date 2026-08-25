@@ -71,7 +71,24 @@ wrong line". For a brand-new diagram use sketch_on_board.`,
       const objects = {}; const bindings = {};      // 增量 patch
       const live = { ...board.objects };             // 本次调用内的"当前态"（让后一条 op 看见前一条的结果）
       const local = new Map();                       // add_node 的本地句柄 → canvas id
-      const rid = (raw) => { if (local.has(raw)) return local.get(raw); const c = normalizeCanvasId(raw); return c && live[c] ? c : null; };
+      // id 解析三级：本次调用的 add_node 句柄 → 真画布 id → **sketch_on_board 当初
+      // 起的局部名**（data.lid）。第三级是 08-24 信箱那条：agent 画完图接着加线，
+      // 自然会用 `linfan`，而它落定后叫 `text:amt7…`，7 条 add_edge 一次全灭。
+      // 同名跨图时按 tag 收窄；还同名就取最后落盘的那个（同一次 sketch 内 id 唯一，
+      // 撞名只会发生在不同图之间，最近画的那张几乎总是 agent 说的那张）。
+      const byLid = (raw) => {
+        const hits = Object.entries(live).filter(([, e]) => e?.data?.lid === raw && Number.isFinite(e?.x));
+        if (!hits.length) return null;
+        const scoped = defaultTag ? hits.filter(([, e]) => e.tag === defaultTag) : [];
+        const pick = (scoped.length ? scoped : hits);
+        return pick[pick.length - 1][0];
+      };
+      const rid = (raw) => {
+        if (local.has(raw)) return local.get(raw);
+        const c = normalizeCanvasId(raw);
+        if (c && live[c]) return c;
+        return byLid(raw);
+      };
       const rectOf = (id) => { const e = live[id]; return e ? { x: e.x, y: e.y, ...estimateSizeOn(board, id, e) } : null; };
       const placeRel = (box, rel) => {
         const r = rectOf(rid(rel.ref));
@@ -139,7 +156,13 @@ wrong line". For a brand-new diagram use sketch_on_board.`,
             report.push(`+ node ${o.id ? `${o.id}=` : ''}${id}`); ok += 1;
           } else if (o.op === 'add_edge') {
             const from = rid(o.from); const to = rid(o.to);
-            if (!from || !to || from === to) { fail(`端点不在板上：${o.from} → ${o.to}`); continue; }
+            if (!from || !to || from === to) {
+              const miss = [!from ? o.from : null, !to ? o.to : null].filter(Boolean).join(' / ') || '两端相同';
+              fail(`端点不在板上：${o.from} → ${o.to}（找不到：${miss}）。`
+                + '画布 id 长这样 text:a… / scribble:a… / 文件路径；sketch_on_board 里起的局部名也认，'
+                + '但要那张图还在板上。read_board 看一眼现在都有谁。');
+              continue;
+            }
             const id = `b:a${stamp()}`;
             const tag = o.tag || defaultTag || live[from]?.tag || live[to]?.tag || null;
             bindings[id] = { type: o.type || 'link', from, to, by: 'agent', ...(o.material && o.material !== 'ink' ? { material: o.material } : {}), ...(o.label ? { label: o.label } : {}), ...(tag ? { tag } : {}) };

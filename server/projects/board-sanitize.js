@@ -6,7 +6,7 @@
  * 行数棘轮，语义一个字没改。
  *
  * schema 见 board-store 头注释。黑板字段（2026-08-23）：
- *   object.tag / object.staging / text.data.format
+ *   object.tag / object.staging / text.data.format / text.data.lid
  *   binding.material / binding.tag / binding.staging
  */
 
@@ -117,6 +117,10 @@ function sanitizeCanvasData(kind, data) {
       font: TEXT_FONTS.includes(data?.font) ? data.font : 'kai',
       size: TEXT_SIZES.includes(data?.size) ? data.size : 'md',
       color: ['ink', 'red', 'pencil', 'brass'].includes(data?.color) ? data.color : 'ink',
+      // lid = sketch_on_board 里那个局部 id（linfan / zhangwei…）。留着它，
+      // edit_sketch 才能按 agent 当初起的名字找回这个节点 —— 否则局部 id 一落定
+      // 就作废，加条线得先去翻上一次调用的返回。这层是白名单重建，不列就丢。
+      ...(typeof data?.lid === 'string' && /^[A-Za-z0-9_-]{1,24}$/.test(data.lid) ? { lid: data.lid } : {}),
       ...sanitizeTransform(data),
     };
   }

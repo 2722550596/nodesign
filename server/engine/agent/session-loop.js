@@ -56,6 +56,7 @@ import { createHooks } from './hooks.js';
 import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isolation.js';
 import { MEMORY_EXTRA_GUIDELINES, mergeAgentSettings } from './memory-config.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
+import { MCP_SERVER_NAME } from '../mcp/server-name.js';
 import { assertInitContract } from './init-contract.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensoredModel } from './model-context.js';
@@ -604,7 +605,9 @@ export async function runSession({
     hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId, projectId }),
 
     mcpServers: {
-      nodesign: nodesignServer,
+      // 键名 = 模型眼里的 `mcp__<名>__<工具>` 前缀，也是 isolation.js 那条
+      // permissions.allow 规则要匹配的名字 —— 两个读者，收在 mcp/server-name.js
+      [MCP_SERVER_NAME]: nodesignServer,
     },
 
     // mainModel = appModel ('kimi-k2.6')，sdkModel = SDK 视角 alias ('claude-opus-4-7[1m]')。

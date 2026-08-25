@@ -29,7 +29,8 @@
 
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { withParamSanitizer } from './param-sanitizer.js';
-import { withCapabilityGate } from './capability-gate.js';
+import { withCapabilityGate, shouldRegisterTool } from './capability-gate.js';
+import { MCP_SERVER_NAME } from './server-name.js';
 import { makeScreenshotCanvasTool } from './tools/screenshot.js';
 import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
 import { makeExportHandoffTool } from './tools/export-handoff.js';
@@ -314,7 +315,12 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 注：Phase Image-2 的 request_image_approval 工具已废弃（2026-05-06）。
       // generate_image 的 CallToolResult 已返 image content block，前端自动渲染；
       // agent 在 caption / 自然回话邀请反馈，下一轮用户 chat 即天然 gate。
-  ].map((t) => (
+  ].filter((t) => (
+    // 本机能力缺席且该工具是 unregister 档 → 整件不注册（连名字都不进上下文）。
+    // 现在只有本地 GPU 盒子那两件：盒子手动开关，关着时留名字只会让 agent 去撞
+    // SSH 拒连。对照表在 capability-gate.js 一份。
+    shouldRegisterTool(t)
+  )).map((t) => (
     // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
     // 集中在这打标避免改 16 个工具文件）
     ALWAYS_LOAD_TOOLS.has(t.name)
@@ -332,7 +338,9 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
   ));
 
   const server = createSdkMcpServer({
-    name: 'nodesign',
+    // 名字收在 mcp/server-name.js：它同时是 session-loop 里 mcpServers 的键
+    // （决定模型看到的 mcp__nodesign__* 前缀）和 isolation.js 那条 allow 规则要匹配的名
+    name: MCP_SERVER_NAME,
     version: '0.1.0',
     tools,
   });

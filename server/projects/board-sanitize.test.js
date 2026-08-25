@@ -63,3 +63,32 @@ describe('画布 id 路径安全（fable 08-23 P0）', () => {
     expect(Object.keys(b.objects)).toEqual(['ok.png']);
   });
 });
+
+/**
+ * lid = sketch_on_board 起的局部节点名（2026-08-25，信箱 iss_mt7mfgt8_m7uf）。
+ * 这层是白名单重建，新字段不列进来就静默丢 —— 丢了 edit_sketch 的第三级 id
+ * 解析就永远查不到，而且不会有任何报错。所以单独钉一条。
+ */
+describe('text.data.lid 存活（局部节点名）', () => {
+  it('合法 lid 留住，非法/超长/非串一律不落字段', () => {
+    const b = sanitizeBoard({
+      objects: {
+        'text:a': { x: 0, y: 0, kind: 'text', data: { t: 'hi', lid: 'linfan' } },
+        'text:b': { x: 0, y: 0, kind: 'text', data: { t: 'hi', lid: '有 空格' } },
+        'text:c': { x: 0, y: 0, kind: 'text', data: { t: 'hi', lid: 'x'.repeat(25) } },
+        'text:d': { x: 0, y: 0, kind: 'text', data: { t: 'hi', lid: 7 } },
+        'text:e': { x: 0, y: 0, kind: 'text', data: { t: 'hi' } },
+      },
+    });
+    expect(b.objects['text:a'].data.lid).toBe('linfan');
+    for (const id of ['text:b', 'text:c', 'text:d', 'text:e']) {
+      expect(b.objects[id].data.lid).toBeUndefined();
+    }
+  });
+
+  it('过一遍 sanitize 再过一遍，lid 不会掉（前端回写会反复走这层）', () => {
+    const once = sanitizeBoard({ objects: { 'text:a': { x: 0, y: 0, kind: 'text', data: { t: 'hi', lid: 'su-wan' } } } });
+    const twice = sanitizeBoard(once);
+    expect(twice.objects['text:a'].data.lid).toBe('su-wan');
+  });
+});

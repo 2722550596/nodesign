@@ -56,3 +56,30 @@ describe('bwrap 垫片的 env', () => {
     expect(out.NODESIGN_SHIM_LOG).toBe('/data/.sandbox-shim.log');
   });
 });
+
+describe('MCP 工具整服务放行（2026-08-25）', () => {
+  const base = { cwdRoot: '/w', sharedRoot: null, npmCacheDir: '/data/.npm-cache', dataRoot: '/data', env: {} };
+
+  it('allow 里有整服务规则，且名字跟 mcpServers 的键同源', async () => {
+    const { MCP_SERVER_NAME, MCP_ALLOW_RULE } = await import('../mcp/server-name.js');
+    const { settings } = buildIsolationOptions(base);
+    expect(settings.permissions.allow).toContain(MCP_ALLOW_RULE);
+    expect(MCP_ALLOW_RULE).toBe(`mcp__${MCP_SERVER_NAME}`);
+    // session-loop 用同一个常量当 mcpServers 的键 —— 谁改名都不会只改一头
+    const src = await import('node:fs/promises').then(fs => fs.readFile('server/engine/agent/session-loop.js', 'utf8'));
+    expect(src).toContain('[MCP_SERVER_NAME]: nodesignServer');
+  });
+
+  it('⛔ Bash 绝不能进 allow —— 它跑任意命令，语义判断正是分类器的本职', () => {
+    const { settings } = buildIsolationOptions(base);
+    for (const rule of settings.permissions.allow) {
+      expect(String(rule).startsWith('Bash')).toBe(false);
+    }
+  });
+
+  it('deny 没被 allow 挤掉（两节共存，不是互相覆盖）', () => {
+    const { settings } = buildIsolationOptions(base);
+    expect(Array.isArray(settings.permissions.deny)).toBe(true);
+    expect(settings.permissions.deny.length).toBeGreaterThan(0);
+  });
+});

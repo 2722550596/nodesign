@@ -87,7 +87,7 @@ Per sketch: ≤${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges (spl
         font: z.enum(['pen', 'kai', 'sans', 'serif', 'mono']).optional(),
         color: z.enum(['ink', 'red', 'pencil', 'brass']).optional(),
         at: GRID_PT.optional().describe('Grid position (layout free); top-left of the node'),
-        w: z.number().min(3).max(22).optional().describe('Width in grid units (md nodes; default by content; ≤22 = 528px — paragraphs grow down, not wide)'),
+        w: z.number().min(3).max(40).optional().describe('Width in grid units (md nodes; default by content; ≤40 = 960px. Prefer ≤22 (528px): paragraphs read better growing down than wide)'),
       })).max(MAX_NODES).optional(),
       shapes: z.array(z.object({
         id: LOCAL_ID.optional(),
@@ -286,7 +286,9 @@ Per sketch: ≤${MAX_NODES} nodes, ${MAX_SHAPES} shapes, ${MAX_EDGES} edges (spl
         const p = pos.get(n.key);
         objects[idOf.get(n.key)] = {
           x: Math.round(p.x + ox), y: Math.round(p.y + oy), w: n.w, h: n.h, kind: 'text',
-          data: { t: n.text, ...(n.format === 'md' ? { format: 'md' } : {}), font: TEXT_FONTS.includes(n.font) ? n.font : 'pen', size: n.size, color: n.color },
+          // lid：agent 当初给这个节点起的局部名。留着它，后续 edit_sketch 就能
+          // 直接用 `linfan` 而不是回头抄 `text:amt7…`（08-24 信箱：7 条 add_edge 全灭）
+          data: { t: n.text, ...(n.format === 'md' ? { format: 'md' } : {}), font: TEXT_FONTS.includes(n.font) ? n.font : 'pen', size: n.size, color: n.color, lid: n.key },
           ...common,
         };
       }

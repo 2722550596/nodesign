@@ -87,7 +87,7 @@ to also read your own console.log output from the page (grouped, capped).
 
 FILMSTRIP — the eye for ANIMATION. A single still cannot show easing, overshoot,
 hard cuts between tweens, or "the whole move played off-screen". Pass
-frames (2-30 ms offsets, e.g. [0,120,240,400,700]) + trigger:"window.game.reload()" (JS that
+frames (2-30 ms offsets within a 30s window, e.g. [0,120,240,400,700]) + trigger:"window.game.reload()" (JS that
 starts the move) and you get ONE contact sheet: the same viewport at each of those
 moments, timestamped. One image = one motion curve — judge attack, overshoot,
 settle and cuts directly. click:"#start" performs a REAL trusted click instead
@@ -168,7 +168,7 @@ Do NOT use this tool when:
         .optional()
         .describe("Console capture level for the caption. Default 'warn' returns only warnings/errors (the count of filtered log lines is reported). Pass 'all' to also get console.log/info/debug output — the only way to read your own debug logging from the page."),
       frames: z
-        .array(z.number().min(0).max(15000))
+        .array(z.number().min(0).max(30000))
         .min(1)
         .max(30)
         .optional()
