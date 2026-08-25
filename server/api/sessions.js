@@ -45,8 +45,8 @@ import { AsyncQueue } from '../lib/async-queue.js';
 import { getProjectBus } from '../ws/broker.js';
 import { getLastContextUsage } from '../engine/runs/live-turn.js';
 import { Events } from '../engine/agent/events.js';
-import { resolveSessionModel, applySessionModel } from '../engine/agent/session-model.js';
-import { selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, crossLaneSwitchReason } from '../engine/agent/model-context.js';
+import { resolveSessionModel, applySessionModel, defaultModel } from '../engine/agent/session-model.js';
+import { selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, modelSwitchRejection } from '../engine/agent/model-context.js';
 
 /**
  * 进行中的 rewind 操作 sid 集合 —— 供 turn.js startNewRunSession 守卫使用，
@@ -244,12 +244,23 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
 
     await ensureSessionWorkspace(req.params.pid, req.params.sid);
     const metaDir = getSessionMetaDir(req.params.pid, req.params.sid);
+    // ⛔ 这条闸 08-25 之前是**死守卫**（08-21 装的时候就写错了位置）：它写在 applySessionModel 之后，
+    // 又拿 apply **之后**读回来的 currentModel 去比 —— 那就是 raw 跟它自己比，crossLaneSwitchReason
+    // 的第一行 `fromModel === toModel` 直接返回 null，一次都没拦住过；而且就算能拦，文件已经写了、
+    // 空闲的 query 也已经被 applySessionModel 关掉重启了，409 只是句马后炮。
+    // 现在：**apply 之前**读、拿 apply 之前的有效模型比。`raw === null`（清覆盖回默认）同样要判 ——
+    // 从 Ox 会话清回订阅默认，是同一个病。
+    const before = await resolveSessionModel(metaDir);
+    const target = raw ?? defaultModel();
+    // 只对**跑过的会话**拦：这条闸防的是历史里那些没有 signature 的 thinking 块被回传给真 Anthropic
+    // （08-21 fable P3）。还没跑过的会话没有历史，拦它只会让人换不了模型。
+    const why = modelSwitchRejection({
+      from: before.model, to: target,
+      hasHistory: await jsonlExistsForSession(getSessionWorkspace(req.params.pid, req.params.sid), req.params.sid),
+    });
+    if (why) return res.status(409).json({ error: why, code: 'LANE_SWITCH' });
     const result = await applySessionModel(req.params.sid, metaDir, raw, 'picker');
-    const { fallback, model: currentModel } = await resolveSessionModel(metaDir);
-    if (raw !== null) {
-      const why = crossLaneSwitchReason(currentModel, raw);
-      if (why) return res.status(409).json({ error: why, code: 'LANE_SWITCH' });
-    }
+    const { fallback } = await resolveSessionModel(metaDir);
     res.json({
       model: result.model,
       override: result.override,

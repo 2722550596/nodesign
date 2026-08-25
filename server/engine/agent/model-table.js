@@ -59,6 +59,36 @@ export const UPSTREAMS_BUILTIN = Object.freeze({
   }),
   // 08-21 晚：Zen 第二入口 /zen/go（= OpenCode Go 订阅入口）。同钥匙、目录不同（Ox 叫 ox-alpha-free，x-preview-f-free 它回 401）；
   // 响应带 `cost`（流式在 [DONE] 之后补 {"choices":[],"cost":"…"}）与 cached_tokens → lib/ingress/upstream-billing.js。'zen' 留着可切回
+  // GMI Cloud（08-25）：算力平台，转卖各家开源权重的部署。**它自己就说 Anthropic 协议**
+  // （`/v1/messages` 原生，不是桥）—— 08-25 用 server/_probe-upstream.mjs 体检 M3 拿 8/9：
+  // 顶层图 ✓ / tool_result 图原样直通 ✓ / prompt cache 真命中 ✓ / 流式 tool_use 分片 ✓ /
+  // max_tokens 128k 不炸 ✓，只差 count_tokens（404，入口本地估算兜底）。所以**不走
+  // openai-chat 转换层**：同一条链路上少一层翻译就少一类 quirk。
+  // ⚠️ 这个账户没有余额：付费模型（gemini/claude/gpt 那些它也转卖）一律 402 CreditsError，
+  // 只有 is_free 的 MiniMax 两行能用 —— 也就是说踩错行不会静默花钱，会当场 402 fail-loud。
+  // 钥匙是一枚 JWT（`~/apikey/gmicloud-API.md`），x-api-key 和 bearer 两种头实测都通，
+  // 按平台文档取 bearer。
+  gmi: Object.freeze({
+    label: 'GMI Cloud api.gmi-serving.com',
+    baseUrl: process.env.NODESIGN_UPSTREAM_GMI_URL || 'https://api.gmi-serving.com',   // ⚠️ 不带 /v1：透传路是 baseUrl + 原始路径
+    keyEnv: 'NODESIGN_UPSTREAM_GMI_KEY',
+    authStyle: 'bearer',
+    countTokens: false,   // 08-25 体检：404
+  }),
+  // NVIDIA build（08-25）：NVIDIA 自己托管的一堆开源权重（102 个模型），开发者档拿 nvapi- 钥匙直接用。
+  // ⛔ **只有 OpenAI 格式**：`/v1/messages` 和 `/v1/messages/count_tokens` 都是 404 → 走 openai-chat 转换层。
+  // ⚠️ 免费档**限流很紧**：08-25 实测串行、间隔 5 秒的小请求里 6 发撞了 1 发 429（141ms 就回），
+  // 大 body 的请求更容易撞。入口对 4xx 是原样透传状态码（forward-openai-chat.js），CLI 见 429 会退避重试、
+  // 用户那边会收到「上游繁忙，正在自动重试」——能用，但别指望它当高频主力。
+  // 延迟画像（同一趟实测 max_tokens=20 的小请求）：中位 772ms，但尾巴很长（单发见过 24.8s / 69s）。
+  nvidia: Object.freeze({
+    label: 'NVIDIA build integrate.api.nvidia.com',
+    baseUrl: process.env.NODESIGN_UPSTREAM_NVIDIA_URL || 'https://integrate.api.nvidia.com/v1',
+    keyEnv: 'NODESIGN_UPSTREAM_NVIDIA_KEY',
+    authStyle: 'bearer',
+    protocol: 'openai-chat',
+    countTokens: false,   // 08-25 体检：404
+  }),
   zenGo: Object.freeze({
     label: 'OpenCode Zen Go',
     baseUrl: process.env.NODESIGN_UPSTREAM_ZEN_GO_URL || 'https://opencode.ai/zen/go/v1',   // 探针覆盖，同上
@@ -77,7 +107,12 @@ export const UPSTREAMS_BUILTIN = Object.freeze({
  *   api      API 通路配置（没有 = 订阅通路）：
  *     upstream   UPSTREAMS 的 key
  *     wireModel  发给上游的真模型名（入口出口替换）
- *     sdkAlias   喂 SDK 的 spoof 名（必须是 SDK 认识的 Claude 名；⚠️全表唯一）
+ *     sdkAlias   喂 SDK 的 spoof 名。**可选，加新行默认不用写**：不写 = 自动用共用别名
+ *                （SHARED_SDK_ALIAS，model-context.js 派生时补上）走会话级路由，全表反查
+ *                认不出这行的 alias（没会话前缀的请求 502，探针带 /__nd/<sid> 前缀）。
+ *                显式写 = 独占一个 1M 坑位（必须是 SDK 认识的订阅 Claude 名，⚠️独占名
+ *                全表唯一、加载断言），换来的是没会话也能按 alias 反查（裸探针能直呼）。
+ *                七个独占坑位已全部占满（见下面 SHARED_SDK_ALIAS 注释），新行别惦记
  *     fastModel  该路的 helper/subagent 模型（必须也是本表可路由的 id；
  *                订阅的 haiku 在 API 模式不可用 —— binary 见 API key 即弃 OAuth，
  *                helper 请求同样走唯一的 BASE_URL）
@@ -101,7 +136,23 @@ export const UPSTREAMS_BUILTIN = Object.freeze({
  * **隐身/神秘的免费行一律用供应商 OpenCode 的方块标**（Ox 这类不公开身份的模型）。
  */
 // 'custom'：本地分发版用户自己配的插槽（runtime/local-config.js）没填 brand 时的默认牌子，前端用通用标
-export const BRANDS = Object.freeze(['claude', 'deepseek', 'opencode', 'gemini', 'qwen', 'custom']);
+export const BRANDS = Object.freeze(['claude', 'deepseek', 'opencode', 'gemini', 'qwen', 'minimax', 'kimi', 'custom']);
+
+/**
+ * **共用 spoof 别名**：`sdkAlias` 不写时的默认值（model-context.js 派生时补上）。
+ *
+ * SDK binary 认识的 1M 名只有七个（strings 扫出来：opus-4-6/4-7/4-8/5、sonnet-4-5-20250929/4-6/5），
+ * 六个已被内置行独占、sonnet-5[1m] 是订阅默认行不许被路由 —— 也就是说「一行一个独占别名」这条路
+ * 已经走到头。共用别名的行（= 不写 sdkAlias 的行 + 本地分发版的全部外部插槽）**不进 WIRE_LOOKUP
+ * 的 alias 键、只按 id 可查**，靠会话级路由分辨（lib/ingress/session-routes.js：一个会话只认
+ * 自己那行和自己的 fast 行，主行优先）。外部插槽（runtime/local-config.js）一直是这么跑的，
+ * 08-25 起内置行也走这条默认路 —— **加新模型行不用再考虑别名这件事**。
+ *
+ * ⚠️ 代价：**没注册会话的请求用这个名发过来一律 502**（全表反查里没有它）—— 探针要带会话前缀
+ * （`/__nd/<sid>/v1/messages`），直呼 appModel id 也行。
+ * ⚠️ 它必须始终是表内一条订阅 Claude 行（SDK 才认识、窗口才查得到）——model-context.js 加载断言。
+ */
+export const SHARED_SDK_ALIAS = 'claude-sonnet-4-6[1m]';
 
 export const MODELS_BUILTIN = Object.freeze([
   // ── 订阅通路（Claude 真名，零注入）──
@@ -116,7 +167,7 @@ export const MODELS_BUILTIN = Object.freeze([
   { id: 'claude-sonnet-5',       window: 200_000, brand: 'claude' },
   { id: 'claude-opus-5',         window: 200_000, brand: 'claude' },
   { id: 'claude-opus-4-7[1m]',   window: 1_000_000, brand: 'claude' },
-  { id: 'claude-sonnet-4-6[1m]', window: 1_000_000, brand: 'claude' },
+  { id: 'claude-sonnet-4-6[1m]', window: 1_000_000, brand: 'claude' },   // = SHARED_SDK_ALIAS（共用别名的本体行，删了它加载断言会炸）
   { id: 'claude-opus-4-7',       window: 200_000, brand: 'claude' },
   { id: 'claude-sonnet-4-6',     window: 200_000, brand: 'claude' },
   { id: 'claude-haiku-4-5',      window: 200_000, brand: 'claude' },
@@ -127,8 +178,9 @@ export const MODELS_BUILTIN = Object.freeze([
   { id: 'claude-opus-4-8[1m]',   window: 1_000_000, brand: 'claude' },
   // 同上，七个里最后一个空着的，给 ox-alpha-max 行做 spoof（08-21 晚）
   { id: 'claude-sonnet-4-5-20250929[1m]', window: 1_000_000, brand: 'claude' },
-  // alias 池现状（08-21 深夜清槽后）：opus-4-6[1m]→gemini-3.7-flash、opus-4-7[1m]→deepseek-v4-flash-vision、opus-4-8[1m]→ox-alpha、
-  // opus-5[1m]→qwen、sonnet-4-5-20250929[1m]→ox-alpha-max、haiku-4-5→ox-alpha-helper；**sonnet-4-6[1m] 空着备用**；sonnet-5[1m] 是订阅默认行不许被路由
+  // 独占 alias 池现状（08-25 起已满员）：opus-4-6[1m]→gemini-3.7-flash、opus-4-7[1m]→deepseek-v4-flash-vision、opus-4-8[1m]→ox-alpha、
+  // opus-5[1m]→qwen、sonnet-4-5-20250929[1m]→ox-alpha-max、haiku-4-5→ox-alpha-helper；sonnet-5[1m] 是订阅默认行不许被路由；
+  // **sonnet-4-6[1m] = SHARED_SDK_ALIAS**（共用别名，永远不许被独占 —— 新行不写 sdkAlias 就用它）
 
   // ── API 通路 ──
   // kimi-k2.6 行与 moonshot 上游 08-21 深夜清掉（用户：「把 kimi 3.1pro 的槽都清理一下」）：NoDesk 退役后没走过流量，
@@ -287,6 +339,101 @@ export const MODELS_BUILTIN = Object.freeze([
       reasoningEffort: 'low',
       maxOutput: 131_072,
       prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  },
+  // ── GMI Cloud · MiniMax（08-25）── 两行都是 GMI 标 `is_free` 的免费部署；账户无余额，付费行 402，
+  // 所以这条上游不存在"选错模型静默烧钱"。目录价（免费期结束后才会真收）：M3 $0.60/$2.40 缓存 $0.12，
+  // **prompt 超过 512k 单价翻倍**（$1.20/$4.80）；M2.7 $0.30/$1.20 缓存 $0.06。今天一律记 0。
+  {
+    // 真窗口 1048576。272k 是用户 08-25 拍板的档（跟 deepseek 行同一个理由：每轮都要重传全量上下文，
+    // 这台机器的出网流量超 200GiB/月要真付钱；且正好落在 GMI「512k 以上翻倍」那道价格坎下面）。
+    id: 'minimax-m3', window: 272_000, brand: 'minimax',
+    select: { label: 'MiniMax M3（免费）', desc: '免费 · 有视觉 · 272k 上下文 · 自己决定想多久' },
+    api: {
+      upstream: 'gmi', wireModel: 'MiniMaxAI/MiniMax-M3',
+      // 不写 sdkAlias = 共用别名（SHARED_SDK_ALIAS）走会话级路由：会话认得出，
+      // 全表反查认不出（探针要带会话前缀）。独占 1M 坑位 08-25 起已满员，新行都走这条默认路。
+      fastModel: 'deepseek-v4-flash-helper',
+      // ⭐ M3 的思考是**开关不是档位**：GMI 部署实测 adaptive（模型自己决定想不想、想多久）/
+      // disabled（不想）/ enabled+budget（每轮强制想）三种都收，但没有 low|medium|high 这套档。
+      // 本站给 API 行一律发 enabled+8192（pickThinkingConfig），对 M3 等于每一轮都强制想 ——
+      // agent 的活大半是"读文件、调工具"这种不值得想的，所以出口改写成 adaptive。
+      thinking: 'adaptive',
+      liftImages: false,   // 08-25 体检 3b：tool_result 里的图**原生直通**（跟 llama.cpp 一样），不需要提升
+      prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    },
+  },
+  // ── NVIDIA build · Kimi K3（08-25）── 免费开发者档，08-25 体检（裸 OpenAI 协议）：
+  // 文本 ✓ / 工具（含回程 tool 消息）✓ / **视觉真的有** ✓（判据是 token 账：同一张图 prompt_tokens 98 → 322
+  // 且答出图里的 ND-7342 与黄色三角）/ 流式含 reasoning_content 与 tool_calls 增量、末块带 usage ✓ /
+  // prompt cache 命中（8101 里缓存 3072）✓ / 上下文实测 **40 万 token 照收**（260k/400k 两档都 200）。
+  // ⛔ 没有 /v1/messages 也没有 count_tokens（都 404）→ 走 openai-chat 转换层 + 入口本地估算。
+  // ⛔ 思考档是 **low | high | max** 三个值（上游 400 的原话：`Unsupported Kimi K3 thinking_effort="medium"`），
+  // 跟 Ox 一样，所以 medium 别写。
+  {
+    // 上游至少收 400k，这里按 272k 收口：跟 deepseek 行同一个理由（每轮重传全量上下文，出网流量要钱），
+    // 而且实测延迟随上下文明显变长（260k 那发 24.9s、400k 那发 39.8s）。要放大改这一个数就行。
+    id: 'kimi-k3', window: 272_000, brand: 'kimi',
+    // ⚠️ 先 gate localGen（admin + 获批），理由是**限流**：全站共用一把 nvapi 钥匙 = 一个限流桶，
+    // 而 agent 一轮会连着发好几发。08-25 实测串行 5 秒间隔的小请求 6 发里就撞了 1 发 429。
+    // 开闸只要删掉 gate 这一处（清单、PUT /model、turn.js 三个消费方都走 selectableModelsFor）。
+    select: { label: 'Kimi K3（免费）', desc: '免费 · 有视觉 · 272k 上下文 · 上游限流，偶尔要等自动重试', gate: 'localGen' },
+    api: {
+      upstream: 'nvidia', wireModel: 'moonshotai/kimi-k3',
+      // sdkAlias 不写 = 共用别名走会话路由（08-25 起的默认写法，见 SHARED_SDK_ALIAS）
+      // helper 特意**不留在 NVIDIA**：那把钥匙的限流桶是全站共用的，标题/分类器那几发会跟主回合抢配额，
+      // 交给 /zen/go 那条常驻的 helper 行（跨上游做 helper 有先例：deepseek 视觉行用的是 Ox 的 helper）
+      fastModel: 'deepseek-v4-flash-helper',
+      thinking: 'strip',            // 转换层按 reasoningEffort 发 thinking_effort，Anthropic 的 thinking 字段出口删掉
+      reasoningEffort: 'high',      // 三档 low|high|max；helper 那行走自己的档，不受这里影响
+      prices: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },   // 开发者档不计费，真限流的是速率不是钱
+    },
+  },
+  // ⛔ `minimax-m2.7` 行 08-25 当天加上又撤掉（用户拍板「2.7 撤了吧」）：**GMI 这家部署把图整个丢掉**。
+  // 判据是 token 账不是模型的说法 —— 七种形态（Anthropic base64 图在前/文本在前、source.type=url、
+  // OpenAI data:URI、OpenAI http URL、两个协议的纯文本基线）打过去，input_tokens **一律 47**，
+  // 跟不带图的基线一个字节不差；同一趟 M3 是 27 → 561/667/703/809 且描述对得上真值。上游 200、不报错，
+  // 模型只会说"我没看到图片" —— 静默丢弃。加上它比它自己慢一档（同题 M3 3s / M2.7 34s），
+  // 本站整条感知栈（截图、板面渲染、生图回看）都靠工具回图，一个瞎子行只会让人踩坑。
+  // 复牌就是照着 minimax-m3 那行写一份：wireModel 'MiniMaxAI/MiniMax-M2.7'、window 180_000、
+  // 不写 sdkAlias（默认共用别名）、fastModel 'deepseek-v4-flash-helper'、thinking 'adaptive'、零价 —— 但先重跑一遍
+  // server/lib/_gmi-check.mjs 的图那一项，确认这家换后端了再说。
+  {
+    // ── 通用 helper 行（08-25 晚，用户拍板"用 opencode 的 deepseek-v4-flash，这个坚挺"）──
+    // 标题 / auto 分类器 / 摘要这类一句话的活。不进 picker。
+    //
+    // 为什么单独一行：session-loop 给 CLI 的 ANTHROPIC_SMALL_FAST_MODEL 是 **app id**，helper 请求
+    // 因此带着这一行的 id 进来 —— 跟主行的名字不同，入口才分得出 role（同名就分不出，主行想多久
+    // helper 跟着想多久）。
+    //
+    // ⭐ 为什么挂在 zenGo 而不是跟着主行走：**helper 要挑最耐久的那条线，不是最便宜的那条**。
+    // GMI 的 MiniMax 是限时免费（免费期结束就 402），NVIDIA 的开发者档限流紧（429 说来就来，
+    // 而且全站共用一把钥匙 = 一个限流桶，helper 会跟主回合抢），Ox 是随时可能下架的 stealth 行。
+    // /zen/go 是按月订阅的池子，deepseek-v4-flash 是它目录里的常驻款。08-25 实测：1.3~2.3s、
+    // reasoning_effort 三档都收、额度内 cost 报 "0"。
+    //
+    // ⚠️ 这条一挂上，**minimax-m3 就成了第一条"主行说 Anthropic、fast 行说 OpenAI"的会话**。
+    // 值得担心的是转换层合成的 thinking 块没有 signature（08-21 记过：这种块回传给真 Anthropic 会
+    // 400 invalid signature，crossLaneSwitchReason 那条闸就是为它装的）。08-25 专门探了一遍 GMI：
+    // 空 signature / 没有 signature 字段 / 瞎编 32 字节，**三种都照收 200**（答案还对）——
+    // 也就是这家不校验签名，这个配对是安全的。⛔ 换别的 Anthropic 原生上游做主行时要重探这一项。
+    id: 'deepseek-v4-flash-helper', window: 272_000, brand: 'deepseek',
+    api: {
+      // ⛔ **必须是 -vision-exp 那个变体**：08-25 实测同池的纯文本版 `deepseek-v4-flash` 一带图就 400
+      // （上游原话 invalid_request / "does not support image"），而 helper 行接的**不只是标题** ——
+      // auto-compact 要把整段对话（含工具回的截图）交给它，会话级路由还会把一切认不出的名字兜底改道过来。
+      // 更坏的是这类失败**不出声**：ingress 对 helper 角色特意不推 onNotice / 不报 onTruncated
+      // （model-ingress.js），用户只会觉得"标题没生成、压缩没做成"，日志里也难翻。
+      // 对照实测：纯文本版 无图 200 / 有图 400；vision-exp 无图 200 / 有图 200。
+      upstream: 'zenGo', wireModel: 'deepseek-v4-flash-vision-exp',
+      fastModel: 'deepseek-v4-flash-helper',   // 不写 sdkAlias，走共用别名
+      thinking: 'strip',                       // 出口删 thinking 字段，档位由 reasoningEffort 发
+      reasoningEffort: 'low',                  // 一句话的活不该想；实测 low 仍会想一两句，够短
+      // ⚠️ 不设 maxOutput（走转换层默认 131072）：auto-compact 的摘要也走这一行，钉个小上限会把摘要
+      // 静默截断 —— 而 helper 的截断标记恰恰是被压掉的那一路，出了事没有任何信号
+      // Go 额度内上游报 cost="0"，真金额以上游为准（context.applyUpstreamBilling）；这里的表价是
+      // 额度外的兜底与配额口径，先跟视觉那行同价（保守高估，helper 一次也就几百 token）
+      prices: { input: 0.44, output: 1.32, cacheRead: 0.014, cacheWrite: 0 },
     },
   },
 ]);

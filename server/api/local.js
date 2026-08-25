@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { platform } from '../runtime/platform.js';
 import { loadLocalConfig, saveLocalConfig, CONFIG_ENUMS } from '../runtime/local-config.js';
-import { MODEL_CONFIG_ERRORS, EXTERNAL_SDK_ALIAS, externalModelIds } from '../engine/agent/model-context.js';
-import { UPSTREAMS_BUILTIN } from '../engine/agent/model-table.js';
+import { MODEL_CONFIG_ERRORS, externalModelIds } from '../engine/agent/model-context.js';
+import { UPSTREAMS_BUILTIN, SHARED_SDK_ALIAS } from '../engine/agent/model-table.js';
 import { capabilitySnapshot } from '../runtime/capabilities.js';
 import { TOOL_CAPABILITIES } from '../engine/mcp/capability-gate.js';
 import { probeCapabilities } from '../runtime/capabilities.js';
@@ -42,7 +42,8 @@ router.get('/status', (_req, res) => {
     modelConfigErrors: MODEL_CONFIG_ERRORS,
     // 本机能力位 + 每个能力位管着哪些工具（配置页那张表）
     capabilities: capabilitySnapshot().map((c) => ({ ...c, tools: Object.entries(TOOL_CAPABILITIES).filter(([, v]) => v.cap === c.id).map(([t]) => t) })),
-    externalSdkAlias: EXTERNAL_SDK_ALIAS,
+    // 外部插槽（和一切不写 sdkAlias 的行）借用的共用 spoof 名。响应字段名保持 externalSdkAlias 不动（对外形状）
+    externalSdkAlias: SHARED_SDK_ALIAS,
     // 内置 Claude 行现在能不能选：'api_key' | 'login' | null（设置页「模型」那块的状态行）
     claudeAuth: platform.claudeAuthPresent(),
     // 内置上游（只报名字和是否配了钥匙，不报钥匙）：配置页提示「这些名字被占了」

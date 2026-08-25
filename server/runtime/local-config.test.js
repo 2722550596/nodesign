@@ -63,20 +63,20 @@ describe('validateLocalConfig', () => {
 });
 
 describe('外部插槽进表 + 会话优先路由（子进程）', () => {
-  it('两条外部行共用 EXTERNAL_SDK_ALIAS：各自的会话把 alias 解回自己；没会话的 alias 请求 502(null)；内置行路由不变', () => {
+  it('两条外部行共用 SHARED_SDK_ALIAS：各自的会话把 alias 解回自己；没会话的 alias 请求 502(null)；内置行路由不变', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'nd-cfg-'));
     const cfg = path.join(dir, 'config.json');
     writeFileSync(cfg, JSON.stringify(GOOD));
     const code = `
-      import { resolveWireModel, resolveModelRoute, EXTERNAL_SDK_ALIAS, MODEL_CONFIG_ERRORS, selectableModelsFor, UPSTREAMS } from '../engine/agent/model-context.js';
+      import { resolveWireModel, resolveModelRoute, SHARED_SDK_ALIAS, MODEL_CONFIG_ERRORS, selectableModelsFor, UPSTREAMS } from '../engine/agent/model-context.js';
       import { registerIngressSession, resolveSessionWire } from '../lib/ingress/session-routes.js';
       registerIngressSession('s1', 'kimi-k2'); registerIngressSession('s2', 'glm-5'); registerIngressSession('s3', 'ox-alpha');
-      const bare = EXTERNAL_SDK_ALIAS.replace(/\\[1m\\]$/, '');
+      const bare = SHARED_SDK_ALIAS.replace(/\\[1m\\]$/, '');
       const pick = (r) => r && r.wire ? { app: r.wire.appModel, role: r.role, reason: r.reason, up: r.wire.upstreamId, proto: r.wire.protocol, wire: r.wire.wireModel } : null;
       console.log(JSON.stringify({
         errors: MODEL_CONFIG_ERRORS,
         route: resolveModelRoute('kimi-k2'),
-        s1: pick(resolveSessionWire(bare, 's1')), s1full: pick(resolveSessionWire(EXTERNAL_SDK_ALIAS, 's1')),
+        s1: pick(resolveSessionWire(bare, 's1')), s1full: pick(resolveSessionWire(SHARED_SDK_ALIAS, 's1')),
         s2: pick(resolveSessionWire(bare, 's2')), s2fast: pick(resolveSessionWire('kimi-k2', 's2')), s2unknown: pick(resolveSessionWire('claude-sonnet-5', 's2')),
         nosess: resolveSessionWire(bare, null).wire, byId: pick({ wire: resolveWireModel('kimi-k2'), role: 'main', reason: 'table' }),
         s3: pick(resolveSessionWire('claude-opus-4-8', 's3')), s3helper: pick(resolveSessionWire('claude-haiku-4-5', 's3')), s3collide: pick(resolveSessionWire('claude-opus-4-7', 's3')),

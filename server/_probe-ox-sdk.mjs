@@ -29,7 +29,9 @@ try {
     options: {
       model: route.sdkAlias,
       thinking: pickThinkingConfig(APP),
-      env: { ...process.env, ANTHROPIC_BASE_URL: `${baseUrl}/__nd/${encodeURIComponent(SID)}`, ANTHROPIC_API_KEY: 'nd-ingress-managed', ANTHROPIC_SMALL_FAST_MODEL: route.sdkAlias, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(route.window) },
+      // ⚠️ SMALL_FAST_MODEL 注的是 fastModel 的 **app id**，跟生产一致（session-loop.js:373）——
+      // 注 alias 的话 helper 请求和主请求同名，入口分不出 role，这条分岔就白验了
+      env: { ...process.env, ANTHROPIC_BASE_URL: `${baseUrl}/__nd/${encodeURIComponent(SID)}`, ANTHROPIC_API_KEY: 'nd-ingress-managed', ANTHROPIC_SMALL_FAST_MODEL: route.fastModel, CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(route.window) },
       mcpServers: { probe: probeServer },
       allowedTools: ['mcp__probe__peek_screen'],
       permissionMode: 'bypassPermissions',

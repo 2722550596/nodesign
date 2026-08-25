@@ -3,7 +3,10 @@
  * 撞车断言 —— 这张表写错一个字的历史下场是"两处静默降级没人报错"。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   SELECTABLE_MODELS,
   resolveSdkSpoofModel,
@@ -13,16 +16,21 @@ import {
   resolveWireModel,
   repriceUsageDeltas,
   selectableModelsFor,
-  allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, crossLaneSwitchReason,
-  UPSTREAMS, BRANDS, brandOfModel,
+  allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, crossLaneSwitchReason, hotSwitchLaneReason, modelSwitchRejection,
+  UPSTREAMS, BRANDS, brandOfModel, SHARED_SDK_ALIAS,
 } from './model-context.js';
+import { MODELS_BUILTIN, SHARED_SDK_ALIAS as SHARED_FROM_TABLE } from './model-table.js';
 
 describe('派生导出（旧签名不变）', () => {
-  it('SELECTABLE_MODELS 只暴露带 select 的行；没 select 的 API 行（kimi / qwen / 3.1 Pro）不进 picker', () => {
+  it('SELECTABLE_MODELS 只暴露带 select 的行；helper 行 / 摘牌行 / 删掉的行都不进 picker', () => {
     const ids = SELECTABLE_MODELS.map((m) => m.id);
     expect(ids).toContain('claude-sonnet-5[1m]');
     expect(ids).toContain('claude-opus-5[1m]');
-    expect(ids.some((id) => /kimi/i.test(id))).toBe(false);
+    // helper 专用行（没写 select）一律不露出 —— 原来这里钉的是"没有任何 kimi"，
+    // 08-25 接了 NVIDIA 的 kimi-k3（带闸的可选行）之后那条按名字写的断言就过期了，
+    // 改成按**语义**钉：没有 select 的行不进清单
+    for (const id of ['ox-alpha-helper', 'deepseek-v4-flash-helper']) expect(ids).not.toContain(id);
+    expect(resolveWireModel('deepseek-v4-flash-helper')?.appModel).toBe('deepseek-v4-flash-helper');   // 不进 picker ≠ 不在表里
     expect(SELECTABLE_MODELS.find((m) => m.id === 'gemini-3.7-flash')?.gate).toBe('localGen');
     expect(ids).not.toContain('gemini-3.1-pro');     // 3.1 Pro 行 08-21 深夜连同 kimi 行一起删了
     expect(resolveWireModel('gemini-3.1-pro')).toBe(null);
@@ -75,6 +83,10 @@ describe('派生导出（旧签名不变）', () => {
     expect(crossLaneSwitchReason('ox-alpha', 'claude-sonnet-5[1m]')).toMatch(/新开一个会话/);
     expect(crossLaneSwitchReason('claude-sonnet-5[1m]', 'ox-alpha')).toBeNull();
     expect(crossLaneSwitchReason('ox-alpha', 'ox-alpha')).toBeNull();
+    // 08-25：MiniMax 是 Anthropic 原生透传，从 Ox 切过去同样要拦；反向和同通路内互切放行
+    expect(crossLaneSwitchReason('ox-alpha', 'minimax-m3')).toMatch(/新开一个会话/);
+    expect(crossLaneSwitchReason('ox-alpha', 'minimax-m3')).not.toMatch(/Claude/);   // 话里不许写死"换到 Claude"
+    expect(crossLaneSwitchReason('minimax-m3', 'ox-alpha')).toBeNull();
     // 08-21 晚：高/深想两行同是 Ox，互切不算跨线；深想行也是免费行但不是默认
     expect(crossLaneSwitchReason('ox-alpha', 'ox-alpha-max')).toBeNull();
     expect(crossLaneSwitchReason('ox-alpha-max', 'claude-opus-5[1m]')).toMatch(/新开一个会话/);
@@ -82,6 +94,19 @@ describe('派生导出（旧签名不变）', () => {
     expect(pubSel.find((m) => m.id === 'ox-alpha-max')?.locked).toBeUndefined();
     expect(resolveWireModel('ox-alpha-max')?.reasoningEffort).toBe('max');
     expect(resolveWireModel('ox-alpha')?.reasoningEffort).toBe('high');
+  });
+
+  it('⛔ hotSwitchLaneReason：运行中订阅 ↔ API 一律拒（env 在起 query 那刻定死，硬切会拿订阅额度跑 API 模型）', () => {
+    // 订阅 → API：binary 没有 ingress 地址，会拿 OAuth 把 alias（真实 Claude 名）打到 anthropic.com = 花真钱
+    expect(hotSwitchLaneReason('claude-sonnet-5[1m]', 'ox-alpha')).toMatch(/订阅额度/);
+    expect(hotSwitchLaneReason('claude-opus-5[1m]', 'minimax-m3')).toMatch(/新开一个会话/);
+    // API → 订阅：那个名字进了入口反查不到，兜底到本会话 fast 行 = 切了没生效
+    expect(hotSwitchLaneReason('minimax-m3', 'claude-sonnet-5[1m]')).toMatch(/换不回订阅模型/);
+    // 同通路内互切这条闸不管（协议那条闸另外管，两条正交）
+    expect(hotSwitchLaneReason('minimax-m3', 'ox-alpha')).toBeNull();
+    expect(hotSwitchLaneReason('claude-sonnet-5[1m]', 'claude-opus-5[1m]')).toBeNull();
+    expect(hotSwitchLaneReason('ox-alpha', 'ox-alpha')).toBeNull();
+    expect(hotSwitchLaneReason(null, 'ox-alpha')).toBeNull();
   });
 
   it('spoof：API 行给 alias，订阅/未知原样返回', () => {
@@ -166,13 +191,37 @@ describe('路由', () => {
     expect(resolveModelRoute('qwen3.8-27b').fastModel).toBe('qwen3.8-27b');
   });
 
-  it('⚠️ 每个 API 行的 sdkAlias 容量必须 ≥ 真实 window —— SDK 压缩窗口取二者较小值', () => {
-    for (const id of ['qwen3.8-27b', 'gemini-3.7-flash', 'deepseek-v4-flash-vision']) {
-      const r = resolveModelRoute(id);
+  it('⚠️ 每个 API 行的 sdkAlias 容量必须 ≥ 真实 window —— SDK 压缩窗口取二者较小值（自动枚举全表，新行天然被盯上）', () => {
+    // 唯一豁免：ox-alpha-helper 故意用 200k 的 haiku 名（它只当 fastModel，永远不是会话主行，
+    // window 字段不会喂进 CLAUDE_CODE_AUTO_COMPACT_WINDOW；见 model-table.js 那行的注释）。
+    // 新行想进这个名单，先说清楚它为什么永远当不了主行。
+    const HELPER_ONLY_EXEMPT = ['ox-alpha-helper'];
+    for (const m of MODELS_BUILTIN.filter((m) => m.api && !HELPER_ONLY_EXEMPT.includes(m.id))) {
+      const r = resolveModelRoute(m.id);
       const aliasWindow = resolveModelContextWindow(r.sdkAlias);
-      expect(aliasWindow, `${id} 的 alias ${r.sdkAlias} 容量不足`).toBeGreaterThanOrEqual(r.window);
-      expect(r.window).toBe(resolveModelContextWindow(id));   // route.window 就是表里那个
+      expect(aliasWindow, `${m.id} 的 alias ${r.sdkAlias} 容量不足`).toBeGreaterThanOrEqual(r.window);
+      expect(r.window).toBe(resolveModelContextWindow(m.id));   // route.window 就是表里那个
     }
+  });
+
+  it('sdkAlias 可选（08-25 固化）：表里不写 = 派生补共用别名；豁免名单里的行都真在表里', () => {
+    // 双名收敛后只剩一个真相源：model-context 的再导出就是 model-table 那一个
+    expect(SHARED_SDK_ALIAS).toBe(SHARED_FROM_TABLE);
+    // MiniMax 两行在表里不写 sdkAlias（默认写法的样本），派生后拿到的是共用别名
+    for (const id of ['minimax-m3', 'kimi-k3', 'deepseek-v4-flash-helper']) {
+      expect(MODELS_BUILTIN.find((m) => m.id === id).api.sdkAlias, id).toBeUndefined();
+      expect(resolveModelRoute(id).sdkAlias, id).toBe(SHARED_SDK_ALIAS);
+      expect(resolveSdkSpoofModel(id), id).toBe(SHARED_SDK_ALIAS);
+    }
+    // 共用别名的本体必须是表内订阅行（加载断言的前提；window 1M 才配当默认 spoof）
+    const sharedRow = MODELS_BUILTIN.find((m) => m.id === SHARED_SDK_ALIAS);
+    expect(sharedRow?.api).toBeUndefined();
+    expect(sharedRow?.window).toBe(1_000_000);
+    // 独占别名的行显式写；独占名全表唯一（撞了在模块加载就炸，这里只对账现状）
+    const exclusive = MODELS_BUILTIN.filter((m) => m.api?.sdkAlias && m.api.sdkAlias !== SHARED_SDK_ALIAS);
+    const names = exclusive.map((m) => m.api.sdkAlias);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).not.toContain(SHARED_SDK_ALIAS);
   });
 });
 
@@ -225,6 +274,124 @@ describe('repriceUsageDeltas', () => {
   });
 });
 
+describe('modelSwitchRejection：三条写模型的路共用的那一个判断（08-25 收口）', () => {
+  it('协议闸：跑过的 Ox 会话换到别的通路要拦；同通路、反向、同模型放行', () => {
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: 'claude-sonnet-5[1m]' })).toMatch(/新开一个会话/);
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: 'minimax-m3' })).toMatch(/新开一个会话/);
+    expect(modelSwitchRejection({ from: 'minimax-m3', to: 'ox-alpha' })).toBe(null);
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: 'ox-alpha' })).toBe(null);
+  });
+
+  it('⭐没跑过的会话不拦：这条闸防的是历史里没 signature 的 thinking 块，没历史就没这回事', () => {
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: 'claude-sonnet-5[1m]', hasHistory: false })).toBe(null);
+    // 但通路闸跟历史无关（env 定死在起 query 那一刻），running 时照拦
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: 'claude-sonnet-5[1m]', hasHistory: false, running: true })).toMatch(/换不回订阅模型/);
+  });
+
+  it('通路闸只在 running 时加判：空闲切会重启 query（换的是新 env），不该拦', () => {
+    expect(modelSwitchRejection({ from: 'claude-sonnet-5[1m]', to: 'minimax-m3' })).toBe(null);
+    expect(modelSwitchRejection({ from: 'claude-sonnet-5[1m]', to: 'minimax-m3', running: true })).toMatch(/订阅额度/);
+  });
+
+  it('缺参数一律放行（调用方还没算出 from/to 时不该误伤）', () => {
+    expect(modelSwitchRejection({ from: null, to: 'ox-alpha' })).toBe(null);
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: null })).toBe(null);
+    expect(modelSwitchRejection({ from: 'ox-alpha', to: undefined, running: true })).toBe(null);
+  });
+
+  it('⛔ lint：三条写模型的路只许经这一个函数判，不许自己去调两条底层闸', () => {
+    // 08-21 装的协议闸在 sessions.js 和 turn.js 各手写了一份，两份都写错、活了四天没人发现
+    // （一份把闸放在写盘之后、拿写完的值当 from；一份多了个 `override &&` 的条件）。
+    // 判据放在这里而不是靠注释：注释里的"调用方必须处理 X"拦不住任何人。
+    const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+    for (const f of ['server/api/turn.js', 'server/api/sessions.js', 'server/api/turn-model-switch.js']) {
+      const src = fs.readFileSync(path.join(REPO, f), 'utf8')
+        .split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n');
+      expect(src, `${f} 不该直接调底层闸，走 modelSwitchRejection`).not.toMatch(/crossLaneSwitchReason\(|hotSwitchLaneReason\(/);
+      expect(src, `${f} 应该调 modelSwitchRejection`).toMatch(/modelSwitchRejection\(/);
+    }
+  });
+});
+
+describe('NVIDIA build · Kimi K3 行（08-25）', () => {
+  it('走 nvidia 上游、openai-chat 转换层、思考档 high（上游只认 low|high|max）、helper 特意挪到别家免得抢限流桶', () => {
+    const r = resolveModelRoute('kimi-k3');
+    expect(r.mode).toBe('api');
+    expect(r.upstream).toBe(UPSTREAMS.nvidia);
+    expect(r.upstream.baseUrl).toBe('https://integrate.api.nvidia.com/v1');   // openai-chat 路：baseUrl 带 /v1，入口再接 /chat/completions
+    expect(r.upstream.countTokens).toBe(false);   // 没有 count_tokens 端点（404），入口本地估算
+    expect(r.window).toBe(272_000);
+    expect(r.fastModel).toBe('deepseek-v4-flash-helper');   // 全站共用一把 nvapi 钥匙 = 一个限流桶，helper 不留在这家
+    const w = resolveWireModel('kimi-k3');
+    expect(w.wireModel).toBe('moonshotai/kimi-k3');
+    expect(w.protocol).toBe('openai-chat');
+    expect(w.thinking).toBe('strip');
+    expect(w.reasoningEffort).toBe('high');
+    expect(w.helperReasoningEffort).toBe('low');
+    // ⛔ medium 上游直接 400（Unsupported Kimi K3 thinking_effort="medium"）—— 改档只能在 low|high|max 里选
+    expect(['low', 'high', 'max']).toContain(w.reasoningEffort);
+  });
+
+  it('不写 sdkAlias = 走共用别名（08-25 的新默认写法，这一行就是第一个真样本）', () => {
+    const raw = MODELS_BUILTIN.find((m) => m.id === 'kimi-k3');
+    expect(raw.api.sdkAlias).toBeUndefined();          // 表里一个字没写
+    expect(resolveModelRoute('kimi-k3').sdkAlias).toBe(SHARED_SDK_ALIAS);   // 派生时补上
+    expect(resolveWireModel(SHARED_SDK_ALIAS)).toBe(null);                  // 仍然不进全表反查
+  });
+
+  it('限流大的行先关在闸后：只对 admin/获批露出，普通账号看不见', () => {
+    expect(selectableModelsFor({ role: 'user' }).some((m) => m.id === 'kimi-k3')).toBe(false);
+    expect(selectableModelsFor({ role: 'admin' }).some((m) => m.id === 'kimi-k3')).toBe(true);
+    expect(allowedModelsFor({ role: 'user' }).some((m) => m.id === 'kimi-k3')).toBe(false);
+  });
+});
+
+describe('GMI Cloud · MiniMax 两行（08-25）—— 共用 sdkAlias 的内置行', () => {
+  it('走 gmi 上游、Anthropic 原生透传（不进 openai-chat 转换层）、图不 lift、思考档 adaptive', () => {
+    const r = resolveModelRoute('minimax-m3');
+    expect(r.mode).toBe('api');
+    expect(r.upstream).toBe(UPSTREAMS.gmi);
+    expect(r.upstream.baseUrl).toBe('https://api.gmi-serving.com');   // ⚠️ 不带 /v1：透传路是 baseUrl + 原始路径
+    expect(r.upstream.protocol).toBeUndefined();                      // 没有 protocol = 透传 Anthropic
+    expect(r.window).toBe(272_000);
+    expect(r.fastModel).toBe('deepseek-v4-flash-helper');
+    const w = resolveWireModel('minimax-m3');
+    expect(w.wireModel).toBe('MiniMaxAI/MiniMax-M3');
+    expect(w.thinking).toBe('adaptive');
+    expect(w.liftImages).toBe(false);   // 08-25 体检：tool_result 里的图原生直通
+    expect(resolveWireModel('deepseek-v4-flash-helper').thinking).toBe('strip');
+  });
+
+  it('⭐共用别名**不进全表反查**（分不出是哪一行）—— 没注册会话的请求 502，靠会话级路由认人', () => {
+    const alias = resolveModelRoute('minimax-m3').sdkAlias;
+    expect(alias).toBe('claude-sonnet-4-6[1m]');
+    expect(resolveWireModel(alias)).toBe(null);
+    expect(resolveWireModel('claude-sonnet-4-6')).toBe(null);
+    // 三行共用同一个别名，各自按 id 可查
+    for (const id of ['minimax-m3', 'kimi-k3', 'deepseek-v4-flash-helper']) {
+      expect(resolveWireModel(id).appModel, id).toBe(id);
+      expect(resolveModelRoute(id).sdkAlias, id).toBe(alias);
+    }
+  });
+
+  it('⛔ M2.7 撤了（GMI 这家部署把图丢掉，判据见 model-table.js 那段注释）—— 表里和 picker 里都不该有', () => {
+    expect(resolveWireModel('minimax-m2.7')).toBe(null);
+    expect(SELECTABLE_MODELS.some((m) => m.id === 'minimax-m2.7')).toBe(false);
+    // 留下的这一行仍要能画标：picker 里现在只剩 M3 一行 minimax
+    expect(SELECTABLE_MODELS.find((m) => m.id === 'minimax-m3').brand).toBe('minimax');
+  });
+
+  it('⭐记账按会话优先：共用别名那笔算主行的，不是 fastModel 的（不然计量按模型分组全落到 helper 头上）', () => {
+    const usage = { inputTokens: 100_000, outputTokens: 2_000, cacheReadTokens: 0, cacheCreateTokens: 0, costUsd: 1.23 };
+    const out = repriceUsageDeltas({ 'claude-sonnet-4-6[1m]': { ...usage } }, 'minimax-m3');
+    expect(Object.keys(out)).toEqual(['minimax-m3']);
+    expect(out['minimax-m3'].costUsd).toBe(0);   // 免费部署，零价表
+    // helper 请求带的是 app id，照旧按 id 归自己那行
+    const out2 = repriceUsageDeltas({ 'deepseek-v4-flash-helper': { ...usage } }, 'minimax-m3');
+    expect(Object.keys(out2)).toEqual(['deepseek-v4-flash-helper']);
+  });
+});
+
 describe('OpenCode Go · DeepSeek V4 Flash Vision 行（08-21 深夜）', () => {
   it('走 zenGo 上游、真名 deepseek-v4-flash-vision-exp、alias opus-4-7[1m]、窗口 272k、gate localGen、helper 仍是免费 Ox', () => {
     const r = resolveModelRoute('deepseek-v4-flash-vision');
@@ -237,7 +404,7 @@ describe('OpenCode Go · DeepSeek V4 Flash Vision 行（08-21 深夜）', () => 
     expect(r.fastModel).toBe('ox-alpha-helper');
     expect(resolveWireModel('claude-opus-4-7')?.wireModel).toBe('deepseek-v4-flash-vision-exp');
     expect(resolveWireModel('claude-opus-4-5')).toBe(null);   // 那个 200k 空名没再占
-    expect(resolveWireModel('claude-sonnet-4-6[1m]')).toBe(null);   // 3.1-pro 退役腾出的名空着
+    expect(resolveWireModel('claude-sonnet-4-6[1m]')).toBe(null);   // 3.1-pro 退役腾出的名 = 现在的共用别名，不进全表反查
     expect(resolveWireModel('claude-sonnet-5')).toBe(null);   // 订阅默认名仍不可路由
     // 08-21 深夜开闸给所有档（basic 靠 $5/天日限管着）
     expect(SELECTABLE_MODELS.find((m) => m.id === 'deepseek-v4-flash-vision')?.gate).toBeUndefined();
@@ -250,5 +417,36 @@ describe('OpenCode Go · DeepSeek V4 Flash Vision 行（08-21 深夜）', () => 
       expect(resolveModelRoute(id).upstream).toBe(UPSTREAMS.zenGo);
       expect(resolveWireModel(id)?.wireModel).toBe('ox-alpha-free');
     }
+  });
+});
+
+describe('加载期断言真的会炸（换一张毒表 import 一遍 —— 装了闸就攻一遍，不许只靠代码里写着）', () => {
+  const importWithTable = async (mutate) => {
+    vi.resetModules();
+    const real = await vi.importActual('./model-table.js');
+    vi.doMock('./model-table.js', () => ({ ...real, MODELS_BUILTIN: Object.freeze(mutate([...real.MODELS_BUILTIN])) }));
+    try {
+      return await import('./model-context.js');
+    } finally {
+      vi.doUnmock('./model-table.js');
+      vi.resetModules();
+    }
+  };
+
+  it('独占 sdkAlias 撞车（第二行显式抢同一个名）→ import 当场 throw，不静默', async () => {
+    await expect(importWithTable((rows) => [...rows, {
+      id: 'evil-twin', window: 1_000_000, brand: 'custom',
+      api: { upstream: 'gmi', wireModel: 'x', sdkAlias: 'claude-opus-4-6[1m]', fastModel: 'evil-twin' },
+    }])).rejects.toThrow(/撞车/);
+  });
+
+  it('共用别名的本体订阅行被删 → import 当场 throw（哪怕没有任何行在用它，默认值也必须始终有效）', async () => {
+    await expect(importWithTable((rows) => rows.filter((m) => m.id !== 'claude-sonnet-4-6[1m]')))
+      .rejects.toThrow(/SHARED_SDK_ALIAS/);
+  });
+
+  it('对照组：原表原样 import 不炸（证明上面俩不是 import 本身就坏）', async () => {
+    const mc = await importWithTable((rows) => rows);
+    expect(mc.resolveModelRoute('minimax-m3').sdkAlias).toBe(SHARED_SDK_ALIAS);
   });
 });

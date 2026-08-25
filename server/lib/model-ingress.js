@@ -327,12 +327,23 @@ export async function transformForUpstream(parsed, wire) {
 
   // thinking：'strip' = 删字段让上游自决（Gemini thinking 关不掉、参数过桥行为
   // 未知）；'enabled8k' = adaptive 改写成 enabled+budget（Kimi 实测 adaptive =
-  // 0 thinking blocks）
+  // 0 thinking blocks）；'adaptive' = 反过来，enabled+budget 改写成 adaptive。
+  //
+  // ⚠️ 本站给**每一条 API 行**发的都是 enabled+8192（model-context.pickThinkingConfig），
+  // 对"自己会判断该不该想"的模型等于逐轮强制想满预算。MiniMax M3 是这一类（08-25 实测
+  // GMI 部署 adaptive/disabled/enabled 三种都收）：agent 一轮里大半是读文件调工具，
+  // 该不该想交给它自己。
   if (wire.thinking === 'strip') {
     if ('thinking' in parsed) { delete parsed.thinking; mutated = true; }
   } else if (wire.thinking === 'enabled8k') {
     if (parsed.thinking?.type === 'adaptive') {
       parsed.thinking = { type: 'enabled', budget_tokens: 8192 };
+      mutated = true;
+    }
+  } else if (wire.thinking === 'adaptive') {
+    // 'disabled' 不动：那是调用方明确要求别想，行的默认档不该压过它
+    if (parsed.thinking && parsed.thinking.type !== 'adaptive' && parsed.thinking.type !== 'disabled') {
+      parsed.thinking = { type: 'adaptive' };
       mutated = true;
     }
   }

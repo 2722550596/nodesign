@@ -28,34 +28,43 @@
  * Opus 价虚高 30×）。repriceUsageDeltas 把 usage key 还原成 appModel、按行内
  * prices 重算 costUsd。行没填 prices = 沿用 SDK 虚价（接真流量前必须填价）。
  *
- * ⚠️ 硬约束：一个 sdkAlias 不能被两个 API 模型共用 —— 反查靠它，撞了整条
- * 路由和记账都错。模块加载断言兜底。
+ * ## sdkAlias 两种写法（08-25 起）
+ *
+ * - **不写（默认）**：派生时补上共用别名 SHARED_SDK_ALIAS，只按 id 进反查表，
+ *   靠会话级路由分辨（session-routes.resolveSessionWire）。加新行不用考虑别名。
+ * - **显式写 = 独占坑位**：alias 三种形态都进反查表，没会话也能按 alias 反查。
+ *   ⚠️ 硬约束只对这种成立：一个独占 sdkAlias 不能被两个 API 模型共用 ——
+ *   反查靠它，撞了整条路由和记账都错。模块加载断言兜底。
  */
 
 import { can, localGenApproved, DENIAL } from '../../auth/tier.js';
 import { platform } from '../../runtime/platform.js';
-import { UPSTREAMS_BUILTIN, MODELS_BUILTIN, BRANDS } from './model-table.js';
+import { UPSTREAMS_BUILTIN, MODELS_BUILTIN, BRANDS, SHARED_SDK_ALIAS } from './model-table.js';
 import { loadLocalConfig } from '../../runtime/local-config.js';
 
-export { BRANDS };
+export { BRANDS, SHARED_SDK_ALIAS };
 
 // ── 内置表 + 用户插槽合并（08-22）──
-// 外部行（runtime/local-config.js）全部共用这一个 sdkAlias：表内唯一空着的 1M 订阅名。全表反查分不出它们，
-// 靠 ingress/session-routes.js 会话优先路由（一个会话只认自己那行）。所以外部行**不进 WIRE_LOOKUP 的 alias 键**，
-// 只按 id 可查；没注册会话的请求用这个 alias 发过来一律 502（探针要带会话前缀）。
-export const EXTERNAL_SDK_ALIAS = 'claude-sonnet-4-6[1m]';
 const external = loadLocalConfig();
 export const UPSTREAMS = Object.freeze({ ...UPSTREAMS_BUILTIN, ...external.upstreams });
-/** 配置条目 → 表行（字段名一一对应，见 local-config.js 文件头） */
+/** 配置条目 → 表行（字段名一一对应，见 local-config.js 文件头；sdkAlias 不许手填 = 永远走下面的共用别名默认） */
 function toExternalRow(m) {
   const { id, label, desc, brand, window, uncensored, upstream, wireModel, fastModel, ...api } = m;
   return Object.freeze({
     id, window, brand, external: true, ...(uncensored ? { uncensored: true } : {}),
     select: Object.freeze({ label, desc }),
-    api: Object.freeze({ upstream, wireModel, sdkAlias: EXTERNAL_SDK_ALIAS, fastModel: fastModel || id, ...api }),
+    api: Object.freeze({ upstream, wireModel, fastModel: fastModel || id, ...api }),
   });
 }
-const MODELS = Object.freeze([...MODELS_BUILTIN, ...external.models.map(toExternalRow)]);
+// sdkAlias 可选（08-25 固化）：API 行不写 = 补上共用别名 SHARED_SDK_ALIAS（内置行、外部插槽同一条路）。
+// 共用别名的行**不进 WIRE_LOOKUP 的 alias 键**，只按 id 可查，靠 ingress/session-routes.js 会话优先路由
+// 分辨（一个会话只认自己那行和自己的 fast 行）；没注册会话的请求用这个 alias 发过来一律 502（探针要带
+// 会话前缀）。独占别名的行才显式写 sdkAlias，语义见 model-table.js 字段说明。
+function withDefaultAlias(row) {
+  if (!row.api || row.api.sdkAlias) return row;
+  return Object.freeze({ ...row, api: Object.freeze({ ...row.api, sdkAlias: SHARED_SDK_ALIAS }) });
+}
+const MODELS = Object.freeze([...MODELS_BUILTIN, ...external.models.map(toExternalRow)].map(withDefaultAlias));
 /** 外部插槽被整条丢掉的原因（启动日志一份、GET /api/local/config 一份，同一个数组） */
 export const MODEL_CONFIG_ERRORS = external.errors;
 
@@ -79,16 +88,25 @@ for (const row of MODELS) {
   if (BY_ID.has(row.id)) throw new Error(`[model-context] 模型 id 重复：${row.id}`);
   BY_ID.set(row.id, row);
 }
+// 共用别名的本体必须始终是表内一条订阅 Claude 行：它是「不写 sdkAlias」的默认值，哪怕此刻没行在用，
+// 删掉/改坏那条订阅行也要当场炸，不能等到下一条新行加进来才发现 SDK 不认识、窗口查不到。
+{
+  const shared = BY_ID.get(SHARED_SDK_ALIAS);
+  if (!shared || shared.api) throw new Error(`[model-context] SHARED_SDK_ALIAS（${SHARED_SDK_ALIAS}）必须是表内订阅模型行 —— 它是 sdkAlias 不写时的默认值`);
+}
 for (const row of MODELS) {
   try { checkRow(row); } catch (err) {
     if (!row.external) throw err;
     BY_ID.delete(row.id); MODEL_CONFIG_ERRORS.push({ where: `models (${row.id})`, message: err.message }); continue;
   }
   if (!row.api) continue;
-  const keys = row.external ? [row.id] : [row.id, row.api.sdkAlias, row.api.sdkAlias.replace(/\[1m\]$/i, '')];
+  // 共用别名的行（sdkAlias 没写、派生时补的默认值）只按 id 进反查表：那个别名同时属于好几行，
+  // 全表反查分不出谁是谁，只有会话知道（session-routes.resolveSessionWire 主行优先）。
+  const sharesAlias = row.api.sdkAlias === SHARED_SDK_ALIAS;
+  const keys = sharesAlias ? [row.id] : [row.id, row.api.sdkAlias, row.api.sdkAlias.replace(/\[1m\]$/i, '')];
   for (const k of keys) {
     const prev = WIRE_LOOKUP.get(k);
-    if (prev && prev !== row) throw new Error(`[model-context] wire 名撞车：'${k}' 同时属于 ${prev.id} 和 ${row.id}（一个 sdkAlias 不能共用）`);
+    if (prev && prev !== row) throw new Error(`[model-context] wire 名撞车：'${k}' 同时属于 ${prev.id} 和 ${row.id}（独占 sdkAlias 不能共用；不想独占就别写 sdkAlias，让它走共用别名）`);
     WIRE_LOOKUP.set(k, row);
   }
 }
@@ -177,17 +195,74 @@ export function defaultModelFor(user) {
 }
 
 /**
- * 会话中途从 openai-chat 行（Ox）切到别的通路要拦（08-21 fable 评审 P3）：转换层合成的 thinking 块
- * 没有 signature，CLI 会把它们原样回传给 Anthropic → 400 invalid signature。返回拒绝理由或 null。
+ * 会话中途从 openai-chat 行（Ox / DeepSeek）切到别的通路要拦（08-21 fable 评审 P3）：转换层合成的
+ * thinking 块没有 signature，CLI 会把它们原样回传给说 Anthropic 协议的那一头 → 400 invalid signature。
+ * 返回拒绝理由或 null。
+ *
+ * ⚠️ 拦的是**协议方向**不是"要不要 Claude"：08-25 接了 MiniMax（Anthropic 原生透传）之后，
+ * 从 Ox 切到 MiniMax 同样是这条路，所以话里不许再写死"换到 Claude"。
  */
 export function crossLaneSwitchReason(fromModel, toModel) {
   if (!fromModel || !toModel || fromModel === toModel) return null;
   const from = resolveWireModel(fromModel);
   const to = resolveWireModel(toModel);
   if (from?.protocol === 'openai-chat' && to?.protocol !== 'openai-chat') {
-    return '这个会话是在 Ox（免费）上开的，它的思考记录换到 Claude 会被拒收。想用 Claude 请新开一个会话';
+    const fromLabel = BY_ID.get(from.appModel)?.select?.label || from.appModel;
+    return `这个会话是在 ${fromLabel} 上开的，它的思考记录换到别的模型会被拒收。想换模型请新开一个会话`;
   }
   return null;
+}
+
+/**
+ * **运行中**热切模型（POST /runs/:runId/model）额外要拦的一条：订阅 ↔ API 跨通路。
+ *
+ * 决定一条会话走订阅还是走 API 的是**起 query 那一刻注入的 env**（BASE_URL / API_KEY，
+ * 见 session-loop 的 route 分支），而 env 是 per-query 的，`setModel` 改不动它。所以跑到
+ * 一半跨通路切的真实后果是：
+ *   - 订阅会话切到 API 行 → binary 手里没有 ingress 地址，会拿着 ~/.claude 的 OAuth 把
+ *     **alias 名**（那都是真实存在的 Claude 模型）打到 anthropic.com —— 界面写着"免费"，
+ *     烧的是订阅额度。⛔ 这是要花真钱的那种错。
+ *   - API 会话切回订阅行 → 那个名字进了 ingress 反查不到，兜底到本会话的 fast 行，
+ *     等于"切了没生效"。
+ * 两边都不是用户想要的，所以运行中一律拒绝，让人等这轮跑完（PUT /sessions/:sid/model
+ * 那条等空闲重启 query，换的是新 env，不受这条限制）。
+ *
+ * 与 crossLaneSwitchReason 是两条**正交**的闸：那条管协议（openai-chat 的思考块没
+ * signature），这条管通路（env 定死在起 query 那一刻）。
+ */
+export function hotSwitchLaneReason(fromModel, toModel) {
+  if (!fromModel || !toModel || fromModel === toModel) return null;
+  const from = resolveModelRoute(fromModel).mode;
+  const to = resolveModelRoute(toModel).mode;
+  if (from === to) return null;
+  return to === 'api'
+    ? '这一轮是用订阅模型开的，跑到一半换不成 API 模型 —— 网关地址和钥匙在起这一轮时就定死了，硬切会拿订阅额度去跑。等这轮跑完再换，或者新开一个会话'
+    : '这一轮是用 API 模型开的，跑到一半换不回订阅模型 —— 同样是网关地址起这一轮时就定死了。等这轮跑完再换，或者新开一个会话';
+}
+
+/**
+ * **换模型该不该拒**（null = 放行）。三条写模型的路共用这一个判断：turn.js 的 body.model、
+ * sessions.js 的 PUT /model、turn-model-switch.js 的运行中热切。
+ *
+ * 收成一份是因为 08-21 装的那条协议闸在两处都没真工作过（08-25 发现）：sessions.js 那份把闸写在
+ * applySessionModel **之后**、又拿 apply 之后的模型当 from，等于自己跟自己比，恒返 null；turn.js 那份
+ * 带着 `override &&`，跑在全局默认上的会话整个逃过检查。同一个判断散成三份手写代码就是这个下场 ——
+ * 这个仓库为「同一件事有多个实例」付过最贵的学费。
+ *
+ * @param {object} p
+ * @param {string} p.from        **改之前**的有效模型（⚠️ 不是刚写进去的那个 —— 那正是旧 bug）
+ * @param {string} p.to          要换成的模型（清覆盖时传全局默认那一行，别传 null）
+ * @param {boolean} [p.hasHistory] 这个会话跑过没有。没跑过就没有历史，协议闸不该拦（拦了只是让人换不了模型）
+ * @param {boolean} [p.running]  当前有没有正在跑的 query。跑着的话 env 已经定死，额外过通路闸
+ * @returns {string|null} 给用户看的拒绝理由
+ */
+export function modelSwitchRejection({ from, to, hasHistory = true, running = false }) {
+  if (!from || !to || from === to) return null;
+  if (hasHistory) {
+    const why = crossLaneSwitchReason(from, to);
+    if (why) return why;
+  }
+  return running ? hotSwitchLaneReason(from, to) : null;
 }
 
 /** 免费行（API 行且四价全 0）：金额配额对它无意义，turn.js 改走按轮次的免费闸 */
@@ -332,9 +407,13 @@ export function repriceUsageDeltas(deltas, sessionAppModel) {
   // helper 用 config 默认 Claude 名发的请求）必然被 ingress 的会话 fast 兜底
   // 承接 —— 归到 fastModel 头上是精确归因，不是猜测。
   const fastRow = BY_ID.get(sessionRow.api.fastModel);
+  // ⭐ 会话优先，跟入口路由同一个次序（session-routes.resolveSessionWire）：SDK 报的 usage key 是
+  // **本会话的 sdkAlias**，而共用别名（SHARED_SDK_ALIAS）根本不在 WIRE_LOOKUP 里 —— 只按全表反查的话
+  // 主行那笔账会整个落到 fastModel 头上（计量按模型分组就全错了，钱对了数不对）。
+  const sessionNames = new Set(wireNamesOf(sessionRow.id));
   const out = {};
   for (const [key, d] of Object.entries(deltas)) {
-    const row = WIRE_LOOKUP.get(key) || fastRow;
+    const row = (sessionNames.has(key) ? sessionRow : WIRE_LOOKUP.get(key)) || fastRow;
     const appKey = row ? row.id : key;
     const p = row?.api?.prices;
     const repriced = p ? {

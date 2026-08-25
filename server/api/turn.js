@@ -42,12 +42,12 @@ import {
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
-  cancelRun, provideAnswer, getQuery, provideElicitation, hasActiveQuerySession, getQuerySession, closeQuerySession, setSessionPermissionMode, getSessionIdByRunId,
+  cancelRun, provideAnswer, getQuery, provideElicitation, hasActiveQuerySession, getQuerySession, closeQuerySession, setSessionPermissionMode,
 } from '../engine/runs/active-runs.js';
 import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
 import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
 import { lruGet, lruPut, inflightTurns, INFLIGHT_RETENTION_MS } from './turn-inflight.js';
-import { allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, resolveSdkSpoofModel, hasSubscriptionAccess, crossLaneSwitchReason } from '../engine/agent/model-context.js';
+import { allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, hasSubscriptionAccess, modelSwitchRejection } from '../engine/agent/model-context.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkFreeQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
@@ -190,9 +190,16 @@ router.post('/:pid/turn', async (req, res, next) => {
     if (!allowedModelsFor(modelUser).some((m) => m.id === turnModel)) {   // 清单整个为空（本地版没 key/没登录/没插槽）→ 指路设置页，别让人去选择器里找
       return res.status(403).json(allowedModelsFor(modelUser).length ? { error: `这个会话指向的模型（${turnModel}）现在不可用，请在模型选择器里换一个`, code: 'MODEL_NOT_ALLOWED', model: turnModel } : { error: '还没有可用的模型：到「设置」填 API Key（或本机 claude login），或者配一个模型插槽', code: 'NO_MODEL_CONFIGURED', model: turnModel });
     }
-    if (requestedModelEarly && sessionModelEarly.override && crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly)) {
-      return res.status(409).json({ error: crossLaneSwitchReason(sessionModelEarly.override, requestedModelEarly), code: 'LANE_SWITCH' });
-    }
+    // ⛔ 08-25 修：原来这条带着 `sessionModelEarly.override &&`，于是**跑在全局默认上的会话（override=null）
+    // 整个逃过检查** —— 而站上默认恰恰是免费的 Ox（openai-chat），正是这条闸要防的那一头。
+    // 改成拿**当前有效模型**（override → env → 兜底，resolveSessionModel 已经算好）去比；新会话不拦，
+    // 它还没有历史，而这条闸防的是历史里没有 signature 的 thinking 块被回传给真 Anthropic。
+    // ⚠️ 已知的一处宽严不匹配：这里的"新会话"判据是 `!resumeSessionId`，而不是 sessions.js 那条 PUT 用的
+    // "jsonl 存不存在"。差别只在一种情况——**会话建了但一次没跑过、第一轮就显式换到另一通路**，
+    // 这里会多拦一次（409 说"新开一个会话"，人照做就没事）。sessionRoot 要到本函数后半段才拿得到，
+    // 为这一种情况把 ensureSessionWorkspace 提前不划算。
+    const laneWhy = modelSwitchRejection({ from: sessionModelEarly.model, to: requestedModelEarly, hasHistory: !isNewSession });
+    if (laneWhy) return res.status(409).json({ error: laneWhy, code: 'LANE_SWITCH' });
     if (modelIsFree(turnModel)) {
       const fq = checkFreeQuota(req.user);
       if (!fq.ok) {
@@ -587,78 +594,10 @@ router.post('/:pid/runs/:runId/rewind', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/**
- * POST /api/projects/:pid/runs/:runId/model
- *
- * 运行中切 model（SDK query.setModel，当场对下一次 LLM 调用生效）。
- *
- * **目前只有 API 能到这里**：前端 picker 在 turn 运行中是禁用的，它走
- * PUT /sessions/:sid/model（那条等空闲才重启 query）。这条留着是因为"turn 跑到
- * 一半换模型"是它独有的能力，PUT 那条按设计做不到。前端那个没人调的 Turn.setModel
- * 绑定已删（doc 里还写着 kimi 时代的 model 名，留着只会误导下一个人）。
- *
- * 2026-07-30：切完**必须同时落 session-config**。原来这条只改运行时不写文件，
- * 于是"当前这轮是 Opus、下次 resume 变回 Sonnet"，而且界面无从得知；跟另外两条
- * 写模型的路加起来，同一个事实有三个互不知情的写者。现在统一走 applySessionModel，
- * 它自己会判断要不要重启空闲 query（这里 query 正在跑，不会重启）。
- *
- * Body: { model: string | null }  - null = 清掉覆盖回到全局默认
- */
-router.post('/:pid/runs/:runId/model', async (req, res, next) => {
-  try {
-    const project = guardProject(req, res);
-    if (!project) return;
-    if (!guardRunInProject(req, res)) return;
+import { hotSwitchModelHandler } from './turn-model-switch.js';
 
-    const { runId } = req.params;
-    const { model } = req.body || {};
-    if (model !== null && model !== undefined && typeof model !== 'string') {
-      return res.status(400).json({ error: 'model must be string or null' });
-    }
-
-    // 08-21：热切路以前不过白名单（任意字符串直达 SDK）。与 PUT /sessions/:sid/model 同口径
-    if (typeof model === 'string' && model.trim()) {
-      const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）
-      if (isModelLockedFor(modelUser, model.trim())) {
-        return res.status(403).json({ error: '这个模型仅限 Pro 档，暂未对外开放', code: 'MODEL_LOCKED', model: model.trim() });
-      }
-      if (!allowedModelsFor(modelUser).some((m) => m.id === model.trim())) {
-        return res.status(400).json({ error: `unknown model: ${model}`, code: 'UNKNOWN_MODEL' });
-      }
-      const sidForLane = getSessionIdByRunId(runId);
-      if (sidForLane) {
-        const cur = await resolveSessionModel(getSessionMetaDir(project.id, sidForLane));
-        const why = crossLaneSwitchReason(cur.model, model.trim());
-        if (why) return res.status(409).json({ error: why, code: 'LANE_SWITCH' });
-      }
-    }
-
-    const query = getQuery(runId);
-    if (!query) {
-      return res.status(404).json({
-        error: 'run not active',
-        code: 'RUN_NOT_ACTIVE',
-      });
-    }
-    if (typeof query.setModel !== 'function') {
-      return res.status(501).json({
-        error: 'SDK query handle missing setModel method',
-        code: 'METHOD_NOT_AVAILABLE',
-      });
-    }
-
-    const sid = getSessionIdByRunId(runId);
-    // API 行喂 SDK 的是 spoof 名（session-loop 同款），appModel 本身 binary 不认识
-    await query.setModel(model ? resolveSdkSpoofModel(model.trim()) : undefined);
-    // 运行时切完再落盘：setModel 失败就不该留下"配置说切了"的假象
-    let persisted = null;
-    if (sid) {
-      await ensureSessionWorkspace(project.id, sid);
-      persisted = await applySessionModel(sid, getSessionMetaDir(project.id, sid), model ?? null, 'runtime');
-    }
-    res.json({ ok: true, model: persisted?.model ?? model, override: persisted?.override ?? null });
-  } catch (err) { next(err); }
-});
+/** 运行中热切模型（实现连同它那三道闸搬去了 turn-model-switch.js） */
+router.post('/:pid/runs/:runId/model', hotSwitchModelHandler);
 
 
 // 注：POST /image-approval 路由已删除（2026-05-06）。原本配 ImageApprovalBanner

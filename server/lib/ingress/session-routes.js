@@ -11,9 +11,9 @@
  * 成功转发不留日志。表级断言封不住（SDK 内部会用哪些名字没法枚举），所以是**会话级路由**：一个会话只认
  * 自己那行和自己的 fast 行，其它一概改道 fast 兜底，绝不跨行。
  *
- * 08-22 起**会话优先**而不是全表优先：本地分发版的外部插槽共用同一个 sdkAlias（表内只剩一个空着的 1M 订阅名，
- * 见 model-context.js EXTERNAL_SDK_ALIAS），全表反查分不出它们，只有会话知道自己是谁。先问会话、再查全表，
- * 对内置行结果不变（自己的 alias 反查到的就是自己）。
+ * 08-22 起**会话优先**而不是全表优先：不写 sdkAlias 的行（外部插槽全部 + 08-25 起的内置新行）共用同一个
+ * spoof 名（model-table.js SHARED_SDK_ALIAS），全表反查分不出它们，只有会话知道自己是谁。先问会话、再查全表，
+ * 对独占别名的行结果不变（自己的 alias 反查到的就是自己）。
  */
 
 import { resolveWireModel, resolveModelRoute, wireNamesOf } from '../../engine/agent/model-context.js';

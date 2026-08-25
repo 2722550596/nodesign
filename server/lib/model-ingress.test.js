@@ -68,6 +68,38 @@ describe('transformForUpstream（Gemini 路：rename + strip thinking + lift）'
   });
 });
 
+describe("thinking 'adaptive' 档（08-25 MiniMax M3）", () => {
+  const wire = (t) => ({ appModel: 'minimax-m3', wireModel: 'MiniMaxAI/MiniMax-M3', upstreamId: 'gmi', upstream: UPSTREAMS.gmi, thinking: t, liftImages: false });
+
+  it('本站发的 enabled+budget 改写成 adaptive —— 让"该不该想"由模型自己判断', async () => {
+    // pickThinkingConfig 给每条 API 行发的都是 enabled+8192，对 M3 等于逐轮强制想满预算
+    const body = { model: 'minimax-m3', thinking: { type: 'enabled', budget_tokens: 8192 }, messages: [] };
+    expect(await transformForUpstream(body, wire('adaptive'))).toBe(true);
+    expect(body.thinking).toEqual({ type: 'adaptive' });
+  });
+
+  it('已经是 adaptive 的不动；没有 thinking 字段的不凭空加', async () => {
+    const a = { model: 'minimax-m3', thinking: { type: 'adaptive' }, messages: [] };
+    await transformForUpstream(a, wire('adaptive'));
+    expect(a.thinking).toEqual({ type: 'adaptive' });
+    const b = { model: 'MiniMaxAI/MiniMax-M3', messages: [] };
+    expect(await transformForUpstream(b, wire('adaptive'))).toBe(false);
+    expect('thinking' in b).toBe(false);
+  });
+
+  it('⚠️ disabled 不动：那是调用方明确要求别想，行的默认档不该压过它', async () => {
+    const body = { model: 'minimax-m3', thinking: { type: 'disabled' }, messages: [] };
+    await transformForUpstream(body, wire('adaptive'));
+    expect(body.thinking).toEqual({ type: 'disabled' });
+  });
+
+  it("helper 行仍是 strip：M3 不传 thinking 就是不想，标题不该想八千字", async () => {
+    const body = { model: 'deepseek-v4-flash-helper', thinking: { type: 'enabled', budget_tokens: 8192 }, messages: [] };
+    await transformForUpstream(body, wire('strip'));
+    expect('thinking' in body).toBe(false);
+  });
+});
+
 describe('liftImagesFromToolResult', () => {
   it('assistant message / 无图 tool_result / 字符串 content 都不动', () => {
     const messages = [
@@ -218,6 +250,22 @@ describe('会话级路由 resolveSessionWire（⛔ 撞名雷封口，2026-08-20�
       } finally { unregisterIngressSession(S3); }
       expect(resolveSessionWire('ox-alpha', null)).toMatchObject({ role: 'main' });
     } finally { unregisterIngressSession(S2); }
+  });
+  it('⭐共用别名（MiniMax 三行 + 外部插槽同名）：主行优先 —— alias 解成会话主行，helper 按 app id 认', () => {
+    const S = 'ingress-test-minimax';
+    registerIngressSession(S, 'minimax-m3');
+    try {
+      // 主行和 fast 行共用同一个 alias，wireNamesOf 两边都包含它 —— 靠 resolveSessionWire 先问主行定胜负
+      expect(resolveSessionWire('claude-sonnet-4-6[1m]', S)).toMatchObject({ reason: 'table', role: 'main', wire: { appModel: 'minimax-m3', thinking: 'adaptive' } });
+      expect(resolveSessionWire('claude-sonnet-4-6', S)).toMatchObject({ role: 'main', wire: { appModel: 'minimax-m3' } });
+      expect(resolveSessionWire('deepseek-v4-flash-helper', S)).toMatchObject({ role: 'helper', wire: { appModel: 'deepseek-v4-flash-helper', thinking: 'strip', protocol: 'openai-chat' } });
+      // 别家的 alias 仍然不跨行：改道本会话 fast（minimax 的 helper 行），并标 collision
+      expect(resolveSessionWire('claude-opus-4-8[1m]', S)).toMatchObject({ reason: 'collision', collidesWith: 'ox-alpha', wire: { appModel: 'deepseek-v4-flash-helper' } });
+      // SDK 内部 helper 的默认 Claude 名（不在表里）→ fallback 到同一个 fast 行
+      expect(resolveSessionWire('claude-sonnet-5', S)).toMatchObject({ reason: 'fallback', role: 'helper', wire: { appModel: 'deepseek-v4-flash-helper' } });
+      // 没注册的会话用共用别名发过来 = 查不到 = 502（fail-loud，探针必须带会话前缀）
+      expect(resolveSessionWire('claude-sonnet-4-6[1m]', null)).toEqual({ wire: null, reason: 'none', role: 'main' });
+    } finally { unregisterIngressSession(S); }
   });
   it('⛔ qwen 会话拿 gemini 行的 alias 发请求 → 不跨行，改道本会话 fast（qwen 自己），且标 collision', () => {
     registerIngressSession(SID, 'qwen3.8-27b');
