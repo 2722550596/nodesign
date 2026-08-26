@@ -194,7 +194,7 @@ async function handleRequest(req, res, bodyBuf) {
   // 计数归零让用户下次再发有新机会。count_tokens 不参与（它不是循环的燃料）。
   // 计数按 sid+角色分桶：helper（标题/分类器）一次成功不能把主行攒的计数清零（08-21 评审抓的洞）
   const streakKey = sessionTag ? `${sessionTag}:${routed.role || 'main'}` : null;
-  if (!isCountTokens && failStreaks.exhausted(streakKey)) {
+  if (!isCountTokens && failStreaks.exhausted(streakKey, wire.failStreakMax)) {
     const { n, reason } = failStreaks.consume(streakKey);
     const body = JSON.stringify(exhaustedErrorBody({ label: wire.upstream?.label || wire.upstreamId, n, reason }));
     console.warn(`[model-ingress] sid=${sidShort} role=${routed.role} upstream=${wire.upstreamId} 连续失败 ${n} 次（${reason}）→ 400 止损，计数归零`);

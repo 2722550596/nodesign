@@ -18,7 +18,7 @@ const GOOD = {
     anth: { baseUrl: 'https://relay2.example.com', keyEnv: 'MY_RELAY_KEY' },
   },
   models: [
-    { id: 'kimi-k2', label: 'Kimi K2', window: 262144, upstream: 'relay', wireModel: 'kimi-k2-0905', reasoningEffort: 'high', prices: { input: 0.6, output: 2.5 } },
+    { id: 'kimi-k2', label: 'Kimi K2', window: 262144, upstream: 'relay', wireModel: 'kimi-k2-0905', reasoningEffort: 'high', prices: { input: 0.6, output: 2.5 }, failStreakMax: 20 },
     { id: 'glm-5', label: 'GLM 5', desc: '便宜', window: 1_000_000, upstream: 'anth', wireModel: 'glm-5', fastModel: 'kimi-k2' },
   ],
 };
@@ -42,6 +42,7 @@ describe('validateLocalConfig', () => {
         { id: 'badfast', label: 'fast 指错', window: 100000, upstream: 'relay', wireModel: 'x', fastModel: 'nope' },
         { id: 'toolong', label: '预算超线', window: 100000, upstream: 'relay', wireModel: 'x', emptyRetries: 3, retryBudgetMs: MAX_RETRY_BUDGET_MS + 1 },
         { id: 'extra', label: '多了字段', window: 100000, upstream: 'relay', wireModel: 'x', sdkAlias: 'claude-opus-5[1m]' },
+        { id: 'streak', label: '止损超线', window: 100000, upstream: 'relay', wireModel: 'x', failStreakMax: 51 },
       ],
     });
     expect(Object.keys(v.upstreams).sort()).toEqual(['anth', 'relay']);
@@ -54,6 +55,7 @@ describe('validateLocalConfig', () => {
     expect(text).toMatch(/badfast.*fastModel 'nope'/);
     expect(text).toMatch(/toolong.*retryBudgetMs/);
     expect(text).toMatch(/extra.*sdkAlias/);   // strict：不认识的字段报出来，别静默吞（sdkAlias 是自动分配的，不许手填）
+    expect(text).toMatch(/streak.*failStreakMax/);   // 行内止损上限超线（>50）报出来
   });
 
   it('根不是对象 / 坏 JSON 形状 → 一条错、空配置', () => {
@@ -82,6 +84,7 @@ describe('外部插槽进表 + 会话优先路由（子进程）', () => {
         s3: pick(resolveSessionWire('claude-opus-4-8', 's3')), s3helper: pick(resolveSessionWire('claude-haiku-4-5', 's3')), s3collide: pick(resolveSessionWire('claude-opus-4-7', 's3')),
         picker: selectableModelsFor({ id: 'u', role: 'admin' }).filter((m) => ['kimi-k2', 'glm-5'].includes(m.id)).map((m) => m.id),
         relayKey: UPSTREAMS.relay.key,
+        wireKimi: resolveWireModel('kimi-k2').failStreakMax, wireGlm: resolveWireModel('glm-5').failStreakMax,
       }));`;
     const base = { ...process.env }; delete base.NODESIGN_PROFILE; delete base.VITEST;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: here, env: { ...base, NODESIGN_MODELS_CONFIG: cfg, DB_PATH: path.join(dir, 'x.db') }, encoding: 'utf8' });
@@ -103,6 +106,9 @@ describe('外部插槽进表 + 会话优先路由（子进程）', () => {
     // hosted profile（子进程没设 NODESIGN_PROFILE）下外部行也进 picker（钥匙过滤只在 local），key 在条目上
     expect(o.picker.sort()).toEqual(['glm-5', 'kimi-k2']);
     expect(o.relayKey).toBe('sk-test');
+    // 行内止损上限（08-27 tokenrouter 冷缓存案）：写了的行派生进 wire，没写的落 null（全局默认）
+    expect(o.wireKimi).toBe(20);
+    expect(o.wireGlm).toBe(null);
   });
 
   it('local profile：外部行进 picker 靠条目上的 key（不是 env）；keyEnv 没设的行藏掉（08-22 smoke 抓到的洞）', () => {

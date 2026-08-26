@@ -85,9 +85,9 @@ anchor 用 kebab-case，重名加页号或角色后缀（`portrait-name-p3` / `c
 
 ## 外部资源
 
-核心视觉资源（封面图 / 章节图 / BGM）`curl -L -o ./assets/<name>` 下载后引本地路径，
+核心视觉资源（封面图 / 章节图 / BGM）用 `curl` 带 `-L -o ./assets/<name>` 下载后引本地路径，
 比 hotlink 稳。icon 库、Google Fonts、importmap 里的 esm.sh / unpkg 直接 hotlink。
-`curl -L -o` 只能写到 cwd 底下，写别处静默失败。
+`curl` 带 `-L -o` 时只能写到 cwd 底下，写别处静默失败。
 
 ## 6 个 layout-role 骨架
 

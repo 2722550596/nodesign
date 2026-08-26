@@ -382,6 +382,10 @@ export function resolveWireModel(bodyModel) {
     // 预算 + 单发最长挂起（实测 185 秒）必须 < 600 秒（配了断言，见 upstream-truncation.test.js）。
     emptyRetries: Number.isFinite(row.api.emptyRetries) ? row.api.emptyRetries : null,
     retryBudgetMs: Number.isFinite(row.api.retryBudgetMs) ? row.api.retryBudgetMs : null,
+    // 会话连续失败止损的行内上限（lib/ingress/upstream-fail-streak.js）。全局默认 4 次是为
+    // "上游真死"设计的；"冷但能焐热"的行（tokenrouter -free 档 cache-only 准入，成功一次才暖）
+    // 4 次必被误杀，行内单独放宽。不写 = 全局默认。
+    failStreakMax: Number.isInteger(row.api.failStreakMax) && row.api.failStreakMax > 0 ? row.api.failStreakMax : null,
   };
 }
 
