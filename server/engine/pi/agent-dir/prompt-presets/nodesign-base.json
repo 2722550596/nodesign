@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "type": "pi-forge.prompt-preset",
+  "id": "nodesign-base",
+  "name": "Nodesign Base",
+  "description": "Nodesign 共享底座 preset：nodesign-prelude 的 preset 化占位。M0 只含唯一可观测标记 ND-PROBE-BASE-20260826，M2 填真实内容。不参与默认激活（autoActivate: false，显式 opt-out 防 loader 扫描序回退误选）。",
+  "autoActivate": false,
+  "items": [
+    {
+      "kind": "block",
+      "id": "nodesign-prelude",
+      "name": "Nodesign Prelude",
+      "role": "system",
+      "content": "ND-PROBE-BASE-20260826\n(M0 占位：nodesign-prelude 的 preset 化内容，M2 填充)"
+    }
+  ]
+}

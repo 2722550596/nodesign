@@ -1,0 +1,9 @@
+{
+  "name": "nodesign-pi-agent-dir",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nodesign pi coding-agent agent dir (PI_CODING_AGENT_DIR). Extension packages are installed by pi's package manager into npm/node_modules (see core/package-manager.ts getManagedNpmInstallPath); this manifest records the declared set for offline/vendored installs.",
+  "dependencies": {
+    "pi-mcp-adapter": "2.20.1"
+  }
+}

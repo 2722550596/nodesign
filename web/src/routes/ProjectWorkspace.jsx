@@ -1877,19 +1877,16 @@ export default function ProjectWorkspace() {
     showToast('spec.json 在 workspace 里，面板还没接真数据', 'info');
   };
 
-  // ── snapshot / candidate handlers（P0 占位，noop）──
-  const handleSaveSnapshotQuick = () => {
-    setActionsOpen(false);
-    showToast('快照 = git history（P0 用 git，UI 入口 C9 加）', 'info');
-  };
+  // ── 版本历史（git history，2026-08-25 从 P0 mock 转真）──
+  // 每轮 turn / 画布编辑自动 commit，面板列 git log，恢复 = checkout + 新 commit。
   const handleOpenSnapshots = () => {
     setActionsOpen(false);
     setSnapshotOpen(true);
   };
-  const handleSnapshotSave = () => showToast('P0+：用 git history 取代', 'info');
-  const handleSnapshotRestore = () => showToast('P0+：git checkout', 'info');
-  const handleSnapshotDelete = () => {};
-  const handleSnapshotRename = () => {};
+  // 恢复成功后：画布 iframe 全量 bump（产物文件变了），面板自己会刷新列表
+  const handleSnapshotRestored = () => {
+    handleCanvasReload();
+  };
 
   const handleAddCandidate = () => showToast('P0+：candidate 由 agent fork_variant 主动开', 'info');
   const handleRemoveCandidate = () => {};
@@ -1982,9 +1979,7 @@ export default function ProjectWorkspace() {
               onRename={handleRename}
               onDuplicate={handleDuplicate}
               onDelete={handleDelete}
-              onSaveSnapshot={handleSaveSnapshotQuick}
               onOpenSnapshots={handleOpenSnapshots}
-              snapshotCount={(project.snapshots || []).length}
               onViewCode={handleViewCode}
               isQuickProject={project.kind === 'quick'}
               onUpgrade={() => { setActionsOpen(false); setUpgradeOpen(true); }}
@@ -2209,10 +2204,7 @@ export default function ProjectWorkspace() {
         show={snapshotOpen}
         onClose={() => setSnapshotOpen(false)}
         project={project}
-        onSave={handleSnapshotSave}
-        onRestore={handleSnapshotRestore}
-        onDelete={handleSnapshotDelete}
-        onRename={handleSnapshotRename}
+        onRestored={handleSnapshotRestored}
       />
       <DirectEditModal
         show={directEditOpen}

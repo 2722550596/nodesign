@@ -28,6 +28,9 @@ export const ENV_KEYS = Object.freeze([
   { key: 'NODESIGN_CF_ACCOUNT_ID', group: '发布', label: 'Cloudflare Account ID', secret: false },
   { key: 'NODESIGN_SANDBOX', group: '运行', label: '沙盒（Bash 隔离）', secret: false, options: ['', 'on'], hint: 'Linux bwrap / macOS sandbox-exec；Windows 没有。默认关（本地版靠 CLI 自己的权限模式）' },
   { key: 'NODESIGN_PERMISSION_MODE', group: '运行', label: '权限模式', secret: false, options: ['', 'auto'], hint: "空 = bypassPermissions（全放）；auto = 模型分类器判每次工具调用，多花 15~20 秒/轮" },
+  { key: 'NODESIGN_MAX_TURNS', group: '引擎', label: '单会话最大轮次', secret: false, validate: (v) => (v && !/^\d{1,4}$/.test(v) ? '只能填 1-4 位数字' : ''), hint: 'agent 单轮可跑的工具步骤上限，跨消息全局累计（不是每条消息重置）。默认 100；复杂多页 deck 不够就调高——轮次越宽，token 烧得越快' },
+  { key: 'NODESIGN_MCP_SERVERS', group: '引擎', label: '外部 MCP 服务（JSON）', secret: false,
+    hint: '消费第三方 MCP server：{"名字":{"type":"sse","url":"http://127.0.0.1:8233/sse"}}。模型将看到 mcp__<名字>__* 工具（名字只允许字母数字 _-）。改完重启生效' },
 ]);
 const ALLOWED = new Set(ENV_KEYS.map((k) => k.key));
 
@@ -65,6 +68,10 @@ export function setEnvValues(values) {
     if (v && /[\r\n]/.test(v)) throw new Error(`${k} 的值不能含换行`);
     const def = ENV_KEYS.find((d) => d.key === k);
     if (def.options && v && !def.options.includes(v)) throw new Error(`${k} 只能是 ${def.options.filter(Boolean).join(' | ')} 或留空`);
+    if (def.validate) {
+      const why = def.validate(v);
+      if (why) throw new Error(`${k}：${why}`);
+    }
   }
   let lines = [];
   try { lines = fs.readFileSync(envPath, 'utf8').split('\n'); if (lines.at(-1) === '') lines.pop(); } catch (err) { if (err.code !== 'ENOENT') throw err; }

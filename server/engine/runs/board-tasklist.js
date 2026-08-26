@@ -1,7 +1,8 @@
 /**
  * server/engine/runs/board-tasklist.js —— 把 agent 的步骤清单镜像成板书（2026-08-23）
  *
- * 用户定的文化：板书是基础设施。agent 开工时用 TodoWrite 列的步骤不该只活在侧栏的计划
+ * 用户定的文化：板书是基础设施。agent 开工时用 TaskCreate 列的步骤（2026-08-26
+ * TodoWrite 退役后的继任者）不该只活在侧栏的计划
  * 面板里 —— 它是这一轮的骨架，该写在画布上、每一步产出的东西连到对应步骤。
  * 这件事**由 harness 做，不靠 agent 记得**：
  *   - run.todo.updated → 一条板书 `notes/板书/<stamp>-步骤.md`（一轮一条、原地更新），

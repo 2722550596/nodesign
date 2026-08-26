@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Edit2, Copy, Trash2, History, Code2, Camera, ArrowUpRight, RotateCcw,
+import { Edit2, Copy, Trash2, History, Code2, ArrowUpRight, RotateCcw,
   ScrollText, Files } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS } from '../../lib/theme.js';
 
@@ -10,8 +10,8 @@ import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS } from '../../lib/them
  */
 export default function ProjectActionsMenu({
   open, onClose, anchorRef,
-  onRename, onDuplicate, onDelete, onHistory, onViewCode, onReload,
-  onSaveSnapshot, onOpenSnapshots, snapshotCount = 0,
+  onRename, onDuplicate, onDelete, onViewCode, onReload,
+  onOpenSnapshots,
   onUpgrade, isQuickProject = false,
   // 项目级四件套（2026-08-07 从画布顶带搬进来）。它们是**设置**不是产物：
   // 每天都在看却几乎不点，却占着画布最好的一条横带。
@@ -80,13 +80,7 @@ export default function ProjectActionsMenu({
       <Item icon={<Edit2 size={12} />} label="重命名" onClick={onRename} />
       <Item icon={<Copy size={12} />} label="复制项目" onClick={onDuplicate} />
       <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
-      <Item icon={<Camera size={12} />} label="保存快照" onClick={onSaveSnapshot} />
-      <Item
-        icon={<History size={12} />}
-        label="快照与历史"
-        onClick={onOpenSnapshots}
-        subtle={snapshotCount > 0 ? String(snapshotCount) : null}
-      />
+      <Item icon={<History size={12} />} label="版本历史" onClick={onOpenSnapshots} />
       <Item icon={<Code2 size={12} />} label="查看 spec JSON" onClick={onViewCode} subtle="debug" />
       <div style={{ height: 1, background: COLOR.borderLt, margin: `${GAP.xs}px ${GAP.sm}px` }} />
       <Item icon={<Trash2 size={12} />} label="删除项目" onClick={onDelete} danger />

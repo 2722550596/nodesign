@@ -65,6 +65,7 @@ import {
 import { makePreToolUseBoardNeighborhoodInjector } from './hooks/pre-board-neighborhood.js';
 import { makePreToolUsePerformanceLogGuard } from './hooks/pre-performance-log-guard.js';
 import { makePreToolUseWorkspaceScopeGuard } from './hooks/pre-workspace-scope-guard.js';
+import { makePreToolUseProjectToolDeny } from './hooks/pre-project-tool-deny.js';
 import { PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { makeUserPromptSubmitHandler } from './hooks/user-prompt-submit.js';
 import {
@@ -97,9 +98,12 @@ import { makePostToolUseSubagentReportRecovery } from './hooks/post-subagent-rep
  * @param {import('./context.js').AgentContext} deps.ctx
  * @param {string} deps.workspaceRoot
  * @param {string} [deps.projectId]
+ * @param {string[]} [deps.toolDisable]     项目级禁用清单（nodesign.config.json tools.disable）。
+ *                                          可见集已摘内置 + mcp__nodesign__*；这里兜外部 MCP
+ *                                          单工具（调用期拒绝）。空数组 = 闸不拦任何东西。
  * @returns {Partial<Record<string, Array<{ matcher?: string, hooks: Function[], timeout?: number }>>>}
  */
-export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId } = {}) {
+export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, projectId, toolDisable = [] } = {}) {
   return assertHooksWellFormed({
     // ── P0+ stage 1（不动）──
 
@@ -122,6 +126,11 @@ export function createHooks({ ctx, workspaceRoot, sharedRoot, sessionId, project
     // （sdk.mjs 的 i6 表 Task→Agent，binary 侧 matcher 也吃这个别名 —— 2026-08-03
     // 双 matcher 探针实测两个都命中）。两个都写，换 SDK 版本时不会静默失配。
     PreToolUse: [{
+      // 项目级工具禁用闸（nodesign.config.json tools.disable）：放链首 —— 被拒的工具
+      // 不走到任何注入器。外部 MCP 没有逐工具注册点（SDK 子进程 client 整组连接），
+      // 只有这里做得到单工具禁用：调用期拒绝 + 理由。见 pre-project-tool-deny.js 头。
+      hooks: [makePreToolUseProjectToolDeny({ disable: toolDisable })],
+    }, {
       // 演出记录隐私闸：Read/Grep 直接点到演出文件夹的对话记录 → deny + 教义
       //（RP 台词只走 chatai 通路不进设计会话；写不拦——建场要种开场白）。
       // ⚠️ 边界写清楚：**只拦点名那一种读法**。`Grep path=<目录>` 和 Bash `cat`

@@ -1,0 +1,19 @@
+{
+  "defaultTools": [
+    "read",
+    "write",
+    "edit",
+    "grep",
+    "find",
+    "ls",
+    "state_update",
+    "get_state"
+  ],
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  }
+}

@@ -182,10 +182,17 @@ async function cfApi(cfg, method, urlPath, body) {
 let zoneIdCache = null;
 async function zoneId(cfg) {
   if (zoneIdCache) return zoneIdCache;
-  const zones = await cfApi(cfg, 'GET', `/zones?name=${cfg.apex}`);
-  zoneIdCache = zones?.[0]?.id || null;
-  if (!zoneIdCache) throw new Error(`zone ${cfg.apex} not found`);
-  return zoneIdCache;
+  // 先按完整后缀查 zone，查不到再退两级 apex。以前只查 apex：三级及以上后缀
+  // （如 a2722.dpdns.org，apex 是 dpdns.org）落在别人名下时就找不到 zone。
+  // 两级后缀（share.example.com）suffix === apex，Set 去重后仍只查一次。
+  for (const name of new Set([cfg.suffix, cfg.apex])) {
+    const zones = await cfApi(cfg, 'GET', `/zones?name=${name}`);
+    if (zones?.[0]?.id) {
+      zoneIdCache = zones[0].id;
+      return zoneIdCache;
+    }
+  }
+  throw new Error(`zone ${cfg.apex} not found`);
 }
 
 // 域名 slug 与 Pages 项目名 slug 用**同一份** slugify（publish-store.js）——

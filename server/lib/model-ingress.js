@@ -36,7 +36,8 @@ import http from 'node:http';
 import https from 'node:https';
 import sharp from 'sharp';
 import { resolveWireModel, UPSTREAMS } from '../engine/agent/model-context.js';
-import { resolveSessionWire, fallbackLogged } from './ingress/session-routes.js';
+import { resolveSessionWire, fallbackLogged, sessionShouldStripResidue } from './ingress/session-routes.js';
+import { stripSdkResidue } from './ingress/strip-sdk-residue.js';
 import { forwardOpenAIChat } from './ingress/forward-openai-chat.js';
 import { failStreaks, exhaustedErrorBody } from './ingress/upstream-fail-streak.js';
 import { noteUpstreamBilling } from './ingress/upstream-billing.js';
@@ -228,6 +229,14 @@ async function handleRequest(req, res, bodyBuf) {
 
   // 修补流水线（count_tokens 也要 model 还原，其余修补无害）
   await transformForUpstream(parsed, wire);
+
+  // sdkPreset='replace' 会话（session-loop 注册时带 stripResidue 标志）：剥 SDK 硬注入
+  // 残留——计费头块 / 身份行块 / messages 的 role=system 动态提醒段（agent 注册表 +
+  // skill 目录 + token 预算，约 10.9KB）。only replace 会话剥，keep 会话原样
+  // （计费头/预算提醒对它们有用）。剥除逻辑 + 实测边界见 strip-sdk-residue.js。
+  if (sessionTag && sessionShouldStripResidue(sessionTag)) {
+    stripSdkResidue(parsed);
+  }
 
   // 协议分岔：上游说 OpenAI chat（Zen 等）→ 转换层；其余透传 Anthropic
   if (wire.protocol === 'openai-chat') {

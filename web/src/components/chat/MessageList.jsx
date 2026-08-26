@@ -140,6 +140,15 @@ export default function MessageList({
 }) {
   const virtuosoRef = useRef(null);
   const groups = useMemo(() => groupMessages(messages, isStreaming), [messages, isStreaming]);
+  // 轮次级回滚：给每个 timeline group 带上它所属轮的起点用户消息（rewindTarget）。
+  // 遍历保持顺序 —— user single 记录自己，其后的 timeline/assistant 都属同一轮。
+  const groupsWithTurn = useMemo(() => {
+    let lastUser = null;
+    return groups.map(g => {
+      if (g.type === 'single' && g.message?.role === 'user') lastUser = g.message;
+      return g.type === 'timeline' ? { ...g, rewindTarget: lastUser } : g;
+    });
+  }, [groups]);
 
   // 空态：没有 message 时不渲染 Virtuoso（避免 height 0 时它的内部测量警告）
   if (messages.length === 0) {
@@ -149,14 +158,14 @@ export default function MessageList({
   return (
     <Virtuoso
       ref={virtuosoRef}
-      data={groups}
+      data={groupsWithTurn}
       computeItemKey={groupKey}
       followOutput="auto"
       atBottomThreshold={80}
-      initialTopMostItemIndex={Math.max(0, groups.length - 1)}
+      initialTopMostItemIndex={Math.max(0, groupsWithTurn.length - 1)}
       style={{ flex: 1, minHeight: 0, padding: `${GAP.lg}px 0` }}
       itemContent={(_index, g) => g.type === 'timeline'
-        ? <TimelineGroup messages={g.items} closed={g.closed} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />
+        ? <TimelineGroup messages={g.items} closed={g.closed} rewindTarget={g.rewindTarget} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />
         : <Message message={g.message} projectId={projectId} sessionId={sessionId} onCanvasReload={onCanvasReload} />}
       components={{ Footer: () => <PendingRow show={isStreaming} active={agentActive} tokens={thinkingTokens} /> }}
     />

@@ -556,6 +556,17 @@ async function truncateJsonlAtMessage(sessionRoot, sid, userMessageId) {
       console.warn(`[sessions.rewind] uuid ${userMessageId.slice(0, 8)} 不在 jsonl 里，跳过对话截断`);
       return null;
     }
+    // 截断前把整份 jsonl 备份到会话私档 .nd/<sid>/checkpoints/（.gitignore 已
+    // 排除 .nd/，备份不进 git 历史、也不会被 revertWorkspace 一起回退）。这样
+    // 「回到此处」从破坏性截断升级为可恢复：误点/后悔都能从备份捞回对话。
+    try {
+      const cpDir = path.join(sessionRoot, '.nd', sid, 'checkpoints');
+      await fs.mkdir(cpDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      await fs.copyFile(jsonlPath, path.join(cpDir, `pre-rewind-${stamp}.jsonl`));
+    } catch (err) {
+      console.warn(`[sessions.rewind] jsonl 备份失败（不影响截断）：${err.message}`);
+    }
     const kept = lines.slice(0, cut).join('\n');
     const tmp = `${jsonlPath}.tmp-rewind`;
     await fs.writeFile(tmp, kept ? `${kept}\n` : '');

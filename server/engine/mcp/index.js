@@ -30,6 +30,7 @@
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { withParamSanitizer } from './param-sanitizer.js';
 import { withCapabilityGate, shouldRegisterTool } from './capability-gate.js';
+import { isToolDisabled, toolNameMatches } from '../../projects/project-config.js';
 import { MCP_SERVER_NAME } from './server-name.js';
 import { makeScreenshotCanvasTool } from './tools/screenshot.js';
 import { makeScreenshotUrlTool } from './tools/screenshot-url.js';
@@ -90,6 +91,10 @@ import { makeLookupTagsTool } from './tools/lookup-tags.js';
  * @param {string} [deps.projectId]
  * @param {string} [deps.sessionId]          NoDesign sessionId（活跃产物指针 / 会话级锁 / 出处记账用）
  * @param {import('../agent/context.js').AgentContext} [deps.ctx]  EventBus 入口
+ * @param {string[]} [deps.disabledTools]    项目级禁用（nodesign.config.json tools.disable，
+ *                                           精确名或尾缀 `*` 前缀通配）——命中项整件不注册
+ * @param {string[]} [deps.preloadTools]     项目级直接挂载（tools.preload）——命中项跳过
+ *                                           ToolSearch 延迟加载，schema 常驻（同 ALWAYS_LOAD_TOOLS）
  * @returns SDK MCP server config（喂给 query options.mcpServers）
  */
 // 常驻 schema 白名单（2026-07-23 订阅模式 token 瘦身）：
@@ -130,7 +135,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_batch', 'artifact_motion',
 ]);
 
-export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx } = {}) {
+export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx, disabledTools = [], preloadTools = [] } = {}) {
   // 浏览通道里能被 browser_batch 串起来的七件：先建一次，batch 拿**同一批实例**
   // （projectId/ctx 绑在 handler 里，不能再造第二份）。只有 request_help 不进
   // batch（它阻塞等人）；capture 在里面 —— 逐页采 token 正是 batch 要省的那种回合。
@@ -319,11 +324,19 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     // 本机能力缺席且该工具是 unregister 档 → 整件不注册（连名字都不进上下文）。
     // 现在只有本地 GPU 盒子那两件：盒子手动开关，关着时留名字只会让 agent 去撞
     // SSH 拒连。对照表在 capability-gate.js 一份。
+    //
+    // 项目级禁用（nodesign.config.json tools.disable，收紧类）同待遇：命中整件
+    // 不注册，连名字都不给 agent 看见。MCP 命名空间前缀（mcp__nodesign__）是
+    // SDK 注册时加的，server 内部只见裸名 —— 匹配时两个写法都认
+    // （project-config.js isToolDisabled 的 prefix 参数）。
     shouldRegisterTool(t)
+      && !isToolDisabled(t.name, disabledTools, `mcp__${MCP_SERVER_NAME}__`)
   )).map((t) => (
     // SDK 用 _meta['anthropic/alwaysLoad'] 标记常驻（tool() 第 5 参的等价物，
-    // 集中在这打标避免改 16 个工具文件）
-    ALWAYS_LOAD_TOOLS.has(t.name)
+    // 集中在这打标避免改 16 个工具文件）。两组来源：平台 ALWAYS_LOAD_TOOLS
+    // 白名单 + 项目配置 tools.preload 直接挂载清单（nodesign.config.json；
+    // 匹配语义同 disable：全名/裸名/尾缀通配，见 project-config.js）。
+    ALWAYS_LOAD_TOOLS.has(t.name) || toolNameMatches(t.name, preloadTools, `mcp__${MCP_SERVER_NAME}__`)
       ? { ...t, _meta: { ...t._meta, 'anthropic/alwaysLoad': true } }
       : t
   )).map((t) => (

@@ -72,3 +72,11 @@ core
 
 # 误提交过的缓存（cwd=server 时 process.cwd()/server/.cache 的产物；cacheRoot 08-22 起走 runtime/profile.js 不再生成）
 server/server/
+
+# pi coding-agent agent dir 的运行时安装目录（pi package-manager 把 extension 包装进
+# <agentDir>/npm/node_modules，M0 起 vendored 安装 pi-mcp-adapter 等；不入库）
+server/engine/pi/agent-dir/npm/
+
+# pi 每次启动会在 agent dir 写运行时状态（空 {}，不入库）
+server/engine/pi/agent-dir/auth.json
+server/engine/pi/agent-dir/models-store.json
