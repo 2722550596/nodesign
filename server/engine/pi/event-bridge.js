@@ -1,30 +1,37 @@
 /**
- * server/engine/pi/event-bridge.js — pi RPC 事件流 → Nodesign EventBus 事件桥（M0 原型）
+ * server/engine/pi/event-bridge.js — pi RPC 事件流 → Nodesign EventBus 事件桥（M1 硬化版）
  *
  * 目标：把 pi rpc-mode 的 stdout JSON 行（AgentSessionEvent，事件表见
  * ~/projects/pi-rp/packages/coding-agent/docs/rpc.md:926-954）翻译成 Nodesign 前端
  * 消费的 run.* 事件（契约见 server/engine/agent/events.js 的 Events 构造器与
- * engine/README.md 事件表）。M1 会硬化成 rpc-client 的常驻解析层；M0 只求基于
- * 真实事件流可重放、可读（Wave B2 验收：/tmp/nd-m0-probe/events.jsonl 重放还原）。
+ * engine/README.md 事件表）。
+ *
+ * 生命周期（M1 约定）：rpc-client 每 turn 新建一个 bridge（fresh runId），
+ * turn_start 重置 text/thinking 累积 —— 一个 bridge 实例只对应一个 run 的事件流。
  *
  * 用法：
  *   import { createEventBridge } from './event-bridge.js';
  *   const bridge = createEventBridge({
  *     emit: (evt) => bus.publish(evt),
  *     run: { runId, uid, sessionId, model, pid },   // M1 run 上下文（见下方约定）
+ *     isTurnActive: () => boolean,                  // 可选：abort 空闲门控（见 handleResponse）
  *   });
  *   for (const line of jsonLines) bridge.handleLine(JSON.parse(line));
  *
  * 设计约定：
  *   - 每行独立判定；跨行状态只存"必须累积"的：text/thinking 块（按 contentIndex
- *     累积，run.done 的 finalText 用）、usage 快照、toolCallId 配对与去重、round。
+ *     累积，run.done 的 finalText 用）、usage 快照、toolCallId 配对与去重、
+ *     toolcall_start 的 id/name 捕获（tool_input 配对用）、round。
  *   - 事件富化对齐 AgentContext.emit（server/engine/agent/context.js:132-141）：
  *     { runId, sessionId, ts, ...event }，调用方显式字段不被覆盖。
  *   - 输出载荷字段逐项对照 Events 构造器：
  *       run.delta.text       { round, text }           ← text 是增量块（前端 appendTextDelta 累加）
  *       run.delta.thinking   { round, text }           ← 同上，role='thinking'
  *       run.delta.tool_use   { round, blockId, name, input }
+ *       run.delta.tool_input { round, blockId, name, append }  ← toolcall_delta 参数流式增量
  *       run.delta.tool_result{ round, blockId, name, ok, output?, error? }
+ *       run.tool_progress    { blockId, toolName }     ← tool_execution_update（elapsedSeconds 无来源，省略）
+ *       run.queue.depth      { sessionId, depth }      ← queue_update（steering+followUp 数组长度和）
  *       run.compact_boundary { compactMetadata }
  *       run.status           { status: 'compacting' | null }
  *       run.rate_limit       { info }
@@ -91,8 +98,11 @@ function isRateLimitMessage(s) {
  * @param {object} [opts.run]  M1 run 上下文契约：{ runId, uid, sessionId, model, pid }。
  *        bridge 只消费 runId/sessionId（富化到每条事件）+ model/pid（run.start 载荷、
  *        run.done snapshot）。M1 由 rpc-client 每 turn 建一个 bridge 实例。
+ * @param {() => boolean} [opts.isTurnActive]  abort 空闲门控：返回当前 turn 是否活跃。
+ *        提供且返回 false 时，abort success:true 视为空闲 abort（pi 幂等、仍回 success）
+ *        而被忽略，防止误发 run.cancelled；不提供则保持 M0 行为（abort success → cancelled）。
  */
-export function createEventBridge({ emit, run = {} } = {}) {
+export function createEventBridge({ emit, run = {}, isTurnActive } = {}) {
   const state = {
     round: 0,                  // 1-based turn 序数，turn_start 自增
     runStarted: false,         // 首个 agent_start 发过 run.start 后才算
@@ -102,6 +112,7 @@ export function createEventBridge({ emit, run = {} } = {}) {
     thinkingByIndex: new Map(),// contentIndex → 累积 thinking（重放完整性校验用）
     toolNames: new Map(),      // toolCallId → toolName（tool_result 兜底）
     emittedToolUses: new Set(),// toolCallId 去重：toolcall_end 与 tool_execution_start 双路径只发一次
+    toolcallStarts: new Map(), // contentIndex → {id,name}：toolcall_start 捕获（toolcall_delta → tool_input 配对；实测流无 id，拿不到则 delta 忽略）
     lastUpdateUsage: null,     // message_update 顶层 usage（流式快照；实测全程是初始快照值）
     finalUsage: null,          // message_end.message.usage（权威最终值，含 reasoning）
     stopReason: null,
@@ -138,9 +149,12 @@ export function createEventBridge({ emit, run = {} } = {}) {
     }
     // abort 响应 → run.cancelled；settled 时据此不发 run.done（收场三信号互斥，
     // 对齐 session-loop.js:775-793 的 cancelled/error/done 分支）。
-    // M1 TODO：核实空闲时 abort 的响应语义（pi 可能幂等 success:true，届时需查
-    // pi 是否有"当前 turn 活跃"的 gate，否则空闲 abort 会误发 cancelled）。
+    // M1 决策（空闲 abort 门控）：pi 对无活跃 turn 的 abort 是幂等的，仍回 success:true；
+    // 若照单全收，用户在空闲期点停止会给一个早已结束的 run 误发 cancelled。
+    // 故：调用方提供 isTurnActive 且返回 false 时按"没取消任何东西"忽略；
+    // 未提供门控则保持 M0 行为（rpc-client 波次2 应提供）。
     if (line.command === 'abort' && line.success === true) {
+      if (typeof isTurnActive === 'function' && isTurnActive() !== true) return null;
       state.cancelled = true;
       return out('run.cancelled', { reason: 'abort_requested' });
     }
@@ -151,6 +165,8 @@ export function createEventBridge({ emit, run = {} } = {}) {
   function handleAgentStart() {
     // run.start：§4.5「首个 agent_start」。auto-retry 会再发 agent_start，
     // 同一 run 只发一次；M1 每 turn 新建 bridge，天然隔离。
+    // model 由 rpc-client 从 run.model 传入（spawn 配置/get_state）——message_start 的
+    // wire model 晚到，只作 state.model 的兜底更新，run.start 用的是 run 初始值。
     if (state.runStarted) return null;
     state.runStarted = true;
     return out('run.start', {
@@ -184,8 +200,9 @@ export function createEventBridge({ emit, run = {} } = {}) {
   function handleMessageUpdate(line) {
     const ame = line.assistantMessageEvent;
     if (!ame || typeof ame !== 'object' || typeof ame.type !== 'string') return null;
-    // usage 每条 message_update 都带（实测全程为初始快照值，流式期不更新）——
-    // 无条件吸收，最后一条即流式终值；权威值仍以 message_end.message.usage 为准
+    // usage 每条 message_update 都带，但实测全程是**初始快照**值（流式期不更新；
+    // rpc.md:1054 亦言"may remain zero until completion"）——吸收仅作 message_end 缺失兜底。
+    // ⭐ 权威终值是 message_end.message.usage（含 reasoning），见 handleMessageEnd。
     if (line.usage && typeof line.usage === 'object') state.lastUpdateUsage = line.usage;
 
     const idx = typeof ame.contentIndex === 'number' ? ame.contentIndex : 0;
@@ -212,9 +229,24 @@ export function createEventBridge({ emit, run = {} } = {}) {
       }
       case 'text_end':
         return null;
-      case 'toolcall_start':
-      case 'toolcall_delta':
-        return null; // 工具参数流式增量；M1 可映射 run.delta.tool_input（同 blockId 补丁）
+      case 'toolcall_start': {
+        // [doc-diff] 实测 RPC 流里 toolcall_start 只有 {type,contentIndex}（ai 层事件无 id，
+        // json-event.ts 又剥掉 partial）；仅 proxy/pi-messages 变体带 id/toolName。
+        // 有则捕获，供后续 toolcall_delta 发 run.delta.tool_input；拿不到则 delta 忽略（M1 决策）。
+        const id = ame.id ?? ame.toolCall?.id ?? null;
+        const name = ame.toolName ?? ame.toolCall?.name ?? null;
+        if (id && name) state.toolcallStarts.set(idx, { id, name });
+        return null;
+      }
+      case 'toolcall_delta': {
+        // 工具参数流式增量 → run.delta.tool_input（Events.deltaToolInput 形状：append = 原始增量文本）。
+        // toolcall_start 没给 id/name 时无法绑 blockId，忽略该行。
+        const start = state.toolcallStarts.get(idx);
+        if (!start || typeof ame.delta !== 'string' || ame.delta === '') return null;
+        return out('run.delta.tool_input', {
+          round: state.round, blockId: start.id, name: start.name, append: ame.delta,
+        });
+      }
       case 'toolcall_end':
         return handleToolcallEnd(ame);
       default:
@@ -225,6 +257,7 @@ export function createEventBridge({ emit, run = {} } = {}) {
   function handleToolcallEnd(ame) {
     // assistant 消息流里的完整 tool call（rpc.md message_update 表：toolcall_end 含
     // 完整 toolCall）。与 tool_execution_start 同 id 只发一次 run.delta.tool_use。
+    if (typeof ame.contentIndex === 'number') state.toolcallStarts.delete(ame.contentIndex); // 闭合 tool_input 配对
     const tc = ame.toolCall && typeof ame.toolCall === 'object' ? ame.toolCall : {};
     const id = tc.id ?? tc.toolCallId ?? null;
     const name = tc.name ?? null;
@@ -232,9 +265,12 @@ export function createEventBridge({ emit, run = {} } = {}) {
     state.emittedToolUses.add(id);
     state.counters.toolCalls += 1;
     state.toolNames.set(id, name);
+    // [doc-diff] 实测 toolCall 形状 {type:'toolCall',id,name,arguments}（events.jsonl:17）；
+    // M0 误读 tc.input，非空参数会被静默丢成 {}——以 arguments 为准（input 兜底）。
+    const args = tc.arguments ?? tc.input;
     return out('run.delta.tool_use', {
       round: state.round, blockId: id, name,
-      input: tc.input && typeof tc.input === 'object' ? tc.input : {},
+      input: args && typeof args === 'object' ? args : {},
     });
   }
 
@@ -252,10 +288,15 @@ export function createEventBridge({ emit, run = {} } = {}) {
     });
   }
 
-  function handleToolExecutionUpdate() {
-    // 执行中 partialResult 是"累计快照"（rpc.md:1105-1112），前端没有逐块覆盖
-    // 的需求（run.delta.tool_result 一次给终值）；M1 若要进度可视再映射。
-    return null;
+  function handleToolExecutionUpdate(line) {
+    // M1：→ run.tool_progress（Events.toolProgress 形状 { blockId, toolName }）。
+    // partialResult 是"累计快照"（rpc.md:1105-1112），前端无逐块覆盖需求
+    //（run.delta.tool_result 一次给终值），不透传；elapsedSeconds 无来源（pi 不报），
+    // 省略字段（前端可忽略未知字段）。
+    const id = line.toolCallId ?? null;
+    if (!id) return null;
+    const name = line.toolName ?? state.toolNames.get(id) ?? null;
+    return out('run.tool_progress', { blockId: id, toolName: name ?? 'tool' });
   }
 
   function handleToolExecutionEnd(line) {
@@ -274,6 +315,16 @@ export function createEventBridge({ emit, run = {} } = {}) {
       payload.error = text || 'tool execution failed';
     }
     return out('run.delta.tool_result', payload);
+  }
+
+  function handleQueueUpdate(line) {
+    // M1：排队 steering/followUp → run.queue.depth（排队提示，Events.queueDepth 形状）。
+    // [doc-diff] rpc.md:1126-1132 / agent-session.ts:717-721：载荷没有 length/count/depth
+    // 标量，是 steering/followUp 两个字符串数组；depth = 两数组长度和。两者都缺则忽略该行。
+    const s = Array.isArray(line.steering) ? line.steering.length : null;
+    const f = Array.isArray(line.followUp) ? line.followUp.length : null;
+    if (s === null && f === null) return null;
+    return out('run.queue.depth', { sessionId: run.sessionId ?? null, depth: (s ?? 0) + (f ?? 0) });
   }
 
   function handleMessageEnd(line) {
@@ -298,9 +349,10 @@ export function createEventBridge({ emit, run = {} } = {}) {
   }
 
   function handleCompactionEnd(line) {
-    // §4.5：compaction 事件 → run.compact_boundary。失败（result:null）时 rpc.md
-    // 用 errorMessage 说明（如 quota 超限），并入 compactMetadata 供前端展示；
-    // M1 决定是否对"失败"单独发 run.error。
+    // §4.5：compaction 事件 → run.compact_boundary。M1 定案：失败（result:null，
+    // rpc.md:1170-1172 用 errorMessage 说明，如 quota 超限）折 errorMessage 进
+    // compactMetadata，**不**单独发 run.error —— compaction 失败可恢复（willRetry）
+    // 或会话照常继续，run 不该因此判死；前端用 compact_boundary 卡片展示。
     state.counters.compactBoundaries += 1;
     const meta = {
       reason: line.reason ?? null,
@@ -375,7 +427,7 @@ export function createEventBridge({ emit, run = {} } = {}) {
                                      // run.done 的权威锚点是 agent_settled（rpc.md:929）
       case 'agent_settled': return handleAgentSettled();
       case 'tool_execution_start': return handleToolExecutionStart(line);
-      case 'tool_execution_update': return handleToolExecutionUpdate();
+      case 'tool_execution_update': return handleToolExecutionUpdate(line);
       case 'tool_execution_end': return handleToolExecutionEnd(line);
       case 'compaction_start': return handleCompactionStart();
       case 'compaction_end': return handleCompactionEnd(line);
@@ -384,8 +436,8 @@ export function createEventBridge({ emit, run = {} } = {}) {
       case 'extension_error': return handleExtensionError(line);
       // 直接 RPC bash 命令的输出流；Nodesign 工具链走 tool_execution_*，M0 不直跑
       case 'bash_execution_update': return null;
-      // 排队 steering/followUp；Nodesign 有 run.queue.depth 但语义不同，M1 再定
-      case 'queue_update': return null;
+      // 排队 steering/followUp → run.queue.depth（排队提示）；载荷是俩数组，depth=长度和，见 handleQueueUpdate
+      case 'queue_update': return handleQueueUpdate(line);
       // watch_state 订阅协议内部事件，无前端消费方
       case 'state_changed': return null;
       // 会话树内部（preset 激活 / reroll 分支切换 / edit_message），不是 run 流事件
