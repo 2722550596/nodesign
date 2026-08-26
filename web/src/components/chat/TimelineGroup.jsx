@@ -1,10 +1,11 @@
 import { useState, memo } from 'react';
-import { ChevronDown, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, CheckCircle2, Undo2 } from 'lucide-react';
 import Message from './Message.jsx';
 import TimelineNode from './TimelineNode.jsx';
 import { TimelinePositionProvider } from './TimelineGroupContext.js';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { toolLabelOf, fileNameOf } from '../../lib/stage.js';
+import { useRewind, canRewindMessage } from '../../hooks/useRewind.js';
 
 /**
  * TimelineGroup —— 把连续的 thinking + tool 节点包成一个可折叠的"思考片段"
@@ -93,8 +94,9 @@ function extractSummary(messages) {
   return fromSdk || summaryFromTools(messages) || summaryFromThinking(messages);
 }
 
-function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload }) {
+function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanvasReload, rewindTarget }) {
   const [open, setOpen] = useState(true);
+  const { busy, rewind } = useRewind({ projectId, sessionId, onCanvasReload });
 
   if (!messages || messages.length === 0) return null;
 
@@ -102,6 +104,18 @@ function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanv
     m.isStreaming || m.status === 'running' || m.taskStatus === 'running',
   );
   const stepCount = messages.length;
+  // 轮次级回滚：回滚到本轮的起点（该轮第一条用户消息）。进行中 / 无有效
+  // 消息 id（乐观插入的 msg_xxx / 历史会话）时不显示。
+  const canRewindTurn = !isActive && !!rewindTarget && canRewindMessage(rewindTarget) && !busy;
+
+  async function handleRewindTurn(e) {
+    e.stopPropagation();
+    if (!canRewindTurn) return;
+    await rewind(rewindTarget.id, {
+      confirmTitle: '回滚到这轮之前',
+      confirmText: '回滚到这轮之前？这会丢弃该轮开始后的所有改动（文件 + 对话）。\n\n历史会话首次回滚需 3-5 秒（重启临时会话）；后续回滚瞬间完成。',
+    });
+  }
 
   // 优先级：显式 prop > SDK helper 摘要 / 工具 / thinking 首句 > 占位
   const title = summary
@@ -141,6 +155,37 @@ function TimelineGroup({ messages, closed, summary, projectId, sessionId, onCanv
           minWidth: 0, flex: 1,
           lineHeight: 1.5,
         }}>{title}</span>
+        {canRewindTurn && (
+          <span
+            role="button"
+            tabIndex={-1}
+            title="回滚到这轮之前的状态（撤销该轮开始后的文件与对话改动）"
+            onClick={handleRewindTurn}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: `2px ${GAP.sm}px`,
+              marginRight: 2,
+              borderRadius: RADIUS.sm,
+              color: COLOR.sub,
+              fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs,
+              cursor: 'pointer', flexShrink: 0,
+              userSelect: 'none',
+            }}
+            onMouseEnter={(e) => {
+              e.stopPropagation();
+              e.currentTarget.style.background = 'rgba(43,33,23,0.06)';
+              e.currentTarget.style.color = COLOR.text2;
+            }}
+            onMouseLeave={(e) => {
+              e.stopPropagation();
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = COLOR.sub;
+            }}
+          >
+            <Undo2 size={11} />
+            回滚到这轮之前
+          </span>
+        )}
         <ChevronDown
           size={14}
           strokeWidth={1.75}
@@ -203,6 +248,7 @@ function timelineGroupPropsEqual(prev, next) {
   if (prev.projectId !== next.projectId) return false;
   if (prev.sessionId !== next.sessionId) return false;
   if (prev.onCanvasReload !== next.onCanvasReload) return false;
+  if (prev.rewindTarget !== next.rewindTarget) return false;
   const a = prev.messages || [];
   const b = next.messages || [];
   if (a.length !== b.length) return false;

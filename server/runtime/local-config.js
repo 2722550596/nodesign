@@ -13,7 +13,7 @@
  *     "models": [
  *       { "id": "kimi-k2", "label": "Kimi K2", "desc": "…", "window": 262144, "upstream": "myrelay", "wireModel": "kimi-k2-0905",
  *         "thinking": "strip", "reasoningEffort": "high", "maxOutput": 32000, "prices": { "input": 0.6, "output": 2.5 },
- *         "emptyRetries": 2, "retryBudgetMs": 120000, "fastModel": "kimi-k2", "brand": "custom" }
+ *         "emptyRetries": 2, "retryBudgetMs": 120000, "failStreakMax": 20, "fastModel": "kimi-k2", "brand": "custom" }
  *     ]
  *   }
  *
@@ -72,6 +72,7 @@ const ModelSchema = z.object({
   prices: PricesSchema.optional(),
   emptyRetries: z.number().int().min(0).max(10).optional(),
   retryBudgetMs: z.number().int().min(0).max(MAX_RETRY_BUDGET_MS).optional(),
+  failStreakMax: z.number().int().min(1).max(50).optional(),
   uncensored: z.boolean().default(false),
 }).strict();
 

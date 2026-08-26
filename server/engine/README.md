@@ -106,7 +106,10 @@ run.error               { message, code, stack }
 
 ## 决定 / 不做的事
 
-- ❌ 不消费 MCP（HANDOVER §11；Nodesign 暴露 REST/WS，不做 MCP client）
+- ✅ 消费外部 MCP server（2026-08-26 起）：.env 的 `NODESIGN_MCP_SERVERS` 声明
+  （JSON：名字 → `{type:'sse',url}`），SDK 以 client 连上去，模型可见 `mcp__<名>__*`
+  工具；allow 规则在 isolation.js 同源展开。名字/数量全由站主 env 决定，代码里
+  没有硬编码的第三方 server（装配见 mcp/external.js）。
 - ❌ 不开 Bash 工具（沙盒 cwd 隔离了，但 shell 越界风险高；P5+ 真要 chart 库时再开）
 - ❌ 不开 WebFetch/WebSearch（P5 真做参考系统时再开，需要 SSRF 防护）
 - ❌ 不开 Sub-agents/Task（P5+ 多方向探索可考虑，前期单 agent 单 run）

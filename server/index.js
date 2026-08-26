@@ -147,7 +147,9 @@ if (platform.serveWeb) {
     if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/ws/')) return next();
     if (!fs.existsSync(indexHtml)) return next();
     res.setHeader('Cache-Control', 'no-cache');
-    res.sendFile(indexHtml);
+    // dotfiles: 'allow' —— webDistDir 若在点目录下（npx 缓存 ~/.npm/_npx/…），
+    // send 默认 'ignore' 会把整条绝对路径判成 dotfile 请求直接 404
+    res.sendFile(indexHtml, { dotfiles: 'allow' });
   });
 }
 

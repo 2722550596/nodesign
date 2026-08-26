@@ -26,6 +26,7 @@ import fs from 'node:fs/promises';
 import { platform } from '../../runtime/platform.js';
 import { autoModeSettings } from './auto-mode-rules.js';
 import { MCP_ALLOW_RULE } from '../mcp/server-name.js';
+import { externalMcpAllowRules } from '../mcp/external.js';
 
 /**
  * 会话要用的缓存/临时目录一次备齐（2026-08-19 从 session-loop 下沉）。
@@ -163,7 +164,7 @@ export function buildIsolationOptions({ cwdRoot, sharedRoot, npmCacheDir, agentT
         //   挡掉过 8 个会话的正经活（08-24 一天 15 次）。闸门的净效用是负的。
         // Bash **不在**名单里：它跑的是任意命令，语义判断正是分类器的本职。
         //   内置的 Read/Write/Edit/WebFetch 等也照旧不动。
-        allow: [MCP_ALLOW_RULE],
+        allow: [MCP_ALLOW_RULE, ...externalMcpAllowRules()],
       },
       // auto 模式的分类器规则（只在开了 auto 时注入，省得白占 settings）。
       // ⚠️ 按节替换不是追加 —— 为什么只覆盖 environment / hard_deny 两节，

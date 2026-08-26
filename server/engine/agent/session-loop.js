@@ -57,6 +57,7 @@ import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isola
 import { MEMORY_EXTRA_GUIDELINES, mergeAgentSettings } from './memory-config.js';
 import { createNodesignMcpServer } from '../mcp/index.js';
 import { MCP_SERVER_NAME } from '../mcp/server-name.js';
+import { externalMcpServers } from '../mcp/external.js';
 import { assertInitContract } from './init-contract.js';
 import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
 import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensoredModel } from './model-context.js';
@@ -69,6 +70,7 @@ import { clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { platform } from '../../runtime/platform.js';
 import { renderPrelude } from './system-prompts.js';
+import { loadProjectConfig, resolveProjectPreludeContent, filterTools, filterMcpServers, applyMcpServerPreload } from '../../projects/project-config.js';
 import {
   DEFAULT_TOOL_ALLOWLIST,
   STREAMING_ENABLED,
@@ -152,6 +154,23 @@ export async function runSession({
   const cwdRoot = sessionWorkspaceRoot;
   const sharedRoot = cwdRoot;
   const sessionMetaRoot = path.join(cwdRoot, '.nd', sessionId);
+
+  // ── 项目级配置（nodesign.config.json，与 CLAUDE.md 同根）──
+  // 必须比 registerIngressSession 早：sdkPreset='replace' 的剥残留标志跟着注册走。
+  // 文件缺失 = 默认；坏 JSON / 越界字段 = 整份落默认，绝不因为一个逗号把会话
+  // 初始化拉下来（project-config.js 文件头写清楚了）。
+  const { config: projectConfig } = await loadProjectConfig(sharedRoot);
+  // null = 用平台 prelude；非 null = 项目自己的整份 prelude（平台协议/产物政策/
+  // 成人档联动都不注入 —— 覆盖语义见 project-config.js 文件头）。
+  const projectPreludeOverride = await resolveProjectPreludeContent(projectConfig, sharedRoot);
+  if (projectPreludeOverride !== null) {
+    console.warn(
+      `[session-loop] ${projectId} 项目级 prelude 覆盖生效 —— 平台协议 / 产物政策块 / 成人档联动不注入，内容由项目配置负责`
+    );
+  }
+  // sdkPreset='replace'：SDK preset 不注入（systemPrompt 装配处）+ ingress 转发前
+  // 剥 SDK 硬注入残留（计费头/身份行/动态提醒段，lib/ingress/strip-sdk-residue.js）。
+  const projectStripResidue = projectConfig.prompt.sdkPreset === 'replace';
 
   const sessionAbortController = new AbortController();
   // initialPermissionMode 落进 active-runs，canUseTool 通过 getSessionPermissionMode 读
@@ -250,7 +269,8 @@ export async function runSession({
       apiKeyForBinary = 'nd-ingress-managed';
       // SDK 内部 helper 可能用不在表里的 Claude 名发请求（config 目录默认模型），
       // 注册会话 fast 兜底路由让它们改道而不是 502。finally 配对注销。
-      registerIngressSession(sessionId, model);
+      // stripResidue：sdkPreset='replace' 的会话让 ingress 在转发前剥 SDK 硬注入残留。
+      registerIngressSession(sessionId, model, { stripResidue: projectStripResidue });
       // 上游抖的时候（Zen 一次 503 能挂 50~140 秒）会话里什么都不动，用户只看到一个转不停的绿点。
       // 给 ingress 一条推消息的通道，让它把"正在重试"说出来。节流在 session-notice.js，finally 配对注销。
       noticeHandler = ({ key, text, priority }) => {
@@ -326,7 +346,11 @@ export async function runSession({
 
   // MCP server 实例落变量：开局契约自检要从**传给 query 的同一个实例**上取预期
   // 工具名（server.toolNames，见 mcp/index.js）——不另立第二份清单。
-  const nodesignServer = createNodesignMcpServer({ workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx });
+  const nodesignServer = createNodesignMcpServer({
+    workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx,
+    disabledTools: projectConfig.tools.disable,
+    preloadTools: projectConfig.tools.preload,
+  });
 
   // npm 缓存 + 沙盒可写 tmp（$TMPDIR / pip 缓存）：细节与教训见 isolation.js
   const agentDirs = await prepareAgentDirs({ dataRoot: PROJECTS_DATA_ROOT, projectId, sessionId });
@@ -404,7 +428,14 @@ export async function runSession({
     // 让 SDK 内部 rawMaxTokens=1M，autoCompactWindow=230400 不再被卡 200k；
     // proxy 出口把 alias 还原成真 appModel 给 gateway。详见 model-context.js。
     model: sdkModel,
-    tools: toolAllowlist,
+    // 项目级禁用（nodesign.config.json tools.disable，收紧类）在 DEFAULT_TOOL_ALLOWLIST
+    // 基础上再收一道 —— 命中项从可见集剥离，连名字都不给 agent 看见。
+    // skills.enabled=false 时 Skill 工具一并摘（catalog 都空了，留它会误导 agent 去加载）。
+    tools: (() => {
+      let list = filterTools(toolAllowlist, projectConfig.tools.disable);
+      if (!projectConfig.skills.enabled) list = list.filter((t) => t !== 'Skill');
+      return list;
+    })(),
     // systemPrompt.append 只放 NODESIGN_PRELUDE（平台协议 / 路径地图 / 工作流硬规则） ——
     // 语义层"平台强制、用户不可覆盖"。SKILL.md（设计方法论） 走 SDK 原生 plugins+skills：
     //   - plugins：加载 server/engine/plugins/nodesign（含 .claude-plugin/plugin.json + skills/）
@@ -419,9 +450,7 @@ export async function runSession({
     // SKILL.md body 全文每 turn 恒驻在 system prompt 里。改造后 system prompt 静态前缀更稳
     // （省 cache），SKILL.md body 只在 agent 真需要决策时进入 context。详见
     // memory/nodesign_system_prompt_architecture.md。
-    systemPrompt: {
-      type: 'preset',
-      preset: 'claude_code',
+    systemPrompt: (() => {
       // 成人段随项目 owner 的外审档联动（agent-shared.renderPrelude）；
       // 找不到 owner 时落 loose 默认，绝不落 off。
       //
@@ -429,17 +458,36 @@ export async function runSession({
       // 判模型名 —— 那是模型属性，写在这儿就是给那张表开第二个真相源。为 true 的
       // 行拿到的是精简版底线：本地无审查权重跑在自己盒子上、gate 'localGen' 只对
       // 获批账号开、产物不外发，完整那节的前提（对外开放平台）根本不成立。
-      append: (() => {
-        const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
-        // 档位按模型通路取旋钮（08-20 两旋钮：订阅 / 本地与中转），model 是上面已解析的会话模型
-        // 无主项目 fail-closed 到 tier.js 的默认（strict），别落 loose（生产 08-21 实查 0 个无主项目）
-        return renderPrelude(owner ? levelFor(owner, model) : defaultModerationLevel(null), {
-          uncensored: isUncensoredModel(model),
-        });
-      })(),
-    },
-    plugins: installed.plugins,
-    skills: installed.skills,
+      //
+      // 项目级 prelude 覆盖（nodesign.config.json prompt.prelude.mode='project'）：
+      // 整份换成项目自己的，平台协议 / 产物政策 / 成人档联动都不注入
+      // （覆盖语义与回退规则见 project-config.js 文件头，装配日志在上面）。
+      const prelude = projectPreludeOverride !== null
+        ? projectPreludeOverride
+        : (() => {
+          const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
+          // 档位按模型通路取旋钮（08-20 两旋钮：订阅 / 本地与中转），model 是上面已解析的会话模型
+          // 无主项目 fail-closed 到 tier.js 的默认（strict），别落 loose（生产 08-21 实查 0 个无主项目）
+          return renderPrelude(owner ? levelFor(owner, model) : defaultModerationLevel(null), {
+            uncensored: isUncensoredModel(model),
+          });
+        })();
+      const appended = [prelude, projectConfig.prompt.append].filter(Boolean).join('\n\n---\n\n');
+      // sdkPreset=replace（nodesign.config.json prompt.sdkPreset）：systemPrompt 整份换成
+      // 我们的文本，SDK 内置 claude_code preset（~27.7KB）不注入。实测残留（SDK 2.1.237
+      // 假网关）：顶层 system 只剩 160B 计费头+身份行，另有 messages[1] 10.9KB 动态提醒段
+      // （agent 注册表 / skill 目录 / token 预算）—— 后者不走 systemPrompt 字段，换不掉。
+      // 替换后失去的 preset 行为（安全条款/钩子信任/动作确认/记忆协议/压缩契约）要靠
+      // prelude 文本自己补，见 project-config.js 文件头。
+      return projectConfig.prompt.sdkPreset === 'replace'
+        ? appended
+        : { type: 'preset', preset: 'claude_code', append: appended };
+    })(),
+    // 项目级关闭（nodesign.config.json skills.enabled=false）：skill catalog（plugins+
+    // skills 两路）和 Skill 工具一起剥 —— plugin 目录资源仍留在 additionalDirectories
+    // 可 Read，但那只是文件访问，不再是"技能协议"。
+    plugins: projectConfig.skills.enabled ? installed.plugins : [],
+    skills: projectConfig.skills.enabled ? installed.skills : [],
 
     // 2026-05-18 安全：关 inline shell execution。SDK 默认允许 skill / slash command 内
     // inline shell 命令（Anthropic 标准 skill 协议的一部分，如 setup script）—— 但 NoDesign
@@ -557,11 +605,10 @@ export async function runSession({
     thinking: pickThinkingConfig(model),
     effort: 'medium',
     // streamInput 模式 query 横跨整个 session，maxTurns 是**全局累计**（每条
-    // user message 起一轮 agent loop，turn 数不重置）。15 太低 —— 用户聊几
-    // 轮就触顶导致 'error_max_turns' 误中断。改 50 给复杂 deck（多页 +
-    // 多次自检 + 子代理）足够余量；env override 给极端情况用
+    // user message 起一轮 agent loop，turn 数不重置）。50 对复杂 deck（多页 +
+    // 多次自检 + 子代理）不够，改 100 给足余量；env override 给极端情况用
     maxTurns: Number(process.env.NODESIGN_MAX_TURNS)
-      || 50,
+      || 100,
 
     // 不传 resume —— streamInput 模式 SDK 内存保 history，不依赖 jsonl
     enableFileCheckpointing: true,
@@ -592,6 +639,15 @@ export async function runSession({
         ...isolation,
         settings: mergeAgentSettings(isolation.settings, {
           skipWebFetchPreflight: platform.skipWebFetchPreflight, sharedRoot,
+          // claudeMd=off（nodesign.config.json prompt.claudeMd）：项目 CLAUDE.md
+          // 记忆精确排除（SDK settings.claudeMdExcludes，绝对路径 picomatch）。
+          // 只排 CLAUDE.md 文件，settings.json / autoCompact 读取不受影响。
+          ...(projectConfig.prompt.claudeMd === 'off' ? {
+            claudeMdExcludes: [
+              path.join(sharedRoot, 'CLAUDE.md'),
+              path.join(sharedRoot, '.claude', 'CLAUDE.md'),
+            ],
+          } : {}),
         }),
       };
     })(),
@@ -602,12 +658,23 @@ export async function runSession({
 
     // projectId 要传：PostToolUseFailure 记问题库时用它标归属（漏传的话
     // issues 行的 project_id 全是 null，事后追不回是哪个项目踩的）
-    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId, projectId }),
+    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId, projectId, toolDisable: projectConfig.tools.disable }),
 
     mcpServers: {
       // 键名 = 模型眼里的 `mcp__<名>__<工具>` 前缀，也是 isolation.js 那条
       // permissions.allow 规则要匹配的名字 —— 两个读者，收在 mcp/server-name.js
       [MCP_SERVER_NAME]: nodesignServer,
+      // 外部 MCP server（.env 的 NODESIGN_MCP_SERVERS，设置页「引擎」组可改）。
+      // 读者 #1：名字在这里展开成工具前缀；读者 #2 的 allow 规则在 isolation.js，
+      // 两份都出自 mcp/external.js 同一份解析，别在这手写。
+      // 项目级禁用（config.tools.disable）按 server 粒度收紧：命中整台摘掉，
+      // 精度只到 server（外部是 SDK 子进程整组连接，无逐工具注册点）。
+      // 项目级挂载（config.tools.preload，server 粒度）：命中整台 alwaysLoad
+      // （SDK McpServerConfig.alwaysLoad，d.ts:1071）——工具常驻免 ToolSearch。
+      ...applyMcpServerPreload(
+        filterMcpServers(externalMcpServers(), projectConfig.tools.disable),
+        projectConfig.tools.preload,
+      ),
     },
 
     // mainModel = appModel ('kimi-k2.6')，sdkModel = SDK 视角 alias ('claude-opus-4-7[1m]')。

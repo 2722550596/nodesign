@@ -8,7 +8,8 @@ import MarkdownText from './MarkdownText.jsx';
 import { Undo2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, FONT_SIZE, FONT_MONO, FONT_SANS } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import { Turn, Sessions } from '../../lib/api.js';
+import { Turn } from '../../lib/api.js';
+import { useRewind, canRewindMessage } from '../../hooks/useRewind.js';
 import TimelineNode from './TimelineNode.jsx';
 import { getToolIcon, isSubagentTool } from './tool-icons.js';
 import { useTimelinePosition } from './TimelineGroupContext.js';
@@ -157,50 +158,17 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
 // SDK uuid 36-char 形态（"abc12345-1234-1234-1234-123456789abc"）—— SDK Query.rewindFiles
 // 只认这个；前端乐观插入的 newId('msg') = "msg_xxx" 拿来调会被 SDK 拒（canRewind:false）
 // 一闪即逝，用户感觉"无反应"。所以 undo 按钮只在 hydrate 来的真 uuid 上启用。
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// （uuid 形态判断收敛到 hooks/useRewind.js 的 canRewindMessage）
 
 function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
-  const showToast = useGlobalStore(s => s.showToast);
-  const confirm = useGlobalStore(s => s.confirm);
   const [hover, setHover] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const { busy, rewind } = useRewind({ projectId, sessionId, onCanvasReload });
 
-  const canUndo = !!(projectId && sessionId && message.id && UUID_RE.test(message.id));
+  const canUndo = !!(projectId && sessionId && canRewindMessage(message));
 
   async function handleUndo() {
     if (!canUndo || busy) return;
-    if (!(await confirm({ title: '回到此处', message: '回到此处？这会丢弃后续所有文件改动。\n\n历史会话首次回滚需 3-5 秒（重启临时会话）；后续回滚瞬间完成。', confirmLabel: '回滚', danger: true }))) return;
-    setBusy(true);
-    try {
-      const result = await Sessions.rewind(projectId, sessionId, message.id);
-      if (result?.canRewind === false) {
-        showToast(result.error || '此处不支持回滚', 'warn');
-      } else {
-        const n = result?.filesChanged?.length || 0;
-        // iframe reload 由后端 emit 的 run.file_changed event 自动触发（ProjectWorkspace 已 case），
-        // 不再依赖 onCanvasReload —— 但保留兼容调用（active query 路径同步返回时也 bump）
-        const talk = result?.conversationTruncated ? '，对话已截回该处' : '';
-        showToast(n > 0 ? `已回滚 ${n} 个文件${talk}` : `已回滚${talk || '（无文件改动）'}`, 'success');
-        if (onCanvasReload) onCanvasReload();
-        // 对话层已被服务端截断 → 通知 ProjectWorkspace 重拉消息（免传三层 props）
-        if (result?.conversationTruncated) {
-          window.dispatchEvent(new CustomEvent('nd-conversation-rewound', { detail: { sessionId } }));
-        }
-      }
-    } catch (err) {
-      const msg = err?.message || String(err);
-      if (msg.includes('REWIND_BUSY') || msg.includes('409')) {
-        showToast('上一个回滚还在进行，稍候重试', 'warn');
-      } else if (msg.includes('JSONL_MISSING') || msg.includes('404')) {
-        showToast('会话历史已删，无法回滚', 'warn');
-      } else if (msg.includes('REWIND_FAILED') || msg.includes('timeout')) {
-        showToast('回滚超时，请重试（临时会话启动较慢时偶发）', 'error');
-      } else {
-        showToast(`回滚失败：${msg}`, 'error');
-      }
-    } finally {
-      setBusy(false);
-    }
+    await rewind(message.id);
   }
 
   return (

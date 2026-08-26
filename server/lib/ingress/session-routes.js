@@ -18,13 +18,26 @@
 
 import { resolveWireModel, resolveModelRoute, wireNamesOf } from '../../engine/agent/model-context.js';
 
-const sessionRoutes = new Map();     // sessionId → { appModel, fastModel }
+const sessionRoutes = new Map();     // sessionId → { appModel, fastModel, stripResidue }
 /** `${sid}:${model}` 只告一次，防日志洪水（model-ingress.js 读写） */
 export const fallbackLogged = new Set();
 
-export function registerIngressSession(sessionId, appModel) {
+/**
+ * 注册会话路由。
+ * @param {string} sessionId
+ * @param {string} appModel
+ * @param {{ stripResidue?: boolean }} [opts] stripResidue=true（prompt.sdkPreset='replace'）
+ *   时 model-ingress 在转发前剥 SDK 硬注入残留（计费头/身份行/动态提醒段），
+ *   见 lib/ingress/strip-sdk-residue.js。
+ */
+export function registerIngressSession(sessionId, appModel, { stripResidue = false } = {}) {
   const route = resolveModelRoute(appModel);
-  if (route.mode === 'api') sessionRoutes.set(sessionId, { appModel: route.appModel, fastModel: route.fastModel });
+  if (route.mode === 'api') sessionRoutes.set(sessionId, { appModel: route.appModel, fastModel: route.fastModel, stripResidue });
+}
+
+/** 该会话要不要剥 SDK 残留（model-ingress 转发前查；未注册/keep 会话 = false） */
+export function sessionShouldStripResidue(sessionId) {
+  return sessionId ? sessionRoutes.get(sessionId)?.stripResidue === true : false;
 }
 
 export function unregisterIngressSession(sessionId) {

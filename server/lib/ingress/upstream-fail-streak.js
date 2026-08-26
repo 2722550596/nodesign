@@ -13,6 +13,12 @@
  * 什么算失败：上游 5xx / 转发层网络错 / 200 但零 choices / 私货 finish_reason 且零可见输出（流式与
  * 非流式都算）。什么算成功：一次回应带可见内容（或透传路 2xx）。成功一次就清零。
  * 超过 DECAY_MS 没有新失败也清零（别让昨天的坏账拦今天的人）。
+ *
+ * 行内覆盖（08-27）：有的上游是"冷但能焐热"而不是"真死"—— tokenrouter 的 `-free` 档走
+ * cache-only 准入，前缀没在共享缓存里变暖就 503 cache_only_cold，成功一次才暖；实测要
+ * 连吃十几次 503 才通。全局 4 次止损对这种行是精准误杀（日志里每个会话都死在第 4 次）。
+ * 所以 exhausted() 接受行内 max 覆盖（wire.failStreakMax，model-context 从行内 api 字段派生），
+ * 这类行单独放宽，别的全局默认不动。
  */
 
 export const DEFAULT_MAX = 4;
@@ -41,12 +47,13 @@ export class FailStreaks {
     this.map.set(sid, { n, last: now, reason: String(reason || '').slice(0, 160) });
     return n;
   }
-  /** 到上限了吗（含衰减判断） */
-  exhausted(sid) {
+  /** 到上限了吗（含衰减判断）。maxOverride：行内上限（wire.failStreakMax），给了就压过全局默认 */
+  exhausted(sid, maxOverride = null) {
     const cur = sid ? this.map.get(sid) : null;
     if (!cur) return false;
     if (this.now() - cur.last >= this.decayMs) { this.map.delete(sid); return false; }
-    return cur.n >= this.max;
+    const cap = Number.isInteger(maxOverride) && maxOverride > 0 ? maxOverride : this.max;
+    return cur.n >= cap;
   }
   /** 取走并清零：返回 { n, reason }，用于组拒绝话术；之后用户再发有新的 max 次机会 */
   consume(sid) {

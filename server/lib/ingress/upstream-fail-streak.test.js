@@ -32,6 +32,16 @@ describe('FailStreaks', () => {
     expect(s.exhausted('a')).toBe(false);
     expect(s.note('a', false, '3')).toBe(1);    // 重新从 1 数
   });
+  it('行内覆盖（08-27 tokenrouter 冷缓存案）：exhausted 用行内 max；非法覆盖回落全局', () => {
+    const s = new FailStreaks({ max: 4 });
+    for (let i = 0; i < 4; i++) s.note('a', false, 'HTTP 503');
+    expect(s.exhausted('a')).toBe(true);        // 全局 4 到了
+    expect(s.exhausted('a', 20)).toBe(false);   // 行内 20：冷缓存行还没焐热，放行
+    for (let i = 0; i < 16; i++) s.note('a', false, 'HTTP 503');
+    expect(s.exhausted('a', 20)).toBe(true);    // 攒满 20 才止损
+    expect(s.exhausted('a', 0)).toBe(true);     // 非法覆盖（0 / 非整数）回落全局，已 ≥4 → 止损
+    expect(s.exhausted('a', 3.5)).toBe(true);
+  });
   it('上限读 env，非法值回默认 4；拒绝体是 400 该有的 invalid_request_error 形状', () => {
     expect(failStreakMax({})).toBe(4);
     expect(failStreakMax({ NODESIGN_UPSTREAM_FAIL_STREAK: '7' })).toBe(7);

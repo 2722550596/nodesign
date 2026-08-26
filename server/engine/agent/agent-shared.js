@@ -61,6 +61,10 @@ export const DEFAULT_TOOL_ALLOWLIST = [
   'WebFetch',
   'Task',
   'TaskOutput',
+  // Task* 工具族（2026-08-26）：SDK ≥ 0.3.142 起 CLI 把 TodoWrite 移出可见集
+  // （退役给 Task* 族，见 sdk-tools.d.ts:2560），显式 --tools 也加不回去。
+  // 步骤清单改由 TaskCreate/TaskUpdate/TaskList 维护 —— 见下方 taskMirror。
+  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop',
   'Skill',
   // deferred MCP 工具的取 schema 入口（ENABLE_TOOL_SEARCH=true 时生效）。
   // 漏挂 = 延迟加载的工具永远调不到（同 Skill 的可见集陷阱）
@@ -328,7 +332,7 @@ function handleAssistantBlocks(ctx, content, skipTextThinking = false) {
         ctx.emit(Events.deltaToolUse(ctx.counters.turns, block.id, block.name, block.input));
         ctx.incrementTool(false);
 
-        // Phase 1：TodoWrite 工具单独再 emit 一条 todoUpdated。
+        // Phase 1：TodoWrite / Task* 工具单独再 emit 一条 todoUpdated。
         // SDK 不会在 type:'system' 里专门推 TodoWrite 状态 —— agent 用工具
         // 写计划时，input.todos 就是完整的 [{ content, status, activeForm }] 列表
         // （sdk-tools.d.ts:530 TodoWriteInput）。
@@ -336,6 +340,8 @@ function handleAssistantBlocks(ctx, content, skipTextThinking = false) {
         // 计划面板用，所以这里平行 emit 一次 run.todo.updated。
         if (block.name === 'TodoWrite' && block.input && Array.isArray(block.input.todos)) {
           ctx.emit(Events.todoUpdated(block.input.todos));
+        } else if (block.name.startsWith('Task')) {
+          handleTaskToolUse(ctx, block.id, block.name, block.input);
         }
         break;
       // 其他 block 类型（redacted_thinking / image / document）忽略
@@ -354,6 +360,156 @@ function handleAssistantBlocks(ctx, content, skipTextThinking = false) {
  * text_delta / thinking_delta 逐 token 转发；input_json_delta 只对 Edit/Write
  * 累积 + 节流抽字段（见下方"真流式工具入参"段），其余工具照旧等完整 block。
  */
+
+// ── Task* 工具族 → run.todo.updated 镜像（2026-08-26）──────────────────
+// SDK ≥ 0.3.142 起 CLI 把 TodoWrite 移出可见集（退役给 Task* 族，显式 --tools
+// 也加不回去），步骤清单改由 TaskCreate/TaskUpdate/TaskList 维护。
+//
+// 这里把 Task* 调用镜像成旧的 run.todo.updated 事件（[{content,status,activeForm}]），
+// 前端计划面板 + 画布"步骤清单"板书零改动。不追求逐 token 精度，只在三个时机
+// 更新镜像：
+//   1. TaskCreate tool_use → 追加一行（content=subject, status=pending）
+//   2. TaskUpdate tool_use（taskId 命中镜像时）→ 就地改状态/activeForm
+//   3. TaskList tool_result → 用全量真值整体重建（authoritative sync —— agent
+//      真实流程总是 create → list 拿 id → update，跟这条路径天然对得上）
+// TaskGet/TaskStop 不发 board（无内容变化）。
+const taskMirrors = new WeakMap(); // WeakMap<ctx, { byId, order, pending }>
+
+function taskStore(ctx) {
+  let m = taskMirrors.get(ctx);
+  if (!m) {
+    m = { byId: new Map(), order: [], pending: new Map() };
+    taskMirrors.set(ctx, m);
+  }
+  return m;
+}
+
+function taskRows(m) {
+  return m.order.map((id) => m.byId.get(id)).filter(Boolean);
+}
+
+function emitTaskMirror(ctx, m) {
+  ctx.emit(Events.todoUpdated(taskRows(m)));
+}
+
+function handleTaskToolUse(ctx, toolUseId, name, input) {
+  if (!input) return;
+  if (!name.startsWith('Task')) return;
+  const m = taskStore(ctx);
+  m.pending.set(toolUseId, name);
+  if (name === 'TaskCreate') {
+    const id = `tc:${toolUseId}`; // 临时 key；TaskList result 真值重建时换掉
+    m.byId.set(id, { content: input.subject || '(未命名任务)', status: 'pending', activeForm: input.activeForm || undefined });
+    m.order.push(id);
+    emitTaskMirror(ctx, m);
+  } else if (name === 'TaskUpdate') {
+    const row = m.byId.get(input.taskId);
+    if (row) {
+      if (input.status === 'deleted') {
+        m.byId.delete(input.taskId);
+        m.order = m.order.filter((k) => k !== input.taskId);
+      } else {
+        if (input.status) row.status = input.status;
+        if (input.activeForm) row.activeForm = input.activeForm;
+        if (input.subject) row.content = input.subject;
+      }
+      emitTaskMirror(ctx, m);
+    }
+    // taskId 没命中（跨会话 / 真值还没同步）—— 等 TaskList result 重建
+  } else if (name === 'TaskList' || name === 'TaskGet') {
+    // 全量真值随后在 tool_result 里重建；这里先让前端看到当前镜像
+    emitTaskMirror(ctx, m);
+  }
+}
+
+/**
+ * 从 task 工具的 tool_result 里解析任务列表。content 可能是 string 或
+ * block[]（text/image 混合）；输出是 JSON（TaskList 通常是 {"tasks":[...]}）。
+ * 用括号配对扫 JSON 数组/对象，出错就返回 null（同步失败不致命）。
+ */
+function parseTaskResult(content) {
+  let text = '';
+  if (typeof content === 'string') text = content;
+  else if (Array.isArray(content)) text = content.map((b) => (b.text != null ? b.text : '')).join('\n');
+  if (!text) return null;
+  const out = [];
+  const TASK_STATUS = ['pending', 'in_progress', 'completed', 'deleted'];
+  // 找独立 JSON 对象（单任务）与 "tasks" 数组（列表）
+  const candidates = [];
+  const arrRe = /"tasks"\s*:\s*\[/g;
+  let hit;
+  while ((hit = arrRe.exec(text))) {
+    // 配对的 ] —— 简单括号计数（JSON 里字符串内括号会误判，够用）
+    let depth = 0, end = -1, inStr = false;
+    for (let i = hit.index + hit[0].length; i < text.length; i++) {
+      const ch = text[i];
+      if (inStr) { if (ch === '"' && text[i - 1] !== '\\') inStr = false; continue; }
+      if (ch === '"') inStr = true;
+      else if (ch === '[' || ch === '{') depth++;
+      else if (ch === ']' || ch === '}') { depth--; if (depth < 0) { end = i + 1; break; } }
+    }
+    if (end > 0) candidates.push(text.slice(hit.index + hit[0].length - 1, end));
+  }
+  const objRe = /\{[^{}]*"id"\s*:\s*"[^"]+"[^{}]*\}/g;
+  while ((hit = objRe.exec(text))) candidates.push(hit[0]);
+  for (const c of candidates) {
+    try {
+      const data = JSON.parse(c);
+      const list = Array.isArray(data) ? data : (data.tasks ?? [data]);
+      for (const t of list) {
+        if (!t || typeof t.id !== 'string' || !t.id || !TASK_STATUS.includes(t.status)) continue;
+        out.push({
+          id: t.id,
+          content: t.subject || t.title || '(未命名任务)',
+          status: t.status,
+          activeForm: t.activeForm || undefined,
+        });
+      }
+    } catch { /* 单段解析失败就跳过 */ }
+  }
+  // 散文格式兜底（实测 CLI 输出是 `Task #N created successfully: <subject>`，
+  // 不是 JSON —— 2026-08-26 抓包确认）。create 的 result 只认这一行；
+  // 其余行（Updated / Removed 之类）不产生新任务，跳过。
+  const createRe = /Task\s+#(\S+?)\s+created successfully[:\s]+(.+)/g;
+  while ((hit = createRe.exec(text))) {
+    const id = hit[1].trim();
+    if (id && !out.some((t) => t.id === id)) {
+      out.push({ id, content: hit[2].trim() || '(未命名任务)', status: 'pending' });
+    }
+  }
+  return out.length ? out : null;
+}
+
+function syncTaskFromResult(ctx, toolUseId, content) {
+  const m = taskMirrors.get(ctx);
+  if (!m) return;
+  const name = m.pending.get(toolUseId);
+  if (!name || name !== 'TaskList' && name !== 'TaskCreate') return;
+  const tasks = parseTaskResult(content);
+  if (!tasks) return;
+  if (name === 'TaskList') {
+    // 全量真值重建 —— pending/修改过状态的行都以 CLI 为准
+    m.byId = new Map();
+    m.order.length = 0;
+    for (const t of tasks) {
+      m.byId.set(t.id, t);
+      m.order.push(t.id);
+    }
+    emitTaskMirror(ctx, m);
+  } else if (name === 'TaskCreate') {
+    // 把临时 key 换成真实 taskId（create 的 result 里带），后续 TaskUpdate 能命中
+    const t = tasks[0];
+    if (!t) return;
+    const tempKey = `tc:${toolUseId}`;
+    const temp = m.byId.get(tempKey);
+    if (temp && (temp.content === t.content || !t.content)) {
+      m.byId.delete(tempKey);
+      m.byId.set(t.id, { ...temp, ...t });
+      m.order = m.order.map((k) => (k === tempKey ? t.id : k));
+      emitTaskMirror(ctx, m);
+    }
+  }
+}
 
 // ── 真流式工具入参（2026-07-28，工作台舞台层代码直播）──
 // input_json_delta 是半截 JSON 碎片，等拼完再发一次的话，模型逐 token 生成
@@ -518,6 +674,10 @@ function handleUserBlocks(ctx, content) {
         images.length > 0 ? images : undefined,
       ));
       if (!ok) ctx.counters.toolFailures += 1;
+
+      // Task* 工具族镜像：TaskList 的 result 是全量真值 → 重建 board；
+      // TaskCreate 的 result 把临时 key 换成真实 taskId（后续 TaskUpdate 命中）
+      syncTaskFromResult(ctx, block.tool_use_id, block.content);
     }
   }
 }
