@@ -1,6 +1,5 @@
 // auto 模式分类器规则（2026-08-15）
 import { describe, it, expect } from 'vitest';
-import { execFileSync } from 'node:child_process';
 import { autoModeSettings, ENVIRONMENT, HARD_DENY, DEFAULT_HARD_DENY } from './auto-mode-rules.js';
 
 describe('喂给分类器的形状', () => {
@@ -44,17 +43,7 @@ describe('喂给分类器的形状', () => {
   });
 });
 
-describe('出厂快照有没有漂移', () => {
-  // auto-mode-default-hard-deny.txt 是从 `claude auto-mode defaults` 抄来的。
-  // SDK 升级后原文会变，这里在本机有 claude CLI 时对一次；没有就跳过，不卡测试。
-  it('跟当前 SDK 的 hard_deny 默认值一致（无 CLI 时跳过）', () => {
-    let 现行;
-    try {
-      const out = execFileSync('claude', ['auto-mode', 'defaults'], { encoding: 'utf8', timeout: 60_000 });
-      现行 = JSON.parse(out).hard_deny?.[0]?.trim();
-    } catch {
-      return;  // 没装 CLI / 超时 → 跳过
-    }
-    expect(现行).toBe(DEFAULT_HARD_DENY);
-  });
-});
+// 「出厂快照有没有漂移」那条对活 claude CLI 的测试 M1 删了：SDK 移除后没有捆绑的
+// claude 可执行，PATH 里的 claude 是用户全局装的（WSL interop 还会卡在欢迎横幅），
+// execFileSync 60s 超时 > vitest 5s 测试超时 → 必挂。快照本身（auto-mode-default-hard-deny.txt）
+// 留着当历史参考，不再做活对账。

@@ -15,7 +15,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { degradedNote } from './helpers/perception-page.js';
 import { acquireArtifactPage, LIVE_PARAM_DESC } from './helpers/acquire-page.js';

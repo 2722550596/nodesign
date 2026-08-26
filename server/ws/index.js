@@ -16,11 +16,9 @@
 import { WebSocketServer } from 'ws';
 import { createBrowseWS } from './browse-channel.js';
 import { URL } from 'url';
-import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { validateProjectId, getProject } from '../projects/store.js';
-import { getSessionWorkspace, validateSessionId } from '../projects/workspace.js';
-import { withConfigDir } from '../lib/sdk-session.js';
-import { platform } from '../runtime/platform.js';
+import { validateSessionId, PROJECTS_DATA_ROOT } from '../projects/workspace.js';
+import { piSessionDir, readPiSessionMessages } from '../engine/pi/pi-jsonl.js';
 import { getProjectBus } from './broker.js';
 import { requestUser } from '../auth/session.js';
 import { originAllowed } from '../auth/origin-guard.js';
@@ -35,7 +33,6 @@ import { getLiveTurnSnapshot } from '../engine/runs/live-turn.js';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HYDRATE_CHUNK_SIZE = 50;
-const GLOBAL_CLAUDE_CONFIG_DIR = platform.claudeConfigDir;
 
 /**
  * WS 全部断开后再 N ms 仍无重连 → closeQuerySession 让 SDK subprocess 退出，
@@ -197,14 +194,14 @@ export function setupWS(httpServer) {
 }
 
 /**
- * 读 jsonl 历史（异步，几百 ms）。发帧是另一个纯同步函数 —— 读完到发出之间不能
- * 再有 await，否则"读到的历史"与"当时的 live turn 快照"会错位（见 handleProjectWS）。
+ * 读 pi session JSONL 历史（异步，几百 ms）。发帧是另一个纯同步函数 —— 读完到发出
+ * 之间不能再有 await，否则"读到的历史"与"当时的 live turn 快照"会错位（见
+ * handleProjectWS）。M1 换源：SDK getSessionMessages → pi-jsonl（doc §5.5），
+ * 输出仍是 SDK SessionMessage 形状数组，timestamp 仍是 ISO —— 下游
+ * dropInFlightTurn / sendHydrateFrames 的同步区纪律一字不动。
  */
 async function loadHydrate(pid, sid) {
-  const sessionRoot = getSessionWorkspace(pid, sid);
-  return withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-    getSessionMessages(sid, { dir: sessionRoot, includeSystemMessages: false }),
-  );
+  return readPiSessionMessages(piSessionDir(PROJECTS_DATA_ROOT, sid));
 }
 
 /**

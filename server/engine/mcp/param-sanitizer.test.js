@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from './tool-shim.js';
 import { splitLeakedParams, desmearArgs, withParamSanitizer } from './param-sanitizer.js';
 
 const SHAPE = {

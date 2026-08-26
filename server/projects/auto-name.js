@@ -3,19 +3,19 @@
  *
  * 首页那个大输入框以前建的是"闪聊"（kind=quick），名字硬切用户第一句话前 30 字，
  * 而且不算正经项目。现在它直接建真项目，名字先用那句话垫着（auto_named=1），
- * 第一轮跑完就用 **SDK helper 写的会话摘要** 改一次名 —— 那是它本来就在写的东西
- * （incrementally 落进 jsonl，我们列会话时读的就是它），不额外花一次模型调用。
+ * 第一轮跑完就用 **pi 会话信息** 改一次名 —— pi-jsonl 读转录头里的
+ * customTitle / summary（没有就退到用户第一句 prompt），不额外花一次模型调用。
+ *
+ * M1 换源：SDK 的 getSessionInfo（~/.claude/projects/）换成 readPiSessionInfo
+ * （<PROJECTS_DATA_ROOT>/pi-sessions/<sid>/，与 lifecycle --session-dir 同公式）。
  *
  * 只改一次：改完清 auto_named。用户自己改过名的项目（updateProject 带 name 会
  * 自动清零）永远不动。
  */
 
-import path from 'node:path';
-import { getSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { getProject, updateProject } from './store.js';
-import { getProjectWorkspace } from './workspace.js';
-import { withConfigDir } from '../lib/sdk-session.js';
-import { platform } from '../runtime/platform.js';
+import { PROJECTS_DATA_ROOT } from './workspace.js';
+import { piSessionDir, readPiSessionInfo } from '../engine/pi/pi-jsonl.js';
 
 const MAX_NAME = 40;
 
@@ -30,17 +30,15 @@ export async function autoNameProjectFromSession(projectId, sessionId) {
   try { project = getProject(projectId); } catch { return null; }
   if (!project || !project.autoNamed) return null;
 
-  const sessionRoot = path.join(getProjectWorkspace(projectId), 'sessions', sessionId);
   let info;
   try {
-    info = await withConfigDir(platform.claudeConfigDir, () =>
-      getSessionInfo(sessionId, { dir: sessionRoot }),
-    );
+    info = await readPiSessionInfo(piSessionDir(PROJECTS_DATA_ROOT, sessionId));
   } catch {
     return null;   // 读不到就下轮再说，auto_named 还留着
   }
+  if (!info) return null;
 
-  const summary = String(info?.customTitle || info?.summary || '').trim();
+  const summary = String(info.customTitle || info.summary || info.firstPrompt || '').trim();
   if (!summary) return null;
   const name = summary.length > MAX_NAME ? summary.slice(0, MAX_NAME) + '…' : summary;
   if (name === project.name) {

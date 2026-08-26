@@ -56,34 +56,12 @@ npm run smoke:engine
 NODESIGN_GATEWAY_KEY=xxx npm run smoke:agent
 ```
 
-## SDK 配置要点
+## 引擎（M1：pi-rp）
 
-```js
-import { query } from '@anthropic-ai/claude-agent-sdk';
-
-query({
-  prompt: brief,
-  options: {
-    cwd: workspaceRoot,                        // 沙盒
-    abortController: ctx.abortController,
-    env: {
-      ...process.env,
-      ANTHROPIC_BASE_URL: NODESIGN_GATEWAY_URL,
-      ANTHROPIC_API_KEY:  NODESIGN_GATEWAY_KEY,
-    },
-    model: 'kimi-k2.6',
-    tools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'TodoWrite'],
-    allowedTools: [...同上...],                // 自动允许，不弹权限
-    systemPrompt: skill.systemPrompt,         // 我们自己拼，不用 claude_code preset
-    persistSession: false,                    // 不写 ~/.claude/projects 的 session
-    settingSources: [],                       // 不读外部 settings 文件
-    includePartialMessages: true,             // 流增量
-    thinking: { type: 'adaptive' },
-    effort: 'medium',
-    maxTurns: 50,
-  },
-});
-```
+agent 循环由 pi-rp 驱动（`server/engine/pi/`），SDK 的 `query()` 已随 M1 wave 4 拆除。
+工具注册走 `buildNodesignTools`（mcp/index.js）→ standalone.js（pi MCP 子进程）→
+pi-mcp-adapter 直挂，工具名是裸名（无 `mcp__nodesign__` 前缀）。
+迁移始末见 `docs/engine-pi-rp-migration.md`。
 
 ## 事件流（EventBus 标准 schema）
 

@@ -10,8 +10,8 @@
  *
  * 同会话 record_decision 4/4 全中，泄漏进了用户画布上的决策便利贴。上游改
  * 不了，在自己边界拆回来。record_decision 只是被看见的那个 —— 同样的泄漏
- * 落在别的工具的长文本参数上会静默进产物，所以消毒挂在 MCP server 出口
- * （createNodesignMcpServer 包所有工具），不是只修一个工具。
+ * 落在别的工具的长文本参数上会静默进产物，所以消毒挂在工具管线出口
+ * （buildNodesignTools 的 withParamSanitizer 包所有工具），不是只修一个工具。
  *
  * 判据收得窄，几乎不可能误伤正文里合法讨论 XML 的内容，三个条件全中才动手：
  *   1. 字符串值里出现 `</{本参数名}>` 且其后紧跟 `<parameter name="X">`

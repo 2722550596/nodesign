@@ -1,24 +1,78 @@
-# Engine 替换：CC SDK → pi-rp RPC
+# Engine 替换：CC SDK → pi-rp RPC（定稿 v2）
 
-> 状态：设计稿（2026-08-26）。目标是把 `@anthropic-ai/claude-agent-sdk`（`query()` 子进程）
-> 整个摘掉，agent loop 交给 pi-rp（`pi --mode rpc`），工具面走 pi-mcp-adapter 接 Nodesign
-> 自己的 MCP server。作者同时是 pi-rp 维护者，pi-rp 侧的 bug 就地修，不做版本防御。
+> 状态：**M1 完成**（2026-08-27）——CC SDK 依赖已移除，pi-rp 为唯一执行引擎；live 探针 GATE PASS，
+> `npm run test:server` 778/778 全绿。M0 探针全绿（2026-08-26）。M2/M3 待用户放行。
+> 目标：把 `@anthropic-ai/claude-agent-sdk`（`query()` 子进程）整个摘掉，agent loop 交给 pi-rp
+> （`pi --mode rpc`），工具面走 pi-mcp-adapter 接 Nodesign 自己的 MCP server。
+> 作者同时是 pi-rp 维护者：pi-rp 侧的缺口就地补（见 §5.6），不做版本防御。
 
-## 动机
+## 1. 动机
 
-1. CC SDK 的隐形提示词（`claude_code` preset ~27.7KB、SDK 硬注入残留、`CLAUDE_CODE_*` env 行为）改不掉、剥不净，`sdkPreset='replace'` 也只能换掉 systemPrompt 字段，messages[1] 的动态提醒段照样进上下文。
-2. Nodesign 自己在 SDK hooks 上叠加的注入族（pre-injectors / user-prompt-submit / post-guidance / canvas-validate / site-validate / failure / subagent-report…）越滚越厚，成了第二层隐形提示词。
-3. pi-rp 有可见的 prompt preset 体系、原生 skills/subagent、RPC 模式、扩展 API——提示词可以变成**能读的文件**，安全闸可以变成**显式的 hook 代码**。
+1. CC SDK 的隐形提示词（`claude_code` preset ~27.7KB、SDK 硬注入残留、`CLAUDE_CODE_*` env 行为）改不掉、剥不净，`sdkPreset='replace'` 也只能换掉 systemPrompt 字段。
+2. Nodesign 在 SDK hooks 上叠加的注入族（pre-injectors / user-prompt-submit / post-guidance / canvas-validate / site-validate / failure / subagent-report…）越滚越厚，成了第二层隐形提示词。
+3. pi-rp 有可见的 prompt preset 体系、原生 skills/subagent、RPC 模式、扩展 API——提示词变成**能读的文件**，安全闸变成**显式 hook 代码**。
 
-## 目标架构
+## 2. 已验证事实（M0 探针 + preset 机制核查，2026-08-26）
+
+> 来源：M0 四路调研（scout）+ 两波探针（REPORT 于 /tmp/nd-m0-probe/）+ preset 机制 6 问源码核查。全部标来源；与正文冲突处以此节为准。
+
+### 2.1 RPC 协议面（PiRpSrc + REPORT）
+
+- 线上事件是 `AgentSessionEvent`：agent_start / turn_start / message_start / message_update / message_end / turn_end / agent_end / agent_settled / tool_execution_start / tool_execution_update / tool_execution_end / compaction_start / compaction_end / extension_error / error 等。**无 hello 启动消息**；session_start / session_shutdown / session_compact 是**扩展 API 事件，不走 RPC 线上**。
+- 所有命令支持可选 `id` 做请求-响应关联（`response{id}`）；**事件不带 id**，靠顺序 + 状态机（agent_settled 收尾）。
+- 实测事件序列：`response{id:req-1}` → agent_start → turn_start → message_start/end(user) → message_start(assistant) → message_update{thinking_start/delta/end, text_start/delta/end} → message_end(stopReason, usage) → turn_end → agent_end{willRetry} → agent_settled。
+- 思考走 thinking_delta、正文走 text_delta；跨块（contentIndex）累积后与 `get_last_assistant_text` **逐字节一致**（B2 重放 28 行真实事件验证）。
+- prompt 命令是排队语义：启动未完成也能缓冲、不丢。
+- pi 冷启 1.3–1.8s（无 adapter；带 adapter 时首事件窗口更大）；首消息总耗时 ~8s（其中冷启 ~1.75s）。
+
+### 2.2 路径与配置语义（PiRpSrc④⑤ + REPORT 踩坑 2 + 本次核查）
+
+- `--config-dir` / `--settings-file` 按 `join(cwd, 值)` 拼接，**绝对路径拼坏**；`--session-dir` 绝对路径直通（normalizePath）。相对值里带 `..` 会被 join 归一化（worldlines 已验证）。
+- `--settings-file` 所在目录**不被**扫描 presets/extensions（help 文案与实现不符，settings-manager.ts:219）。settings 差异走 agent-dir/settings.json（global scope）。
+- `PI_CODING_AGENT_DIR` 专用 agent dir 隔离生效；`PI_TELEMETRY=0` 关遥测；RPC 必须 `--approve`（否则 .pi 资源被忽略）；`--no-extensions` 不影响 `-e`。
+- pi 0.84.2 内建工具：read / bash / edit / write / grep / find / ls + state_update / get_state + subagent / subagent_profiles（**无 glob**）；settings.json `defaultTools` 白名单可排除 bash/subagent。
+
+### 2.3 preset 机制（本次 6 问核查，全文见附录 B）
+
+- **文件库两级**：agentDir/prompt-presets（先）+ cwd/.pi/prompt-presets（后）；同 id 项目覆盖全局（保持全局槽位位置）。
+- **选择**：`chooseDefaultPreset` 三级回退——preferredId → 首个 `autoActivate:true` → 首个 `autoActivate !== false` → undefined（落内建 pi-default）。**autoActivate:true 只在启动选默认用；有它在场时缺省 autoActivate 的 preset 不会被自动选中**。
+- **激活与恢复**：`_rebuildSystemPrompt` 按 `会话 JSONL 最新 preset_change 条目 ?? settings.json defaultPreset ?? chooseDefaultPreset` 定 `_activePreset`。切换写 session JSONL（`preset_change` 条目，必写）；settings.json `defaultPreset` **只在切到 none/off/default 禁用分支才写**。
+- **切换入口现状**：交互式 `/preset`、CLI `--preset <id>`、SDK `options.preset`——**RPC 层无 preset 命令**（`reload_prompts` 只重扫 prompt 模板）。→ 已定：给 pi-rp 加 RPC `set_preset`（§5.6）。
+- `--preset <id>` spawn 时经 `setActivePreset(persistSettings:false)` → `_presetExplicitlyActivated=true` → **优先于会话恢复块**（重启换 preset 的语义依据）。
+- 格式：items 只有 block / slot 两种，**无继承机制**；13 内置槽（slot-renderers.ts:46-61）；12 内建宏（date/time/cwd/lastUserMessage/tools/selectedTools/activeModel/setvar/addvar/getvar/trim/user，`{{name}}` / `{{name:param}}`）；`hiddenOverrides`（continueText / compaction 文案可覆盖）；扩展 API 有 registerSlot / registerMacro / compilePreset / `on("preset_activated")`，**无 setActivePreset**。
+- 编译语义：compileMessages 以 **chat-history 槽为锚点**（槽前 items + `agent.state.messages` 整段 + 槽后 items，squash 同角色）；新增消息默认 role system（compiler.ts:301-320）。
+- ⚠️ 坑：agent-dir 或项目里出现 `SYSTEM.md`/`APPEND_SYSTEM.md` 会**短路 preset 编译路径**（resource-loader.ts:1035-1050）——禁止放置；preset 文件被删后恢复块匹配不到 → 停在默认 preset（不回退 chooseDefaultPreset）。
+- 新会话也落 preset_change：值 = `settings.defaultPreset ?? chooseDefaultPreset(...) ?? "default"`（sdk.ts:472-476）——agent-dir settings 显式 `defaultPreset` 是双保险。
+
+### 2.4 adapter（pi-mcp-adapter，Adapter + REPORT）
+
+- 6 层配置优先级，`.pi/mcp.json`（pi 进程 cwd 下的项目覆盖层，`getProjectConfigDirName() = PI_PROJECT_CONFIG_DIR 或 .pi`）最高；`~/.config/mcp/mcp.json` 等全局层仍被读。
+- mcp() / directTools / mcpScript / disableProxyTool **全在 adapter 侧**（pi 核心 No MCP）。
+- lifecycle `lazy` 首调才 spawn；无 keepAlive 布尔位，重连走 `lifecycle: "keep-alive"`（30s 健康检查）+ `lazy-keep-alive`；requestTimeoutMs 省略/≤0 回落 MCP SDK 默认 60s。
+- 安装落点 `<agentDir>/npm/node_modules`（package-manager.ts:2047）；vendored v2.20.1 已验证完整走通 加载→配置发现→stdio connect→元数据缓存→registerTool 直挂→tool_execution_start/end（@earendil-works 旧依赖不影响工具路径）；production 用 registry 版 2.27.0 复跑同款探针全绿再切。
+- adapter spawn MCP 子进程：**cwd = pi 的 cwd、env = pi process.env 副本**（B1 实测）→ 会话身份走 env 即天然会话级。
+
+### 2.5 Nodesign 现状关键事实（Map + 本次）
+
+- `ws/index.js:19` import SDK `getSessionMessages`（hydrate 数据源，L205-207）；`sessions.js:19` 同——hydrate/fork/rename/delete 全走 SDK session API。**「ws 不用动」不成立**，数据源必须换。
+- workspace = `<PROJECTS_DATA_DIR>/<pid>/shared/` **项目级共享**（getSessionWorkspace 里 sessionId 只校验不参与路径）——不是会话私有。
+- session-loop 默认 `maxTurns = 100`（`Number(env)||100`），.env `NODESIGN_MAX_TURNS=50` 让生效值=50。
+- turn 认领依赖 SDK `--replay-user-messages` uuid 回显（turn-relay.js claimRunByUuid：current/promoted/merged）——pi 无此机制。
+- `ALWAYS_LOAD_TOOLS`（mcp/index.js:108-141，28 项）是 Nodesign 侧常量，adapter 侧无对应物。
+- `createNodesignMcpServer` 工厂与 handler 深度耦合 SDK（createSdkMcpServer + tools/ 约 37 文件 import SDK tool()，param-sanitizer.test.js 同）——「换传输零改动」不成立。
+- 本地真实上游 key 在 `~/.nodesign/.env`（profile.js:62-69；仓库 .env 只有陈旧 NODESIGN_MODEL=kimi-k2.6）。
+- model-table 行字段 `api.wireModel` 与 pi wire id 同构；`--model` 部分匹配已实测（注册 `MiniMaxAI/MiniMax-M3`、传 `minimax-m3` 命中）。
+- 官方 rpc-client 已存在：pi-rp `packages/coding-agent/src/modes/rpc/rpc-client.ts`（42 方法，id=req_N 关联）；worldlines-rivet `vendor/pi-rp/` 有同构 vendored 副本。
+
+## 3. 目标架构
 
 ```
 ┌─────────────────────────── Nodesign server 进程 ───────────────────────────┐
 │  express / ws broker / EventBus / SQLite run 状态机 / projects·auth·tier    │
 │                                                                             │
 │  engine/pi/                                                                │
-│    rpc-client.js    spawn `pi --mode rpc`，JSONL 读写，请求关联              │
-│    event-bridge.js  AgentSessionEvent → EventBus（前端契约不变）            │
+│    rpc-client.js    spawn `pi --mode rpc`，JSONL 读写，请求关联，setPreset   │
+│    event-bridge.js  AgentSessionEvent → EventBus（前端契约不变，M0 原型已验）│
 │    lifecycle.js     每会话一个 pi 子进程：起/停/崩溃重启/孤儿回收            │
 │    sidecar.js       MCP 子进程回主进程的桥（emit / tier / 项目配置）        │
 └───────────────┬───────────────────────────────┬────────────────────────────┘
@@ -26,272 +80,204 @@
                 ▼                               ▼
 ┌───────────────────────────────┐   ┌────────────────────────────────────────┐
 │ pi 子进程（每会话一个）        │   │ nodesign MCP 子进程（每会话一个，adapter│
-│ cwd = workspace/<sid>/        │   │ 懒启动）                               │
-│ --session-dir 每会话 JSONL     │   │ engine/mcp/standalone.js               │
-│ 专用 agent dir（见 §4.1）      │   │ createNodesignMcpServer 原工厂 + stdio │
-│ pi-mcp-adapter 扩展（client）  │   │ 传输；身份从 env/argv 取               │
-│ ── mcp() 代理 / directTools ──┼──▶│ 工具 handler：感知/控制/产物/研究全保留  │
+│ cwd = <pid>/shared/（项目共享）│   │ 懒启动）                               │
+│ agent dir = engine/pi/agent-dir│   │ engine/mcp/standalone.js               │
+│ --session-dir <dataRoot>/pi-   │   │   （复用 createNodesignMcpServer 工厂  │
+│   sessions/<sid>/（仅 JSONL）  │   │    产物 + StdioServerTransport）        │
+│ pi-mcp-adapter 扩展（client）  │   │ 身份从 env 取（NODESIGN_SID/UID/TOKEN） │
+│ ── mcp() 代理 / directTools ──┼──▶│ tools/ 28 工具（ALWAYS_LOAD_TOOLS）     │
+│                                │   │ ctx 三桥：emit→sidecar / tier+项目配置 │
+│ .pi → <pid>/shared/.pi         │   │   / 主进程内存态（M1 sidecar.js）       │
+│   prompt-presets/（项目级）    │   │                                        │
+│   mcp.json（项目级共享）       │   │                                        │
 └───────────────────────────────┘   └────────────────────────────────────────┘
 ```
 
 设计决策：
 
-- **每会话一个 pi 进程**，不用 `switch_session` 共享。理由：RPC 会话 cwd 绑定在启动进程（session 0 = 进程 cwd，`new_session` 沿用），每会话独立进程让 workspace 绑定、preset 装配、崩溃隔离都简单，代价是一次进程启动（可接受）。
-- **Nodesign 工具用 stdio MCP 而非 SSE**。每会话进程天然携带身份（env/argv），adapter 按 `.pi/mcp.json` 懒拉起，不需要常驻 HTTP + 会话路由。
-- **模型路由不进主进程**：ingress 整个删掉（§4.2），上游直连，路由语义由 pi-rp 的 provider/model 配置表达。
+- **每会话一个 pi 进程**，不用 `switch_session` 共享：cwd 绑定（session 0 = 进程 cwd）、preset 装配、崩溃隔离都简单；代价是一次进程启动（~2s，可接受）。
+- **配置项目级，身份走 env**：mcp.json / preset 文件库是项目级共享（`<pid>/shared/.pi/`，初始化一次）；会话差异（sid/uid/token/workspace）全在 pi 进程 env，adapter spawn 继承 → standalone 子进程天然拿到会话身份。**.pi 内禁止任何密钥，密钥一律走 env**。
+- **Nodesign 工具用 stdio MCP**：每会话进程天然携带身份，adapter 按 `.pi/mcp.json` 懒拉起，不需要常驻 HTTP + 会话路由。
+- **模型路由不进主进程**：ingress 整个删掉（§5.2），上游直连，路由语义由 pi provider/model 配置表达。
 
-## 删除清单（用户已拍板）
+## 4. 删除清单（用户已拍板）
 
 | 组件 | 去向 |
 |---|---|
-| `@anthropic-ai/claude-agent-sdk`（package.json + 所有 `query()` 引用） | 删 |
-| `server/lib/model-ingress.js` + `lib/ingress/`（路由/换钥/修补/剥残留） | 删 |
-| `engine/agent/hooks.js` + `hooks/`（注入族 + 事件钩子） | 删，安全闸迁 §4.4 |
-| `engine/agent/isolation.js` + `ops/sandbox-shim/`（bwrap 垫片，CC 专属） | 删 |
-| `engine/agent/system-prompts.js` + `prompts/nodesign-prelude.md` | 迁 prompt preset（§4.4） |
-| `engine/agent/session-model.js` / `model-table.js` / `model-context.js`（路由表） | 迁 pi provider 配置（§4.2） |
-| `engine/agents/*.md`（子代理提示词） | 迁 pi delegatable presets |
-| `engine/agent/init-contract.js` | 删（改为对 pi `session_start` 的装配断言） |
-| `engine/agent/memory-config.js`（`CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES` env） | 迁 preset 文本槽 |
-| `maxTurns: 50` | 丢。循环终止靠 pi 自然结束 + auto-compaction，取消走 RPC `abort` |
-| hooks/isolation/ingress 的测试（`hooks/*.test.js`、`isolation.test.js`、`tier.test.js` 里针对 query 的断言等） | 删 |
-| **保留**：`engine/mcp/` 全部工具工厂与测试、`runs/` 状态机、`projects/`、`auth/`、`ws/`、`db/`、`runtime/`、`chatai/`、`browse/`、`perception/`、`motion/` | — |
+| `@anthropic-ai/claude-agent-sdk`（package.json + 所有 `query()` 引用） | 删（M1） |
+| `server/lib/model-ingress.js` + `lib/ingress/`（路由/换钥/修补/剥残留） | 删（M3） |
+| `engine/agent/hooks.js` + `hooks/`（注入族 + 事件钩子） | 删（M2），安全闸迁 §5.4 guards |
+| `engine/agent/isolation.js` + `ops/sandbox-shim/`（bwrap 垫片，CC 专属） | 删（M2） |
+| `engine/agent/system-prompts.js` + `prompts/nodesign-prelude.md` | 迁 preset 单层文件（§5.4，M2） |
+| `engine/agent/session-model.js` / `model-table.js` / `model-context.js`（路由表） | 迁 pi provider 配置（§5.2，M1 迁移脚本） |
+| `engine/agents/*.md`（子代理提示词） | 迁 pi delegatable presets（M2） |
+| `engine/agent/init-contract.js` | 删（改对 pi `session_start` 的装配断言，M2） |
+| `engine/agent/memory-config.js`（`CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES` env） | 迁 preset 文本槽（M2） |
+| `maxTurns`（默认 100，.env 生效 50） | 丢。循环终止靠 pi 自然结束 + auto-compaction + RPC `abort` |
+| hooks/isolation/ingress 的测试（`hooks/*.test.js`、`isolation.test.js`、tier.test.js 里针对 query 的断言等） | 删（M3） |
+| **保留**：`engine/mcp/` 工具工厂与测试（standalone 复用产物）、`runs/` 状态机（turn 认领改 prompt id）、`projects/`、`auth/`、`tier/`、`ws/`（透传层留，hydrate 数据源换）、`db/`、`runtime/`、`chatai/`、`browse/`、`perception/`、`motion/` | — |
 
-## 组件设计
+## 5. 组件设计
 
-### 4.1 pi 子进程生命周期
+### 5.1 pi 子进程生命周期
 
-**专用 agent dir**（关键，防提示词污染）：pi-rp 默认 agent dir 是 `~/.pi/agent`，也就是本机 OMP harness 自己的目录（里面躺着 qingzi 系系统提示词、chaoxi/klein 等 RP preset、harness 的 skills）。不隔离的话 Nodesign 会话会加载进一套没人知情的提示词。Nodeigns 自持一份：
+**运行时 pin**：Nodesign 自持 pi 版本（agent-dir 同级安装或 vendor），不依赖全局 PATH——理由：① 防 harness 目录污染（专用 agent dir）；② §5.6 的 `set_preset` 命令需要 pin 含它的版本；③ 可复现部署。版本对齐：pi-rp 发版后升级，先在测试环境复跑 M0 探针。
 
-```
-server/engine/pi/agent-dir/
-  settings.json        # 全局默认：defaultTools 白名单 / compaction / telemetry off
-  package.json         # pi-extensions
-  node_modules/pi-mcp-adapter   # 这里也要装一份（npm i，或 pi install npm:pi-mcp-adapter）
-  prompt-presets/nodesign-base.json   # 平台 prelude 的 preset 化（不 autoActivate，共享底座，§4.4）
-```
-
-启动时 `PI_CODING_AGENT_DIR=<此目录>`（唯一入口；`--config-dir` 是项目级 `.pi` 目录名，不是 agent dir）。全局装的那份 adapter 不直接用——它和 harness 提示词在同一目录，取它的前提是连 harness 一起加载。
-
-**spawn 参数**（`engine/pi/lifecycle.js`，参考 worldlines `writerLaunch` 的约定）：
+**spawn 参数**（`engine/pi/lifecycle.js`，参照 worldlines `writerLaunch` 约定 + M0 实测）：
 
 ```js
-// ⚠️ --config-dir / --session-dir / --settings-file 传相对 cwd 的值：
-// pi 的拼接是 join(cwd, dir)，绝对路径会拼成垃圾（worldlines web 踩过，
-// 注释收口在 writerLaunch 一个函数里——Nodesign 同样收口在 lifecycle.js）。
-// cwd = workspace/<sid>/，故相对值由 lifecycle 按 session 计算。
-export function sessionLaunch({ sid, workspaceDir, dataRoot, resume, provider, model }) {
+// ⚠️ --config-dir / --settings-file 传相对 cwd 的值（join(cwd,·) 拼绝对路径会坏）；
+// --session-dir 可用绝对路径。cwd = <pid>/shared/（项目共享），相对值由 lifecycle 算。
+export function sessionLaunch({ sid, workspaceDir, dataRoot, resume, provider, model, presetId }) {
   const rel = (abs) => path.relative(workspaceDir, abs) || '.';
   const args = [
     '--mode', 'rpc',
-    '--approve',                          // 项目信任：RPC 无交互，不预信任则 .pi 资源被忽略
+    '--approve',
     ...(provider ? ['--provider', provider] : []),
-    ...(model ? ['--model', model] : []), // 会话模型走 arg：preset 是静态的，模型是动态的（§4.2）
-    '--config-dir', '.pi',                // 会话级配置目录：presets / mcp.json / skills 从这解析
-    '--session-dir', rel(join(dataRoot, 'pi-sessions', sid)),
-    '--settings-file', rel(join(dataRoot, 'pi-sessions', sid, 'settings.json')),
+    ...(model ? ['--model', model] : []),
+    ...(presetId ? ['--preset', presetId] : []),       // 会话/项目显式指定时（§5.4）
+    '--config-dir', '.pi',                             // 项目级配置目录（presets / mcp.json）
+    '--session-dir', join(dataRoot, 'pi-sessions', sid), // 绝对路径直通；不含 .pi
     '-e', join(NODESIGN_SRC, 'server/engine/pi/extensions/guards.ts'),
     '-e', join(NODESIGN_SRC, 'server/engine/pi/extensions/providers.ts'),
-    ...BASE_FLAGS,                        // 全局旗标常量（telemetry 走 PI_TELEMETRY=0 env）
+    ...BASE_FLAGS,                                     // --system-prompt "" --no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files
     ...(resume ? ['--continue'] : []),
   ];
   const env = {
-    PI_CODING_AGENT_DIR: AGENT_DIR,       // 专用 agent dir（§4.1 上）
-    NODESIGN_SID: sid,
-    NODESIGN_WORKSPACE: workspaceDir,
+    PI_CODING_AGENT_DIR: AGENT_DIR,                    // 专用 agent dir（唯一入口）
+    PI_TELEMETRY: '0',
+    NODESIGN_SID: sid, NODESIGN_WORKSPACE: workspaceDir,
     NODESIGN_MAIN_URL: `http://127.0.0.1:${PORT}/__nd-sidecar`,
     NODESIGN_TOKEN: sidToken(sid),
+    ...loadUpstreamKeys(dataRoot),                     // ~/.nodesign/.env 的 NODESIGN_UPSTREAM_*（hosted 从部署 env）
   };
   return { args, env };
 }
 ```
 
-- **preset 装配不走 RPC**：`autoActivate: true` 由 pi-rp `chooseDefaultPreset` 在启动时选中（源码 `prompt-preset/loader.ts`：显式 opt-in 优先于扫描序），比会话首轮发 `/preset` 干净，续档重放也不会重复触发。
-- **每会话 `.pi/` 目录**：`workspace/<sid>/.pi/prompt-presets/nodesign-session.json`（autoActivate）+ `.pi/mcp.json`（adapter 的项目覆盖层，nodesign MCP server 配置，§4.3）。preset 从 `cwd/.pi/prompt-presets/` 解析（`loadPromptPresets` 项目目录），会话私有天然成立。
-- **`--settings-file`**：进程级只读覆盖（最高优先级，且该文件所在目录同样被扫描 presets/schemas/extensions/MCP config）——放每会话 settings（defaultTools 差异等）。
-- **`-e` 显式扩展**：guards/providers 是仓库内文件，显式传路径，不依赖 agent dir 发现；`--no-extensions` 关掉发现也不影响 `-e`。
-- **`--approve`**：预信任项目文件，否则 RPC 非交互模式下 `.pi` 资源会被忽略（`project-trust.ts`）。
-- **`--continue`**：续档/崩溃恢复时带，配合 session-dir 里已有的 JSONL。
+- **preset 默认装配**：全局 `agent-dir/prompt-presets/nodesign.json`（`autoActivate:true`）在启动时被 chooseDefaultPreset 选中（唯一 autoActivate）；不传 `--preset` 即默认它。运行中切换（§5.6）写 session JSONL，`--continue` 恢复。**`--preset` 显式传时优先于一切**（含会话恢复）——重启换 preset 的语义。
+- **agent-dir 内容**：`settings.json`（defaultTools 白名单：read/write/edit/grep/find/ls/state_update/get_state，无 bash/subagent；telemetry off；`defaultPreset: "nodesign"` 双保险）、`package.json`（pi-mcp-adapter 声明）、`npm/node_modules/pi-mcp-adapter`（正规安装，gitignore）、`prompt-presets/nodesign.json`（M2 填全量平台提示词）。**禁止 SYSTEM.md / APPEND_SYSTEM.md**（短路 preset 编译）。
+- **项目级 `.pi/`**（`<pid>/shared/.pi/`，项目初始化写一次，多会话共享）：`prompt-presets/`（项目可选 preset，不带 autoActivate，靠 lifecycle `--preset` 指定或 RPC set_preset 切换）、`mcp.json`（§5.3，项目级共享）。
+- **就绪判定**：无 hello。`prompt` 应答（`response{id}`）或 `get_state` 往返即就绪；prompt 是排队语义，尽早发不丢。
+- **kill 链**：`abort` RPC → 5s → SIGTERM → 2s → SIGKILL；异常退出（agent_settled 未收到）→ run 状态机标记 failed，JSONL 在 session-dir 天然可重连续档。
 
-生命周期：会话激活时 spawn → 等 `hello`/首个快照就绪 → RPC 通信；会话结束/`abort` 超时 → SIGTERM → 超时 SIGKILL；异常退出（`agent_settled` 未收到）→ 按 run 状态机标记 failed，允许重连时 `switch_session` 续（JSONL 在 session-dir，天然可恢复）。
+### 5.2 模型接入（ingress 删除后）
 
-### 4.2 模型接入（ingress 删除后）
+- **多上游路由 / 换钥** → `server/engine/pi/extensions/providers.ts`：读 `NODESIGN_UPSTREAM_*` env，`pi.registerProvider(...)`（api: "anthropic-messages" + baseUrl + models）。M0 已验：GMI 直连、wire id 注册（`MiniMaxAI/MiniMax-M3`）、`--model` 短 id 部分匹配命中、鉴权双头兼容（x-api-key/Bearer）、baseUrl 不带 `/v1`。
+- **模型表迁移**：M1 一次性脚本，把 model-table.js 条目（`api.wireModel`、baseUrl、keyEnv）生成 providers 扩展的模型清单；Nodesign 侧继续传短 id。
+- **thinking 修补 / strip** → 模型配置的 `thinkingLevelMap` + `reasoning` 位（静态留模型配置）；运行时调档走 RPC `set_thinking_level`（`set_model` 无 thinking 参数）。
+- **计费/失败连击** → guards 扩展挂 `after_provider_response`（`before_provider_response` 不存在；实际是 before_provider_request / before_provider_headers / after_provider_response）。
 
-ingress 干的活拆解后各归其位：
+### 5.3 工具面（MCP）
 
-- **按 `body.model` 路由多上游 / 换钥** → pi-rp provider 体系：每个上游注册成一个 provider（`baseUrl` + `apiKey` + `api: "anthropic-messages"` + `models`）。注册方式选**扩展**：`server/engine/pi/extensions/providers.ts` 读 `NODESIGN_UPSTREAM_*` env，`pi.registerProvider(...)`——配置在 env，代码在文件，spawn 时 `-e` 显式加载，不碰 pi 的 models.json 装配流程。模型表迁移 = 把 `model-table.js` 的条目生成成 provider/models JSON（M1 做一次性脚本，M0 先手工注册一条验证）。
-- **thinking 修补 / strip** → pi 模型配置的 `thinkingLevelMap` + `reasoning` 位；`pickThinkingConfig` 的语义（adaptive）映射到 pi 的 thinking level（`--thinking` / `set_model` 带 thinking）。
-- **tool_result 图片提升**（Kimi/Gemini 桥丢图） → 这是上游协议坑，与引擎无关。pi-rp 侧先探针验证；若还丢，在 pi-rp 的 provider stream 层修（作者自己就是 pi-rp 维护者，往上游补，不回 Nodesign）。
-- **/__nd/<sid> 日志归属** → 每个会话进程的 `--session-dir` 目录名就是归属，不需要 URL 前缀。
-- **计费/失败连击/截断记录** → 删。pi 的 `message` 事件自带 `usage`，需要时在 event-bridge 落账。
+- **`.pi/mcp.json`（项目级）**：`{"mcpServers": {"nodesign": {command: "node", args: [standalonePath], directTools: [...ALWAYS_LOAD_TOOLS 28 项], lifecycle: "lazy", requestTimeoutMs}}}`——M0 已验 directTools 全白名单位直挂裸名工具全链路。lifecycle 值 M1 定（倾向 lazy；keep-alive 是 30s 健康检查+自动重连，会话短命场景收益小）。
+- **standalone.js**（M0 版已探通 4 工具：screenshot_canvas / read_board / web_search / pin_to_board）：复用 `createNodesignMcpServer` 工厂产物（纯描述对象）挂 `@modelcontextprotocol/sdk` McpServer + StdioServerTransport；M1 扩展全量 28 工具。**ctx 跨进程**：tier 闸/emit/身份由 sidecar 三桥替代（M1）：
+  1. `ctx.emit` → sidecar → EventBus（事件富化 runId/sessionId/ts 对齐 AgentContext.emit）；
+  2. 只读项目配置 / tier / owner（复用 getProject / getUserById）；
+  3. 主进程内存态（按需）。文件型 store（board 文件、pending-changes 落盘）直接读盘，不经 sidecar。
+- **身份**：standalone 从 env 取（NODESIGN_SID/UID/TOKEN，adapter spawn 继承 pi env）；不安全数据统一经 sidecar 校验。
+- **MCP 配置注入**：探针/生产 env 必须剔除 `NODESIGN_MCP_SERVERS`（避免把 Nodesign 的 MCP 外部配置带进 pi）；外部 MCP（`external.js`，NODESIGN_MCP_SERVERS）仍由主进程管理，不改。
+- **adapter 版本 gate**：M1 第一道——正规安装 `pi-mcp-adapter@2.27.0`（替换 vendored symlink）→ 复跑 M0 同款 MCP 工具探针 → 全绿再继续；vendored 2.20.1 为回退。
 
-会话模型选择：`resolveSessionModel` → spawn 时 `--model provider/model` 传入（model 是会话激活期的动态参数，不进静态 preset——preset 管提示词，arg 管模型；换模型走 RPC `set_model`）。tier 闸（哪个档能用哪个模型）留在 Nodesign 侧做 pre-flight 检查，不依赖引擎。
+### 5.4 提示词与 preset（单层模型）
 
-### 4.3 工具面
+- **一个完整 preset = 全部提示词**：`agent-dir/prompt-presets/nodesign.json`（autoActivate:true）= Nodesign 平台默认，唯一 autoActivate。内容 = nodesign-prelude 全量 + 原注入族静态部分（M2 并成一份）。13 槽 / 12 宏随用；prelude 内容放 chat-history 槽之前（编译时槽前items + messages 整段 + 槽后items）。
+- **项目可选 preset**：`<pid>/shared/.pi/prompt-presets/*.json`，不带 autoActivate，会话要用靠 lifecycle `--preset`（spawn 时）或 RPC `set_preset`（运行中）显式选。
+- **切换与持久化**：setActivePreset 写 session JSONL `preset_change` 条目 → `--continue` 恢复；`preset_activated` 事件（线上）供前端感知。settings `defaultPreset` 只在禁用分支写，Nodesign 用 agent-dir settings 显式设 `defaultPreset: "nodesign"` 双保险。
+- **动态内容不进 preset**：画布上下文、pending-changes、记忆等 CC 时代注入族每次拼的内容 → rpc-client 的 prompt 消息装配（M2 迁注入族时定接口，project.prelude 风格 override 或 steer 消息）。
+- **guards 扩展**（guards.ts）：迁移安全闸——tool_call 拦截（等价 PostToolUse/PreToolUse 的校验与 site-validate/canvas-validate 语义）、`after_provider_response` 计费与失败连击、`before_agent_start` systemPrompt 装配断言、`session_start` 装配断言（init-contract 去向）、rate-limit 判别（error 事件 + auto_retry 耗尽，M1 复核真实 provider 错误面）。
+- **子代理**：`engine/agents/*.md` → pi delegatable presets（M2）。Settings 白名单已排除 subagent；确需时按 preset `tools.allow` 开。
 
-**nodesign MCP stdio server**（新文件 `engine/mcp/standalone.js`）：
+### 5.5 事件桥与 turn 关联
 
-- 复用 `createNodesignMcpServer` 工厂（原样，零改动），换传输：`@modelcontextprotocol/sdk` 的 `StdioServerTransport`，进程身份从 argv/env 取（`--session <sid>`、`WORKSPACE_ROOT`、`PROJECT_ID`、`SHARED_ROOT`、`NODESIGN_MAIN_URL`）。
-- 原实现 handler 与主进程共享内存（`ctx.emit` 发事件、`withTierGate` 查 project owner、pending-changes、board-store）。跨进程后统一走 **sidecar**（`engine/pi/sidecar.js` + 主进程 express 挂 `/__nd-sidecar`）：本地回环 + 会话 token 鉴权，只桥三类——① `ctx.emit`（事件转发 EventBus）；② 只读项目配置/tier/owner（复用 `getProject`/`getUserById`）；③ 主进程内存态（有需要再加）。文件型 store（board 文件、pending-changes 落盘）直接读盘，不经 sidecar。
-- 崩溃/超时：adapter 有 `requestTimeoutMs`、`lifecycle: lazy`、keep-alive 重连；子进程死亡由 lifecycle.js 记 run 失败。
+- **event-bridge.js**：M0 原型已实现并验收（真实 28 行事件重放逐字节一致；12 合成分支全过：compaction 成功/失败、工具成败、extension_error→run.error、auto_retry 耗尽 429→run.rate_limit / 5xx→run.error、prompt 受理失败→run.error、abort→run.cancelled 且不再发 run.done、text+thinking round-trip、stopReason=error→run.error）。M1 硬化点见附录 C。
+- **映射要旨**：`run.start` ← 首个 agent_start（auto-retry 重复 agent_start 只发一次）；`run.delta.text/thinking` ← message_update 增量（跨块累积）；`run.delta.tool_use/result` ← tool_execution_start/end（toolCallId→blockId 配对去重，双路径 toolcall_end/tool_execution_start 已处理）；`run.compact_boundary` ← compaction_end（compaction_start 发 run.status 代理 isCompacting）；`run.done` ← agent_settled（usage 取 message_end 权威终值——流式 usage 是初始快照不更新）；`run.cancelled` ← abort 受理；`run.error/rate_limit` ← §5.4 guards 判别。
+- **turn 关联**：run 认领从 SDK uuid 回显改为 **RPC prompt 命令 id**——每轮唯一 id，`response{id}` 确认受理，agent_settled 收尾；turn-relay.js claimRunByUuid 改造。单飞行约束：每进程同一时刻一个 prompt（busy 报错），排队/合并语义落 rpc-client。
+- **hydrate 数据源**：ws/index.js hydrate 改读 pi session JSONL（解析 assistant 消息 / tool 结果还原历史），不再走 SDK getSessionMessages；sessions.js 的 fork/rename/delete 同时改造（M1）。
 
-**adapter 配置**（写进会话 workspace 的 `.pi/mcp.json`——adapter 的 Pi 项目覆盖层，最高优先级，`<sid>` 烘焙进 args；workspace 本来就是会话私有的，全局层的 `~/.config/mcp/mcp.json` 仍然会被读到）：
+### 5.6 pi-rp 侧前置变更（M1 阻塞项，作者就地修）
 
-```json
-{
-  "mcpServers": {
-    "nodesign": {
-      "command": "node",
-      "args": ["<abs>/server/engine/mcp/standalone.js", "--session", "<sid>"],
-      "env": { "NODESIGN_MAIN_URL": "http://127.0.0.1:<port>/__nd-sidecar", "NODESIGN_TOKEN": "<sid-token>" },
-      "directTools": ["screenshot_canvas", "read_board", "web_search", "pin_to_board", "get_pending_changes", "clear_pending_changes", "deliver_files"],
-      "lifecycle": "lazy"
-    }
-  }
-}
-```
+**RPC `set_preset` 命令**：`{"type":"set_preset","presetId":"<id|none>"}` →
+- 调 `session.setActivePreset(id)`（复用 `/preset` 命令逻辑，builtins.ts:634-680；`persistSettings` 保留「仅禁用分支写 settings」语义不变）；
+- 行为：写 session JSONL `preset_change` 条目、同步工具策略（_syncActiveToolPolicy）、广播 `preset_activated` 线上事件；
+- 响应：`response{id, success}`；未知 id → success:false + error；agent 运行中（单飞行）时行为与排队语义由实现定，M1 验证；
+- 配套：rpc-types.ts 命令联合 + modes/rpc 处理 + rpc-client.ts 加 `setPreset` 方法（Nodesign 移植版同步）。
 
-- `directTools` 白名单 = 原 `ALWAYS_LOAD_TOOLS` 常驻 schema 清单；其余走 `mcp()` 代理按需取（省常驻 token，替代原 ToolSearch）。
-- 外部 MCP（原 `NODESIGN_MCP_SERVERS` env）→ 挪进 `~/.config/mcp/mcp.json` 或 agent-dir 的 mcp.json，配置格式照 adapter 的 6 层优先级；`NODESIGN_MCP_SERVERS` env 解析器删除。
-- 内置文件工具（Read/Write/Edit/Glob/Grep）→ pi 原生工具，白名单在 settings.json `defaultTools` 钉死，**不给 bash**（需要 shell 的那天用 sandbox 扩展包一层 bwrap，不裸开）。
+**交付节奏**：pi-rp 合并发版 → Nodesign pin 新版本（§5.1 运行时 pin）→ rpc-client 封装 `setPreset` → 探针验证切换 + `--continue` 恢复 + preset_activated 事件。在发版前，lifecycle 先支持 `--preset`（spawn 时选择）不阻塞主线。
 
-### 4.4 提示词与安全（这次的核心诉求：提示词全部可见）
+## 6. 里程碑（M0 ✅；M1 ✅ 2026-08-27；M2–M3 待用户放行）
 
-- **平台 prelude → prompt preset**：`nodesign-prelude.md` 正文迁进 agent-dir 的 `prompt-presets/nodesign-base.json`（共享底座，**不**设 autoActivate；pi-rp 的 JSON preset 格式：13 个内置槽 + 宏引擎，成人档/产物政策标记块的渲染逻辑用 slot 覆盖 + 宏实现）。会话层在 workspace 的 `.pi/prompt-presets/nodesign-session.json` 写一份 `autoActivate: true` 的薄覆盖（纯提示词内容，模型不进 preset）——`chooseDefaultPreset` 启动即选中，不走 RPC `/preset`。项目级 `prompt.prelude.override` 语义保留 → 直接改这份会话 preset 的槽内容。
-- **SKILL.md**：pi 原生 skills（同一格式），`skill.js` loader 删，`plugin-loader` 的 plugins 装配 → pi 的插件/skills 发现机制。
-- **安全闸（必留，显式化）**：workspace-scope guard、performance-log guard、project-tool-deny、auto-mode-rules → 一个 Nodesign 扩展 `extensions/guards.ts`，`pi.on("tool_call")` 里 block + 理由；工具 deny 白名单同时落到 preset 的 `"tools": {"deny": [...]}`。
+### M0（✅ 2026-08-26，五验收全绿）
+- agent dir 装配（settings 白名单 / adapter 装载 / providers 扩展）
+- RPC spawn 文本直连（GMI/MiniMax-M3）、autoActivate 生效、agent dir 隔离
+- standalone.js 最小版 4 工具 + .pi/mcp.json directTools 全链路（extension_error=0）
+- event-bridge 原型 + 真实事件流还原逐字节一致
+- 资产：agent-dir/、extensions/providers.ts、mcp/standalone.js、pi/event-bridge.js、_probe-pi-rpc.mjs 等（已 commit 1c7502d）；REPORT 于 /tmp/nd-m0-probe/
 
-**hooks.js 全家迁移映射**（源码验证过的事件面）：
+### M1 工具面 + 事件桥（✅ 2026-08-27）
+1. 【前置】pi-rp `set_preset` 命令（§5.6）+ Nodesign pin 版本 ✅
+2. engine/pi/ 四模块：rpc-client.js、lifecycle.js、event-bridge.js 硬化、sidecar.js ✅（+ pi-jsonl.js、model-map.js、mcp-config.js）
+3. standalone.js 全量 54 工具 + sidecar 三桥 + adapter 2.27.0 gate ✅（GATE PASS：read_board 往返，extension_error=0）
+4. session-loop.js 换引擎（严格串行 turn）+ sessions.js 旁路删 + ws hydrate 换 JSONL + turn-relay 串行化 ✅
+5. CC SDK 依赖移除（tool-shim.js 替 SDK tool()；createSdkMcpServer/createNodesignMcpServer 删除；package.json + lockfile 清零）✅
+6. 模型表迁移脚本（model-table → providers/models JSON，wireModel 对齐）✅
 
-| 现有 hooks.js | pi 机制 | 备注 |
-|---|---|---|
-| PreToolUse（deny/guard/默认值） | `pi.on("tool_call")`：`event.input` 可变、返回 `{block, reason, terminate}` | guard 类 1:1；Grep content 默认 = 改 input |
-| PostToolUse（trim/failure/subagent-report） | `pi.on("tool_result")`：返回 `{content, isError, details}` 改结果 | 无注入字段 |
-| PreToolUse 注入族（cookbook/协议） | 工具 description 承载 ／ `pi.sendMessage()` custom message（默认以 user 进 LLM，`registerCustomType` 控策略，deliverAs=steer/followUp） | ⚠️ `tool_call` 结果无 additionalContext 等价——注入语义由工具侧或 sendMessage 替代 |
-| UserPromptSubmit（每 turn 状态注入） | `before_agent_start` 的 `systemPrompt`（每 turn 链式替换）／ preset 宏 | 按文档策略删，路径地图用 preset 静态宏 |
-| FileChanged / PostToolUse 事件转发 | **不用扩展**：event-bridge 直接看 RPC `tool_execution_end`（input+result），`ctx.emit` | 比现在少一层 |
-| SessionStart / Stop / PostCompact | `session_start`（reason 区分 new/resume/fork/reload）/ `session_shutdown` / `session_compact`（`session_before_compact` 可 cancel+自定义压缩） | — |
-| Subagent 生命周期 | 原生 subagent + `agent_start`/`agent_end` | agents/*.md → delegatable presets |
-| AskUserQuestion 协议注入 | `ctx.ui.select/confirm/input` → RPC `extension_ui_request` → 主进程桥到前端 | 注入协议整体退役 |
-| rate-limit / 计费 | `before_provider_request` / `before_provider_response` | 替代 ingress 的失败连击/计费记录 |
-- **业务注入族（删）**：pre-injectors（cookbook）、user-prompt-submit（路径地图）、post-guidance、canvas-validate、site-validate、failure、subagent-report——不搬。需要的前置知识（generate-image cookbook 等）降级为 preset 文本或 SKILL.md 附件，由 agent 自主按需读取；前端校验类逻辑移进 MCP handler 本身（`createNodesignMcpServer` 内部本来就有 param-sanitizer/capability-gate 这层，往这层加）。
-- **agents/*.md → delegatable presets**：pi-rp 原生 subagent（`subagent` 工具 + `delegatable: true` preset）；子代理工具默认不启用（defaultTools 不含 `subagent`），需要时按会话开。
-- **记忆指导**（`MEMORY_EXTRA_GUIDELINES`）→ preset 文本槽。
+**M1 live 探针**（`server/_probe-m1-live.mjs`，GATE PASS）：minimax-m3 双 turn——turn 1 文本复述 marker（run.done，usage 落库 in=40954/out=30）；turn 2 read_board 工具调用经 pi-mcp-adapter → standalone → sidecar gate 全链路（BOARD_READ_OK）。事件流：run.query.start / run.start / delta.thinking / delta.text / tool_use / tool_result / run.done / queue.depth / query.end 全在。
 
-### 4.5 事件与前端
+**M1 已知缺口**（代码内注释留档，M2/M3 处理）：AskUserQuestion/elicitation、rewind、热换模型、截断续写、background turns、context usage 事件、permissionMode 同步、maxTurns、ingress usage、hooks/isolation/plugins/systemPrompt 组装（M2）、thinking 档位配置。订阅通道 M1 整体禁用（三层防御：turn.js 403 / session-loop init 抛错 / selectableModelsFor 锁行）。
 
-前端契约（EventBus schema，`run.delta.*` 等）**不变**，`ws/index.js` 不用动。事件映射在 `engine/pi/event-bridge.js`：
+### M2 提示词收敛
+- nodesign.json 单层完整 preset（prelude 全量 + 注入族静态部分并档）+ 项目可选 preset
+- guards 扩展（安全闸全集：工具拦截 / 计费 / 失败连击 / 装配断言 / rate-limit）
+- 删注入族 hooks/；删 isolation / init-contract / memory-config
+- agents/*.md → delegatable presets；动态注入接口定（§5.4）
 
-| EventBus | pi RPC 事件 |
-|---|---|
-| `run.start` | `session_start` / 首个 `agent_start` |
-| `run.delta.text` | `message_update`（`assistantMessageEvent` 的 `text_delta`） |
-| `run.delta.thinking` | `message_update`（`thinking_delta`） |
-| `run.delta.tool_use` | `tool_execution_start`（args） |
-| `run.delta.tool_result` | `tool_execution_end`（result/isError） |
-| `run.compact_boundary` | pi compaction 事件（实现时核对事件名） |
-| `run.status` | agent state（isStreaming/isCompacting） |
-| `run.rate_limit` | error 事件（rate-limit 判别） |
-| `run.cancelled` | `abort` 响应 / `agent_end` |
-| `run.done` | `agent_settled` + 末条消息 |
-| `run.error` | `extension_error` / error 事件 |
+### M3 清理回归
+- 删 ingress / sandbox-shim / 旧测试（hooks×7、isolation、ingress、tier 中 query 断言）
+- 重写保留契约测试（tier、参数校验、事件桥、turn 认领）
+- 前端联调（run.delta.* 契约不变确认 + hydrate 回归 + 换 preset 交互）
 
-`includePartialMessages` 的逐 token 增量由 `message_update` 的 delta 事件承担，映射层按 round 聚合即可，前端不改。
+## 附录 A　M0 验证结果与偏差记录（2026-08-26，已并入正文，保留追溯）
 
-### 4.6 会话持久化
+> 16 条偏差中：架构级 1 条（workspace 共享 → 配置项目级/身份 env，§2.5/§3）、M1 增负 3 条（ws hydrate、turn-relay、standalone ctx）、其余为命名/配置修正。全部已并入 §2 与 §5。原文偏差表见 git 历史（docs/engine-pi-rp-migration.md@1c7502d 前身），此处不重复。
 
-- pi 侧：`--session-dir` 指向 `<data>/pi-sessions/<sid>/`（lifecycle 算成相对 cwd 的值传给 pi），每会话一个 JSONL（白拿 /tree、/reroll、/continue、state）。
-- Nodesign 侧：`runs/` SQLite 状态机保留（记账/审计不变），`persistSession:false` 之类 SDK 选项随 SDK 一起消失。
+## 附录 B　preset 机制事实核查（6 问，2026-08-26）
 
-## 里程碑
+见 §2.3 汇总；逐条文件:行号：
+- loader.ts:61-83 chooseDefaultPreset 三级回退；loader.ts:29-51 loadPromptPresets 两级扫描 + 同 id 覆盖
+- agent-session.ts:1320-1346 _rebuildSystemPrompt 恢复块（preset_change ?? settings.defaultPreset ?? chooseDefaultPreset）；1488-1520 setActivePreset（persistSettings 仅禁用分支）；1610-1630 getPresetInjectMessages
+- session-manager.ts:69-72 PresetChangeEntry；1113-1123 appendPresetChange；1045-1072 落盘 JSONL
+- settings-manager.ts:96 Settings.defaultPreset；772-791 get/setDefaultPreset
+- sdk.ts:472-477 新会话记录默认 preset；509-519 options.preset
+- rpc-types.ts RpcCommand 联合（无 preset 命令）；reload_prompts:102；rpc-mode.ts:921-926
+- config.ts:491 CONFIG_DIR_NAME=".pi"；512-514 getProjectConfigDir；539-545 getAgentDir
+- cli/args.ts:219-224 --preset；commands/builtins.ts:634-680 /preset
+- slot-renderers.ts:46-61 13 槽；macro-engine.ts 12 宏；types.ts PromptPresetItem（无 inherit）
+- compiler.ts:96-160 chat-history 锚点；301-320 addSyntheticMessage role system
+- default-stack.ts pi-default（autoActivate:true）
+- resource-loader.ts:1035-1050 SYSTEM.md/APPEND_SYSTEM.md 短路编译
+- extensions/types.ts:703-707 PresetActivatedEvent；1298 on("preset_activated")；361-368 registerSlot/registerMacro；1585-1589 compilePreset
 
-**M0 · 探针（半天，不动 session-loop）**
-1. 装配专用 agent dir（settings + adapter 一份 + 手工注册一个 provider 指向 Kimi 上游，或先跑 providers 扩展）。
-2. 按 §4.1 `sessionLaunch` 手搓 spawn（cwd=临时 workspace + `.pi/prompt-presets/nodesign-session.json` autoActivate），RPC `prompt` 走通一轮文本回复，验证 autoActivate 生效。
-3. `standalone.js` 最小版（先挂 3~5 个工具：screenshot_canvas / read_board / web_search / pin_to_board），`.pi/mcp.json` 指向它，验证模型能通过 `mcp()`/directTools 调工具、工具结果回得来。
-4. 事件流落盘解析，验证 message_update delta 可还原前端增量。
-- 验收：三件事全通（工具调用 / provider 直连 / 流式事件）。不通的项（如 tool_result 图提升）当场定修法。
+## 附录 C　event-bridge M1 硬化点（B2 遗留）
 
-**M1 · 工具面完整 + 事件桥**
-- `standalone.js` 全量工具 + sidecar 三类桥接；`engine/pi/` 四个模块成型。
-- `session-loop.js` 换引擎（`engine/pi/rpc-client.js` 驱动），`api/sessions.js` 临时 query 旁路删，CC SDK 依赖移除。
-- 模型表迁移脚本（model-table → provider JSON）。
+- run.start 的 model 由 rpc-client 从 spawn 配置/get_state 传入（message_start 的 model 晚到）
+- rate-limit 判别现为文本启发式，对真实 provider 错误面复核（上游可能无 429/'rate_limit' 字样）
+- abort 空转时是否回 success:true 需核实（防误发 run.cancelled），必要时加「turn 活跃」门控
+- compaction 失败（result:null+errorMessage）折进 compactMetadata，M1 定是否单独 run.error
+- toolcall_delta（参数流式）→ run.delta.tool_input、tool_execution_update → run.tool_progress 留 M1
+- 流式 usage 是初始快照：前端实时进度需别的来源（provider 自报或 message_end 后补发）
+- queue_update → run.queue.depth（排队提示）映射未做
+- 多 turn 排队：rpc-client 每 turn 新建 bridge（fresh runId），turn_start 重置累积
 
-**M2 · 提示词收敛**
-- prelude/skill/agents 迁 preset；guards 扩展；删注入族与 `hooks/`、`isolation/`、`init-contract`、`memory-config` env。
+## 附录 D　防坑清单（M1-M3 执行时对照）
 
-**M3 · 清理与回归**
-- 删 ingress、sandbox-shim、旧测试；重写保留下来的契约测试（MCP 工具 handler、param-sanitizer、tier 仍在）；前端联调（流式、事件、canvas 事件、browse 通道）。
-
-## 开放问题（进 M0/M1 时逐一验证）
-
-1. **MCP 子进程的 playwright 复用**：browse 工具现在跑在主进程，多会话各自起 chromium 实例的资源压力——原实现是否有共享实例，迁移后要不要 pool（`browse/registry.js` 核对）。
-2. **sidecar 延迟**：`ctx.emit` 桥对前端即时性（screencast、canvas_focus 等）的影响，本地回环可接受性。
-3. **pi 子进程启动耗时**：每会话 spawn 的冷启动延迟对首消息体验的影响（pi 带 adapter 冷启约 1~2s，实测确认）。
-4. **adapter 代理工具占位**：`mcp()` 代理 + `mcpScript` 默认开，`disableProxyTool` 是否在 directTools 齐了之后关。
-5. **subagent/state 工具**：默认不启用，确需时按会话开（defaultTools 是进程级，得按会话改 settings 或 preset deny 实现）。
-6. **compaction 事件名**与 `run.compact_boundary` 的精确映射。
-
----
-
-## 附录 A　M0 验证结果与计划偏差（2026-08-26）
-
-> 本附录由 M0 调研（4 scout + 2 探针 wave，2026-08-26）收口：把已验证事实与对正文假设的偏差补进设计稿，作为 M1-M3 子代理可直接引用的权威附录。**只增不改**：正文结构未动；正文假设与本附录冲突处，以本附录为准。
->
-> 来源标注（下文括号简称）：REPORT = `/tmp/nd-m0-probe/REPORT.md`（Wave A 探针：pi RPC 直连）；PiRpSrc = scout `agent://PiRpSourceVerify`（pi-rp v0.84.2 源码核查，含文件:行号）；Adapter = scout `agent://McpAdapterResearch`（pi-mcp-adapter v2.20.1 vendored 源码）；Map = scout `agent://NodesignEngineMap`（Nodesign 引擎现状实测）；WLRef = scout `agent://WorldlinesPiRef`（worldlines-rivet / -mvp / pirp-web 集成参考）。
-
-### A.1 已验证事实速查（M0 全绿项）
-
-- RPC 线上事件面是 `AgentSessionEvent`（agent_start / turn_start / message_start / message_update / message_end / turn_end / agent_end / agent_settled / tool_execution_start / tool_execution_update / tool_execution_end / compaction_start / compaction_end / extension_error / error …），**无 hello 启动消息**；session_start / session_shutdown / session_compact 是扩展 API 事件，不走 RPC 线上。（PiRpSrc① + REPORT 事件序列）
-- 所有命令支持可选 `id` 做请求-响应关联（`response{id:req-1}`）；事件不带 id，靠顺序 + 状态机（agent_settled 收尾）。（PiRpSrc + REPORT）
-- `--config-dir` / `--settings-file` 按 `join(cwd, 值)` 拼接，绝对路径拼坏；`--session-dir` 绝对路径直通（normalizePath）。`--settings-file` 所在目录**不被**扫描 presets/extensions（help 文案与实现不符）。（PiRpSrc④⑤ + REPORT 踩坑 2 + WLRef §7）
-- preset 解析目录：agentDir/prompt-presets + cwd/.pi/prompt-presets；chooseDefaultPreset 三级回退：autoActivate:true 优先，**未显式 false 的 preset 在无 opt-in 时会被回退选中**——所以底座必须显式 `autoActivate:false`。（PiRpSrc + REPORT 踩坑 4）
-- `PI_CODING_AGENT_DIR` 专用 agent dir 隔离生效（未加载 ~/.pi/agent）；`PI_TELEMETRY=0`；RPC 必须 `--approve`（否则 .pi 资源被忽略）；`--no-extensions` 不影响 `-e`。（REPORT 验收 4 + PiRpSrc project-trust.ts / resource-loader.ts:451-453）
-- pi 0.84.2 内建工具：read / bash / edit / write / grep / find / ls + state_update / get_state + subagent / subagent_profiles（**无 glob**）；settings.json `defaultTools` 白名单可排除 bash/subagent。（REPORT 踩坑 3 + PiRpSrc tools/index.ts:83-84、sdk.ts:296-309）
-- provider 直连：anthropic-messages 直接拿 `model.id` 发上游 → provider 注册 wire id；`--model` 部分匹配（id 子串 + name 子串）；GMI 鉴权双头兼容（x-api-key / Bearer 均过）、baseUrl 不带 `/v1`。（REPORT 踩坑 1/7）
-- pi 冷启 1.3–1.8s（无 adapter）；adapter 挂载后 22s 窗口 extension_error=0 验证通过。（REPORT 耗时实测 + `/tmp/nd-m0-probe/adapter-check.mjs`）
-- 思考走 thinking_delta、正文走 text_delta；跨块（contentIndex）累积后与 `get_last_assistant_text` **逐字节一致**。（REPORT 事件序列 + summary.json textFromUpdates==textFromCommand）
-- pi-mcp-adapter v2.20.1：6 层配置优先级，`.pi/mcp.json`（config-dir）为最高项目覆盖层，`~/.config/mcp/mcp.json` 仍被读；mcp() / directTools / mcpScript / disableProxyTool 全在 adapter 侧（pi 核心 **No MCP**）；lifecycle `lazy` 首调才 spawn；requestTimeoutMs 省略或 ≤0 时回落 MCP SDK 默认 60s；安装落点 `<agentDir>/npm/node_modules`。（Adapter + REPORT 安装状态）
-
-### A.2 计划偏差清单（⚠️）
-
-| # | 计划原文（出处） | 事实（来源） | 影响与处置 |
-|---|---|---|---|
-| 1 | ws/index.js「不用动」（§4.5 + 删除清单「ws/ 保留」） | ws/index.js:19 import SDK `getSessionMessages`（hydrate 数据源，L205-207）；sessions.js:19 同——hydrate/fork/rename/delete 全走 SDK session API（Map A1③/E14） | M1 需把 hydrate 改读 pi session JSONL（session-manager 落盘 `<时间戳>_<id>.jsonl`，PiRpSrc）；ws 透传层本身可不动，数据源必须换 |
-| 2 | 「workspace 本来就是会话私有的」、每会话 `.pi/` + `.pi/mcp.json` 烘焙 `<sid>`（§4.1、§4.3） | 现状 cwd = `<PROJECTS_DATA_DIR>/<pid>/shared/` **项目级共享**；getSessionWorkspace 里 sessionId 只校验不参与路径（Map H22）；全仓无 .pi 目录 | 会话私有前提不成立，重做：每会话配置根建议 `dataRoot/pi-sessions/<sid>/`（.pi 与 mcp.json 都放这），`--config-dir` 相对 cwd 传 `../` 路径（pi 侧 join 归一化 `..`，WLRef server.mjs:1354 已验） |
-| 3 | `createNodesignMcpServer` 工厂「原样，零改动」，standalone.js 换传输即得（§4.3） | 工具工厂与 handler 深度耦合 SDK：mcp/index.js:356 createSdkMcpServer、tools/ 约 37 文件 `import { tool }`、param-sanitizer.test.js:10 也 import SDK tool()（Map D11/G18） | 「换传输零改动」不成立。M0 已用 ctx stub 探通 4 工具调用链（screenshot_canvas / read_board / web_search / pin_to_board，与计划 M0 里程碑 3 一致）；M1 standalone.js 以 ctx stub / sidecar 三桥替代（见 A.3-2） |
-| 4 | 「maxTurns: 50 \| 丢」（删除清单） | 代码默认 **100**（session-loop.js:610-611 `Number(env)\|\|100`）；.env 的 NODESIGN_MAX_TURNS=50 才让生效值=50（Map A1/H20） | 删除的是 maxTurns 键本身；迁移语义确认：循环终止靠 pi 自然结束 + auto-compaction + RPC abort，无需等价 maxTurns |
-| 5 | runs/ 保留（删除清单「保留：runs/ 状态机」） | turn 认领依赖 SDK 的 `--replay-user-messages` uuid 回显（session-loop.js:476 extraArgs；turn-relay.js claimRunByUuid：current/promoted/merged，Map A1/E14） | pi 无此回显机制 → M1 改用 RPC prompt 命令的 `id` 关联 run/turn：每轮唯一 id，response 同 id 确认受理，agent_settled 收尾（REPORT `response{id:req-1}` 已验证） |
-| 6 | rate-limit / 计费挂 `before_provider_request` / `before_provider_response`（§4.4 映射表） | `before_provider_response` **不存在**；实际为 before_provider_request / before_provider_headers / after_provider_response（PiRpSrc⑦，sdk.ts:359-429 挂进 gateway） | guards.ts 的计费/失败连击挂 after_provider_response（或 before_provider_request）；§4.5 run.rate_limit ← error 事件判别不变 |
-| 7 | 「子代理工具默认不启用（defaultTools 不含 subagent）」（§4.4） | subagent 默认在 defaultActiveToolNames（sdk.ts:296-309，PiRpSrc⑥） | settings.json defaultTools 白名单显式排除后 M0 验证无 subagent（REPORT 踩坑 3：read, write, edit, grep, find, ls, state_update, get_state）；确需时按会话改 settings / preset tools.allow |
-| 8 | 换模型走 RPC `set_model`（§4.2 提到「--thinking / set_model 带 thinking」） | `set_model` 无 thinking 参数；thinking 是独立命令 `set_thinking_level`（PiRpSrc⑧） | rpc-client.js 封装两条命令；thinkingLevelMap / reasoning 等静态位留模型配置（model-config.ts，PiRpSrc） |
-| 9 | §4.5 表 `run.start` ← session_start、`run.compact_boundary` ←「pi compaction 事件（实现时核对）」；§4.4 SessionStart/PostCompact 行（§4.5 + §4.4） | session_start / session_shutdown / session_compact **是扩展 API 事件，不走 RPC 线上**；线上 compaction 事件名是 compaction_start / compaction_end（PiRpSrc①） | §4.5 表更新：run.start ← 首个 agent_start；run.compact_boundary ← compaction_start / compaction_end；guards 扩展内仍可 `pi.on("session_start")`（扩展 API 可用，只是不在 RPC 事件流） |
-| 10 | providers.ts 读 `NODESIGN_UPSTREAM_*` env（§4.2） | 仓库 .env 无 NODESIGN_UPSTREAM_* 键（只有陈旧 NODESIGN_MODEL=kimi-k2.6 等）；本机真实配置在 `~/.nodesign/.env`（Map H20，profile.js L62-69） | lifecycle spawn env 从 `~/.nodesign/.env` 注入 NODESIGN_UPSTREAM_*（M0 探针已这么做，REPORT spawn env 段）；hosted 部署从部署 env 注入 |
-| 11 | 模型表迁移 = model-table → provider/models JSON（§4.2） | model-table 行字段 `api.wireModel` 与 pi wire id 同构；`--model` 部分匹配已实测（注册 `MiniMaxAI/MiniMax-M3`、传 `minimax-m3` 命中，model-resolver.ts:150-152）（REPORT 踩坑 1 + Map C10） | M1 迁移脚本把 wireModel → provider models 注册 id；Nodesign 侧继续用短 id 传 `--model`，sdkAlias 层退役 |
-| 12 | agent-dir 装 pi-mcp-adapter（§4.3） | vendored v2.20.1 依赖 @earendil-works/pi-ai 0.74.2 / pi-coding-agent 0.79.10（pi 0.84.2）；jiti 别名解析到已装 0.84.2 dist 加载未报错；registry latest 2.27.0（REPORT 安装状态 + Adapter） | M1 正规安装时核对版本（2.20.1 或 2.27.0），按真实 MCP 工具行为复核（依赖代差风险） |
-| 13 | engine/pi/rpc-client.js 自写（§4 目标架构） | 官方客户端已存在：pi-rp `packages/coding-agent/src/modes/rpc/rpc-client.ts`（42 方法，id=req_N 关联，无 hello 仅等 100ms）；worldlines-rivet `vendor/pi-rp/` 有同构 vendored 副本（PiRpSrc + WLRef 3b） | M1 rpc-client.js 直接移植官方/副本（promptAndWait / getLastAssistantText / onEvent / setModel / stop），不白写；帧解析纪律：indexOf('\n') 分帧防 U+2028/2029 |
-| 14 | adapter 有「keep-alive 重连」（§4.3） | 无 keepAlive 布尔位；重连机制是 `lifecycle: "keep-alive"`（30s 健康检查）+ `lazy-keep-alive`；ALWAYS_LOAD_TOOLS 在 adapter 侧 NOT FOUND（Nodesign 侧 mcp/index.js:108-141 存在 28 项）（Adapter② + Map D11） | directTools 白名单数据源继续用 Nodesign `ALWAYS_LOAD_TOOLS` 常量；M1 定 lifecycle 值（lazy 省常驻 vs keep-alive 保连接重连） |
-| 15 | `--settings-file`「该文件所在目录同样被扫描 presets/schemas/extensions/MCP config」（§4.1） | **不扫描**——仅 overlay 文件本身被读（settings-manager.ts:219 `join(cwd, overlayPath)`，help 文案与实现不符，PiRpSrc⑤）；M0 已绕开：defaultTools/telemetry/compaction 全走 agent-dir/settings.json（global scope，REPORT 踩坑 2） | 每会话 settings 差异不进覆盖层目录扫描：放 agent-dir/settings.json 或 preset 的 tools 字段 |
-| 16 | 生命周期「等 hello / 首个快照就绪」（§4.1） | 无 hello：spawn 后 stdout 静默；冷启 1.3-1.8s；prompt 命令是排队语义，启动未完成也能缓冲、不丢（REPORT 耗时实测） | 就绪判定 = 首个 response 或 get_state 往返（同 mvp PersistentRpcPool ready 握手 15s，WLRef 3a）；首消息延迟 = 冷启 + 首个事件，M1 评估预热 |
-
-### A.3 M0 遗留与 M1 前置
-
-**1. event-bridge 尚未实现（M1 目标文件 `server/engine/pi/event-bridge.js`）——M0 只留下事件面事实与探针脚本。**
-- 事件面事实依据：`/tmp/nd-m0-probe/events.jsonl` 完整序列 response → agent_start → turn_start → message_start/end(user) → message_start(assistant) → thinking_start/delta×6/end → text_start/delta×2/end → message_end → turn_end → agent_end{willRetry:false} → agent_settled → response(get_last_assistant_text)（REPORT）。
-- M0 探针脚本名单：`server/_probe-pi-rpc.mjs`（Wave A 主探针，--cwd/--provider/--model/--message 参数化，自带 kill 链）；`/tmp/nd-m0-probe/adapter-check.mjs`（Wave B：adapter 挂载后 extension_error 计数 + get_state 往返）；`server/engine/pi/extensions/providers.ts`（provider 扩展，读 NODESIGN_UPSTREAM_* env）。
-- M1 桥输入：事件白名单 / 轮次切分直接抄 worldlines-rivet `wl-protocol.mjs` EVENT_TYPES + extractText（WLRef 3c）。注意 server/ 下其余 `_probe-*.mjs`（_probe-mcpcall / _probe-ns 等）是 CC SDK 时代旧探针，不在 M0 名单内。
-
-**2. standalone.js M0 版 = ctx stub 探通 4 工具；M1 换 sidecar 三桥。**
-- M0 版 ctx stub 探明的依赖面（= 计划 §4.3 需桥接的面，Map D11 context.js）：`ctx.emit`（事件，enrich runId/sessionId/ts）、`ctx.workspace.*`、counters、`addToolCharge`。
-- M1 sidecar 三桥（计划 §4.3）：① `ctx.emit` → sidecar → EventBus；② 只读项目配置 / tier / owner（复用 getProject / getUserById）；③ 主进程内存态（按需再加）。文件型 store（board 文件、pending-changes 落盘）直接读盘，不经 sidecar。
-- 已探通工具：screenshot_canvas / read_board / web_search / pin_to_board（M0 探针，任务交办口径；与计划 M0 里程碑 3 一致）。
-
-**3. turn 边界对齐：agent_settled ↔ run.done；prompt id ↔ run 关联。**
-- `agent_end{willRetry:false}` → `agent_settled` 后取 `get_last_assistant_text` 收尾（REPORT 序列；mvp wait_settled 同款语义，WLRef 3a）；run.done 与 agent_settled 对齐，不再等 SDK query() 的 result 对象。
-- run 认领从 uuid 回显改为 RPC prompt 命令 id（A.2 #5）；pi 单飞行约束：每进程同一时刻只发一个 prompt（busy 无 streamingBehavior 会报错，WLRef 3a）——turn 排队/合并语义落到 rpc-client 层确认。
-
-**4. adapter 正规安装命令（生产/迁移用，替换 symlink）。**
-- `cd server/engine/pi/agent-dir/npm && npm install pi-mcp-adapter@2.20.1`（走 registry；离线则拷 vendored 目录到 node_modules/ 并 npm install，保 lockfile）——落点 `<agentDir>/npm/node_modules`（REPORT 安装状态 + package-manager.ts:2047）。
-- M1 复核 @earendil-works 依赖代差（A.2 #12）；settings 的 `packages` 字段或 `-e` 显式挂载皆可。
-
-**复跑命令**：`node server/_probe-pi-rpc.mjs --provider gmi --model minimax-m3`（REPORT）。
+1. `.pi/` 内禁止密钥（全部 env）；mcp.json 对代理可见，不放敏感配置
+2. env 剔除 NODESIGN_MCP_SERVERS（外部 MCP 仍归主进程）
+3. adapter 的 mcp-cache.json 缓存：改 mcp.json 定义后必须删（否则 direct tools 不刷新）；属 agent-dir 运行时状态，与 auth.json/models-store.json 同待遇（已 gitignore）
+4. 禁止 SYSTEM.md/APPEND_SYSTEM.md（短路 preset 编译）
+5. preset 文件删除后恢复块不回退 chooseDefaultPreset（停在默认），删除前确认
+6. 每会话 .pi 不烘焙 <sid>——已有任何此类残留代码立即清理
+7. anthropic-messages api 直接拿 model.id 发上游：注册 wire id，勿用本地短名
+8. pi 0.84.2 无 glob 工具：需要 glob 语义的工具（glob tool 前端）走 standalone MCP 或确认工具集
+9. session-dir 每会话独立 JSONL 是续档/崩溃恢复的唯一事实源——禁止清理
+10. 探测性改动只增文件直到 M1 换引擎；session-loop 改造前先出基线 commit（已完成 1c7502d）

@@ -9,7 +9,7 @@
  * 和会话 cwd 的 canvas.html 两种形态）。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { Events } from '../../agent/events.js';
 import { setActiveDeck } from '../../../lib/artifact-target.js';

@@ -20,7 +20,7 @@
  * 返回会把截图尺寸说清楚。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { openSession, withSession, changedSinceOpen, peekSession, defaultViewportFor } from '../../perception/session.js';
 import { findInPage, formatMatches } from '../../browse/refs.js';

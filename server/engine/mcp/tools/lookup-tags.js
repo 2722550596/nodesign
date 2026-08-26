@@ -10,7 +10,7 @@
  * fail-open：danbooru 查不到就明说查不到，不挡出图。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { lookupTags, formatLookup } from '../../../lib/danbooru-tags.js';
 

@@ -38,16 +38,16 @@ describe('capability-gate（子进程真起工具表）', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'nd-gate-'));
     const code = `
       import { probeCapabilities, capabilityState } from './capabilities.js';
-      import { createNodesignMcpServer } from '../engine/mcp/index.js';
+      import { buildNodesignTools } from '../engine/mcp/index.js';
       import { withCapabilityGate } from '../engine/mcp/capability-gate.js';
       await probeCapabilities();
-      const s = createNodesignMcpServer({ workspaceRoot: '${dir}', sharedRoot: '${dir}', projectId: 'p', sessionId: 's' });
-      // SDK 的 createSdkMcpServer 把工具收进 instance；拿 toolNames 证明没少注册，再直接对单件工具做闸
+      const tools = buildNodesignTools({ workspaceRoot: '${dir}', sharedRoot: '${dir}', projectId: 'p', sessionId: 's' });
+      // buildNodesignTools 产出纯描述对象数组（M1 起 standalone.js 同款管线）；拿长度证明没少注册，再直接对单件工具做闸
       const fake = { name: 'web_search', description: 'ORIG', inputSchema: {}, handler: async () => ({ content: [{ type: 'text', text: 'ran' }] }) };
       const gated = withCapabilityGate(fake);
       const called = await gated.handler({});
       const docx = withCapabilityGate({ name: 'build_docx', description: 'ORIG', inputSchema: {}, handler: async () => ({ ok: 1 }) });
-      console.log(JSON.stringify({ n: s.toolNames.length, ws: capabilityState('webSearch')?.available, lo: capabilityState('libreoffice')?.available, desc: gated.description.slice(0, 40), isError: !!called.isError, text: called.content?.[0]?.text?.slice(0, 30), docxDesc: docx.description, docxRan: (await docx.handler({})).ok }));`;
+      console.log(JSON.stringify({ n: tools.length, ws: capabilityState('webSearch')?.available, lo: capabilityState('libreoffice')?.available, desc: gated.description.slice(0, 40), isError: !!called.isError, text: called.content?.[0]?.text?.slice(0, 30), docxDesc: docx.description, docxRan: (await docx.handler({})).ok }));`;
     const base = { ...process.env }; delete base.VITEST;
     for (const k of Object.keys(base)) if (/^NODESIGN_(TAVILY|EXA|BAIDU_QIANFAN|ZHIPU)_KEY$/.test(k)) delete base[k];
     const run = (extra) => {

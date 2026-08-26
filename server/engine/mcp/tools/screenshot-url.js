@@ -16,7 +16,7 @@
  * 失败 —— 部分渲染的参考图也比纯文字转述强，超时记进 caption。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { attachPageDiagnostics, runBeforeShot, normalizeShot, FIDELITY_LAUNCH_ARGS, detectPaintTransform } from './helpers/shot-pipeline.js';
 import { checkUrl, attachSsrfGuard } from '../../../lib/ssrf-guard.js';

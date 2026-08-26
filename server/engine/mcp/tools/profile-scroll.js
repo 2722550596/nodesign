@@ -20,7 +20,7 @@
  * 会重复这句话，别让 agent 拿绝对数字去跟用户汇报。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, requireBrowsable } from '../../../lib/artifact-target.js';
 import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';

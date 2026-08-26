@@ -27,7 +27,7 @@
  * use 那种"从浏览器逃到终端"的面。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { withBrowser, _limits } from '../../browse/registry.js';
 import { handleForRef, staleRefText } from '../../browse/refs.js';

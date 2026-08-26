@@ -5,36 +5,23 @@
  *   session-loop.js 的 ctx.abortController / ctx 是 in-memory 实例，外部（HTTP cancel
  *   endpoint）需要根据 runId 找到对应的引用才能控制。
  *
- * 工作流：
- *   1. runAgent 启动时立即 registerRun(runId, { abortController, ctx })
- *      —— 此时 query 还没调，先注册让 cancel race condition 兜底
- *   2. query() 拿到 handle 后调 attachQuery(runId, query)
- *      —— 之后 control 方法（interrupt/setModel/rewindFiles/...）可用
+ * 工作流（M1 pi-rp 换源后）：
+ *   1. runTurn 启动时立即 registerRun(runId, { abortController, ctx })
+ *      —— 此时 pi prompt 还没发，先注册让 cancel race condition 兜底
+ *   2. session-loop 拿到 pi interrupt handle 后调 attachSessionQuery(sid, handle)
+ *      —— handle 形如 { interrupt(): Promise }，之后 cancel 走 interrupt() 优雅路径
  *   3. 用户点"停止"→ POST /api/projects/:pid/runs/:runId/cancel
- *      → cancelRun(runId) 三条路径：
- *         a. query.interrupt() 优雅 + 5s 后兜底 ctx.cancel()
- *         b. interrupt 失败兜底 ctx.cancel()
- *         c. race window（query 还没 attach）→ 直接 ctx.cancel()
+ *      → cancelRun(runId)：session 路径调 query.interrupt()，失败/未 attach 兜底
+ *        close session 或 ctx.cancel()
  *   4. ctx.cancel() 幂等：set abort signal + emit run.cancelled（前端据此 setIsStreaming(false)）
- *   5. SDK 看到 abort signal 或 interrupt → query 中断
- *      → session-loop.js 走 cancelled 路径或 catch
- *   6. runAgent finally 调 unregisterRun(runId)（无论成功失败）
+ *   5. pi 看到 abort → agent_settled 带 cancelRequested → session-loop 走 cancelled 路径
+ *   6. runTurn finally 调 unregisterRun(runId)（无论成功失败）
  *
  * 暴露给上层（API/前端）的能力（通过 getQuery）：
- *   - query.interrupt()                 优雅中断
- *   - query.setModel(model?)            运行时切模型
- *   - query.setPermissionMode(mode)     运行时切权限模式
- *   - query.getContextUsage()           真实上下文水位
- *   - query.mcpServerStatus()           MCP 连接状态
- *   - query.rewindFiles(uuid, opts?)    file checkpoint 回滚（per user message）
- *   - query.toggleMcpServer(name, on)   动态启停 MCP server
- *   - query.stopTask(taskId)            停后台子代理任务
- *   - query.streamInput(stream)         追加 user message（多轮复用）
- *   - 等等（见 sdk.d.ts:2017 Query interface）
- *
- *   ⚠️ 这些 control 方法**只在 streaming input/output 模式下可用**
- *      （sdk.d.ts:2018-2022）。session-loop.js 已统一把所有 prompt 包成
- *      AsyncIterable<SDKUserMessage>，符合此前提。
+ *   - query.interrupt()  优雅中断当前 turn（pi-rp abort 的薄封装）
+ *   M1 已知缺口（SDK 时代有、pi-rp 暂禁 501）：setModel 热切换、setPermissionMode、
+ *   getContextUsage、mcpServerStatus、rewindFiles、toggleMcpServer、stopTask。
+ *   AskUserQuestion / elicitation 一族机械保留（wave 4 统一扫），M1 用不到。
  *
  * Map 是 in-memory：服务重启 controller / ctx 都没了（活跃 run 也都死了，一致）。
  * 多实例部署时需要分布式协调（Redis pub/sub），stage 1 单进程够用。
@@ -53,7 +40,7 @@ import { markRunFailed } from './store.js';
  * @typedef {object} ActiveRunRecord
  * @property {AbortController} abortController
  * @property {import('../agent/context.js').AgentContext} ctx  - AgentContext 引用，cancelRun 走 ctx.cancel() 统一 emit run.cancelled
- * @property {import('@anthropic-ai/claude-agent-sdk').Query|null} query  - query handle，先注册时为 null，attachQuery 后填
+ * @property {object|null} query  - pi interrupt handle {interrupt(): Promise}，先注册时为 null，attachQuery 后填
  * @property {Map<string, PendingQuestion>} pendingQuestions - A4.1：tool_use_id → Promise resolver，AskUserQuestion 等用户答案用
  * @property {Map<string, PendingQuestion>} pendingElicitations - Phase 2.3：reqId → Promise resolver，MCP onElicitation 等用户答案用
  * @property {number} startedAt
@@ -66,16 +53,11 @@ const activeRuns = new Map();
  * @typedef {object} ActiveQuerySession  - per-sid long-running query（streamInput 模式）
  * @property {AbortController} abortController  - session 级；close session 时触发
  * @property {import('../agent/context.js').AgentContext|null} ctx  - 当前 turn 的 ctx（per-turn 切换）
- * @property {import('@anthropic-ai/claude-agent-sdk').Query|null} query
- * @property {import('../../lib/async-queue.js').AsyncQueue} inputQueue  - SDK 消费 user message 的源
+ * @property {object|null} query  - pi interrupt handle {interrupt(): Promise}
+ * @property {import('../../lib/async-queue.js').AsyncQueue} inputQueue  - session-loop 消费 user message 的源
  * @property {string|null} currentRunId  - 当前正处理的 turn run record id
  * @property {Map<string, PendingQuestion>} pendingQuestions  - tool_use_id → resolver
  * @property {Map<string, PendingQuestion>} pendingElicitations
- * @property {string} currentPermissionMode  - 当前 SDK permissionMode（'auto' | 'bypassPermissions' 等）
- *   canUseTool 钩子按此分流（auto 模式升级口）。
- *   初值来自 registerQuerySession 的 initialPermissionMode；运行时切 mode（query.
- *   setPermissionMode）必须同步调 setSessionPermissionMode 更新本字段，否则 canUseTool
- *   仍按旧 mode 拦截。
  * @property {number} startedAt
  * @property {number} lastActivityAt - 最近一次"活跃信号"时间戳（push message / turn 边界 /
  *   WS subscriber 连上）。session-loop.js 的 idle scan 据此判断是否超时关闭。
@@ -116,7 +98,7 @@ export function registerRun(runId, { abortController, ctx } = {}) {
  * abortController/ctx 兜底；query() 之后 cancel 走 query.interrupt() 优雅路径。
  *
  * @param {string} runId
- * @param {import('@anthropic-ai/claude-agent-sdk').Query} query
+ * @param {object} query  - pi interrupt handle {interrupt(): Promise}
  */
 export function attachQuery(runId, query) {
   const rec = activeRuns.get(runId);
@@ -222,7 +204,7 @@ function findQuerySessionByRunId(runId) {
  *
  * @param {string} runId
  * @param {string} reqId  - host 端生成的 elicitation 请求 id
- * @returns {Promise<import('@anthropic-ai/claude-agent-sdk').ElicitationResult>}
+ * @returns {Promise<{action:string, content?:object}>}
  */
 export function registerPendingElicitation(runId, reqId) {
   const sessionRec = findQuerySessionByRunId(runId);
@@ -268,7 +250,7 @@ export function registerPendingElicitation(runId, reqId) {
  *
  * @param {string} runId
  * @param {string} reqId
- * @param {import('@anthropic-ai/claude-agent-sdk').ElicitationResult} result
+ * @param {{action:string, content?:object}} result
  *   - { action: 'accept', content?: {...} } / { action: 'cancel' } / { action: 'decline' }
  * @returns {boolean}
  */
@@ -333,7 +315,7 @@ export function getRun(runId) {
  * 兼容老路径：若 activeRuns.get(runId)?.query 真有值（比如非 streamInput 路径
  * 留下的），优先返它。
  *
- * @returns {import('@anthropic-ai/claude-agent-sdk').Query | null | undefined}
+ * @returns {object|null|undefined}  - pi interrupt handle {interrupt(): Promise}
  */
 export function getQuery(runId) {
   if (!runId) return null;
@@ -443,13 +425,12 @@ export function listActiveRuns() {
  * @param {object} deps
  * @param {AbortController} deps.abortController
  * @param {import('../../lib/async-queue.js').AsyncQueue} deps.inputQueue
- * @param {string} [deps.initialPermissionMode='bypassPermissions']  - 初始 permission mode
  * @returns {symbol|false} 注册成功返 token（Symbol，唯一身份）；同 sid 已活跃返 false。
  *   caller 必须保留 token 在 unregister 时回传，让 active-runs 比对身份后再删，
  *   防止"closeQuerySession 已让位 + 新 session register 后，旧 session-loop finally
  *   误删新 entry"的 race（grace timer 关 session 后用户立即重发的真实场景）。
  */
-export function registerQuerySession(sessionId, { abortController, inputQueue, initialPermissionMode = 'bypassPermissions' } = {}) {
+export function registerQuerySession(sessionId, { abortController, inputQueue } = {}) {
   if (!sessionId || !abortController || !inputQueue) return false;
   // 关键去重：同 sid 已注册就拒绝（旧 record .set 覆盖会让旧 abortController + inputQueue
   // 失去引用，旧 SDK binary 仍在跑变孤儿 → 跟新 binary 并行 Write 同 canvas.html
@@ -478,13 +459,8 @@ export function registerQuerySession(sessionId, { abortController, inputQueue, i
     inputQueue,
     currentRunId: null,
     pendingRunIds: [],
-    // uuid → runId：pushUserMessage 盖在出站 SDKUserMessage 上的章。CLI 开着
-    // --replay-user-messages 时会把这条消息原样回显（带同一个 uuid），回显的
-    // 时刻 = 它真正被并进对话的时刻 —— 那才是 turn 边界的锚（见 claimRunByUuid）。
-    runIdByUuid: new Map(),
     pendingQuestions: new Map(),
     pendingElicitations: new Map(),
-    currentPermissionMode: initialPermissionMode,
     startedAt: Date.now(),
     lastActivityAt: Date.now(),
     _token: token,
@@ -517,30 +493,8 @@ export function getSessionLastActivity(sessionId) {
 }
 
 /**
- * 同步更新 session 当前 permissionMode（canUseTool 钩子按此分流）。
- * 必在 query.setPermissionMode(mode) 成功后调，否则 canUseTool 仍按旧 mode 拦截。
- *
  * @param {string} sessionId
- * @param {string} mode  - 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto'
- */
-export function setSessionPermissionMode(sessionId, mode) {
-  const rec = activeQuerySessions.get(sessionId);
-  if (!rec) return;
-  rec.currentPermissionMode = mode;
-}
-
-/**
- * @param {string} sessionId
- * @returns {string|null}
- */
-export function getSessionPermissionMode(sessionId) {
-  const rec = activeQuerySessions.get(sessionId);
-  return rec?.currentPermissionMode || null;
-}
-
-/**
- * @param {string} sessionId
- * @param {import('@anthropic-ai/claude-agent-sdk').Query} query
+ * @param {object} query  - pi interrupt handle {interrupt(): Promise}
  */
 export function attachSessionQuery(sessionId, query) {
   const rec = activeQuerySessions.get(sessionId);
@@ -686,7 +640,6 @@ export function unregisterQuerySession(sessionId, expectedToken = null) {
     try { markRunFailed(rid, 'session ended before queued turn started'); } catch { /* */ }
   }
   if (rec.pendingRunIds) rec.pendingRunIds.length = 0;
-  rec.runIdByUuid?.clear?.();
   activeQuerySessions.delete(sessionId);
 }
 

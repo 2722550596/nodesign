@@ -21,7 +21,7 @@
  *   以前这是 6 个回合，现在是 1 个。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { withBrowser } from '../../browse/registry.js';
 import { findInPage, formatMatches } from '../../browse/refs.js';

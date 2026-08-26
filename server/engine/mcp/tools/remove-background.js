@@ -34,7 +34,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { patchBoard } from '../../../projects/board-store.js';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { removeBackground as rembgRemove, isAvailable as rembgIsAvailable, REMBG_SETUP_HINT } from './helpers/rembg.js';
 

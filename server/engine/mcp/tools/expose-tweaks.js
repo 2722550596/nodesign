@@ -21,7 +21,7 @@
  *     除了写 canvas.html 还应该 expose_tweaks 更新 default 值）
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { mutateSpecJson } from '../../../projects/workspace.js';
 

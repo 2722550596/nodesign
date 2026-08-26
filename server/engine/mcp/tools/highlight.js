@@ -8,7 +8,7 @@
  * 挂 pulse overlay 短暂动画。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 
 /**

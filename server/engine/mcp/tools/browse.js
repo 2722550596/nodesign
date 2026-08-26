@@ -25,7 +25,7 @@
  * 对着一个半残的页面猜，比拦不住只好一点。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { withBrowser, peek, hold, _limits } from '../../browse/registry.js';
 import { requestHelp } from '../../browse/handover.js';

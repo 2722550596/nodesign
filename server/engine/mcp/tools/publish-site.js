@@ -8,7 +8,7 @@
  * 发到公网是外发动作：工具描述里写死"用户明确要求才调"。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { getProject } from '../../../projects/store.js';
 import { getUserById } from '../../../auth/users-store.js';

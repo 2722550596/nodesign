@@ -37,7 +37,7 @@
  *   反查靠它，撞了整条路由和记账都错。模块加载断言兜底。
  */
 
-import { can, localGenApproved, DENIAL } from '../../auth/tier.js';
+import { can, localGenApproved } from '../../auth/tier.js';
 import { platform } from '../../runtime/platform.js';
 import { UPSTREAMS_BUILTIN, MODELS_BUILTIN, BRANDS, SHARED_SDK_ALIAS } from './model-table.js';
 import { loadLocalConfig } from '../../runtime/local-config.js';
@@ -146,16 +146,15 @@ export function brandOfModel(appModel) {
 /**
  * 按用户过滤可选模型。两种闸不同语义（08-21）：
  *   - `gate: 'localGen'`：**看不见**。只对 admin / 已批准本地产线的账号露出（同 roll_film 那套批准制）
- *   - `gate: 'subscription'`：**看得见选不了**。订阅 Claude 行对没有订阅资格的账号
- *     （auth/tier.js can(user,'subscription')=false：basic 档/公开注册号）仍在清单里，但带 `locked: true`；
- *     用户拍板「选择器依旧在，无配额账户无法请求，并且弹框提示」—— 让人知道有更强的档、
- *     怎么拿到（邀请码），而不是当它不存在
+ *   - `gate: 'subscription'`：**看得见选不了**。M1 起订阅通道整体禁用（Claude Code SDK
+ *     已换成 pi-rp，OAuth 订阅行没有对应通路），所以订阅行对**所有**用户 locked，
+ *     不再看订阅资格 —— 让人知道有更强的档、M1 暂不可用，而不是当它不存在
  *
  * ⚠️ 三处消费方必须都走它/allowedModelsFor：GET /model 的清单、PUT /model 的校验、
  * turn.js 的模型校验。少一处就是一个绕过闸门的后门 —— 2026-08-19 的独立评审正是在
  * turn.js 抓到过这种漏校验。校验用 allowedModelsFor（不含 locked），清单用本函数。
  */
-export const SUBSCRIPTION_LOCK_REASON = DENIAL.subscription;
+export const SUBSCRIPTION_LOCK_REASON = 'M1 阶段订阅通道整体禁用（引擎已换 pi-rp，Claude 订阅行暂无通路），请选 API 模型';
 
 export function hasSubscriptionAccess(user) {   // 订阅 Claude 资格 = 档位能力（auth/tier.js）；薄封装只为调用点读着顺
   return can(user, 'subscription');
@@ -164,12 +163,11 @@ export function hasSubscriptionAccess(user) {   // 订阅 Claude 资格 = 档位
 const upstreamKeyPresent = (row) => { if (!row.api) return !!platform.claudeAuthPresent(); const up = UPSTREAMS[row.api.upstream]; return !up || up.authStyle === 'none' || !!up.key || !!(up.keyEnv && process.env[up.keyEnv]); };   // 无 api = 内置 Claude 行：本地版看本机凭据
 export function selectableModelsFor(user) {
   const approved = localGenApproved(user);   // 档位 + 逐人批准，同 paint_still / roll_film / 演出端点一把尺
-  const subscribed = hasSubscriptionAccess(user);
   const out = [];
   for (const m of SELECTABLE_MODELS) {
     if (platform.isLocal && !upstreamKeyPresent(BY_ID.get(m.id))) continue;   // 本地版藏没配钥匙的行（含没登录/没 key 时的内置 Claude 行）；hosted 不过滤（缺钥匙让请求 502 fail-loud）
     if (m.gate === 'localGen') { if (approved) out.push(m); continue; }
-    if (m.gate === 'subscription' && !subscribed) { out.push({ ...m, locked: true, lockReason: SUBSCRIPTION_LOCK_REASON }); continue; }
+    if (m.gate === 'subscription') { out.push({ ...m, locked: true, lockReason: SUBSCRIPTION_LOCK_REASON }); continue; }   // M1：订阅行对所有人锁死
     out.push(m);
   }
   return out;
@@ -336,7 +334,7 @@ export function pickThinkingConfig(model) {
  *
  * @returns {{ mode: 'subscription' } | {
  *   mode: 'api', appModel: string, sdkAlias: string, fastModel: string,
- *   window: number, upstreamId: string, upstream: object,
+ *   window: number, upstreamId: string, upstream: object, wireModel: string,
  * }}
  */
 export function resolveModelRoute(appModel) {
@@ -350,7 +348,19 @@ export function resolveModelRoute(appModel) {
     window: row.window,
     upstreamId: row.api.upstream,
     upstream: UPSTREAMS[row.api.upstream],
+    wireModel: row.api.wireModel,
   };
+}
+
+/**
+ * 这个 appModel 是不是订阅通路的行（表里有、且没有 api 字段）。
+ * M1 订阅通道整体禁用，turn.js 用它做 403 闸（SUBSCRIPTION_LANE_M1_DISABLED）。
+ * 未知名字返 false —— resolveModelRoute(未知) 虽然也回 mode:'subscription'，
+ * 但那条由 MODEL_NOT_ALLOWED 白名单闸管，别在这里误报订阅错误码。
+ */
+export function isSubscriptionLaneModel(appModel) {
+  const row = appModel ? BY_ID.get(appModel) : null;
+  return !!row && !row.api;
 }
 
 /**

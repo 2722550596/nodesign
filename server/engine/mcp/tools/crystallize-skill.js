@@ -16,7 +16,7 @@
  * 套资产。owner 查不到就报错，不往共享根写（那是刚修掉的跨用户污染路径）。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { getProject } from '../../../projects/store.js';
 import { getUserPluginsRoot } from '../../agent/plugin-loader.js';

@@ -25,7 +25,7 @@
  * agent 每帮一次忙就制造一条死数据。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import path from 'path';
 import { promises as fs } from 'fs';

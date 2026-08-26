@@ -80,3 +80,5 @@ server/engine/pi/agent-dir/npm/
 # pi 每次启动会在 agent dir 写运行时状态（空 {}，不入库）
 server/engine/pi/agent-dir/auth.json
 server/engine/pi/agent-dir/models-store.json
+# pi-mcp-adapter 的工具元数据缓存（改 mcp.json 后要删，见迁移文档附录 D.3；不入库）
+server/engine/pi/agent-dir/mcp-cache.json

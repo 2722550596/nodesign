@@ -7,7 +7,7 @@
  * 指代消解的顺序：选中的 > 开着的窗 > 视口中心附近的东西。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { readBoard } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';

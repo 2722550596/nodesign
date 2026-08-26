@@ -13,7 +13,7 @@
  * （md、文件本体、agent 要能读回来、有线程）。黑板模式下回复的主体走这里。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { readBoard, patchBoard } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';

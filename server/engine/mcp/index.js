@@ -1,7 +1,7 @@
 /**
- * server/engine/mcp/index.js — Nodesign 内置 MCP server
+ * server/engine/mcp/index.js — Nodesign 内置工具集（M1：pi-mcp-adapter 直挂）
  *
- * 暴露给 agent 的自定义工具集（in-process，via SDK 的 createSdkMcpServer）：
+ * 暴露给 agent 的自定义工具集：
  *
  *   感知层（playwright headless 跑出真实渲染元数据）：
  *     screenshot_canvas / list_pages / read_page / query_elements / get_computed_styles
@@ -14,20 +14,20 @@
  *   研究层：
  *     web_search（4 provider，CJK auto baidu）
  *
- * 调用约定（SDK 自动给 tool name 加前缀）：
- *   tool 名在 agent 端是 mcp__nodesign__<tool>，比如 mcp__nodesign__screenshot_canvas
+ * M1 消费方式（SDK 的 createSdkMcpServer 路径已随 M1 wave 4 拆除）：
+ *   buildNodesignTools 产出纯描述对象数组（{name, description, inputSchema, handler, _meta}），
+ *   由 standalone.js（pi MCP 子进程）经 @modelcontextprotocol/sdk 注册后喂给 pi-mcp-adapter。
+ *   pi 下工具名是裸名（toolPrefix 'none'），没有 mcp__nodesign__ 前缀。
  *
  * 实例化策略：
- *   每个 runAgent 创建一个新的 MCP server 实例（through createNodesignMcpServer）。
- *   开销小（in-process，没起 process），但能让 deps（workspaceRoot / projectId / ctx）
- *   绑死到当前 turn 的上下文，避免 cross-talk。
+ *   每个会话的 standalone 子进程各构建一份，deps（workspaceRoot / projectId / ctx）
+ *   绑死到当前会话上下文，避免 cross-talk。
  *
  * 安全：
- *   tool handler 在 SDK 进程内（本服务器进程）跑，不通过 stdio/sse/http。
- *   handler 自己不做沙盒，由 PreToolUse hook + workspace cwd 隔离兜底。
+ *   tool handler 在 standalone 子进程（server 派生，stdio JSON-RPC）内跑，不走 http。
+ *   handler 自己不做沙盒，由 workspace cwd 隔离兜底。
  */
 
-import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { withParamSanitizer } from './param-sanitizer.js';
 import { withCapabilityGate, shouldRegisterTool } from './capability-gate.js';
 import { isToolDisabled, toolNameMatches } from '../../projects/project-config.js';
@@ -83,7 +83,7 @@ import { makePaintStillTool } from './tools/paint-still.js';
 import { makeLookupTagsTool } from './tools/lookup-tags.js';
 
 /**
- * 创建 Nodesign 的 MCP server，绑定当前 run 的依赖。
+ * 构建 Nodesign 的工具描述对象数组，绑定当前会话的依赖。
  *
  * @param {object} deps
  * @param {string} deps.workspaceRoot       绝对路径，project workspace（sessions/<sid>/）
@@ -95,7 +95,11 @@ import { makeLookupTagsTool } from './tools/lookup-tags.js';
  *                                           精确名或尾缀 `*` 前缀通配）——命中项整件不注册
  * @param {string[]} [deps.preloadTools]     项目级直接挂载（tools.preload）——命中项跳过
  *                                           ToolSearch 延迟加载，schema 常驻（同 ALWAYS_LOAD_TOOLS）
- * @returns SDK MCP server config（喂给 query options.mcpServers）
+ *
+ * M1 起唯一消费方是 standalone.js（pi MCP 子进程）：描述对象经 zod→JSON-schema
+ * 转换后直挂 @modelcontextprotocol/sdk 喂给 pi-mcp-adapter；gate 参数用于跨进程
+ * tier 闸注入（sidecarGate；缺省 withTierGate 保留同进程调用语义）。
+ * @returns 工具描述对象数组 { name, description, inputSchema, handler, _meta }
  */
 // 常驻 schema 白名单（2026-07-23 订阅模式 token 瘦身）：
 // 高频 + schema 小的工具第一 turn 就注入 prompt；不在名单里的走 SDK 默认
@@ -135,7 +139,7 @@ const ALWAYS_LOAD_TOOLS = new Set([
   'artifact_open', 'artifact_computer', 'artifact_find', 'artifact_batch', 'artifact_motion',
 ]);
 
-export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, sessionId, ctx, disabledTools = [], preloadTools = [] } = {}) {
+export function buildNodesignTools({ workspaceRoot, sharedRoot, projectId, sessionId, ctx, disabledTools = [], preloadTools = [], gate = withTierGate } = {}) {
   // 浏览通道里能被 browser_batch 串起来的七件：先建一次，batch 拿**同一批实例**
   // （projectId/ctx 绑在 handler 里，不能再造第二份）。只有 request_help 不进
   // batch（它阻塞等人）；capture 在里面 —— 逐页采 token 正是 batch 要省的那种回合。
@@ -221,7 +225,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 移植自 ~/.deskclaw/skills/deskclaw-search-pro/scripts/search.py，0 外部依赖。
       // WebFetch 不在这里 — 用 SDK 内置（session-loop.js DEFAULT_TOOL_ALLOWLIST 启用），
       // 它自带 LLM summarize 能控制上下文，不需要自实现。
-      withTierGate(makeWebSearchTool({ workspaceRoot, sharedRoot, ctx }), 'webSearch', projectId),   // basic 档有日上限
+      gate(makeWebSearchTool({ workspaceRoot, sharedRoot, ctx }), 'webSearch', projectId),   // basic 档有日上限
 
       // S1c canvas 焕新升级 — read_page 让 agent 精确读 canvas.html 任意页
       // （`<section data-page="N">` 一段），不必 Read 整文件 + Grep + offset/limit。
@@ -289,7 +293,7 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
       // 图片生成（gemini-3.1-flash-image-preview / Nano Banana 2，via NoDesk passthrough）
       // 落档优先 sharedRoot/assets/generated/，fallback workspaceRoot/assets/generated/。
       // 跨 session 共享靠 sessions/<sid>/assets softlink → shared/assets。
-      withTierGate(makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }), 'imageGen', projectId, ctx),   // 先过日限，出图记 $0.20/张
+      gate(makeGenerateImageTool({ workspaceRoot, sharedRoot, ctx }), 'imageGen', projectId, ctx),   // 先过日限，出图记 $0.20/张
 
       // 抠图（rembg U²-Net，server 端 spawn .venv-rembg python subprocess）
       // 任何 workspace 里的图都能抠，输出 RGBA PNG 到 assets/generated/<name>.png。
@@ -350,16 +354,6 @@ export function createNodesignMcpServer({ workspaceRoot, sharedRoot, projectId, 
     withParamSanitizer(t, { projectId, sessionId })
   ));
 
-  const server = createSdkMcpServer({
-    // 名字收在 mcp/server-name.js：它同时是 session-loop 里 mcpServers 的键
-    // （决定模型看到的 mcp__nodesign__* 前缀）和 isolation.js 那条 allow 规则要匹配的名
-    name: MCP_SERVER_NAME,
-    version: '0.1.0',
-    tools,
-  });
-  // 开局契约自检用（2026-08-14 灭门案第 3 层）：预期工具名从构造本 server 的
-  // 同一份 tools 数组上取，不另立第二份清单 —— 第二真相源会漂移。session-loop
-  // 收到 system:init 时拿它跟 SDK 实际注册进会话的工具对账。
-  server.toolNames = tools.map((t) => t.name);
-  return server;
+  return tools;
 }
+

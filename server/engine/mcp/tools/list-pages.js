@@ -10,7 +10,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { openArtifactPage, launchPerceptionBrowser, degradedNote } from './helpers/perception-page.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';

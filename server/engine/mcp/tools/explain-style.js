@@ -24,7 +24,7 @@
  * 各自来自哪条规则。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, requireBrowsable } from '../../../lib/artifact-target.js';
 import { degradedNote, SITE_DEVICE_W } from './helpers/perception-page.js';

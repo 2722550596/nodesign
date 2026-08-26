@@ -16,7 +16,7 @@
  *   - 同类按指纹聚合累加，不是刷一万条重复。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { recordIssue, signatureOf } from '../../../lib/issues-store.js';
 import { getProject } from '../../../projects/store.js';

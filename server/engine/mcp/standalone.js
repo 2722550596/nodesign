@@ -1,173 +1,139 @@
 #!/usr/bin/env node
 /**
- * server/engine/mcp/standalone.js — Nodesign MCP 引擎的独立 stdio 进程（M0 最小版）
+ * server/engine/mcp/standalone.js — Nodesign MCP 引擎的独立 stdio 进程（M1 全量版）
  *
- * M0 目标：把 Nodesign 的 MCP 工具以原生 stdio MCP server 形态提供，喂给
- * pi-mcp-adapter（directTools 直挂）。验证「工厂产物可换传输」：
+ * 全量工具：复用 buildNodesignTools（server/engine/mcp/index.js）拿与 SDK 路径
+ * 同一批工具描述对象（{ name, description, inputSchema(zod raw shape), handler,
+ * _meta }），挂到 @modelcontextprotocol/sdk 的 McpServer + StdioServerTransport，
+ * 喂给 pi-mcp-adapter（.pi/mcp.json directTools 直挂，toolPrefix 'none' → 裸名）。
+ * pi 无 ToolSearch 延迟加载，deferred=不可调用，所以全量 ~54 件一次注册。
  *
- * 复用点（createNodesignMcpServer 工厂，server/engine/mcp/index.js）：
- *   - 工厂内部把工具定义（SDK tool() 的**纯描述对象**）喂给
- *     createSdkMcpServer({ name, version, tools })。描述对象形状：
- *     { name, description, inputSchema(zod raw shape), handler, _meta }。
- *   - 本文件取同一批工厂（makeReadBoardTool / makePinToBoardTool /
- *     makeWebSearchTool / makeScreenshotCanvasTool）的产物，挂到
- *     @modelcontextprotocol/sdk 的 McpServer + StdioServerTransport 上。
- *     handler 返回形状（{ content, isError }）两边一致，直接透传。
- *     M1 起删 @anthropic-ai/claude-agent-sdk 依赖（届时工具描述改为纯 JSON
- *     schema，这里不用再碰 zod 实例）。
+ * 跨进程三桥（替换 M0 三个 stub，经 server/engine/pi/sidecar-client.js 回主进程
+ * /__nd-sidecar；lifecycle 注入 NODESIGN_MAIN_URL/TOKEN）：
+ *   - ctx.emit          → sidecar /emit       （事件富化进 EventBus；失败只 warn）
+ *   - ctx.addToolCharge → sidecar /charge     （按件计费；失败只 warn）
+ *   - tier/quota 闸     → sidecar /tool-gate  （fail-closed；imageGen 出图后另走
+ *     chargeForImage → ctx.addToolCharge 记账，与 withTierGate 语义对齐）
  *
- * 跨进程 stub（每处都注释「M1 起由 sidecar 桥替换」）：
- *   - tier 闸：真实闸依赖 auth/users-store + auth/tier.js（DB/账号体系，在
- *     server 进程内），M0 默认放行 + stderr warn。
- *   - ctx.emit / ctx.addToolCharge：真实实现把事件推进 EventBus 推给前端，
- *     M0 落 stderr JSON 日志。
- *   - board 数据：真实路径 —— <dataRoot>/<projectId>/shared/board.json。
- *     dataRoot 由 --data-root / env NODESIGN_DATA_ROOT 指定（映射到 server 侧
- *     PROJECTS_DATA_DIR 语义；⚠️ server 侧**没有 SQLite**，board-store 是
- *     JSON 文件 + 进程内锁，任务描述里的「SQLite」不成立）。数据根下缺
- *     board.json 时，从 env NODESIGN_BOARD_FIXTURE 或 cwd/board-fixture.json
- *     （探针 fixture）播种一份。
- *   - 身份：sessionId / uid / token 从 argv/env 读（M0 静态测试值）。
- *   - DB：导入工具工厂会连带 engine/runs/store.js（better-sqlite3 模块级
- *     初始化 + 幂等迁移），M0 强制把 DB_PATH 重定向到临时库，绝不摸
- *     server/db/nodesign.db（生产库）。
+ * 身份来自 env（C1；adapter spawn MCP 子进程 = pi env 副本，天然会话级）：
+ *   NODESIGN_SID / NODESIGN_UID / NODESIGN_PROJECT / NODESIGN_WORKSPACE /
+ *   NODESIGN_DATA_ROOT / NODESIGN_MAIN_URL / NODESIGN_TOKEN / DB_PATH /
+ *   NODESIGN_DISABLED_TOOLS（逗号分隔；项目级 tools.disable，lifecycle 注入，
+ *   被禁工具整件不注册，连 adapter mcp() 代理也够不着）
  *
- * 用法：
- *   node server/engine/mcp/standalone.js [--session <sid>] [--uid <uid>]
- *       [--project <pid>] [--data-root <dir>]
+ * M1 已知缺口（M2/M3 复评）：
+ *   - paint_still / publish_site / roll_film / report_issue 内部自带 quota/tier/
+ *     并发闸，在 standalone 里读真实 DB，但 active-runs / rate-window 是 standalone
+ *     进程自己的（非主进程权威）。主闸（web_search / generate_image）已 sidecar 化。
+ *   - ctx.abortController.signal 永不 abort（standalone 无法感知主进程取消）。
  *
- * 说明：M0 只走 stdio（.pi/mcp.json 的 command 就是本文件），不做 HTTP。
+ * stdio 纪律：stdout 只许 JSON-RPC 帧 —— 所有 console.* 重定向到 stderr，且必须
+ * 在任何会 log 的 import 之前执行（见下方顺序纪律）。
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 // stdio MCP 纪律：stdout 只许走 JSON-RPC 帧。server 模块（engine/runs/store.js
 // 等）有**无条件 console.log**（"SQLite ready" 之类），会在适配器解析帧流时
 // 打爆协议 —— 把所有 console.* 输出重定向到 stderr（本进程是专用服务进程，
 // 全局替换无副作用）。
 for (const k of ['log', 'info', 'debug', 'warn', 'error', 'trace']) {
-  const orig = console[k].bind(console);
   console[k] = (...a) => {
     process.stderr.write(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ') + '\n');
   };
 }
-// log / error 这两个我们自己也用，先恢复成 stderr 直写
 const log = (m) => process.stderr.write(`[standalone] ${m}\n`);
 
+// ── 身份与路径：全部来自 env（C1）──
 // ⚠️ 顺序纪律：workspace.js / engine/runs/store.js 在**模块顶层**读 env
 // （PROJECTS_DATA_DIR / DB_PATH），而 ESM 静态 import 先于任何代码执行——
-// 所以 argv 解析 + env 重定向必须在动态 import 工具工厂之前完成。
+// 所以 env 归一化必须在动态 import 工具工厂之前完成。
+const SESSION_ID = process.env.NODESIGN_SID ?? '';
+const UID = process.env.NODESIGN_UID ?? '';
+const PROJECT_ID = process.env.NODESIGN_PROJECT ?? '';
+const WORKSPACE = process.env.NODESIGN_WORKSPACE ?? '';
+const DATA_ROOT = process.env.NODESIGN_DATA_ROOT ?? '';
+const MAIN_URL = process.env.NODESIGN_MAIN_URL ?? '';
+const TOKEN = process.env.NODESIGN_TOKEN ?? '';
 
-function parseArgv(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--session') out.session = argv[++i];
-    else if (a === '--uid') out.uid = argv[++i];
-    else if (a === '--project') out.project = argv[++i];
-    else if (a === '--data-root') out.dataRoot = argv[++i];
-    else if (a === '--help' || a === '-h') {
-      console.error('usage: standalone.js [--session <sid>] [--uid <uid>] [--project <pid>] [--data-root <dir>]');
-      process.exit(0);
-    }
-  }
-  return out;
-}
-
-const args = parseArgv(process.argv.slice(2));
-
-// ── M0 身份：静态测试值（M1 起由 sidecar 从真实会话注入）──
-const SESSION_ID = args.session ?? process.env.NODESIGN_SESSION_ID ?? 'test-s1';
-const UID = args.uid ?? process.env.NODESIGN_UID ?? 'u-test';
-const TOKEN = process.env.NODESIGN_TOKEN ?? '';            // M0 静态空 token
-const PROJECT_ID = args.project ?? 'proj_m0probe01';       // store.js PROJECT_ID_RE 合法格式
-const DATA_ROOT = args.dataRoot || process.env.NODESIGN_DATA_ROOT || process.env.PROJECTS_DATA_DIR || '';
+if (!SESSION_ID || !PROJECT_ID) log(`warn: NODESIGN_SID/NODESIGN_PROJECT 缺失（sid='${SESSION_ID}' project='${PROJECT_ID}'）——继续启动，身份按空串`);
+if (!WORKSPACE) log('warn: NODESIGN_WORKSPACE 缺失——workspaceRoot 按空串，依赖工作区路径的工具调用期才会报错');
+if (!MAIN_URL || !TOKEN) log('warn: NODESIGN_MAIN_URL/NODESIGN_TOKEN 缺失——sidecar 桥不可用：gate fail-closed，emit/charge 静默失败');
+if (!process.env.DB_PATH) log('warn: DB_PATH 未设置——engine/runs/store.js 将回落默认库路径');
+// board-store / workspace.js 的共享目录解析基于 PROJECTS_DATA_DIR
+// （<dataRoot>/<pid>/shared/board.json）；DATA_ROOT 由 lifecycle 注入。
 if (DATA_ROOT) process.env.PROJECTS_DATA_DIR = DATA_ROOT;
-// 绝不摸生产库（engine/runs/store.js 默认 server/db/nodesign.db）
-if (!process.env.DB_PATH) process.env.DB_PATH = path.join(os.tmpdir(), 'nd-m0-standalone', 'probe.db');
 
-log(`identity: session=${SESSION_ID} uid=${UID} project=${PROJECT_ID}`);
-log(`dataRoot=${DATA_ROOT || '(unset -> repo projects-data default)'} DB_PATH=${process.env.DB_PATH}`);
+// ── 动态 import：env 已就位（./index.js 会传递性拉 SDK + store.js 开库）──
+const [{ buildNodesignTools }, { chargeForImage }, { createSidecarClient }] = await Promise.all([
+  import('./index.js'),
+  import('./tools/tier-gate.js'),
+  import('../pi/sidecar-client.js'),
+]);
 
-// ── 动态 import：env 已就位 ──
-const { makeReadBoardTool } = await import('./tools/read-board.js');
-const { makePinToBoardTool } = await import('./tools/pin-to-board.js');
-const { makeWebSearchTool } = await import('./tools/web-search.js');
-const { makeScreenshotCanvasTool } = await import('./tools/screenshot.js');
-const { getSharedDir } = await import('../../projects/workspace.js');
+// workspaceRoot = sharedRoot = NODESIGN_WORKSPACE（<pid>/shared，即 pi 的 cwd）
+const workspaceRoot = WORKSPACE;
 
-const workspaceRoot = getSharedDir(PROJECT_ID); // <dataRoot>/<pid>/shared
+// ── sidecar 三桥 ──
+const sidecar = createSidecarClient({ baseUrl: MAIN_URL, token: TOKEN, sid: SESSION_ID, pid: PROJECT_ID });
 
-// ── board 数据：真实 board.json；缺则从 fixture 播种（M1 起由 sidecar 桥替换）──
-function seedBoardFromFixture() {
-  const boardFile = path.join(workspaceRoot, 'board.json');
-  if (fs.existsSync(boardFile)) return false;
-  const fixture = process.env.NODESIGN_BOARD_FIXTURE || path.resolve('board-fixture.json');
-  let raw;
-  try {
-    raw = fs.readFileSync(fixture, 'utf8');
-  } catch {
-    log(`no board.json at ${boardFile} and no fixture at ${fixture} -> read_board 将返回空画布`);
-    return false;
-  }
-  try {
-    JSON.parse(raw); // 合法性预检，坏 fixture 不写盘
-  } catch (e) {
-    log(`fixture ${fixture} 不是合法 JSON，跳过播种: ${e.message}`);
-    return false;
-  }
-  fs.mkdirSync(workspaceRoot, { recursive: true });
-  fs.writeFileSync(boardFile, raw, 'utf8');
-  log(`board.json 缺失，已从 fixture 播种: ${fixture} -> ${boardFile}`);
-  return true;
-}
-seedBoardFromFixture();
-
-// ── ctx stub：真实实现把事件推进 EventBus 推给前端（M1 起由 sidecar 桥替换）──
-const ctxStub = {
-  emit: (ev) => process.stderr.write(`[standalone:ctx.emit] ${JSON.stringify(ev)}\n`),
-  addToolCharge: (...rest) => process.stderr.write(`[standalone:ctx.addToolCharge] ${JSON.stringify(rest)}\n`),
+// 工具对 ctx 的实际依赖面只有 3 个成员（emit / addToolCharge / abortController；
+// runId/sessionId 走 ctx?.x 可选链，缺省 undefined 已被各工具容忍）。
+const neverAbort = new AbortController();   // 永不 abort（standalone 无法感知主进程取消，M1 接受）
+const ctx = {
+  emit: (event) => { sidecar.emit(event); },                    // fire-and-forget
+  addToolCharge: (name, usd) => { sidecar.charge(name, usd); }, // fire-and-forget
+  abortController: neverAbort,
+  get signal() { return neverAbort.signal; },
 };
 
-// ── tier 闸 stub：真实闸在 server 进程（auth/tier.js，按项目 owner），
-//    M0 默认放行 + 每次调用 warn（M1 起由 sidecar 桥替换）──
-function tierGateStub(toolDef, capability) {
-  const handler = toolDef.handler;
+// ── sidecar-backed gate：签名与 withTierGate(toolDef, capability, projectId, ctx)
+//    完全一致（web_search 传 3 参、generate_image 传 4 参），注入 buildNodesignTools。
+//    主进程 /tool-gate 已做 tierDenial + imageGen 的 checkQuota 预检；出图后的
+//    按件计费由 chargeForImage 走 ctx.addToolCharge → sidecar.charge。──
+function sidecarGate(toolDef, capability, projectId, ctxArg = null) {
   return {
     ...toolDef,
-    handler: async (callArgs, extra) => {
-      log(`tier gate STUB: ${toolDef.name}（capability=${capability}）默认放行（M1 起由 sidecar 桥替换真实闸）`);
-      return handler(callArgs, extra);
+    handler: async (args, extra) => {
+      const verdict = await sidecar.toolGate(capability, toolDef.name);
+      if (!verdict.allowed) {
+        return { content: [{ type: 'text', text: verdict.denial || `${toolDef.name} denied` }], isError: true };
+      }
+      const result = await toolDef.handler(args, extra);
+      if (capability === 'imageGen') chargeForImage(result, ctxArg);
+      return result;
     },
   };
 }
 
-// ── 4 个工具：与 factory 同款工厂、同款入参（只换 ctx / tier 闸）──
-const tools = [
-  // C9 screenshot_canvas — playwright headless 截图（真实实现；M0 不验证调用）
-  makeScreenshotCanvasTool({ workspaceRoot, projectId: PROJECT_ID, sessionId: SESSION_ID, ctx: ctxStub }),
-  // read_board — 读画布座次（真实实现；数据源见 seedBoardFromFixture）
-  makeReadBoardTool({ projectId: PROJECT_ID }),
-  // web_search — factory 里包了 withTierGate(…, 'webSearch', projectId)，这里用 stub 闸
-  tierGateStub(makeWebSearchTool({ workspaceRoot, sharedRoot: workspaceRoot, ctx: ctxStub }), 'webSearch'),
-  // pin_to_board — 写 board.json + 广播 board.updated（emit 走 ctxStub）
-  makePinToBoardTool({ sharedRoot: workspaceRoot, projectId: PROJECT_ID, ctx: ctxStub }),
-];
+// ── 全量工具注册 ──
+// disabledTools 从 NODESIGN_DISABLED_TOOLS env 读（项目级 tools.disable，lifecycle
+// 注入）——被禁工具整件不注册，连 adapter mcp() 代理也够不着。preloadTools 传空：
+// preload 是 SDK ToolSearch 概念，pi 无对应物，全量注册即常驻。
+const disabledTools = (process.env.NODESIGN_DISABLED_TOOLS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+const tools = buildNodesignTools({
+  workspaceRoot,
+  sharedRoot: workspaceRoot,
+  projectId: PROJECT_ID,
+  sessionId: SESSION_ID,
+  ctx,
+  disabledTools,
+  preloadTools: [],
+  gate: sidecarGate,
+});
 
 const server = new McpServer({ name: 'nodesign', version: '0.1.0' });
 for (const t of tools) {
-  const argNames = Object.keys(t.inputSchema ?? {});
-  log(`register tool ${t.name}${argNames.length ? ` args=[${argNames.join(', ')}]` : ' (no args)'}`);
   // inputSchema 是 zod raw shape（工厂描述对象原生形态），MCP SDK 的
   // tool(name, desc, zodShape, cb) 原样接收；handler 返回 { content, isError }
   // 与 MCP CallToolResult 同构，直接透传。
   server.tool(t.name, t.description, t.inputSchema, (callArgs) => t.handler(callArgs, {}));
 }
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
-log(`ready on stdio (${tools.length} tools); session=${SESSION_ID} uid=${UID}`);
+await server.connect(new StdioServerTransport());
+log(`ready on stdio: ${tools.length} tools registered; session=${SESSION_ID || '(none)'} uid=${UID || '(none)'} project=${PROJECT_ID || '(none)'}`);
+log(`tools: ${tools.map((t) => t.name).join(', ')}`);
+if (disabledTools.length) log(`disabled (not registered): ${disabledTools.join(', ')}`);

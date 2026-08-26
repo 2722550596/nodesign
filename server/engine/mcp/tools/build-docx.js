@@ -13,7 +13,7 @@
  */
 
 import path from 'node:path';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { buildFromSource, DocxSourceError } from '../../../lib/docx/build-from-source.js';
 import { formatLint } from '../../../lib/docx/text-lint.js';

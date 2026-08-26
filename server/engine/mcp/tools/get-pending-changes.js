@@ -42,7 +42,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 
 /** 一次调用最多附几张圈选截图（更早的留路径让 agent 按需自己读） */

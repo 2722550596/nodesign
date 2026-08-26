@@ -15,7 +15,7 @@
  * 改完前端按 board.updated 整份重拉；默认不进 staging（改的是已落定的图）。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { readBoard, patchBoard, TEXT_FONTS } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';

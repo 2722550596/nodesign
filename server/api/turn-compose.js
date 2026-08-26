@@ -38,11 +38,11 @@ export async function composeUserMessage(chat, attachments, pendingSummary, sess
   const blocks = [];
 
   // C4：用户在过去时段做的 direct edit + comment → prepend system 提示
-  // 不灌详情（让 agent 主动调 mcp__nodesign__get_pending_changes 拉），省 token
+  // 不灌详情（让 agent 主动调 get_pending_changes 拉），省 token
   if (pendingSummary && pendingSummary.count > 0) {
     blocks.push({
       type: 'text',
-      text: `<system>${pendingSummary.summary}。可调 mcp__nodesign__get_pending_changes 查看详情；处理完调 mcp__nodesign__clear_pending_changes 清 buffer。</system>`,
+      text: `<system>${pendingSummary.summary}。可调 get_pending_changes 查看详情；处理完调 clear_pending_changes 清 buffer。</system>`,
     });
   }
 
@@ -104,7 +104,7 @@ export async function composeUserMessage(chat, attachments, pendingSummary, sess
     if (docLines.length > 0) {
       blocks.push({
         type: 'text',
-        text: `Office 文档（**用 mcp__nodesign__read_document 读，不要用 Read** ——`
+        text: `Office 文档（**用 read_document 读，不要用 Read** ——`
           + ` 这几种是 zip 包，Read 会返回二进制且不报错）：\n${docLines.join('\n')}`,
       });
     }

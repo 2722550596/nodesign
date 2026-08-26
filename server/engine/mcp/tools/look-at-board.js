@@ -17,7 +17,7 @@
  * 所以按需调用，不做每回合自动注入。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { getProject } from '../../../projects/store.js';
 import { getUserById } from '../../../auth/users-store.js';

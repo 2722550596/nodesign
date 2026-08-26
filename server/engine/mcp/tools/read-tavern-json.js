@@ -11,7 +11,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { detectKind, digest, fetchEntries } from '../../../lib/tavern-json.js';
 

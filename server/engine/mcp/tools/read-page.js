@@ -21,7 +21,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable,
 } from '../../../lib/artifact-target.js';

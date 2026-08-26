@@ -5,9 +5,8 @@
  * 中转站 Gemini 桥会把 tool_result 里的图转成文本（模型只能瞎编）。
  * 本校验把同样的请求穿过新入口 —— lift 修补生效则模型答出 ND-7342/三角/黄。
  *
- * 用法：node server/lib/_ingress-check.mjs [--sdk]
- *   默认只跑裸 HTTP 半（快、便宜）；--sdk 追加真 claude-agent-sdk 端到端
- *  （验证 helper/fastModel/alias 全链路，一次约 $0.2-0.4 中转站消耗）。
+ * 用法：node server/lib/_ingress-check.mjs
+ *   只跑裸 HTTP 半（快、便宜）。（--sdk 真 SDK 端到端半已随 M1 wave 4 拆 SDK 移除）
  */
 
 import path from 'node:path';
@@ -130,55 +129,6 @@ const PEEK_TOOL = {
     messages: [{ role: 'user', content: '只回两个字：好的' }],
   });
   check('4b 会话 fast 兜底路由（helper 名改道）', r.status === 200 && /好的/.test(textOf(r.json)), `${r.status}「${textOf(r.json).slice(0, 20)}」`);
-}
-
-// ── 5.（--sdk）真 SDK 端到端：alias 喂 SDK、helper 走 appModel、工具回图 ──
-if (process.argv.includes('--sdk')) {
-  const { query, tool, createSdkMcpServer } = await import('@anthropic-ai/claude-agent-sdk');
-  let toolCalled = 0;
-  const probeServer = createSdkMcpServer({
-    name: 'probe', version: '1.0.0',
-    tools: [tool('peek_screen', 'Take a screenshot of the current screen and return it as an image.', {}, async () => {
-      toolCalled += 1;
-      return { content: [{ type: 'image', data: pngB64, mimeType: 'image/png' }] };
-    })],
-  });
-  let finalText = '';
-  let resultMsg = null;
-  try {
-    const q = query({
-      prompt: '调用 peek_screen 工具看一眼屏幕，然后告诉我：图片里写着什么文字、什么形状、什么颜色。',
-      options: {
-        model: resolveSdkSpoofModel('gemini-3.7-flash'),
-        env: {
-          ...process.env,
-          ANTHROPIC_BASE_URL: BASE,
-          ANTHROPIC_API_KEY: 'nd-ingress-managed',
-          ANTHROPIC_SMALL_FAST_MODEL: 'gemini-3.7-flash',
-        },
-        mcpServers: { probe: probeServer },
-        allowedTools: ['mcp__probe__peek_screen'],
-        permissionMode: 'bypassPermissions',
-        maxTurns: 4,
-      },
-    });
-    for await (const m of q) {
-      if (m.type === 'assistant') {
-        for (const b of m.message?.content || []) {
-          if (b.type === 'text' && b.text?.trim()) finalText = b.text;
-        }
-      } else if (m.type === 'result') resultMsg = m;
-    }
-    check('5a SDK 循环穿入口进工具', toolCalled > 0, `调了 ${toolCalled} 次`);
-    check('5b ⭐SDK 端到端看见真图（对照：直连时此项恒✗）',
-      /7342/.test(finalText) && /(三角|triangle)/i.test(finalText),
-      `「${finalText.slice(0, 80)}」`);
-    const usedModels = Object.keys(resultMsg?.modelUsage || {});
-    console.log(`   modelUsage keys=[${usedModels.join(', ')}] cost(SDK虚价)=$${resultMsg?.total_cost_usd}`);
-  } catch (e) {
-    check('5a SDK 循环穿入口进工具', false, e?.message || String(e));
-    check('5b ⭐SDK 端到端看见真图（对照：直连时此项恒✗）', false, '同上');
-  }
 }
 
 // ── 6. 本地盒子的 slot 数 vs Nodesign 的并发闸（两边必须一样多）──

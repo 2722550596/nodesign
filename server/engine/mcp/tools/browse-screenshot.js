@@ -11,7 +11,7 @@
  */
 
 import path from 'node:path';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { withBrowser, _limits } from '../../browse/registry.js';
 import { saveFrame } from '../../browse/state.js';

@@ -49,6 +49,7 @@ import meRouter from './api/me.js';
 import localRouter, { RESTART_EXIT_CODE } from './api/local.js';
 import { platform } from './runtime/platform.js';
 import { probeCapabilities, summarizeCapabilities } from './runtime/capabilities.js';
+import { createSidecarRouter } from './engine/pi/sidecar.js';
 
 // 启动时 dump 平台决策（让运维一眼看到 OS / HOME / claudeConfigDir / sandbox / preflight）
 // 跨平台坑排查的第一信号
@@ -79,6 +80,10 @@ app.get('/api/health', (_req, res) => {
     ts: new Date().toISOString(),
   });
 });
+
+// ── pi 引擎 sidecar（MCP 子进程 → 主进程桥，doc §5.3）──
+// 独立路径 /__nd-sidecar，不走 authGuard（loopback + HMAC token 自鉴权，见 engine/pi/sidecar.js）
+app.use('/__nd-sidecar', createSidecarRouter({}));
 
 // ── 登录墙（health 之后、业务路由之前）──
 // 多用户 bootstrap（幂等）：users 空时用 NODESIGN_AUTH_PASSWORD 建 admin +

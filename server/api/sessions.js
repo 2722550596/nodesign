@@ -1,64 +1,62 @@
 /**
- * server/api/sessions.js — Session CRUD（H3：session-scoped workspace）
+ * server/api/sessions.js — Session CRUD（M1 G1：数据源换 pi session JSONL）
  *
- * GET    /api/projects/:pid/sessions                列项目所有 session（自实现）
- * GET    /api/projects/:pid/sessions/:sid           SDK getSessionMessages
- * POST   /api/projects/:pid/sessions/:sid/fork      SDK forkSession + 复制产物
- * PATCH  /api/projects/:pid/sessions/:sid           SDK rename + tag
- * DELETE /api/projects/:pid/sessions/:sid           SDK deleteSession + 删 session 目录
+ * GET    /api/projects/:pid/sessions                列项目所有 session（.nd + sessions/ + pi-sessions/ 发现）
+ * GET    /api/projects/:pid/sessions/:sid           readPiSessionMessages（SDK SessionMessage 形状）
+ * POST   /api/projects/:pid/sessions/:sid/fork      复制最新 pi jsonl 到新 sid 目录
+ * PATCH  /api/projects/:pid/sessions/:sid           rename/tag → .nd/<sid>/session-config.json
+ * DELETE /api/projects/:pid/sessions/:sid           rm pi 转录目录 + 私档目录
  *
- * H3 改造：每个 session 独立工作目录 sessions/<sid>/，CLAUDE_CONFIG_DIR
- * per-session（sessions/<sid>/.claude/）。SDK listSessions 按 cwd encoded path
- * 索引 jsonl，跨 session 列要自己 readdir sessions/ 后 per-sid getSessionInfo。
+ * M1 换源（doc §5.5）：转录从 SDK ~/.claude/projects/ 搬到 <PROJECTS_DATA_ROOT>/
+ * pi-sessions/<sid>/（解析在 engine/pi/pi-jsonl.js）。rewind 无 pi 对应物，暂禁 501
+ * （M3 复评，设计决策 3）。
  */
 
 import express from 'express';
 import path from 'path';
 import { promises as fs } from 'fs';
-import {
-  getSessionInfo,
-  getSessionMessages,
-  forkSession,
-  renameSession,
-  tagSession,
-  deleteSession,
-  query,
-} from '@anthropic-ai/claude-agent-sdk';
-import { validateProjectId, getProject, setActiveSession } from '../projects/store.js';
+import { randomUUID } from 'crypto';
+import { setActiveSession } from '../projects/store.js';
 import { guardProject, modelUserFor } from './_guard.js';
-import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
+import { closeQuerySession, hasActiveQuerySession } from '../engine/runs/active-runs.js';
 import {
   getProjectWorkspace,
   getWorkspaceRoot,
-  getSessionWorkspace,
   ensureSessionWorkspace,
   forkSessionWorkspace,
   removeSessionWorkspace,
   validateSessionId,
   getSessionMetaDir,
-  encodeCwdForSDK,
+  PROJECTS_DATA_ROOT,
 } from '../projects/workspace.js';
-import { withConfigDir } from '../lib/sdk-session.js';
-import { patchBoard } from '../projects/board-store.js';
-import { platform } from '../runtime/platform.js';
-import { AsyncQueue } from '../lib/async-queue.js';
+import {
+  piSessionDir,
+  findLatestSessionFile,
+  hasPiSession,
+  readPiSessionMessages,
+  readPiSessionInfo,
+  readLastAssistantUsage,
+} from '../engine/pi/pi-jsonl.js';
 import { getProjectBus } from '../ws/broker.js';
 import { getLastContextUsage } from '../engine/runs/live-turn.js';
 import { Events } from '../engine/agent/events.js';
-import { resolveSessionModel, applySessionModel, defaultModel } from '../engine/agent/session-model.js';
-import { selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, modelSwitchRejection } from '../engine/agent/model-context.js';
+import {
+  resolveSessionModel, applySessionModel, defaultModel, readSessionConfigFile,
+} from '../engine/agent/session-model.js';
+import {
+  selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, modelSwitchRejection,
+  resolveModelContextWindow, brandOfModel,
+} from '../engine/agent/model-context.js';
 
 /**
- * 进行中的 rewind 操作 sid 集合 —— 供 turn.js startNewRunSession 守卫使用，
- * 防止同 sid 临时 rewind query 跟 normal turn query 同时启动撞 jsonl。
+ * 进行中的 rewind 操作 sid 集 —— 供 turn.js startNewRunSession 守卫使用。
+ * M1：pi 引擎 rewind 已禁（下面 501），此 Set 恒空；export 保留给 turn.js 的 import
+ * 兼容（G2 改造 turn.js 前不动它）。
  */
 export const pendingRewinds = new Set();
 
 const router = express.Router();
 
-// SDK session API 需要 CLAUDE_CONFIG_DIR 指向 JSONL 实际存储的全局目录
-// 来自 runtime/platform.js（跨平台决策单一来源）
-const GLOBAL_CLAUDE_CONFIG_DIR = platform.claudeConfigDir;
 
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,12 +65,14 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  * 1. GET /api/projects/:pid/sessions（这文件下面的路由）
  * 2. GET /api/sessions/recent（recent.js 跨项目聚合）
  *
- * 后端实现：readdir sessions/ → 对每个 sid 调 SDK getSessionInfo
- * （per-session CLAUDE_CONFIG_DIR）→ filter null → sort by lastModified。
+ * M1 换源：sid 发现保留 .nd/ + sessions/ 双目录扫描（老 SDK 会话的私档 / 旧结构），
+ * 再并入 pi-sessions/（新引擎的会话可能还没有 .nd 目录 —— G2 会写 .nd，但防御性
+ * 并入）。per-sid info 改 readPiSessionInfo（pi-jsonl.js），title/tag 以
+ * .nd/<sid>/session-config.json（PATCH rename/tag 的落点）优先覆盖。
  *
  * @param {string} pid
  * @returns {Promise<object[]>} sessions 数组（每条至少含 sessionId / lastModified；
- *   SDK 还会补 customTitle / summary / firstPrompt / tag 等字段）
+ *   另带 customTitle / summary / firstPrompt / tag 等前端可消费字段）
  */
 export async function listSessionsForProject(pid) {
   // 会话的落脚点在 2026-08-08 扁平化时搬了家：`<项目>/sessions/<sid>/`（每会话
@@ -94,15 +94,18 @@ export async function listSessionsForProject(pid) {
   const sids = [...new Set([
     ...await readSids(path.join(workspaceRoot, '.nd')),
     ...await readSids(path.join(getProjectWorkspace(pid), 'sessions')),
+    // pi 引擎转录：每 sid 一个目录（新会话可能还没有 .nd）
+    ...await readSids(path.join(PROJECTS_DATA_ROOT, 'pi-sessions')),
   ])];
   const results = await Promise.all(sids.map(async (sid) => {
-    // 转录按 **cwd** 编码定位，而 cwd 现在就是工作区（getSessionWorkspace 也返回它）
-    const sessionRoot = workspaceRoot;
     try {
-      const info = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-        getSessionInfo(sid, { dir: sessionRoot }),
-      );
-      return info || null;
+      const info = await readPiSessionInfo(piSessionDir(PROJECTS_DATA_ROOT, sid));
+      if (!info) return null;
+      // title/tag：Nodesign 自有 meta 优先（PATCH 写这里；pi session_info 的 name 只是兜底）
+      const cfg = await readSessionConfigFile(getSessionMetaDir(pid, sid));
+      if (typeof cfg.title === 'string' && cfg.title.trim()) info.customTitle = cfg.title.trim();
+      if (typeof cfg.tag === 'string' && cfg.tag.trim()) info.tag = cfg.tag.trim();
+      return info;
     } catch (err) {
       console.warn(`[sessions list] ${sid.slice(0, 8)} info failed:`, err.message);
       return null;
@@ -113,7 +116,7 @@ export async function listSessionsForProject(pid) {
     .sort((a, b) => (b.lastModified || 0) - (a.lastModified || 0));
 }
 
-// ── List：自实现（readdir sessions/ + per-sid getSessionInfo）──
+// ── List：自实现（多目录 sid 发现 + per-sid readPiSessionInfo）──
 router.get('/:pid/sessions', async (req, res, next) => {
   try {
     const project = guardProject(req, res);
@@ -129,23 +132,17 @@ router.get('/:pid/sessions', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Read：单 session messages ──
+// ── Read：单 session messages（pi JSONL → SDK SessionMessage 形状）──
 router.get('/:pid/sessions/:sid', async (req, res, next) => {
   try {
     validateSessionId(req.params.sid);
     const project = guardProject(req, res);
     if (!project) return;
 
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-
-    const includeSystemMessages = req.query.includeSystem === '1';
-
-    const messages = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-      getSessionMessages(req.params.sid, {
-        dir: sessionRoot,
-        includeSystemMessages,
-      }),
-    );
+    // M1 换源：readPiSessionMessages 输出 SDK SessionMessage 形状（C5 映射），
+    // 前端 sessionMessagesToDisplay 零改动消费。includeSystem 参数保留 API 兼容，
+    // pi 的 system entry 一律跳过（= includeSystemMessages:false 语义）。
+    const messages = await readPiSessionMessages(piSessionDir(PROJECTS_DATA_ROOT, req.params.sid));
     res.json({ messages });
   } catch (err) { next(err); }
 });
@@ -156,11 +153,14 @@ router.get('/:pid/sessions/:sid', async (req, res, next) => {
  * run.context_usage 是 turn 内推的，turn 一结束前端就只剩一个空值。可用户想看
  * "现在装了多少、要不要压缩"恰恰是在两轮之间。composer 的 [+] 菜单展开时打这条。
  *
- * 两个来源，优先级从高到低：
- *   1. query 还活着 → 直接向 SDK 现问（streamInput 模式下 query 在 turn 之间不死），
- *      这是权威值
- *   2. query 已经没了 → 内存里记着的最后一次事件，标 live:false 让前端说明白
- * 都没有 → 204，前端显示"还没开始对话"。
+ * M1 近似口径（pi 引擎，SDK query.getContextUsage 权威路径随引擎换掉）：取最新
+ * jsonl 里**最后一条 assistant message 的 usage**，input + cacheRead + cacheWrite
+ * 当 used —— pi 的 usage.input 是本次请求未命中缓存的增量、cacheRead/cacheWrite
+ * 是缓存命中/写入部分，三者之和 ≈ 模型这次实际看到的上下文大小。分母从会话
+ * session-config 的 model 查 resolveModelContextWindow 真实窗口（与
+ * Events.contextUsage 的分母同源，前端 ContextMeter 形状逐字段对齐）。
+ * 近似误差：最后一条消息的 usage 不含其后工具结果的增量，M2 复评。
+ * 拿不到 usage → 内存记忆值兜底；再没有 → 零用量（前端进度条低于阈值自动隐藏）。
  */
 router.get('/:pid/sessions/:sid/context-usage', async (req, res, next) => {
   try {
@@ -169,26 +169,40 @@ router.get('/:pid/sessions/:sid/context-usage', async (req, res, next) => {
     if (!project) return;
 
     const sid = req.params.sid;
-    const qs = getQuerySession(sid);
-    if (typeof qs?.query?.getContextUsage === 'function') {
-      try {
-        const usage = await qs.query.getContextUsage();
-        // appModel 决定分母（真实容量 vs SDK 的 compact 触发线），跟 turn 内推的
-        // 事件走同一个构造函数，前端拿到的两份数据形状一致。
-        // 模型从 session-config 现读 —— 原来这里问的是 querySession.ctx?.appModel，
-        // 而那个 ctx 字段从注册起就是 null 且无人填写，那一支永远走不到，分母只能
-        // 掉回 SDK 的 compact 触发线，同一个会话两次读数对不上。
-        const { model: appModel } = await resolveSessionModel(getSessionMetaDir(req.params.pid, sid));
-        if (usage) return res.json({ ...Events.contextUsage(usage, appModel), live: true });
-      } catch (err) {
-        // SDK 拒答不算错（query 正在收尾等）—— 掉到记忆值上，别把菜单打成红的
-        console.warn(`[sessions] getContextUsage failed sid=${sid.slice(0, 8)}: ${err.message}`);
-      }
+    const usage = await readLastAssistantUsage(piSessionDir(PROJECTS_DATA_ROOT, sid));
+    if (usage) {
+      const totalTokens = (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
+      const { model: appModel } = await resolveSessionModel(getSessionMetaDir(req.params.pid, sid));
+      const realMax = resolveModelContextWindow(appModel) ?? null;
+      return res.json({
+        type: 'run.context_usage',
+        totalTokens,
+        maxTokens: realMax,
+        sdkMaxTokens: null,             // pi 无 SDK compact 触发线概念
+        percentage: realMax > 0 ? Math.round((totalTokens / realMax) * 100) : 0,
+        autoCompactThreshold: null,     // M1：pi compaction 阈值暂不可得
+        isAutoCompactEnabled: null,
+        model: appModel,
+        brand: brandOfModel(appModel),
+        messageBreakdown: null,
+        memoryFilesTokens: 0,
+        mcpToolsTokens: 0,
+        agentsTokens: 0,
+        live: false,                    // 非活 query 现问，是 jsonl 读出的近似值
+      });
     }
 
     const remembered = getLastContextUsage(sid);
     if (remembered) return res.json({ ...remembered, live: false });
-    return res.status(204).end();
+    // 完全没跑过（或服务器重启且 jsonl 无 usage）：零用量，形状与上面对齐
+    return res.json({
+      type: 'run.context_usage',
+      totalTokens: 0, maxTokens: null, sdkMaxTokens: null, percentage: 0,
+      autoCompactThreshold: null, isAutoCompactEnabled: null,
+      model: null, brand: null, messageBreakdown: null,
+      memoryFilesTokens: 0, mcpToolsTokens: 0, agentsTokens: 0,
+      live: false,
+    });
   } catch (err) { next(err); }
 });
 
@@ -256,7 +270,7 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     // （08-21 fable P3）。还没跑过的会话没有历史，拦它只会让人换不了模型。
     const why = modelSwitchRejection({
       from: before.model, to: target,
-      hasHistory: await jsonlExistsForSession(getSessionWorkspace(req.params.pid, req.params.sid), req.params.sid),
+      hasHistory: await hasPiSession(piSessionDir(PROJECTS_DATA_ROOT, req.params.sid)),
     });
     if (why) return res.status(409).json({ error: why, code: 'LANE_SWITCH' });
     const result = await applySessionModel(req.params.sid, metaDir, raw, 'picker');
@@ -272,7 +286,7 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Fork：SDK fork + 复制产物 + mv jsonl 到新 session 子目录 ──
+// ── Fork：复制最新 pi jsonl 到新 sid 目录 + 备私档 ──
 router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
   try {
     validateSessionId(req.params.sid);
@@ -280,71 +294,57 @@ router.post('/:pid/sessions/:sid/fork', async (req, res, next) => {
     if (!project) return;
 
     const srcSid = req.params.sid;
-    const srcSessionRoot = getSessionWorkspace(req.params.pid, srcSid);
     const { upToMessageId, title } = req.body || {};
 
-    // 1. SDK fork —— 在 GLOBAL_CLAUDE_CONFIG_DIR 下生成新 sid 的 jsonl
-    const result = await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-      forkSession(srcSid, { dir: srcSessionRoot, upToMessageId, title }),
-    );
-    const newSid = result.sessionId;
+    // M1 换源：SDK forkSession → 文件复制。pi 按目录发现会话：把源 sid 目录里
+    // 最新的 jsonl 复制进新 sid 目录（文件名保持原名 —— 文件名里是 pi 自己的
+    // sessionId，pi 不在意目录名）。header/entries 原样带过去，新目录 --continue
+    // 即从这份历史继续 = fork 语义。
+    if (upToMessageId) {
+      // SDK 式"截到指定消息"的 partial fork 无 pi 对应物；显式拒绝，不静默全量复制
+      return res.status(400).json({
+        error: 'pi fork 暂不支持 upToMessageId 截断（M3 复评）',
+        code: 'FORK_TRUNCATE_NOT_SUPPORTED_PI',
+      });
+    }
+
+    const srcFile = await findLatestSessionFile(piSessionDir(PROJECTS_DATA_ROOT, srcSid));
+    if (!srcFile) {
+      return res.status(404).json({ error: 'session transcript not found', code: 'JSONL_MISSING' });
+    }
+
+    const newSid = randomUUID();
     validateSessionId(newSid);
 
-    // 2. 备好新会话的私档目录（不再复制任何产物 —— 分叉的是对话，不是工作区）
+    // 备好新会话的私档目录（不再复制任何产物 —— 分叉的是对话，不是工作区）
     await forkSessionWorkspace(req.params.pid, srcSid, newSid);
 
-    // 3. jsonl 归位。
-    //
-    // 扁平化之后同一个项目的所有会话共用一个 cwd，encoded 目录因此**完全相同**，
-    // SDK fork 出来的 newSid.jsonl 一落地就已经在对的位置了。这一整段搬运
-    // （含"换个 encoded 目录再找一遍"的兜底）只对旧数据还有意义：那时每个
-    // 会话一个 cwd，fork 出来的 jsonl 落在**源会话**的目录里，不搬就找不到。
-    const srcEncoded = encodeCwdForSDK(srcSessionRoot);
-    const newSessionRoot = getSessionWorkspace(req.params.pid, newSid);
-    const newEncoded = encodeCwdForSDK(newSessionRoot);
-    if (srcEncoded !== newEncoded) {
-      const srcJsonl = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', srcEncoded, `${newSid}.jsonl`);
-      const newJsonlDir = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', newEncoded);
-      const newJsonl = path.join(newJsonlDir, `${newSid}.jsonl`);
-      await fs.mkdir(newJsonlDir, { recursive: true });
-      try {
-        await fs.rename(srcJsonl, newJsonl);
-      } catch (err) {
-        console.warn(`[fork] rename ${srcJsonl} → ${newJsonl} failed (${err.code}); searching alt encoded dir`);
-        const altParent = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects');
-        const pidPrefix = encodeCwdForSDK(getProjectWorkspace(req.params.pid));
-        const altSubs = (await fs.readdir(altParent).catch(() => []))
-          .filter(sub => sub.startsWith(pidPrefix));
-        for (const sub of altSubs) {
-          const candidate = path.join(altParent, sub, `${newSid}.jsonl`);
-          try {
-            await fs.access(candidate);
-            await fs.rename(candidate, newJsonl);
-            break;
-          } catch { /* continue */ }
-        }
-      }
+    const destDir = piSessionDir(PROJECTS_DATA_ROOT, newSid);
+    await fs.mkdir(destDir, { recursive: true });
+    await fs.copyFile(srcFile, path.join(destDir, path.basename(srcFile)));
+
+    // 标题落 Nodesign 自有 meta（list 的 title 优先读这里）
+    if (typeof title === 'string' && title.trim()) {
+      await mergeSessionMeta(req.params.pid, newSid, { title: title.trim() });
     }
 
     res.json({ sessionId: newSid });
   } catch (err) { next(err); }
 });
 
-// ── PATCH：rename / tag ──
+// ── PATCH：rename / tag（写 Nodesign 自有 meta，不再走 SDK）──
 router.patch('/:pid/sessions/:sid', async (req, res, next) => {
   try {
     validateSessionId(req.params.sid);
     const project = guardProject(req, res);
     if (!project) return;
 
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
     const { title, tag } = req.body || {};
+    const patch = {};
 
     if (typeof title === 'string') {
       if (title.length > 200) return res.status(400).json({ error: 'title too long (max 200)' });
-      await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-        renameSession(req.params.sid, title, { dir: sessionRoot }),
-      );
+      patch.title = title.trim();
     }
     if ('tag' in (req.body || {})) {
       if (tag !== null && typeof tag !== 'string') {
@@ -353,10 +353,10 @@ router.patch('/:pid/sessions/:sid', async (req, res, next) => {
       if (typeof tag === 'string' && tag.length > 50) {
         return res.status(400).json({ error: 'tag too long (max 50)' });
       }
-      await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-        tagSession(req.params.sid, tag, { dir: sessionRoot }),
-      );
+      patch.tag = (typeof tag === 'string' && tag.trim()) ? tag.trim() : null;  // null = 清掉
     }
+
+    await mergeSessionMeta(req.params.pid, req.params.sid, patch);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -377,23 +377,19 @@ router.post('/:pid/sessions/:sid/close', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── DELETE：SDK 删 jsonl + rm session 目录（产物 / git） ──
+// ── DELETE：rm pi 转录目录 + 会话私档目录 ──
 router.delete('/:pid/sessions/:sid', async (req, res, next) => {
   try {
     validateSessionId(req.params.sid);
     const project = guardProject(req, res);
     if (!project) return;
 
-    const sessionRoot = getSessionWorkspace(req.params.pid, req.params.sid);
-
-    // 1. SDK delete jsonl（从全局 CLAUDE_CONFIG_DIR 删除）
+    // 1. M1 换源：SDK deleteSession → 删 pi 转录目录（每 sid 一个目录）
     try {
-      await withConfigDir(GLOBAL_CLAUDE_CONFIG_DIR, () =>
-        deleteSession(req.params.sid, { dir: sessionRoot }),
-      );
+      await fs.rm(piSessionDir(PROJECTS_DATA_ROOT, req.params.sid), { recursive: true, force: true });
     } catch (err) {
-      // 如果 jsonl 已经不存在或 SDK 找不到，silent skip — 后面 rm 整个目录兜底
-      console.warn(`[delete session] SDK delete failed (${err.message}); proceeding to rm dir`);
+      // 目录不存在等 silent skip —— 与老逻辑一致，后面 rm 私档兜底
+      console.warn(`[delete session] pi session dir rm failed (${err.message}); proceeding to rm meta`);
     }
 
     // 2. 删这条会话的私档（`.nd/<sid>/`）。
@@ -419,193 +415,37 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
 
 
 // ── POST /:pid/sessions/:sid/rewind ──
-// SDK Query.rewindFiles(userMessageId) 控制方法 —— 把 session 内文件回滚到该
-// user message 之前的状态（后续 Edit/Write 全撤销）。SDK file checkpoint 写在
-// session jsonl（type='file-history-snapshot'），跨进程持久化天然搞定。
-//
-// 两条路径：
-//   1. active query 在跑 → 直接用现有 query.rewindFiles（最快，无 spawn 成本）
-//   2. session 已 close（历史 session）→ 起临时 query (resume + drain) → rewindFiles → close
-//
-// 历史 session 也能 undo —— 之前返 410 是应用层偷懒，SDK 完全支持 resume + rewindFiles。
-//
-// body: { userMessageId }
-// 200 { canRewind, filesChanged?, insertions?, deletions? }
-// 404 { code: 'JSONL_MISSING' }   jsonl 不存在（session 删了 / 部分创建）
-// 409 { code: 'REWIND_BUSY' }     同 sid 已有 rewind 进行中
-// 500 { code: 'REWIND_FAILED' }   临时 query 启动 / rewindFiles 失败
+// M1：SDK Query.rewindFiles 的文件 checkpoint 活在 SDK jsonl 里，pi 引擎无对应物，
+// 暂禁 —— M3 复评（设计决策 3）。turn.js 里的 run 级 rewind 归 G2，这里不碰。
 router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
   try {
     validateSessionId(req.params.sid);
     const project = guardProject(req, res);
     if (!project) return;
-
-    const { userMessageId } = req.body || {};
-    if (!userMessageId || typeof userMessageId !== 'string') {
-      return res.status(400).json({ error: 'userMessageId required' });
-    }
-
-    const { pid, sid } = req.params;
-
-    // 路径 1：active query 在跑 —— 直接用现有 query
-    const rec = getQuerySession(sid);
-    if (rec?.query && !rec.abortController.signal.aborted) {
-      const result = await rec.query.rewindFiles(userMessageId);
-      // 对话层同步回滚（2026-08-08「做完整」）：rewindFiles 只回文件。显示与模型
-      // 记忆读的都是这份 jsonl —— 关掉活口 query（下条消息从截断后的 jsonl resume，
-      // 记忆才真的回退），等 SDK flush 后把 jsonl 截到该 user 消息之前。
-      try { closeQuerySession(sid, 'rewind_truncate'); } catch { /* */ }
-      await new Promise((r) => setTimeout(r, 800));
-      const removed = await truncateJsonlAtMessage(getSessionWorkspace(pid, sid), sid, userMessageId);
-      const payload = { ...result, conversationTruncated: removed != null, removedEntries: removed ?? 0 };
-      emitRewindFiles(pid, sid, payload);
-      return res.json(payload);
-    }
-
-    // race guard：active session 存在但 query handle 未 attach（session 启动中
-    // 的窄 race window — registerQuerySession 已 set Map 但 attachSessionQuery
-    // 还没赋值 query 字段）→ 拒 409 让用户重试。如果直接 fallthrough 进路径 2
-    // 起临时 query，两个 SDK binary 会同时 attach 同一 jsonl 文件 → 错乱不可恢复。
-    if (hasActiveQuerySession(sid) && rec && !rec.abortController.signal.aborted) {
-      return res.status(409).json({
-        error: 'session is starting (query handle not yet attached), retry shortly',
-        code: 'SESSION_STARTING',
-      });
-    }
-
-    // 路径 2：起临时 query resume → rewindFiles → close
-    if (pendingRewinds.has(sid)) {
-      return res.status(409).json({ error: 'rewind in progress', code: 'REWIND_BUSY' });
-    }
-    const sessionRoot = getSessionWorkspace(pid, sid);
-    if (!await jsonlExistsForSession(sessionRoot, sid)) {
-      return res.status(404).json({ error: 'session jsonl not found', code: 'JSONL_MISSING' });
-    }
-
-    pendingRewinds.add(sid);
-    const inputQueue = new AsyncQueue();
-    let tempQuery = null;
-    let drain = null;
-    try {
-      tempQuery = query({
-        prompt: inputQueue,
-        options: {
-          resume: sid,
-          enableFileCheckpointing: true,
-          cwd: sessionRoot,
-          // 关键：跟 runSession 一致传 CLAUDE_CONFIG_DIR，否则 SDK 找不到 jsonl
-          env: { ...process.env, CLAUDE_CONFIG_DIR: GLOBAL_CLAUDE_CONFIG_DIR },
-          persistSession: true,
-          // 不传 hooks / mcpServers / agents / canUseTool —— 临时 query 不跑 turn
-        },
-      });
-      // fire-and-forget consume —— SDK control method 走 bidirectional protocol，
-      // stream 不消费会卡死 control RPC。drain 跑在后台，close 后自然结束。
-      drain = (async () => {
-        try { for await (const _ of tempQuery) { /* discard */ } }
-        catch { /* expected on close */ }
-      })();
-      // 15s timeout（SDK boot + jsonl load + control RPC ~3-5s 正常 → 3× margin）
-      const result = await Promise.race([
-        tempQuery.rewindFiles(userMessageId),
-        new Promise((_, rj) => setTimeout(() => rj(new Error('rewind timeout')), 15000)),
-      ]);
-      // 对话层回滚：先收干净临时 query（文件句柄/尾部 flush），再截断 jsonl
-      try { tempQuery.close(); } catch { /* */ }
-      try { inputQueue.close(); } catch { /* */ }
-      if (drain) { try { await drain; } catch { /* */ } }
-      tempQuery = null; drain = null;
-      await new Promise((r) => setTimeout(r, 300));
-      const removed = await truncateJsonlAtMessage(sessionRoot, sid, userMessageId);
-      const payload = { ...result, conversationTruncated: removed != null, removedEntries: removed ?? 0 };
-      emitRewindFiles(pid, sid, payload);
-      res.json(payload);
-    } catch (err) {
-      console.warn(`[sessions.rewind] temp query failed (sid=${sid.slice(0, 8)}): ${err.message}`);
-      res.status(500).json({ error: err.message, code: 'REWIND_FAILED' });
-    } finally {
-      try { tempQuery?.close(); } catch { /* ignore */ }
-      try { inputQueue.close(); } catch { /* ignore */ }
-      if (drain) { try { await drain; } catch { /* ignore */ } }
-      pendingRewinds.delete(sid);
-    }
+    return res.status(501).json({
+      code: 'REWIND_NOT_SUPPORTED_PI',
+      message: 'pi 引擎暂不支持 rewind（M3 复评）',
+    });
   } catch (err) { next(err); }
 });
 
 /**
- * 检查 SDK jsonl 是否存在 —— 历史 session 在 ~/.claude/projects/<encoded-cwd>/<sid>.jsonl。
- * encodeCwdForSDK + GLOBAL_CLAUDE_CONFIG_DIR 都已在文件顶部定义。
+ * 会话的 Nodesign 自有 meta 合并写（.nd/<sid>/session-config.json）。
+ *
+ * M1 rename/tag 不再走 SDK —— 落到 session-loop 存 model 的同一份文件（读侧复用
+ * session-model.js 的 readSessionConfigFile；list 的 title/tag 优先读这里）。
+ * null 值 = 清字段。read-modify-write 与模型 picker 的 writeSessionModelOverride
+ * 之间有窄 race 窗（那把锁是 session-model 模块私有的），M1 接受，M2 复评。
  */
-/**
- * 对话层回滚（2026-08-08）：把 jsonl 截断到 userMessageId 那条之前（含它与其后全部）。
- * jsonl 是追加式日志，截到 prefix = 它历史上真实存在过的状态，resume 天然自洽；
- * 之后的 file-history-snapshot 属于被撤销的编辑，一并丢弃是正确语义。
- * 原子写（tmp+rename）。找不到该 uuid 返 null（fail-soft：文件回滚仍算成功）。
- */
-async function truncateJsonlAtMessage(sessionRoot, sid, userMessageId) {
-  const jsonlPath = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', encodeCwdForSDK(sessionRoot), `${sid}.jsonl`);
-  try {
-    const raw = await fs.readFile(jsonlPath, 'utf8');
-    const lines = raw.split('\n');
-    let cut = -1;
-    for (let i = 0; i < lines.length; i++) {
-      if (!lines[i] || !lines[i].includes(userMessageId)) continue;
-      try { if (JSON.parse(lines[i]).uuid === userMessageId) { cut = i; break; } } catch { /* 非 JSON 行跳过 */ }
-    }
-    if (cut < 0) {
-      console.warn(`[sessions.rewind] uuid ${userMessageId.slice(0, 8)} 不在 jsonl 里，跳过对话截断`);
-      return null;
-    }
-    // 截断前把整份 jsonl 备份到会话私档 .nd/<sid>/checkpoints/（.gitignore 已
-    // 排除 .nd/，备份不进 git 历史、也不会被 revertWorkspace 一起回退）。这样
-    // 「回到此处」从破坏性截断升级为可恢复：误点/后悔都能从备份捞回对话。
-    try {
-      const cpDir = path.join(sessionRoot, '.nd', sid, 'checkpoints');
-      await fs.mkdir(cpDir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      await fs.copyFile(jsonlPath, path.join(cpDir, `pre-rewind-${stamp}.jsonl`));
-    } catch (err) {
-      console.warn(`[sessions.rewind] jsonl 备份失败（不影响截断）：${err.message}`);
-    }
-    const kept = lines.slice(0, cut).join('\n');
-    const tmp = `${jsonlPath}.tmp-rewind`;
-    await fs.writeFile(tmp, kept ? `${kept}\n` : '');
-    await fs.rename(tmp, jsonlPath);
-    return lines.filter(Boolean).length - lines.slice(0, cut).filter(Boolean).length;
-  } catch (err) {
-    console.warn(`[sessions.rewind] jsonl 截断失败（不影响文件回滚）：${err.message}`);
-    return null;
+async function mergeSessionMeta(pid, sid, patch) {
+  const metaDir = getSessionMetaDir(pid, sid);
+  await fs.mkdir(metaDir, { recursive: true });
+  const cfg = await readSessionConfigFile(metaDir);
+  const next = { ...cfg, ...patch, updatedAt: new Date().toISOString() };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete next[k];
   }
-}
-
-async function jsonlExistsForSession(sessionRoot, sid) {
-  const encoded = encodeCwdForSDK(sessionRoot);
-  const jsonlPath = path.join(GLOBAL_CLAUDE_CONFIG_DIR, 'projects', encoded, `${sid}.jsonl`);
-  try {
-    await fs.access(jsonlPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * rewindFiles 成功后 emit run.file_changed 事件让前端 iframe 自动 reload。
- * 复用现有 event 类型 —— ProjectWorkspace.jsx 已 case 它（仅 .html 后缀 bump reloadToken），
- * 0 前端事件代码改动。
- */
-function emitRewindFiles(pid, sid, result) {
-  if (!result?.canRewind || !Array.isArray(result.filesChanged) || !result.filesChanged.length) return;
-  const bus = getProjectBus(pid);
-  for (const filePath of result.filesChanged) {
-    bus.publish({
-      type: 'run.file_changed',
-      filePath,
-      event: 'change',
-      sessionId: sid,
-      ts: new Date().toISOString(),
-    });
-  }
+  await fs.writeFile(path.join(metaDir, 'session-config.json'), JSON.stringify(next, null, 2), 'utf8');
 }
 
 export default router;

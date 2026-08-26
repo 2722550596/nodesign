@@ -9,7 +9,7 @@
  * scrollIntoView 对应 section[data-page="N"]。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 
 /**

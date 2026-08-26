@@ -15,7 +15,7 @@
  * 护栏：每回合 3 张图；每张 ≤ 40 节点 / 30 形状 / 60 线。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { readBoard, patchBoard, commitStaging, removeByTag, TEXT_FONTS } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';

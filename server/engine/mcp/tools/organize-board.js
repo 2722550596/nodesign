@@ -13,7 +13,7 @@
  * （后面的不动，报告哪件停的）。目标夹不存在就建 —— 归纳常配新夹。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { moveEntry, MoveError } from '../../../projects/move-entry.js';
 import { rewriteWorkspaceRefs } from '../../../lib/rewrite-refs.js';

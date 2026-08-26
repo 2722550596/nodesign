@@ -15,7 +15,7 @@
  * 护栏：每回合上限 08-23 按用户意思撤了（只记数）；画布不是弹幕区这条写在 prelude 里。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { readBoard, patchBoard, TEXT_FONTS } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';

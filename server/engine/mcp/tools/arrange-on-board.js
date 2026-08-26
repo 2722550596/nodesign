@@ -9,7 +9,7 @@
  * feature/unfeature 立/撤主角：写 board.hero，前端 pickHero 的推断被它压过。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { readBoard, patchBoard } from '../../../projects/board-store.js';
 import { estimateSizeOn } from '../../../lib/board-kind-sizes.js';

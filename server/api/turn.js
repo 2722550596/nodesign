@@ -42,48 +42,22 @@ import {
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
-  cancelRun, provideAnswer, getQuery, provideElicitation, hasActiveQuerySession, getQuerySession, closeQuerySession, setSessionPermissionMode,
+  cancelRun, hasActiveQuerySession, getQuerySession,
 } from '../engine/runs/active-runs.js';
 import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
 import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
 import { lruGet, lruPut, inflightTurns, INFLIGHT_RETENTION_MS } from './turn-inflight.js';
-import { allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, hasSubscriptionAccess, modelSwitchRejection } from '../engine/agent/model-context.js';
+import { allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, hasSubscriptionAccess, modelSwitchRejection, isSubscriptionLaneModel } from '../engine/agent/model-context.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkFreeQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
 import { getProjectBus } from '../ws/broker.js';
-import { Events } from '../engine/agent/events.js';
 import { readPendingSummary } from './pending-changes.js';
 import { pendingRewinds } from './sessions.js';
-import { platform } from '../runtime/platform.js';
 import { composeUserMessage } from './turn-compose.js';
 
 const router = express.Router();
 
-/**
- * Emit run.permission_mode_changed —— 广播 SDK 实际 permissionMode 的变化。唯一的
- * 切换路径（turn 入口 mode 校正）调完 setPermissionMode 后 emit 一次。
- *
- * 前端不镜像这个事件（plan mode 2026-08-21 整体移除后它只剩观测价值）。事件保留给
- * 多 tab 观测和排障用 —— mode 是 SDK 真相的一部分，不该只活在服务端日志里。
- *
- * @param {string} pid
- * @param {string} sid
- * @param {string} mode  - 'default' | 'acceptEdits' | 'bypassPermissions' | 'dontAsk' | 'auto'
- */
-export function emitPermissionModeChanged(pid, sid, mode) {
-  if (!pid || !sid || !mode) return;
-  try {
-    getProjectBus(pid).publish({
-      type: 'run.permission_mode_changed',
-      sessionId: sid,
-      mode,
-      ts: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.warn(`[turn] emitPermissionModeChanged failed: ${err.message}`);
-  }
-}
 
 router.post('/:pid/turn', async (req, res, next) => {
   // ⚠️ 必须在 try **外面**：catch 是 try 的**兄弟**作用域。写在里面的话 catch 那句
@@ -129,9 +103,6 @@ router.post('/:pid/turn', async (req, res, next) => {
       // 防 promise unhandled rejection 警告：失败时也 attach catch
       p.catch(() => {});
     }
-    // permissionMode 请求字段保留兼容老前端，但不再参与决定（plan mode 08-21 整体移除）：
-    // 启动 mode 一律 platform 默认（生产 bypassPermissions / exp auto）。
-    const initialPermissionMode = platform.permissionModeDefault;
 
     const finalSkillId = (typeof skillId === 'string' && skillId) || project.skillId;
 
@@ -180,6 +151,16 @@ router.post('/:pid/turn', async (req, res, next) => {
     const keepLegacyDefault = !isNewSession && !sessionModelEarly.override && hasSubscriptionAccess(modelUser);
     const turnModel = requestedModelEarly || sessionModelEarly.override
       || (keepLegacyDefault ? sessionModelEarly.model : defaultModelFor(modelUser)) || sessionModelEarly.model;
+    // M1 订阅闸（三层防御第一层）：订阅通道随 SDK 一起禁用 —— 解析出来的模型
+    // 落在订阅行（claude-sonnet-5[1m] 等）一律 403，不看资格（M1 对所有人锁死）。
+    // 老会话跑在全局默认订阅行上的，会在这里拿到明确的 M1 错误码而不是后面的
+    // INIT_FAILED。另两层：session-loop init 抛错、selectableModelsFor 锁行。
+    if (isSubscriptionLaneModel(turnModel)) {
+      return res.status(403).json({
+        error: `这个模型（${turnModel}）走订阅通道，M1 阶段整体禁用。请换一个 API 模型`,
+        code: 'SUBSCRIPTION_LANE_M1_DISABLED', model: turnModel,
+      });
+    }
     // 解析出来的模型一律过白名单（不只 body.model）：旧覆盖/资格收回/无 select 裸名都在此拦（fable P0）
     if (isModelLockedFor(modelUser, turnModel)) {
       return res.status(403).json({
@@ -330,38 +311,28 @@ router.post('/:pid/turn', async (req, res, next) => {
     res.status(202).json({ runId: run.id, sessionId: sid });
     const bus = getProjectBus(project.id);
 
-    const sdkUserMessage = {
-      type: 'user',
-      message: { role: 'user', content: blocks },
-      parent_tool_use_id: null,
-    };
+    // M1 pi-rp 消息形状：{ text, images }。compose 出的是 Anthropic content blocks，
+    // 这里翻译：text blocks 拼接；image block {source:{base64,media_type,data}} →
+    // {type:'image', data, mimeType}（rpc-client prompt 的 images 形状）。
+    const textParts = [];
+    const images = [];
+    for (const b of blocks) {
+      if (b.type === 'text' && typeof b.text === 'string') textParts.push(b.text);
+      else if (b.type === 'image' && b.source?.data) {
+        images.push({ type: 'image', data: b.source.data, mimeType: b.source.media_type });
+      }
+    }
+    const piMessage = { text: textParts.join('\n\n'), images };
 
     if (hasActiveQuerySession(sid)) {
-      // streamInput 模式：session 已有 long-running query 在跑 →
-      // push 这条 message 进 queue，由 runSession 的 for-await-of 拉走处理。
-      // 适用：① 续 chat（agent 已结束上一轮 idle 等）② 用户在 agent 跑时追加消息
-      //
-      // permissionMode 校正：请求带的 mode 和 SDK 当前 mode 不一致时（例如上一轮
-      // agent 自己进了 plan mode，用户直接又发了一条普通消息），pushUserMessage 路径
-      // 下 SDK 会按旧 mode 处理新 chat → canUseTool 拦 Write/Edit。这里在 push 前对齐。
-      // setPermissionMode 是 SDK 原生 API，可在 turn 边界外调；fail-soft 不阻塞。
-      const querySession = getQuerySession(sid);
-      const currentMode = querySession?.currentPermissionMode;
-      const desiredMode = initialPermissionMode;
-      if (currentMode && desiredMode && currentMode !== desiredMode && querySession?.query?.setPermissionMode) {
-        try {
-          await querySession.query.setPermissionMode(desiredMode);
-          setSessionPermissionMode(sid, desiredMode);
-          emitPermissionModeChanged(project.id, sid, desiredMode);
-        } catch (err) {
-          console.warn(`[turn] mode sync failed sid=${sid.slice(0, 8)} (${currentMode}→${desiredMode}): ${err.message}`);
-        }
-      }
-      const ok = pushUserMessage(sid, run.id, sdkUserMessage);
+      // pi-rp 模式：session 已有 pi 子进程在跑 →
+      // push 这条 message 进 queue，由 runSession 的消息循环拉走处理。
+      // 适用：① 续 chat（agent 已结束上一轮 idle 等）② 用户在 agent 跑时追加消息（排队）
+      const ok = pushUserMessage(sid, run.id, piMessage);
       if (!ok) {
         // race：刚 close 的 session（理论上极少）—— fallback 起新
         console.warn(`[turn] pushUserMessage failed for ${sid.slice(0, 8)}, falling back to new session`);
-        startNewRunSession({ runId: run.id, sid, sessionRoot, blocks: sdkUserMessage, eventBus: bus, project, finalSkillId, chat, initialPermissionMode });
+        startNewRunSession({ runId: run.id, sid, sessionRoot, message: piMessage, eventBus: bus, project, finalSkillId, chat });
       } else {
         // push 后 emit 当前 queue 积压深度，前端显示"已排队 N 条"
         // depth=0 表示 agent idle 立刻处理；depth>0 表示 agent 还在忙，要排队
@@ -370,7 +341,7 @@ router.post('/:pid/turn', async (req, res, next) => {
       }
     } else {
       // 没活跃 session → 起新 runSession（首条 message 提前 push 进 queue）
-      startNewRunSession({ runId: run.id, sid, sessionRoot, blocks: sdkUserMessage, eventBus: bus, project, finalSkillId, chat, initialPermissionMode });
+      startNewRunSession({ runId: run.id, sid, sessionRoot, message: piMessage, eventBus: bus, project, finalSkillId, chat });
     }
 
     // 写回 active_session_id（让下次不带 sessionId 的 turn fallback 续到这个）。
@@ -400,33 +371,29 @@ router.post('/:pid/turn', async (req, res, next) => {
 });
 
 /**
- * 起一个新的 runSession（streamInput long-running query），并预 push 首条 user
- * message 让 SDK 启动后立即处理。fire-and-forget — 不阻塞 HTTP response。
+ * 起一个新的 runSession（pi-rp long-running 子进程），并预 push 首条 user
+ * message（{runId, text, images}）让 pi 启动后立即处理。fire-and-forget — 不阻塞 HTTP response。
  */
-function startNewRunSession({ runId, sid, sessionRoot, blocks, eventBus, project, finalSkillId, chat, initialPermissionMode }) {
+function startNewRunSession({ runId, sid, sessionRoot, message, eventBus, project, finalSkillId, chat }) {
   const inputQueue = new AsyncQueue();
-  inputQueue.push(blocks);   // 直接 push 进 queue —— runSession 启动后用 initialRunId 关联
+  // 首条消息直接 push 进 queue —— runSession 启动后用 initialRunId 关联
+  inputQueue.push({ runId, text: message.text, images: message.images });
 
   runSession({
     sessionId: sid,
     projectId: project.id,
-    ownerId: project.ownerId,   // 订阅通路的资格断言在 session-loop 做 OAuth 决策那一行（auth/tier.js）
+    ownerId: project.ownerId,   // pi 子进程身份（NODESIGN_UID）
     sessionWorkspaceRoot: sessionRoot,
     eventBus,
     inputQueue,
     skillId: finalSkillId,
-    // 不再传 sessionTitle —— SDK doc:"Custom session title... skips automatic
-    // title generation"。让 SDK 用 ANTHROPIC_SMALL_FAST_MODEL（haiku）自动
-    // 总结对话生成标题，前端 run.done 后 refetch sessions 拉新 summary。
-    // 用户主动 rename（未来 ✏️ 按钮）走 SDK renameSession() 单独路径。
     initialRunId: runId,
-    initialPermissionMode,
   })
     .then(() => {
       console.info(`[turn] runSession ${sid.slice(0, 8)} ended cleanly`);
     })
     .catch((err) => {
-      // session 抛错：query 可能挂了，前端通过 run.error event 看到
+      // session 抛错：pi 子进程可能挂了，前端通过 run.error event 看到
       console.error(`[turn] runSession ${sid.slice(0, 8)} failed:`, err.message);
     });
 }
@@ -462,135 +429,60 @@ router.post('/:pid/runs/:runId/cancel', async (req, res, next) => {
 /**
  * A4.2：POST /api/projects/:pid/runs/:runId/answer
  *
- * 用户在 AskUserQuestionView 卡片点选项 → 前端 POST 来这个 endpoint →
- * provideAnswer resolve 对应 toolUseId 的 Promise → session-loop.js canUseTool
- * 返回 { behavior: 'allow', updatedInput: { ...input, answers } } → SDK
- * binary 调 tool.call → 模型看到 "User has answered: q1=A"。
- *
- * Body：
- *   {
- *     toolUseId: string,            // run.ask_user_question 事件带的
- *     answers: { [questionText]: optionLabel }  // multi-select 用 ", " 拼
- *   }
- *
- * 200 { ok: true }                            成功 resolve
- * 404 { error, code: 'NO_PENDING_QUESTION' }  run/toolUseId 不在 pending
- *                                             （已答 / 已 cancel / 已结束）
- * 400 { error }                               body 缺字段
+ * M1 换源后 501：AskUserQuestion 靠 SDK canUseTool 拦截实现，pi-rp 没有对应
+ * 机制（M2 评估用 MCP 工具 + sidecar 回传重做）。路由保留，前端拿到 501
+ * 能区分"功能暂不可用"和"请求错了"。
  */
 router.post('/:pid/runs/:runId/answer', async (req, res, next) => {
   try {
     const project = guardProject(req, res);
     if (!project) return;
     if (!guardRunInProject(req, res)) return;
-
-    const { runId } = req.params;
-    const { toolUseId, answers } = req.body || {};
-    if (!toolUseId || typeof toolUseId !== 'string') {
-      return res.status(400).json({ error: 'toolUseId required (string)' });
-    }
-    if (!answers || typeof answers !== 'object') {
-      return res.status(400).json({ error: 'answers required (object: { [questionText]: label })' });
-    }
-
-    const ok = provideAnswer(runId, toolUseId, answers);
-    if (!ok) {
-      return res.status(404).json({
-        error: 'no pending question for this run/toolUseId',
-        code: 'NO_PENDING_QUESTION',
-      });
-    }
-    res.json({ ok: true });
+    return res.status(501).json({
+      error: 'AskUserQuestion 交互 M1 暂不支持（引擎已换 pi-rp）',
+      code: 'M1_NOT_SUPPORTED',
+    });
   } catch (err) { next(err); }
 });
 
 /**
  * Phase B 批次 4：POST /api/projects/:pid/runs/:runId/elicit/:reqId/answer
  *
- * MCP 工具调 server.elicitInput() 时 SDK 触发 onElicitation 回调，回调 emit
- * run.elicitation_request 事件让前端弹 Modal。用户填完后 POST 这个 endpoint
- * → provideElicitation resolve session-loop.js 里 await 的 Promise
- * → SDK 拿到 { action, content } 继续工具调用。
- *
- * Body:
- *   {
- *     action: 'accept' | 'decline' | 'cancel',
- *     content?: { [field]: any }  // accept 时用户填的表单字段
- *   }
- *
- * 200 { ok: true }
- * 404 { error, code: 'NO_PENDING_ELICITATION' }
- * 400 { error }
+ * M1 换源后 501：elicitation 靠 SDK onElicitation 回调实现，pi-rp 没有对应
+ * 机制（M2 评估）。路由保留，语义同 answer。
  */
 router.post('/:pid/runs/:runId/elicit/:reqId/answer', async (req, res, next) => {
   try {
     const project = guardProject(req, res);
     if (!project) return;
     if (!guardRunInProject(req, res)) return;
-
-    const { runId, reqId } = req.params;
-    const { action, content } = req.body || {};
-    if (!action || !['accept', 'decline', 'cancel'].includes(action)) {
-      return res.status(400).json({ error: 'action required (accept|decline|cancel)' });
-    }
-
-    const ok = provideElicitation(runId, reqId, { action, content });
-    if (!ok) {
-      return res.status(404).json({
-        error: 'no pending elicitation for this run/reqId',
-        code: 'NO_PENDING_ELICITATION',
-      });
-    }
-    res.json({ ok: true });
+    return res.status(501).json({
+      error: 'elicitation 交互 M1 暂不支持（引擎已换 pi-rp）',
+      code: 'M1_NOT_SUPPORTED',
+    });
   } catch (err) { next(err); }
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// SDK Query control method endpoints（sdk.d.ts:2017 Query interface）
-// 这些方法只在 streaming input/output 模式下可用 — session-loop.js 唯一入口
-// 已让所有 run 走 AsyncIterable<SDKUserMessage>（buildUserMessageStream）满足前提。
+// SDK Query control method endpoints —— M1 换源后整体 501
+// （rewindFiles 是 SDK Query 接口方法，pi-rp RPC 没有对应命令；M2 评估）
 // ─────────────────────────────────────────────────────────────────────
 
 /**
  * POST /api/projects/:pid/runs/:runId/rewind
  *
- * 配合 sdkOptions.enableFileCheckpointing —— 把 cwd 文件回滚到指定 user
- * message 时点 + session JSONL 截断到该 message。前端 user message 旁的
- * undo 按钮调这个 endpoint。
- *
- * Body: { messageId: string }  - SDKAssistantMessage.uuid 或 user message uuid
- *
- * 注意：rewindFiles 不主动 git revert（git 不在 SDK 管辖）→ 用户用 undo 后
- * 产物文件落后 git history 一步；前端可以 hint 或 host 端补 commit。
+ * M1 换源后 501：文件回滚 + JSONL 截断靠 SDK rewindFiles 实现，pi-rp 没有
+ * 对应命令。路由保留，前端 undo 按钮拿到 501 自行降级。
  */
 router.post('/:pid/runs/:runId/rewind', async (req, res, next) => {
   try {
     const project = guardProject(req, res);
     if (!project) return;
     if (!guardRunInProject(req, res)) return;
-
-    const { runId } = req.params;
-    const { messageId } = req.body || {};
-    if (!messageId || typeof messageId !== 'string') {
-      return res.status(400).json({ error: 'messageId required (string)' });
-    }
-
-    const query = getQuery(runId);
-    if (!query) {
-      return res.status(404).json({
-        error: 'run not active or query handle not yet attached',
-        code: 'RUN_NOT_ACTIVE',
-      });
-    }
-    if (typeof query.rewindFiles !== 'function') {
-      return res.status(501).json({
-        error: 'SDK query handle missing rewindFiles method (older SDK?)',
-        code: 'METHOD_NOT_AVAILABLE',
-      });
-    }
-
-    const result = await query.rewindFiles(messageId);
-    res.json({ ok: true, result });
+    return res.status(501).json({
+      error: 'rewind M1 暂不支持（引擎已换 pi-rp）',
+      code: 'M1_NOT_SUPPORTED',
+    });
   } catch (err) { next(err); }
 });
 

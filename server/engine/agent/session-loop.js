@@ -1,144 +1,111 @@
 /**
- * server/engine/agent/session-loop.js — Long-running query session loop
+ * server/engine/agent/session-loop.js — Long-running session loop（M1：pi-rp 引擎）
  *
- * SDK streamInput 模式：一个 SDK Query 持续吃 user message 跨多 turn，conversation
- * state 留在 SDK binary 内存里，**不依赖 jsonl resume**。这是 NoDesign 主代理唯一
- * 入口（曾有 per-turn 的 loop.js runAgent，2026-05-03 后已彻底移除）。
+ * M1 换源（doc §5）：执行引擎从 Claude Code SDK `query()` 换成 pi --mode rpc 子进程。
+ * 一个 pi 子进程横跨整个 session（conversation state 在 pi 内存 + jsonl 里），每条
+ * 用户消息经 RPC `prompt` 发进去恰好对应一个 turn —— **严格串行**，turn 进行中追加
+ * 的消息在 inputQueue 里排队等前一个 settle（turn-relay.js）。
  *
- * 解决 per-turn query 架构的两个痛点：
- *   1. cancel 时 jsonl 残缺 → 下个 turn resume 失败丢上下文（streamInput 不 resume）
- *   2. 用户在 agent 跑时无法追加消息（streamInput 排队天然支持）
+ * 结构（init → 消息循环 → finally 清理）：
+ *   - init：项目配置（M1 只用 tools.disable）→ 模型路由（只跑 API 行，订阅行抛错）→
+ *     buildNodesignTools 拿工具名清单（真注册在 standalone 子进程）→ spawn pi →
+ *     PiRpcClient.start()（get_state 探活）
+ *   - 消息循环：inputQueue.next() 拉 {runId, text, images} → runTurn（一条消息一个
+ *     完整 turn）→ takeNextRunId 提升下一条
+ *   - runTurn：每 turn 新建 EventBridge（fresh runId）+ registerRun（sidecar /charge
+ *     要按 runId 找 ctx）→ client.prompt → await settle（三来源）→ finishTurn 结账
+ *   - finally：drainSession（pending run 标 failed）→ client.kill() → unregister →
+ *     run.query.end
  *
- * 设计要点：
- *   - 不接 brief / userContentBlocks —— 用 inputQueue（AsyncQueue）作 prompt source
- *   - 不接 resumeSessionId —— streamInput 模式下 SDK 自己保 conversation state
- *   - per-turn lifecycle 管理：result message = turn 边界，emit run.done 但 query 不退
- *   - cancel 走 query.interrupt() —— SDK 出 result with terminal_reason='aborted_*'
- *     → 当前 turn emit run.cancelled → 继续等下条 user message
- *   - close session：inputQueue.close() → for-await-of 自然退出 → finally 清理
+ * settle 三来源（互斥，先到先算）：
+ *   a) agent_settled 事件 → success（cancelRequested 时 cancelled）
+ *   b) 终态 run.error（PROMPT_REJECTED / AUTO_RETRY_EXHAUSTED / STOP_REASON_ERROR）
+ *   c) pi 进程退出（onExit）→ PI_EXITED
+ * prompt 应答 success:false 走 (b) 的 PROMPT_REJECTED（response 行不进桥，直接判返回值）。
  *
- * 共享 ctx 策略（妥协）：
- *   一个 sharedCtx 横跨多 turn，每个 turn 边界处覆盖 runId + 重置 counters。
- *   这样 hooks / mcp 闭包持有的 ctx 引用稳定，emit 时 enrich 当前 turn runId。
- *   非 thread-safe（SDK stream 串行处理 message，OK）。
+ * 共享 ctx 策略（同 SDK 时代）：一个 sharedCtx 横跨多 turn，每个 turn 开头覆盖 runId
+ * + 重置 counters（freshTurnCounters）。sidecar /charge 经 active-runs 按 runId 拿到
+ * 它记 addToolCharge，finishTurn 里 _foldToolCharges 折进账。
+ *
+ * M1 已知缺口（M2/M3 复评，别在这里补）：
+ *   AskUserQuestion / elicitation（canUseTool/onElicitation 随 SDK options 一起没了）、
+ *   rewind、运行中热切模型、截断续写（maybeContinueTruncated）、后台自发 turn
+ *   （mintBackgroundTurn）、context usage 事件、permissionMode 同步、maxTurns、
+ *   ingress usage/billing、hooks / isolation / plugins / skills / systemPrompt 组装、
+ *   thinking 档位配置。
  */
 
 import path from 'node:path';
-import fs from 'node:fs/promises';
-import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { AgentContext, freshTurnCounters } from './context.js';
 import { Events } from './events.js';
-import { createRun, markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata, setRunMetrics, setRunModelUsage } from '../runs/store.js';
-import { getProject } from '../../projects/store.js';
-import { randomUUID } from 'node:crypto';
+import {
+  markRunStarted, markRunSucceeded, markRunFailed, mergeRunMetadata, setRunMetrics, setRunModelUsage,
+} from '../runs/store.js';
 import {
   registerQuerySession,
   attachSessionQuery,
   unregisterQuerySession,
-  getCurrentTurnRunId,
   setCurrentTurnRunId,
-  registerPendingQuestion,
-  registerPendingElicitation,
-  getSessionPermissionMode,
   getSessionLastActivity,
   closeQuerySession,
   markSessionActivity,
+  registerRun,
+  unregisterRun,
 } from '../runs/active-runs.js';
-import {
-  promoteNextPendingRunId, claimRunByUuid, releaseCurrentTurnRunId, getPendingRunCount,
-  closeMergedRun, publishQueueDepth, pushUnclaimedMessage,
-} from '../runs/turn-relay.js';
-// skill 起手文件拷贝已挪 hooks.js PreToolUse(Skill/Bash)（2026-07-27），
-// session-loop 不再直接依赖 skill.js；skillId 参数仅作兼容保留。
-import { loadInstalledPlugins } from './plugin-loader.js';
-import { createHooks } from './hooks.js';
-import { buildIsolationOptions, prepareAgentDirs, sandboxShimEnv } from './isolation.js';
-import { MEMORY_EXTRA_GUIDELINES, mergeAgentSettings } from './memory-config.js';
-import { createNodesignMcpServer } from '../mcp/index.js';
-import { MCP_SERVER_NAME } from '../mcp/server-name.js';
-import { externalMcpServers } from '../mcp/external.js';
-import { assertInitContract } from './init-contract.js';
-import { createAgents, resolveDefaultFastModel } from '../agents/index.js';
-import { resolveSdkSpoofModel, pickThinkingConfig, resolveModelRoute, isUncensoredModel } from './model-context.js';
+import { takeNextRunId, publishQueueDepth, drainSession } from '../runs/turn-relay.js';
+import { loadProjectConfig } from '../../projects/project-config.js';
+import { resolveModelRoute } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
-import { getOrStartIngress, registerIngressSession, unregisterIngressSession } from '../../lib/model-ingress.js';
-import { takeUpstreamBilling } from '../../lib/ingress/upstream-billing.js';
-import { takeUpstreamTruncation } from '../../lib/ingress/upstream-truncation.js';
-import { registerSessionNotice, unregisterSessionNotice } from '../../lib/ingress/session-notice.js';
-import { clampFirstClause } from '../../lib/quick-summary.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
-import { platform } from '../../runtime/platform.js';
-import { renderPrelude } from './system-prompts.js';
-import { loadProjectConfig, resolveProjectPreludeContent, filterTools, filterMcpServers, applyMcpServerPreload } from '../../projects/project-config.js';
-import {
-  DEFAULT_TOOL_ALLOWLIST,
-  STREAMING_ENABLED,
-  handleSDKMessage,
-  detectArtifact,
-} from './agent-shared.js';
+import { detectArtifact } from './agent-shared.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
-// 合流并集（2026-08-13）：commitWorkspace/taskManifest 是扁平化这边的，
-// getUserById/levelFor 是 main 的每用户内容尺度旋钮（78ceaac）；
-// main 的 listTasks 已随任务层退役，不再引入
-import { commitTaskWorkspace, commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
+import { commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { commitStaging } from '../../projects/board-store.js';
-import { taskManifest } from '../../lib/artifact-target.js';
-import { getUserById } from '../../auth/users-store.js';
-import { can, defaultModerationLevel } from '../../auth/tier.js';
+import { PiRpcClient } from '../pi/rpc-client.js';
+import { sessionLaunch, createSessionProcess } from '../pi/lifecycle.js';
+import { createEventBridge } from '../pi/event-bridge.js';
+import { hasPiSession, piSessionDir } from '../pi/pi-jsonl.js';
+import { piProviderModelFor } from '../pi/model-map.js';
+// mcp/index.js 此刻仍 transitively import SDK（wave 4 才拆），import 没问题。
+// 进程内跑一遍 buildNodesignTools 只为拿名字（handler 不用）—— 真注册在
+// standalone 子进程（同一函数 + 同一份 disabledTools 过滤 → 名字集严格一致）。
+import { buildNodesignTools } from '../mcp/index.js';
 
 /**
- * 半截续接时替 agent 说的那句话（见 maybeContinueTruncated）。写成"系统提示"而不是装成用户说话：
- * 模型看得见前面那段半截是自己说的，让它接着写，别从头重来（重来一遍用户要看两份）。
+ * 终态 run.error 码：命中即本 turn 判死（settle → error），不再等 agent_settled。
+ * 其余 run.error（如 EXTENSION_ERROR）是非终态警告 —— 只转发前端，turn 可能仍成功。
+ * 码源：event-bridge.js（PROMPT_REJECTED / AUTO_RETRY_EXHAUSTED / STOP_REASON_ERROR）。
  */
-const CONTINUATION_PROMPT = '[系统] 上一条回复在传输途中被上游中断了，没有说完。请从被截断的地方接着写完，不要重复已经说过的内容，也不要为此道歉。如果上一条其实已经把话说完了，就继续执行手头的任务。';
-import { levelFor } from '../../lib/moderation.js';
+const TERMINAL_ERROR_CODES = new Set(['PROMPT_REJECTED', 'AUTO_RETRY_EXHAUSTED', 'STOP_REASON_ERROR']);
 
 /**
- * 起一个 session-level long-running SDK query。runs 是 per-turn 概念（SDK 每见
- * 到一条 user message 起一轮 LLM 调用直到 stop_reason='end_turn'）。
+ * 起一个 session-level pi-rp 会话。runs 是 per-turn 概念（每条用户消息一个 turn）。
  *
- * **必须**外部维护 inputQueue —— 调用方（turn.js）提前 push 第一条 message 后再
- * 调 runSession，session-loop 立即拉到处理。
+ * **必须**外部维护 inputQueue —— 调用方（turn.js）提前 push 第一条 message
+ * （{runId, text, images}）后再调 runSession，session-loop 立即拉到处理。
  *
  * @param {object} opts
  * @param {string} opts.sessionId
  * @param {string} opts.projectId
+ * @param {string} [opts.ownerId]  - 项目 owner（NODESIGN_UID，pi 子进程身份）
  * @param {string} opts.sessionWorkspaceRoot
  * @param {import('./events.js').EventBus} opts.eventBus
  * @param {import('../../lib/async-queue.js').AsyncQueue} opts.inputQueue
  * @param {string} [opts.skillId='deskskill-engine-mini']
- * @param {string} [opts.sessionTitle]
- * @param {string[]} [opts.toolAllowlist=DEFAULT_TOOL_ALLOWLIST]
- * @param {string} [opts.initialPermissionMode]
  * @param {string} [opts.initialRunId] - 首条 turn 的 run record id；若给则 register
  *                                       完立即设 currentRunId，避免 turn.js race
  *                                       condition（push 早于 register 没法关联 runId）
- * @returns {Promise<void>}  - inputQueue 关闭时 resolve
+ * @returns {Promise<void>}  - inputQueue 关闭 / session abort / pi 退出时 resolve
  */
-/**
- * SDK 自发 turn 的开启信号：真实的模型/对话活动（assistant 输出、流式增量、
- * SDK 注入的 user 消息）。task_notification / task_progress / notification 等
- * 旁路事件**不算** —— 通知之后 SDK 不一定真的唤起模型，铸了 run 却等不来
- * result 收尾就是僵尸 run。
- */
-function isBackgroundTurnOpener(message) {
-  return message?.type === 'assistant'
-    || message?.type === 'stream_event'
-    || message?.type === 'user';
-}
-
 export async function runSession({
   sessionId,
   projectId,
-  ownerId = null,   // 项目 owner；订阅通路在 OAuth 决策那一行按 auth/tier.js 断言资格（见下）
+  ownerId = null,
   sessionWorkspaceRoot,
   eventBus,
   inputQueue,
   skillId = 'deskskill-engine-mini',
-  sessionTitle = null,
-  toolAllowlist = DEFAULT_TOOL_ALLOWLIST,
-  initialPermissionMode = null,
   initialRunId = null,
 }) {
   if (!sessionId) throw new Error('runSession: sessionId required');
@@ -149,46 +116,28 @@ export async function runSession({
   if (!eventBus) throw new Error('runSession: eventBus required');
 
   // 2026-08-07 扁平化：cwd 就是项目工作区，`sharedRoot` 和它是同一个目录。
-  // 旧代码在这里用 `../../shared` 从会话沙盒爬回共享目录 —— 那条相对路径现在
-  // 会爬到数据根之外，两个名字保留只是为了不动下游几十处引用。
   const cwdRoot = sessionWorkspaceRoot;
   const sharedRoot = cwdRoot;
   const sessionMetaRoot = path.join(cwdRoot, '.nd', sessionId);
 
-  // ── 项目级配置（nodesign.config.json，与 CLAUDE.md 同根）──
-  // 必须比 registerIngressSession 早：sdkPreset='replace' 的剥残留标志跟着注册走。
-  // 文件缺失 = 默认；坏 JSON / 越界字段 = 整份落默认，绝不因为一个逗号把会话
-  // 初始化拉下来（project-config.js 文件头写清楚了）。
+  // ── 项目级配置（nodesign.config.json）──
+  // M1 只消费 tools.disable（透传给 standalone 整件不注册 + directTools 清单过滤）。
+  // prompt.append / prompt.prelude / skills / sdkPreset 休眠到 M2 —— pi 的 system
+  // prompt 组装（prelude / skill 协议 / 成人档联动）是 M2 的事，现在读了也没人消费。
+  // 文件缺失 = 默认；坏 JSON = 整份落默认（project-config.js 文件头写清楚了）。
   const { config: projectConfig } = await loadProjectConfig(sharedRoot);
-  // null = 用平台 prelude；非 null = 项目自己的整份 prelude（平台协议/产物政策/
-  // 成人档联动都不注入 —— 覆盖语义见 project-config.js 文件头）。
-  const projectPreludeOverride = await resolveProjectPreludeContent(projectConfig, sharedRoot);
-  if (projectPreludeOverride !== null) {
-    console.warn(
-      `[session-loop] ${projectId} 项目级 prelude 覆盖生效 —— 平台协议 / 产物政策块 / 成人档联动不注入，内容由项目配置负责`
-    );
-  }
-  // sdkPreset='replace'：SDK preset 不注入（systemPrompt 装配处）+ ingress 转发前
-  // 剥 SDK 硬注入残留（计费头/身份行/动态提醒段，lib/ingress/strip-sdk-residue.js）。
-  const projectStripResidue = projectConfig.prompt.sdkPreset === 'replace';
 
   const sessionAbortController = new AbortController();
-  // initialPermissionMode 落进 active-runs，canUseTool 通过 getSessionPermissionMode 读
-  // 当前 mode（auto 模式升级口按它分流）。turn.js 入口的 mode 校正会同步更新本字段。
-  // （plan mode 08-21 整体移除；这里不再有 'plan' 分支）
-  const initialModeNormalized = 'bypassPermissions';
   // sessionToken：身份证。closeQuerySession 已同步让出 sid 后用户立即重发起新
   // runSession → 新 register 拿到新 token；旧 runSession finally 调 unregister 带
   // 旧 token 比对不匹配 → noop 不误删新 entry。
   const sessionToken = registerQuerySession(sessionId, {
     abortController: sessionAbortController,
     inputQueue,
-    initialPermissionMode: initialModeNormalized,
   });
   // 关键 race guard：registerQuerySession 拒绝重复注册（同 sid 已活跃）→ 这次
-  // runSession 是冗余调用（前端 race / 后端 fallback / resume race），直接 early
-  // return 不 spawn 第二个 SDK binary。否则两个 binary 并行 Write 同 canvas.html
-  // 就是用户报告的"独立 main 进程在 write"。
+  // runSession 是冗余调用（前端 race / 后端 fallback），直接 early return 不 spawn
+  // 第二个 pi 子进程。否则两个 pi 并行写同一工作区就是双写 race。
   if (!sessionToken) {
     console.warn(
       `[session-loop] runSession sid=${sessionId.slice(0, 8)} skipped — already active. `
@@ -211,27 +160,22 @@ export async function runSession({
     } catch { /* */ }
     return;
   }
-  // initialRunId：register 后立刻设 currentRunId，让 for-await-of 第一次见到
-  // SDK 转发首条 user message 时直接知道当前 turn 的 runId（否则 turn.js 那边
-  // 必须在 register 之后才能调 pushUserMessage —— race window）
+  // initialRunId：register 后立刻设 currentRunId（首条消息经 turn.js 直接 push 进
+  // queue，没走 pushUserMessage 的认领路径 —— 不提前设，cancelRun / sidecar 按
+  // currentRunId 反查会 miss 第一轮）。
   if (initialRunId) setCurrentTurnRunId(sessionId, initialRunId);
 
-  // session-level start event（Phase 2，前端识别 query alive）
+  // session-level start event（前端识别 query alive）
   eventBus.publish({ type: 'run.query.start', sessionId, ts: new Date().toISOString() });
 
-  // sharedCtx：跨 turn 复用。每个 turn 边界覆盖 runId + 重置 counters。
-  // hooks / mcp 闭包持稳定引用即可。
-  // sessionId 传入让 ctx.emit 自动 enrich event.sessionId，WS handler 按 sid 过滤
-  // 防多 session / 多 tab 跨 session 串扰（project bus 共享）。
-  // model 优先级：调用方显式 > session-config.json（用户在 picker 选的，随会话
-  // 持久）> env 全局默认。这条链现在只写在 session-model.js 一处 —— 以前它在这里、
-  // turn.js、canvas.js 各有一份写法不同的复制品，对不上的时候没人发现。
+  // 模型优先级：session-config.json（用户在 picker 选的）> env 全局默认。
+  // 这条链只写在 session-model.js 一处。
   const { model: resolvedModel } = await resolveSessionModel(sessionMetaRoot);
   const model = resolvedModel;
-  const sdkModel = resolveSdkSpoofModel(model);
 
-  // appModel env：session-level，由 try 块内 + finally 配对管理。详见 line 558 注释。
-
+  // sharedCtx：跨 turn 复用。每个 turn 边界覆盖 runId + 重置 counters。
+  // sessionId 传入让 ctx.emit 自动 enrich event.sessionId，WS handler 按 sid 过滤
+  // 防多 session / 多 tab 跨 session 串扰（project bus 共享）。
   const sharedCtx = new AgentContext({
     runId: '__session_pending__',
     skillId,
@@ -242,101 +186,166 @@ export async function runSession({
     appModel: model,
   });
 
-  // ── init 段（2026-07-27 起整体 try/catch）——
-  // 老代码这些 await 在主 try 块之外，任一抛错 → Promise reject 只被 turn.js
-  // console.error，没有 run.start 也没有 run.error，run 行永远 pending，
-  // 前端完全零反馈（丢状态路径 P5）。现在失败时补 run.error + markRunFailed。
-  let wsRoot, baseUrlForBinary, apiKeyForBinary, fastModel, compactWindow, isResume, installed;
-  let noticeHandler = null;   // ingress → 会话的通知回调（注销时按身份比对，别误删新会话的）
+  // ── 引擎状态（per-session）──
+  let currentBridge = null;   // 每个 turn 一个新 EventBridge；turn 之间为 null
+  let turnState = null;       // 活跃 turn 的状态（runTurn 里建；settle/usage 都挂它）
+  let piExited = null;        // onExit 落下：{ code, signal, err }；非 null = 引擎死了
+  let client = null;
+  let child = null;
+
+  // ── settle 机制 ──
+  // settleTurn 只记录结果 + resolve promise；结账（落库 / emit / commit）统一在
+  // finishTurn，保证恰好一次。三个来源都经它（互斥，先到先算）。
+  function settleTurn(outcome) {
+    const st = turnState;
+    if (!st || st.settled) return;
+    st.settled = true;
+    st.outcome = outcome;
+    st.settleResolve();
+  }
+
+  // agent_settled → success；interrupt 过（cancelRequested）→ cancelled
+  function onSettled() {
+    if (!turnState || turnState.settled) return;
+    settleTurn(turnState.cancelRequested
+      ? { outcome: 'cancelled', reason: 'user_cancel' }
+      : { outcome: 'success' });
+  }
+
+  // pi 进程死掉：活跃 turn 以 PI_EXITED 收尾；inputQueue 关掉让消息循环退出
+  // （pending 的 run 归 finally 的 drainSession 标 failed）。
+  function onPiExit(code, signal, err) {
+    piExited = { code, signal, err };
+    console.warn(
+      `[session-loop] sid=${sessionId.slice(0, 8)} pi 进程退出`
+      + `（code=${code} signal=${signal}${err ? ` ${err.message}` : ''}）`
+    );
+    if (turnState && !turnState.settled) {
+      settleTurn({
+        outcome: 'error',
+        code: 'PI_EXITED',
+        message: `pi 进程退出（code=${code} signal=${signal}${err ? `：${err.message}` : ''}）`,
+      });
+    }
+    try { inputQueue.close(); } catch { /* 已 close 是常态 */ }
+  }
+
+  // session 关闭（closeQuerySession → abort）→ 当前 turn 走 cancelled。
+  // 与 interrupt 路径共用 settleTurn 的幂等（先到先算）。
+  const onSessionAbort = () => {
+    if (turnState && !turnState.settled) {
+      turnState.cancelRequested = true;
+      settleTurn({ outcome: 'cancelled', reason: sessionAbortController.signal.reason || 'session_closed' });
+    }
+  };
+  sessionAbortController.signal.addEventListener('abort', onSessionAbort, { once: true });
+
+  // usage 累计：pi 每轮 assistant message_end 带**该轮** usage（不是会话累计），
+  // 逐轮累进 turn 级累计器。⚠️ 必须在 bridge.handleLine 之前自己留一份 ——
+  // bridge 只保留最后一轮的 finalUsage。
+  function accumulateUsage(acc, usage) {
+    acc.inputTokens += usage.input ?? 0;
+    acc.outputTokens += usage.output ?? 0;
+    acc.cacheReadTokens += usage.cacheRead ?? 0;
+    acc.cacheCreateTokens += usage.cacheWrite ?? 0;
+    acc.totalCostUsd += usage.cost?.total ?? 0;
+  }
+
+  // ── init 段 —— 失败时补 run.error + markRunFailed，不让 run 行永远 pending ──
+  let wsRoot;
   try {
     wsRoot = await sharedCtx.workspace.ensure();
 
-    // 起手文件拷贝（canvas.template.html 等）2026-07-27 起不再在 init 无条件做 ——
-    // 挪到 hooks.js 的 PreToolUse(Skill/Bash)：agent 真的开始 deck 工作
-    // （加载 deskskill / cp 模板）才拷。非 deck 会话（便签 / 整理画布）cwd 干净。
-
-    // ── 通路由模型表决定（2026-08-19 重建，前身是全局 NODESIGN_GATEWAY_URL 开关）──
-    // 订阅模型：什么都不注入（ANTHROPIC_API_KEY 一出现 binary 就弃 OAuth）。
-    // API 模型：BASE_URL 指进程内通用入口（model-ingress），入口按请求 body.model
-    // 查表换上游换钥匙；binary 侧的 API_KEY 只是"逼它进 API 模式"的占位符。
-    // helper（title 总结 / auto-compact / promptSuggestions）与 subagent 因此
-    // 天然全通：它们的请求同样进入口、同样被反查路由 —— 不再依赖旧版那个
-    // 跨会话互写的 NODESIGN_CURRENT_APP_MODEL 进程全局 env。
+    // 模型路由：M1 只跑 API 行。订阅行（claude-sonnet-5[1m] 等）在 M1 整体禁用 ——
+    // 这是三层防御的第二层（turn.js 403 是第一层，selectableModelsFor 锁行是第三层）。
     const route = resolveModelRoute(model);
-    if (route.mode === 'api') {
-      const ingress = await getOrStartIngress();   // 起不来就让 init 失败，别静默直连
-      baseUrlForBinary = `${ingress.baseUrl}/__nd/${encodeURIComponent(sessionId)}`;
-      apiKeyForBinary = 'nd-ingress-managed';
-      // SDK 内部 helper 可能用不在表里的 Claude 名发请求（config 目录默认模型），
-      // 注册会话 fast 兜底路由让它们改道而不是 502。finally 配对注销。
-      // stripResidue：sdkPreset='replace' 的会话让 ingress 在转发前剥 SDK 硬注入残留。
-      registerIngressSession(sessionId, model, { stripResidue: projectStripResidue });
-      // 上游抖的时候（Zen 一次 503 能挂 50~140 秒）会话里什么都不动，用户只看到一个转不停的绿点。
-      // 给 ingress 一条推消息的通道，让它把"正在重试"说出来。节流在 session-notice.js，finally 配对注销。
-      noticeHandler = ({ key, text, priority }) => {
-        try { sharedCtx.emit(Events.notification(key || 'upstream_retry', text, priority || 'warn')); } catch { /* 通知不该弄死会话 */ }
-      };
-      registerSessionNotice(sessionId, noticeHandler);
-      // API 路的 fast model 必须同表可路由（订阅 haiku 在 API 模式会 404），
-      // 所以 env 覆盖在这条路上不生效 —— 表是唯一真相。
-      fastModel = route.fastModel;
-      // 把**真实**上下文窗口钉给 SDK。不设的话 SDK 只能按 spoof alias 猜，而
-      // alias 的容量和上游真实 n_ctx 基本对不上：猜小了白扔容量，猜大了会一路
-      // 涨到超过上游 n_ctx 再炸。实测规律见 resolveModelRoute 注释。
-      compactWindow = route.window;
-    } else {
-      // ⭐ 订阅通路的资格断言就放在做 OAuth 决策的这一行（08-21 晚）。API 边界（turn.js /
-      // sessions.js 的 allowedModelsFor）是第一道闸；这里是第二道：runSession 以前不认识
-      // 用户，只看会话模型决定走不走 ~/.claude 的 OAuth —— quick-summary 那次泄漏（写死
-      // haiku 起独立 SDK 会话，08-19 拆）正是这个形状。现在 owner 没资格就 init 失败，
-      // 而不是静默烧站主的订阅。owner 为空（无主项目；生产 08-21 实查 0 个）也 fail-closed。
-      const owner = ownerId ? getUserById(ownerId) : null;
-      if (!can(owner, 'subscription')) {
-        throw new Error(`订阅通路资格不足：项目 owner=${ownerId || '(无)'} 档位不含 subscription，模型=${model}`);
-      }
-      baseUrlForBinary = process.env.ANTHROPIC_BASE_URL;
-      apiKeyForBinary = process.env.ANTHROPIC_API_KEY;
-      fastModel = process.env.NODESIGN_FAST_MODEL || resolveDefaultFastModel(model);
-      // 订阅模型的真名 SDK 自己认得，别去覆盖它已知正确的默认值
-      compactWindow = null;
+    if (route.mode !== 'api') {
+      throw new Error(`M1 订阅通道整体禁用，模型=${model} 不可路由（换 API 模型）`);
+    }
+    // appModel → pi 扩展 (provider, wireModel)。查不到 = providers-models.json 没
+    // 覆盖这行 → init 失败（别静默让 pi 用它自己的默认模型跑）。
+    const piRoute = piProviderModelFor(model);
+    if (!piRoute) {
+      throw new Error(`模型 ${model} 没有 pi-rp 扩展映射（providers-models.json _appModels 未命中）`);
     }
 
-    // 检测 jsonl 是否已存在 —— 决定走 resume（已存在）还是 sessionId（新建）
-    // 之前的 bug：session-loop 永远传 sessionId，但如果用户 close session 后又
-    // 用同 sid 起 query（hasActiveQuerySession=false 走 startNewRunSession），
-    // SDK binary 看 jsonl 已存在抛 "Session ID ... is already in use"，
-    // 子进程死，nodejs 端 stdin write EPIPE 整个 server 挂。
-    isResume = await jsonlExistsForSession(cwdRoot, sessionId);
-
-    // 扫已装 plugin（内置 + 用户级 + project 级），返 SDK options 直接用的形态。
-    // 装新 plugin 只有重启 session 才生效（v1 接受，详见 plan § "Hot-reload v2"）。
-    // skillId 参数（传入的 'deskskill-engine-mini'）保留兼容，但实际 skills 列表以
-    // installed.skills 为准 —— 包含所有已装 plugin 内的 skill name 合集。
-    // 用户级 plugin 按**项目 owner** 取，不是按"当前请求者"—— 同一个项目谁来跑
-    // （owner 自己、后台自发回合、admin 代看）都该是同一套 skill，不然会话行为
-    // 会随观看者变。owner 为空（历史项目没回填全）→ 只跳过用户级，别退回共享根。
-    installed = await loadInstalledPlugins({
-      projectId,
-      userId: projectId ? getProject(projectId)?.ownerId : null,
+    // 工具清单：与 standalone 注册集严格一致（同一个 buildNodesignTools + 同一份
+    // disabledTools）。handler 不在进程内用 —— 工具真跑在 standalone MCP 子进程。
+    const disabledTools = projectConfig?.tools?.disable ?? [];
+    const toolDefs = buildNodesignTools({
+      workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx, disabledTools,
     });
-    console.log(
-      `[session-loop] plugins=[${installed.plugins.map(p => p.path.split('/').pop()).join(', ')}] `
-      + `skills=[${installed.skills.join(', ')}] `
-      + `(builtin=${installed.diagnostics.builtin} user=${installed.diagnostics.user} project=${installed.diagnostics.project})`
-    );
+    const directTools = toolDefs.map((t) => t.name);
+
+    // resume 检测：pi 转录已存在 → --continue（续写同一 session 文件）。
+    // SDK 时代的 jsonlExistsForSession（~/.claude/projects/）换成 pi-sessions/。
+    const resume = await hasPiSession(piSessionDir(PROJECTS_DATA_ROOT, sessionId));
+
+    // sidecar 端口 = 主进程 HTTP 端口（lifecycle 拼 NODESIGN_MAIN_URL 给子进程回连）。
+    // 与 server/index.js 的 PORT 解析同口径。
+    const port = Number(process.env.PORT || 4001);
+
+    const launch = sessionLaunch({
+      sid: sessionId,
+      projectId,
+      ownerId,
+      workspaceDir: wsRoot,
+      dataRoot: PROJECTS_DATA_ROOT,
+      resume,
+      provider: piRoute.provider,
+      model: piRoute.model,
+      port,
+      directTools,
+      disabledTools,
+    });
+    child = createSessionProcess(launch);
+
+    client = new PiRpcClient({
+      child,
+      onEvent: (obj) => {
+        markSessionActivity(sessionId);   // 每条事件都是活跃信号（长 turn 不被 idle 掐）
+        // usage 累计必须在 bridge 之前（bridge 只留最后一轮）
+        if (obj?.type === 'message_end' && obj.message?.role === 'assistant'
+          && obj.message?.usage && turnState) {
+          accumulateUsage(turnState.usageAcc, obj.message.usage);
+        }
+        currentBridge?.handleLine(obj);
+        if (obj?.type === 'agent_settled') onSettled();
+      },
+      onExit: (code, signal, err) => onPiExit(code, signal, err),
+      stderr: (line) => console.error(`[session ${sessionId.slice(0, 8)}/pi.stderr]`, line),
+    });
+
+    // cancelRun 的 streamInput 路径调 qRec.query.interrupt() —— attach 的"query"
+    // 就是这个 shim：记 cancelRequested（agent_settled 到达时判 cancelled）+ 发 abort。
+    // 5s 兜底：pi 收了 abort 却不 settle（卡死）时强制结账，前端不挂 streaming。
+    attachSessionQuery(sessionId, {
+      interrupt: () => {
+        if (turnState) turnState.cancelRequested = true;
+        const p = client.abort().catch(() => { /* 进程可能已死 */ });
+        setTimeout(() => {
+          if (turnState && !turnState.settled && turnState.cancelRequested) {
+            console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} interrupt 后 5s 未 settle，强制按 cancelled 结账`);
+            settleTurn({ outcome: 'cancelled', reason: 'user_cancel:interrupt_timeout' });
+          }
+        }, 5000).unref?.();
+        return p;
+      },
+    });
+
+    await client.start();   // get_state 探活；失败抛错（带 stderr 尾巴）
   } catch (err) {
     console.error(`[session-loop] init failed sid=${sessionId.slice(0, 8)}:`, err.message);
+    // 子进程可能已 spawn —— 收掉，别留孤儿（lifecycle 的进程级钩子只兜主进程退出）
+    try {
+      if (client) { await client.kill(); client.dispose(); }
+      else if (child) { child.kill('SIGKILL'); }
+    } catch { /* */ }
     if (initialRunId) {
       sharedCtx.runId = initialRunId;   // emit 带正确 runId，前端才不会 stale-guard 吞掉
       try { markRunFailed(initialRunId, `init: ${err.message || 'unknown'}`); } catch { /* */ }
     }
     sharedCtx.emit(Events.error(`会话初始化失败：${err.message}`, 'INIT_FAILED', err.stack));
-    // registerIngressSession 在本 try 内、其后还有可抛的 await —— 这里配对注销，
-    // 否则 init 失败的 API 会话在 ingress 的 sessionRoutes 里残留（2026-08-19 评审抓的洞）。
-    // 主路径的注销在下方大 try 的 finally；两处都是幂等 delete，不怕重复。
-    unregisterIngressSession(sessionId);
-    unregisterSessionNotice(sessionId, noticeHandler);
-    takeUpstreamTruncation(sessionId);   // 别留标记给下一个同 sid 的会话
     unregisterQuerySession(sessionId, sessionToken);
     try {
       eventBus.publish({ type: 'run.query.end', sessionId, reason: 'init_failed', ts: new Date().toISOString() });
@@ -344,474 +353,173 @@ export async function runSession({
     throw err;
   }
 
-  // MCP server 实例落变量：开局契约自检要从**传给 query 的同一个实例**上取预期
-  // 工具名（server.toolNames，见 mcp/index.js）——不另立第二份清单。
-  const nodesignServer = createNodesignMcpServer({
-    workspaceRoot: wsRoot, sharedRoot, projectId, sessionId, ctx: sharedCtx,
-    disabledTools: projectConfig.tools.disable,
-    preloadTools: projectConfig.tools.preload,
-  });
+  // ── per-turn lifecycle ──
 
-  // npm 缓存 + 沙盒可写 tmp（$TMPDIR / pip 缓存）：细节与教训见 isolation.js
-  const agentDirs = await prepareAgentDirs({ dataRoot: PROJECTS_DATA_ROOT, projectId, sessionId });
-
-  // ⛔ 服务器自己的运行姿态不许漏进 agent 环境（08-24 案）：
-  //   - NODE_ENV=production（pm2 注的）会让 agent 沙盒里的 npm install 静默跳过
-  //     devDependencies —— 返回 0 还报 "up to date"，vite/typescript 根本没装上，
-  //     构建道当场断。npm_config_production / npm_config_omit 是同一开关的旁路。
-  //   - PWD 是 pm2 进程的 cwd（仓库根）；spawn({cwd}) 不更新它，bash 会自校正但
-  //     python/node/构建工具读 $PWD 拿到的就是错目录 ——"cwd 被重置到父目录"的
-  //     另一半病根。下面显式钉成 cwdRoot。
-  const {
-    NODE_ENV: _dropNodeEnv, npm_config_production: _dropNpmProd,
-    npm_config_omit: _dropNpmOmit, OLDPWD: _dropOldpwd,
-    ...inheritedEnv
-  } = process.env;
-  const sdkEnv = {
-    ...inheritedEnv,
-    PWD: cwdRoot,
-    ANTHROPIC_BASE_URL: baseUrlForBinary,
-    // 订阅模型：apiKeyForBinary = process.env 原值（通常 undefined）——binary 见到
-    // ANTHROPIC_API_KEY 会弃用 ~/.claude 订阅 OAuth，所以订阅路绝不能注入。
-    // API 模型：占位符（真钥匙在 model-ingress 按上游注入，不经 binary）。
-    ANTHROPIC_API_KEY: apiKeyForBinary,
-    CLAUDE_AGENT_SDK_CLIENT_APP: 'nodesign/0.0.1',
-    CLAUDE_CONFIG_DIR: platform.claudeConfigDir,
-    // auto-memory 强制开启分支（binary gate：DISABLE 置 falsy 值 = force on，
-    // 绕过 CLAUDE_CODE_SIMPLE 等后置门；前置门 U$/zl 若拦住则此招无效 → 走自建 B 计划）
-    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-    // 记忆指导追加段（保留 SDK 原合同只追加产品口径，理由见 memory-config.js）
-    CLAUDE_COWORK_MEMORY_EXTRA_GUIDELINES: MEMORY_EXTRA_GUIDELINES,
-    // 工具搜索：非 alwaysLoad 的 MCP 工具延迟加载（省 ~25-30k 常驻 schema tokens），
-    // agent 用 ToolSearch 按需取。白名单见 mcp/index.js ALWAYS_LOAD_TOOLS
-    ENABLE_TOOL_SEARCH: 'true',
-    // npm_config_cache / CLAUDE_CODE_TMPDIR / PIP_CACHE_DIR（见 isolation.js）
-    ...agentDirs.envPatch,
-    // auto 模式分类器用哪个模型。判"这个动作越不越界"是需要判断力的活，
-    // 默认 opus —— 这一步省钱等于把闸门交给一个更笨的看门人。
-    ...(platform.autoModeEnabled ? { CLAUDE_CODE_AUTO_MODE_MODEL: platform.autoModeModel } : {}),
-    // bwrap 垫片：绕开 apply-seccomp 的 unshare 竞态（见 isolation.js / ops/sandbox-shim）
-    ...sandboxShimEnv({ dataRoot: PROJECTS_DATA_ROOT }),
-    // 快速 helper model（SDK 内部 helper：task title 总结、auto-compaction 等）。
-    // 通路见上方 route 注释：订阅 = env 可覆盖；API = 表内 fastModel。
-    ...(fastModel ? { ANTHROPIC_SMALL_FAST_MODEL: fastModel } : {}),
-    // 真实上下文窗口（仅 API 路；订阅路留空让 SDK 用它自己的正确默认）
-    ...(compactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compactWindow) } : {}),
-  };
-
-  const sdkOptions = {
-    cwd: cwdRoot,
-    abortController: sessionAbortController,
-    // --replay-user-messages（2026-08-20）：让 CLI 把每条用户消息在**真正并进对话
-    // 的那一刻**原样回显（带我们 push 时盖的 uuid）。这是 run 记账的 turn 边界锚 ——
-    // 没有它就只能靠"一条消息一个 result"计数接力，而 CLI 会把 turn 进行中追加的
-    // 消息并进当前轮，链一错就永不自愈。机制全文见 active-runs.js claimRunByUuid。
-    // SDK 没把这面旗做成具名选项，走 extraArgs 透传（值 null = 无参布尔旗）。
-    extraArgs: { 'replay-user-messages': null },
-    // 新建 → sessionId 让 SDK 用我们的 sid；已存在 → resume 续 jsonl 历史
-    ...(isResume ? { resume: sessionId } : { sessionId }),
-    // title 仅在新建时有效（resume 用持久化的 title）
-    ...(sessionTitle && !isResume ? { title: sessionTitle.slice(0, 80) } : {}),
-    // additionalDirectories：cwd 外但允许 Read 的目录。
-    //   - sharedRoot：project 共享资源（assets / agent-memory / .claude/）
-    //   - 每个已装 plugin 根：让 agent 能 Read patterns / references 等 SKILL.md 附件
-    //     （SDK Skill 工具只加载 SKILL.md body 自身，附件靠 agent 主动 Read，
-    //      要求路径在 sandbox 范围内 — 详见 memory nodesign_sdk_plugin_routes.md）
-    additionalDirectories: [
-      ...(sharedRoot ? [sharedRoot] : []),
-      ...installed.plugins.map(p => p.path),
-    ],
-
-    env: sdkEnv,
-
-    // sdkModel = appModel spoofing alias（kimi-k2.6 → claude-opus-4-7[1m]）。
-    // 让 SDK 内部 rawMaxTokens=1M，autoCompactWindow=230400 不再被卡 200k；
-    // proxy 出口把 alias 还原成真 appModel 给 gateway。详见 model-context.js。
-    model: sdkModel,
-    // 项目级禁用（nodesign.config.json tools.disable，收紧类）在 DEFAULT_TOOL_ALLOWLIST
-    // 基础上再收一道 —— 命中项从可见集剥离，连名字都不给 agent 看见。
-    // skills.enabled=false 时 Skill 工具一并摘（catalog 都空了，留它会误导 agent 去加载）。
-    tools: (() => {
-      let list = filterTools(toolAllowlist, projectConfig.tools.disable);
-      if (!projectConfig.skills.enabled) list = list.filter((t) => t !== 'Skill');
-      return list;
-    })(),
-    // systemPrompt.append 只放 NODESIGN_PRELUDE（平台协议 / 路径地图 / 工作流硬规则） ——
-    // 语义层"平台强制、用户不可覆盖"。SKILL.md（设计方法论） 走 SDK 原生 plugins+skills：
-    //   - plugins：加载 server/engine/plugins/nodesign（含 .claude-plugin/plugin.json + skills/）
-    //   - skills：把 deskskill-engine-mini 加进 main session 的 skill catalog
-    //
-    // SDK 行为（sdk.d.ts:1649-1671 / 2598）：SDK 在 system prompt 里给 agent 看到 skill listing
-    // （含 frontmatter description，单条截到 1536 字符），agent 自主决定何时通过内置 `Skill`
-    // 工具加载 body 进 context。**SDK 自己注入 listing，host 不该再在 prelude 里写硬规则强制
-    // invoke** —— description 写好让 agent 主动判断即可。
-    //
-    // 历史：2026-05-18 之前是 `append: [PRELUDE, skill.systemPrompt].join('\n\n---\n\n')` ——
-    // SKILL.md body 全文每 turn 恒驻在 system prompt 里。改造后 system prompt 静态前缀更稳
-    // （省 cache），SKILL.md body 只在 agent 真需要决策时进入 context。详见
-    // memory/nodesign_system_prompt_architecture.md。
-    systemPrompt: (() => {
-      // 成人段随项目 owner 的外审档联动（agent-shared.renderPrelude）；
-      // 找不到 owner 时落 loose 默认，绝不落 off。
-      //
-      // uncensored 走模型表的标记位（model-context.isUncensoredModel），不在这里
-      // 判模型名 —— 那是模型属性，写在这儿就是给那张表开第二个真相源。为 true 的
-      // 行拿到的是精简版底线：本地无审查权重跑在自己盒子上、gate 'localGen' 只对
-      // 获批账号开、产物不外发，完整那节的前提（对外开放平台）根本不成立。
-      //
-      // 项目级 prelude 覆盖（nodesign.config.json prompt.prelude.mode='project'）：
-      // 整份换成项目自己的，平台协议 / 产物政策 / 成人档联动都不注入
-      // （覆盖语义与回退规则见 project-config.js 文件头，装配日志在上面）。
-      const prelude = projectPreludeOverride !== null
-        ? projectPreludeOverride
-        : (() => {
-          const owner = projectId ? getUserById(getProject(projectId)?.ownerId) : null;
-          // 档位按模型通路取旋钮（08-20 两旋钮：订阅 / 本地与中转），model 是上面已解析的会话模型
-          // 无主项目 fail-closed 到 tier.js 的默认（strict），别落 loose（生产 08-21 实查 0 个无主项目）
-          return renderPrelude(owner ? levelFor(owner, model) : defaultModerationLevel(null), {
-            uncensored: isUncensoredModel(model),
-          });
-        })();
-      const appended = [prelude, projectConfig.prompt.append].filter(Boolean).join('\n\n---\n\n');
-      // sdkPreset=replace（nodesign.config.json prompt.sdkPreset）：systemPrompt 整份换成
-      // 我们的文本，SDK 内置 claude_code preset（~27.7KB）不注入。实测残留（SDK 2.1.237
-      // 假网关）：顶层 system 只剩 160B 计费头+身份行，另有 messages[1] 10.9KB 动态提醒段
-      // （agent 注册表 / skill 目录 / token 预算）—— 后者不走 systemPrompt 字段，换不掉。
-      // 替换后失去的 preset 行为（安全条款/钩子信任/动作确认/记忆协议/压缩契约）要靠
-      // prelude 文本自己补，见 project-config.js 文件头。
-      return projectConfig.prompt.sdkPreset === 'replace'
-        ? appended
-        : { type: 'preset', preset: 'claude_code', append: appended };
-    })(),
-    // 项目级关闭（nodesign.config.json skills.enabled=false）：skill catalog（plugins+
-    // skills 两路）和 Skill 工具一起剥 —— plugin 目录资源仍留在 additionalDirectories
-    // 可 Read，但那只是文件访问，不再是"技能协议"。
-    plugins: projectConfig.skills.enabled ? installed.plugins : [],
-    skills: projectConfig.skills.enabled ? installed.skills : [],
-
-    // 2026-05-18 安全：关 inline shell execution。SDK 默认允许 skill / slash command 内
-    // inline shell 命令（Anthropic 标准 skill 协议的一部分，如 setup script）—— 但 NoDesign
-    // 允许用户上传 plugin，若不关 = 用户上传的 SKILL.md 含 shell 命令会被 SDK 真的执行 = RCE。
-    // 内置 deskskill-engine-mini 不依赖 inline shell，关掉无功能损失。
-    // 详见 memory nodesign_sdk_skills_options_internals.md「安全相关 SDK option」。
-    disableSkillShellExecution: true,
-
-    // resume 时不传 permissionMode：SDK 会从 JSONL 读原 session flags + 检查
-    // bypassPermissions 必须有 --dangerously-skip-permissions 启动才允许。如果
-    // 老 session 是在没这个 flag 的版本下创建的（老 SDK / 老代码），现在硬传
-    // permissionMode: 'bypassPermissions' 会让 SDK 抛：
-    //   "Cannot set permission mode to bypassPermissions because the session
-    //    was not launched with --dangerously-skip-permissions"
-    // 这个错没有 runId 会被前端 stale guard 吞掉 → 用户看到"完全没反应"。
-    // 修：resume 不传 permissionMode 让 SDK 用 JSONL 保存的；运行时切 mode 通过
-    // query.setPermissionMode + turn.js POST /turn 入口的 mode 校正路径完成。
-    // 默认模式来自 platform（exp 是 'auto' = 模型分类器判每次调用，生产仍是 'bypassPermissions'）。
-    ...(isResume ? {} : { permissionMode: platform.permissionModeDefault }),
-    // 永远 true：与 permissionMode 正交——只是"允许运行时切 bypassPermissions"的安全
-    // 开关，启动当下的 mode 由 permissionMode 字段定。运行时切 mode（turn.js 入口校正）
-    // 必须有它，否则 query.setPermissionMode('bypassPermissions') 会被 SDK 拒：
-    // "session was not launched with --dangerously-skip-permissions"。
-    allowDangerouslySkipPermissions: true,
-
-    // 通用 permission gate
-    //
-    // ⚠️ SDK 0.2.x permission decision schema 要求 'allow' branch 必带 updatedInput
-    // （Zod union 严格验证）；返 `{ behavior: 'allow' }` 缺 updatedInput 会触发
-    // ZodError 让工具被拒。'allow' 都要带 updatedInput（不改的话原样透传 input）。
-    //
-    canUseTool: async (toolName, input, options) => {
-      const currentMode = getSessionPermissionMode(sessionId);
-
-      // auto 模式的升级口：分类器自己拿不准的调用会落到这里（它自己判定要拦的
-      // 不会来，直接就拒了）。第一版**只记账不拦**——先看真实用量里都有谁会
-      // 升上来，再决定拦不拦；这期间分类器的硬拒照样生效。
-      // NODESIGN_AUTO_MODE_ESCALATION=deny 改成拦。
-      if (platform.autoModeEnabled && currentMode === 'auto') {
-        const 因 = options?.decisionReason || options?.title || '(没给原因)';
-        console.log(
-          `[auto-mode] 升级 sid=${sessionId.slice(0, 8)} tool=${toolName} `
-          + `理由=${String(因).replace(/\s+/g, ' ').slice(0, 200)}`,
-        );
-        if (platform.autoModeEscalation === 'deny' && toolName !== 'AskUserQuestion') {
-          return {
-            behavior: 'deny',
-            message:
-              `这个动作没通过平台的自动审批：${String(因).slice(0, 300)}\n`
-              + '换个不需要越界的做法；确实必须这么做的话，先跟用户说清楚你要做什么、为什么，让他决定。',
-            interrupt: false,
-          };
+  /**
+   * 建本 turn 的 EventBridge。emit 包装的分工：
+   *   - 收场三事件（run.done / run.cancelled / 终态 run.error）一律**吞掉**——
+   *     finishTurn 是它们唯一的权威出口（带 artifactPath / token / 正确 reason）。
+   *     桥的 run.done 缺 artifactPath/token；桥的 run.cancelled（abort 应答路径）
+   *     与 finishTurn 的 Events.cancelled 重复；终态 run.error 与 finishTurn 的
+   *     Events.error 重复。转发会造成前端双弹。
+   *   - 终态 run.error 虽吞转发，但要 settle 本 turn 为 error（settle 三来源之一）。
+   *   - 非终态 run.error（EXTENSION_ERROR 等）→ 只转发，不 settle（turn 可能仍成功）。
+   *   - 其余事件（delta / tool / compact / rate_limit / queue_update…）→ 直接转发。
+   * 桥的 out() 已把 {runId, sessionId, ts} 富化进事件，直接 publish 即可。
+   */
+  function makeBridge(runId) {
+    return createEventBridge({
+      emit: (evt) => {
+        if (evt.type === 'run.done' || evt.type === 'run.cancelled') return;
+        if (evt.type === 'run.error') {
+          if (TERMINAL_ERROR_CODES.has(evt.code)) {
+            settleTurn({ outcome: 'error', code: evt.code, message: evt.message || evt.code });
+            return;   // 吞转发：finishTurn 发权威 Events.error
+          }
+          // 非终态（EXTENSION_ERROR 等）：只转发，不 settle
         }
-      }
+        try { eventBus.publish(evt); } catch { /* bus 异常不弄死 turn */ }
+      },
+      run: { runId, uid: ownerId, sessionId, model, pid: child?.pid },
+      isTurnActive: () => client.isTurnActive(),
+    });
+  }
 
-      if (toolName !== 'AskUserQuestion') return { behavior: 'allow', updatedInput: input };
-      const toolUseId = options?.toolUseID;
-      if (!toolUseId) {
-        return { behavior: 'deny', message: 'AskUserQuestion missing toolUseID', interrupt: false };
-      }
-      let currentRunId = getCurrentTurnRunId(sessionId);
-      if (!currentRunId) {
-        // 后台自发 turn（task-notification 唤起）里 agent 问用户 —— 以前直接
-        // deny "no active turn"，把带 preview 的候选卡逼退成纯文字。现在铸造
-        // 一个真 turn 再放行（mintBackgroundTurn 会 emit run.start 让前端拿到
-        // runId，answer 回路照常走）。
-        currentRunId = mintBackgroundTurn('AskUserQuestion');
-      }
-      sharedCtx.emit({ type: 'run.ask_user_question', toolUseId, input });
-      try {
-        const answers = await registerPendingQuestion(currentRunId, toolUseId);
-        return { behavior: 'allow', updatedInput: { ...input, answers } };
-      } catch (err) {
-        return { behavior: 'deny', message: err.message, interrupt: true };
-      }
-    },
-
-    // Phase B 批次 4：MCP elicitation 接通前端 Modal。
-    // 流程：MCP 工具调 server.elicitInput() → SDK 调这个回调 → 我们 emit
-    // run.elicitation_request 给前端 → ElicitationModal 弹出 → 用户填完 POST
-    // /elicit/:reqId/answer → provideElicitation 返回 { action, content } → SDK
-    // 拿到结果继续工具调用。
-    // 60s 超时是为了给用户填表时间（之前 5s 太短，未来真用 elicit 时永远没机会答）；
-    // 仍兜底防 MCP 工具卡死整个 agent loop。
-    onElicitation: async (request, _options) => {
-      const reqId = randomUUID();
-      const currentRunId = getCurrentTurnRunId(sessionId);
-      try {
-        sharedCtx.emit({ type: 'run.elicitation_request', reqId, request, runId: currentRunId });
-      } catch { /* ignore */ }
-      if (!currentRunId) {
-        return { action: 'decline' };
-      }
-      try {
-        const p = registerPendingElicitation(currentRunId, reqId);
-        const timeoutPromise = new Promise(resolve =>
-          setTimeout(() => resolve({ action: 'decline' }), 60_000),
-        );
-        return await Promise.race([p, timeoutPromise]);
-      } catch {
-        return { action: 'decline' };
-      }
-    },
-
-    persistSession: true,
-    settingSources: ['project'],
-
-
-    includePartialMessages: STREAMING_ENABLED,
-    // 子代理时间轴（2026-07-28）：转发子代理完整对话（text/thinking 也带
-    // parent_tool_use_id），前端按它拆「对话」主线和每个子代理的独立时间轴。
-    // 默认只透传 tool_use/tool_result（心跳级），不够渲染嵌套 transcript。
-    forwardSubagentText: true,
-
-    thinking: pickThinkingConfig(model),
-    effort: 'medium',
-    // streamInput 模式 query 横跨整个 session，maxTurns 是**全局累计**（每条
-    // user message 起一轮 agent loop，turn 数不重置）。50 对复杂 deck（多页 +
-    // 多次自检 + 子代理）不够，改 100 给足余量；env override 给极端情况用
-    maxTurns: Number(process.env.NODESIGN_MAX_TURNS)
-      || 100,
-
-    // 不传 resume —— streamInput 模式 SDK 内存保 history，不依赖 jsonl
-    enableFileCheckpointing: true,
-    agentProgressSummaries: true,
-    promptSuggestions: true,
-    forwardSubagentText: true,
-
-    // maxBudgetUsd（2026-07-30 默认撤销）：它只是给 agent 注"USD budget:
-    // $X/$N; remaining"的软提醒，SDK 不硬截断；数字还是按 SDK 硬编码价目表
-    // × spoofing 模型名算的虚价。订阅 OAuth 模式下实际不按 token 扣费，这个
-    // 虚价 reminder 只会给 agent 制造错误紧迫感（少派子代理 / 仓促收尾）——
-    // 不传，让 reminder 彻底消失。按量付费网关想要预算线时用
-    // NODESIGN_MAX_BUDGET_USD 显式开。
-    // （历史：Kimi 时代因 Opus 虚价 30× 把默认从 $10 拉到 $150，现连默认也不要了）
-    ...(() => {
-      const v = Number(process.env.NODESIGN_MAX_BUDGET_USD);
-      return Number.isFinite(v) && v > 0 ? { maxBudgetUsd: v } : {};
-    })(),
-
-    // 隔离两道闸（sandbox 管 Bash，permissions.deny 管 Read/Write 这类进程内工具）
-    // 全在 agent/isolation.js 里，改之前读那份文件头上的四条实测教训。
-    // ⛔ settings 必须与 isolationOptions.settings 深合并 —— 08-15 起两处 settings
-    // 静默互吞八天（autoMemory*/skipWebFetchPreflight 全丢）。合并+出口断言在
-    // memory-config.js 的 mergeAgentSettings。
-    ...(() => {
-      const isolation = buildIsolationOptions({ cwdRoot, sharedRoot, ...agentDirs, dataRoot: PROJECTS_DATA_ROOT, env: sdkEnv });
-      return {
-        ...isolation,
-        settings: mergeAgentSettings(isolation.settings, {
-          skipWebFetchPreflight: platform.skipWebFetchPreflight, sharedRoot,
-          // claudeMd=off（nodesign.config.json prompt.claudeMd）：项目 CLAUDE.md
-          // 记忆精确排除（SDK settings.claudeMdExcludes，绝对路径 picomatch）。
-          // 只排 CLAUDE.md 文件，settings.json / autoCompact 读取不受影响。
-          ...(projectConfig.prompt.claudeMd === 'off' ? {
-            claudeMdExcludes: [
-              path.join(sharedRoot, 'CLAUDE.md'),
-              path.join(sharedRoot, '.claude', 'CLAUDE.md'),
-            ],
-          } : {}),
-        }),
-      };
-    })(),
-
-    toolConfig: {
-      askUserQuestion: { previewFormat: 'html' },
-    },
-
-    // projectId 要传：PostToolUseFailure 记问题库时用它标归属（漏传的话
-    // issues 行的 project_id 全是 null，事后追不回是哪个项目踩的）
-    hooks: createHooks({ ctx: sharedCtx, workspaceRoot: wsRoot, sharedRoot, sessionId, projectId, toolDisable: projectConfig.tools.disable }),
-
-    mcpServers: {
-      // 键名 = 模型眼里的 `mcp__<名>__<工具>` 前缀，也是 isolation.js 那条
-      // permissions.allow 规则要匹配的名字 —— 两个读者，收在 mcp/server-name.js
-      [MCP_SERVER_NAME]: nodesignServer,
-      // 外部 MCP server（.env 的 NODESIGN_MCP_SERVERS，设置页「引擎」组可改）。
-      // 读者 #1：名字在这里展开成工具前缀；读者 #2 的 allow 规则在 isolation.js，
-      // 两份都出自 mcp/external.js 同一份解析，别在这手写。
-      // 项目级禁用（config.tools.disable）按 server 粒度收紧：命中整台摘掉，
-      // 精度只到 server（外部是 SDK 子进程整组连接，无逐工具注册点）。
-      // 项目级挂载（config.tools.preload，server 粒度）：命中整台 alwaysLoad
-      // （SDK McpServerConfig.alwaysLoad，d.ts:1071）——工具常驻免 ToolSearch。
-      ...applyMcpServerPreload(
-        filterMcpServers(externalMcpServers(), projectConfig.tools.disable),
-        projectConfig.tools.preload,
-      ),
-    },
-
-    // mainModel = appModel ('kimi-k2.6')，sdkModel = SDK 视角 alias ('claude-opus-4-7[1m]')。
-    // vision-checker 用 sdkModel 让 SDK 信 1M context（绕开"喂真 kimi → SDK 不认 →
-    // rawMaxTokens fallback 200k"）；其余子代理走 fastModel，跟以前一致。
-    agents: createAgents({ mainModel: model, sdkModel, fastModel }),
-
-    stderr: (data) => {
-      console.error(`[session ${sessionId.slice(0, 8)}/claude.stderr]`, data.trim());
-    },
-  };
-
-  // ── per-turn lifecycle helpers ──
-
-  let activeTurnRunId = null;
-  let turnStartedAt = 0;        // 本回合开始时刻（半截标记的新鲜度判据）
-  // 半截续接前存下的"第一轮的账"（结账时加回去）。⚠️ 必须声明在 finishTurn **之前**：
-  // finishTurn 引用它，写在下面的 try 块里会让闭包够不着 → 每个回合都 ReferenceError
-  // （真路径探针逮到的，node --check 和单测都看不见）。
-  let truncationCarry = null;
-
-  const startTurn = (runId) => {
-    activeTurnRunId = runId;
-    turnStartedAt = Date.now();
-    markSessionActivity(sessionId);  // turn 边界 = 活跃信号
-    // 重置 sharedCtx 的 per-turn state
+  /**
+   * 一条用户消息 = 一个完整 turn。
+   * 流程：重置 sharedCtx → 建桥 → registerRun → markRunStarted → prompt →
+   * await settle → finishTurn。settle 之前绝不返回（串行纪律的锚）。
+   */
+  async function runTurn({ runId, text, images }) {
+    // per-turn 重置（context-counters.test.js 钉着 counters 这行的形状）
     sharedCtx.runId = runId;
     sharedCtx.counters = freshTurnCounters();
     sharedCtx.startedAt = Date.now();
     sharedCtx._cancelled = false;        // context.js cancel 幂等 flag 重置
-    // 当前 turn id 写到 process.env（历史上给 proxy 透传 trace 头用；NoDesk 退役
-    // 后暂无消费方，保留是因为惯性成本为零、删了想再串链路要重接）。
-    // 旧的 NODESIGN_CURRENT_APP_MODEL 已随 model-ingress 重建退役：路由改为按
-    // 请求 body.model 查表，天然无跨会话互写问题。
+
+    const st = {
+      runId,
+      cancelRequested: false,
+      settled: false,
+      outcome: null,
+      usageAcc: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreateTokens: 0, totalCostUsd: 0 },
+    };
+    st.settlePromise = new Promise((resolve) => { st.settleResolve = resolve; });
+    turnState = st;
+    currentBridge = makeBridge(runId);
+
+    // sidecar /charge 按 runId → ctx 记 addToolCharge（active-runs 要求 abortController 非空）
+    registerRun(runId, { abortController: sessionAbortController, ctx: sharedCtx });
+
+    markSessionActivity(sessionId);      // turn 边界 = 活跃信号
     process.env.NODESIGN_CURRENT_TURN_ID = runId;
-    markRunStarted(runId);
-    // 丢掉回合之外留下的半截标记：CLI 在两个回合之间还会用**主模型**打几发
-    // （SUGGESTION MODE 的猜你想问、标题生成等，真路径探针实测），那些也会被
-    // ingress 标成半截。不清的话下一轮一开场就吃到陈旧标记，平白续接一次
-    // （用户看到 agent 没头没脑地"接着写"）。只有本回合内产生的标记才算数。
-    takeUpstreamTruncation(sessionId);
-    sharedCtx.emit(Events.start());
-  };
+    try { markRunStarted(runId); } catch (err) {
+      console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} markRunStarted(${runId}) failed: ${err.message}`);
+    }
+    // run.start 由桥在首个 agent_start 时发（带 model/pid）—— 这里不另发 Events.start()
 
-  // ── 后台自发 turn 铸造（2026-07-29）──
-  // SDK 自己发起的 turn（后台 Task 子代理完成 → task-notification 重新唤起 agent）
-  // 没有经过 turn.js POST /turn，没人 createRun / 设 currentRunId。后果：
-  //   1. AskUserQuestion 被 canUseTool 以 "no active turn" 拒掉 —— explorer 跑完
-  //      准备好三张带 preview 的方向卡片，只能退化成纯文字描述（真实伤口）
-  //   2. 整个回合的事件挂在上一个已结束 run 的 runId 上，前端归属混乱
-  // 修法：检测到无主 turn 时铸造一个真 run record（createRun → setCurrentTurnRunId
-  // → startTurn），让 run.start/run.done、AskUserQuestion answer 回路、runs 审计
-  // 全部照常工作。前端 activeRun 由 run.start 设置，answer POST 天然有 runId 可用。
-  const mintBackgroundTurn = (reason) => {
-    // 归属：后台自发 turn 没有 req.user，用项目 owner（配额/审计口径一致）
-    let ownerId = null;
-    try { ownerId = getProject(projectId)?.ownerId ?? null; } catch { /* 归属查不到不挡后台回合 */ }
-    const run = createRun({
-      skillId,
-      brief: `(后台回合：${reason})`,
-      projectId,
-      userId: ownerId,
-      metadata: { background: true, mintReason: reason },
-    });
-    setCurrentTurnRunId(sessionId, run.id);
-    startTurn(run.id);
-    console.info(
-      `[session-loop] sid=${sessionId.slice(0, 8)} minted background turn run=${run.id} (${reason})`,
-    );
-    return run.id;
-  };
+    try {
+      // response 行不进桥（rpc-client 内部消化）—— success:false 直接判返回值
+      const resp = await client.prompt(text, { id: runId, images: images?.length ? images : undefined });
+      if (resp && resp.success === false) {
+        settleTurn({ outcome: 'error', code: 'PROMPT_REJECTED', message: resp.error || 'prompt rejected' });
+      }
+    } catch (err) {
+      // stdin 写失败 / 进程已死（onPiExit 通常已先 settle PI_EXITED；这里是兜底）
+      settleTurn({ outcome: 'error', code: 'PI_EXITED', message: err.message || 'prompt failed' });
+    }
 
+    await st.settlePromise;
+    await finishTurn(st, currentBridge);
+  }
 
-  const finishTurn = async (status, info) => {
-    if (!activeTurnRunId) return;
-    const runId = activeTurnRunId;
-    // 取消 / 出错路径没走到上面那次 addCarry —— 在这里补上，别让续接前那一轮的账凭空消失
-    // （取消掉的回合一样烧了 token，配额口径要计）
-    if (truncationCarry) { sharedCtx.addCarry(truncationCarry); truncationCarry = null; }
-    if (status === 'success') {
+  /**
+   * 结账：恰好一次。落库（metrics / modelUsage / metadata / 状态）+ emit 收场事件
+   * （done / cancelled / error）+ 工作区 commit + 清理 per-turn 引用。
+   */
+  async function finishTurn(st, bridge) {
+    const runId = st.runId;
+    const outcome = st.outcome || { outcome: 'error', code: 'UNKNOWN', message: 'turn 无结算结果' };
+    turnState = null;
+    currentBridge = null;   // 此后的事件（迟到的 settled 等）无桥可进，丢弃
+
+    // ── 计量 ──
+    // pi usage 累计 → counters 主字段 + 分模型明细（M1 无热切换，单模型 = appModel）。
+    const acc = st.usageAcc;
+    sharedCtx.counters.inputTokens = acc.inputTokens;
+    sharedCtx.counters.outputTokens = acc.outputTokens;
+    sharedCtx.counters.cacheReadTokens = acc.cacheReadTokens;
+    sharedCtx.counters.cacheCreateTokens = acc.cacheCreateTokens;
+    sharedCtx.counters.totalCostUsd = acc.totalCostUsd;
+    sharedCtx.counters.modelUsage = {
+      [model]: {
+        inputTokens: acc.inputTokens, outputTokens: acc.outputTokens,
+        cacheReadTokens: acc.cacheReadTokens, cacheCreateTokens: acc.cacheCreateTokens,
+        costUsd: acc.totalCostUsd,
+      },
+    };
+    // 桥的可观测计数（turns / toolCalls / toolFailures / compactBoundaries / apiRetries）
+    const finalText = bridge ? [...bridge.state.textByIndex.values()].join('') : '';
+    if (bridge) {
+      const bc = bridge.state.counters;
+      sharedCtx.counters.turns = bc.turns;
+      sharedCtx.counters.toolCalls = bc.toolCalls;
+      sharedCtx.counters.toolFailures = bc.toolFailures;
+      sharedCtx.counters.compactBoundaries = bc.compactBoundaries;
+      sharedCtx.counters.apiRetries = bc.apiRetries;
+    }
+    // 按件计价的工具花费（sidecar /charge 记的 generate_image 等）折进 modelUsage ——
+    // SDK 时代是 absorbResult 调的，现在必须显式调（它会重算 totalCostUsd，所以
+    // 必须在 usage 落 counters 之后）。
+    sharedCtx._foldToolCharges();
+
+    if (outcome.outcome === 'success') {
       const artifactPath = await detectArtifact(sharedCtx);
-      mergeRunMetadata(runId, { sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters });
+      mergeRunMetadata(runId, {
+        ...sharedCtx.counters,
+        stopReason: bridge?.state.stopReason ?? null,
+        wireModel: bridge?.state.model ?? null,
+      });
       setRunMetrics(runId, sharedCtx.counters);
       setRunModelUsage(runId, sharedCtx.counters.modelUsage);
       try { markRunSucceeded(runId, { artifactPath }); } catch { /* idempotent */ }
-      sharedCtx.emit(Events.done(info?.finalText || '', artifactPath, sharedCtx.snapshot ? sharedCtx.snapshot() : { counters: sharedCtx.counters }));
-      // （2026-08-19 拆除：收场 recap —— 闲时精灵那句"刚才干了什么"。它唯一的
-      //   产出方式是起一发写死 claude-haiku-4-5 的一次性会话，不跟随会话模型，
-      //   本地/API 会话照样烧订阅额度且不进记账。闲时精灵改回写问候语，那是
-      //   recap 缺席时本来就走的分支。理由全文见 lib/quick-summary.js 文件头。）
-      // 首页大输入框建出来的项目名是垫的：第一轮跑完拿 SDK helper 写的会话摘要
-      // 正名一次（只一次，用户改过名就不动）。失败不影响 turn。
+      sharedCtx.emit(Events.done(finalText, artifactPath, sharedCtx.snapshot()));
+      // 首页大输入框建的项目名是垫的：第一轮跑完拿 pi 会话摘要正名一次（只一次，
+      // 用户改过名就不动）。失败不影响 turn。
       autoNameProjectFromSession(projectId, sessionId)
         .then((name) => {
           if (name) sharedCtx.emit({ type: 'project.renamed', projectId, name });
         })
         .catch((err) => console.warn('[auto-name]', err.message));
-    } else if (status === 'cancelled') {
-      // 取消掉的 turn 也烧了 token —— counters 一样落库（配额视角是漏收）
+    } else if (outcome.outcome === 'cancelled') {
+      // 取消掉的 turn 也烧了 token —— counters 一样落库（配额视角不能漏收）
       mergeRunMetadata(runId, {
-        aborted: true, abortReason: info?.reason || 'user_cancel',
-        sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters,
+        aborted: true, abortReason: outcome.reason || 'user_cancel',
+        ...sharedCtx.counters,
       });
       setRunMetrics(runId, sharedCtx.counters);
       setRunModelUsage(runId, sharedCtx.counters.modelUsage);
-      try { markRunFailed(runId, `cancelled: ${info?.reason || 'user_cancel'}`); } catch { /* */ }
-      sharedCtx.emit({ type: 'run.cancelled', reason: info?.reason || 'user_cancel' });
-    } else if (status === 'error') {
+      // 沿用 SDK 时代口径：cancelled 落 failed（'cancelled: reason'），配额 sum 不断
+      try { markRunFailed(runId, `cancelled: ${outcome.reason || 'user_cancel'}`); } catch { /* */ }
+      sharedCtx.emit(Events.cancelled(outcome.reason || 'user_cancel'));
+    } else {
       mergeRunMetadata(runId, {
-        sdkSessionId: sharedCtx.sdkSessionId, ...sharedCtx.counters,
-        errorCode: info?.code, errorMessage: info?.message,
+        ...sharedCtx.counters,
+        errorCode: outcome.code, errorMessage: outcome.message,
       });
       setRunMetrics(runId, sharedCtx.counters);
       setRunModelUsage(runId, sharedCtx.counters.modelUsage);
-      try { markRunFailed(runId, info?.message || 'unknown'); } catch { /* */ }
-      sharedCtx.emit(Events.error(info?.message || 'unknown', info?.code, info?.stack));
+      try { markRunFailed(runId, outcome.message || outcome.code || 'unknown'); } catch { /* */ }
+      sharedCtx.emit(Events.error(outcome.message || 'unknown', outcome.code));
     }
-    // 工作区一轮一条 commit（2026-08-08）。
-    //
-    // 在这之前**只有"用户在画布上直接编辑 HTML"那一条路会提交**（canvas.js 的
-    // PUT），agent 写文件、mv 文件一次 commit 都不产生 —— 项目仓里基本只有一条
-    // init。现在它承担一件具体的活：画布物件的 id 就是工作区相对路径，agent
-    // 背着画布 `mv` 一个文件，那张卡的坐标 / 关系线 / 批注全断，而且因为
-    // board.objects 是稀疏的，断掉的条目**清都清不掉**。git 的改名检测是唯一
-    // 不用引入第二个真相源就能认出"这是同一个东西换了位置"的办法
-    // （见 board-store.js 的 reconcileBoardRenames），而它需要有 commit 可比。
-    //
-    // 失败只 warn：一个 commit 落不下不该让已经跑完的 turn 变成失败。
-    // **等它落完再往下走**：对账器（reconcileBoardRenames）靠这条 commit 才看得见
-    // agent 这一轮 mv 了什么。不等的话，turn 完成事件触发的那次产物重扫可能跑在
-    // commit 前面，改名这一轮就漏掉了。
-    await commitWorkspace(projectId, sessionId, `turn ${status}: ${new Date().toISOString()}`, { author: 'agent' })
+
+    // 工作区一轮一条 commit（画布物件 id = 相对路径，git 改名检测是 reconcile 的
+    // 唯一真相源，见 board-store.js reconcileBoardRenames）。失败只 warn。
+    await commitWorkspace(projectId, sessionId, `turn ${outcome.outcome}: ${new Date().toISOString()}`, { author: 'agent' })
       .catch((err) => console.warn('[git] turn commit failed:', err.message));
 
-    // 黑板草稿兜底落定（2026-08-23）：agent 这一轮 sketch_on_board 留下的 staging
-    // 物件，没调 finish_sketch 也在回合结束时变实 —— 草稿态是"正在画"的信号，
-    // 回合都结束了还半透明就是幽灵。取消/出错同样落定：画了就是画了。
+    // 黑板草稿兜底落定：agent 这轮 sketch_on_board 留下的 staging 物件，没调
+    // finish_sketch 也在回合结束时变实。取消/出错同样落定：画了就是画了。
     if (projectId) {
       try {
         const { committed } = await commitStaging(projectId);
@@ -819,21 +527,15 @@ export async function runSession({
       } catch (err) { console.warn('[board] commitStaging failed:', err.message); }
     }
 
-    activeTurnRunId = null;
-    turnStartedAt = 0;
+    unregisterRun(runId);
     markSessionActivity(sessionId);  // turn 结束 = 活跃信号；下次 idle 计时重置
-    // 让出 currentRunId。排队的下一 turn **不在这里按计数晋升**（2026-08-20 起）——
-    // 由它自己的回显来认领（见 for-await 循环头的回显锚）。老接力在 CLI 并轮后
-    // 永久错一格（run 记账错位案，见 active-runs.js）。
-    releaseCurrentTurnRunId(sessionId);
-    // 清掉 turn id 环境变量；下个 turn 的 startTurn 会重设
     delete process.env.NODESIGN_CURRENT_TURN_ID;
-  };
+    // currentRunId 的让出 + 下一条晋升归主循环的 takeNextRunId（原子，无窗口）
+  }
 
   // ── idle timeout 兜底 ──
   // 用户关 tab 后 WS-disconnect grace 是常规清理路径；这里再加一道：
   // session 超过 IDLE_TIMEOUT 无任何活动（push message / turn 边界）→ 自动关。
-  // 防止"WS 还在但 user 走开几小时"的隐性占用。
   const IDLE_TIMEOUT_MS = Number(process.env.NODESIGN_SESSION_IDLE_MS) || 30 * 60_000;
   const IDLE_SCAN_INTERVAL_MS = Math.min(5 * 60_000, IDLE_TIMEOUT_MS);
   const idleScanTimer = setInterval(() => {
@@ -846,271 +548,56 @@ export async function runSession({
   }, IDLE_SCAN_INTERVAL_MS);
   idleScanTimer.unref?.();
 
-  // ── main stream loop ──
-
-  let stream;
+  // ── main message loop（严格串行）──
   try {
-    stream = query({ prompt: inputQueue, options: sdkOptions });
-    attachSessionQuery(sessionId, stream);
-
-    // 铅笔精灵的手写短句（2026-08-14 日记本批）：assistant 文本一到就把第一
-    // 小句压成一行推上画布，纯本地整形、零成本零延迟、同步出结果。
-    // 子代理的话不上精灵 —— 它们有自己的舞台便利贴。
-    // （2026-08-19 拆除后半段：原来这里还起一发 haiku 精修、到货再补一发
-    //   refined:true 覆盖底稿。那发写死走订阅不跟随会话模型 —— 见
-    //   lib/quick-summary.js 文件头。现在一 round 只有这一发。）
-    let lastSummarySrc = '';
-    const maybeSpriteSummary = (message) => {
-      if (message.parent_tool_use_id) return;
-      const text = (message.message?.content || [])
-        .filter(b => b?.type === 'text' && typeof b.text === 'string')
-        .map(b => b.text).join('\n').trim();
-      if (!text || text === lastSummarySrc) return;
-      lastSummarySrc = text;
-      const line = clampFirstClause(text);
-      if (line) sharedCtx.emit(Events.spriteSummary(sharedCtx.counters.turns, line));
-    };
-
-    // emitContextUsage：fire-and-forget per assistant message
-    let usageInFlight = false;
-    const emitContextUsage = () => {
-      if (usageInFlight) return;
-      usageInFlight = true;
-      stream.getContextUsage()
-        .then((usage) => { if (usage) sharedCtx.emit(Events.contextUsage(usage, sharedCtx.appModel)); })
-        .catch(() => { /* fail-soft */ })
-        .finally(() => { usageInFlight = false; });
-    };
-
-    // ── 半截续接（08-21 晚）──
-    // Zen 会在模型说到一半时把流掐了（无 finish_reason / 私货 finish 如 network_error），
-    // 正文已经吐了一半。转换层照旧按 end_turn 交付（假上游实测：有可见输出后再发 error 事件
-    // CLI **不重试**，只会把半截 + "Server error mid-response" 一起判 is_error 丢给用户），
-    // 于是半截答案就成了最终答案 —— agent 说半句话就收工。08-21 当天生产 4 次。
-    //
-    // 治法跟 OpenCode 1.18.21 对 unknown finish 的做法一样：半截那段原样留在历史里，
-    // 补一条用户消息让模型接着说，同一个 run 内再跑一轮（pushUnclaimedMessage 不认领 run）。
-    // 上限 MAX_CONTINUATIONS：上游持续半截时别把回合拖成无限循环。
-    // ⚠️ 别写 `Number(env) || 2`：设 0 想紧急关掉这个功能会落回 2（fable 评审 P2）
-    const envMax = Number(process.env.NODESIGN_TRUNCATION_CONTINUATIONS);
-    const MAX_CONTINUATIONS = Number.isFinite(envMax) && envMax >= 0 ? envMax : 2;
-    const continuationCounts = new Map();   // runId → 已续接次数
-    const maybeContinueTruncated = () => {
-      const mark = takeUpstreamTruncation(sessionId);
-      if (!mark) return false;
-      const runId = activeTurnRunId;
-      if (!runId) return false;
-      // 只认**本回合内**产生的标记。CLI 在回合之间还会用主模型打请求（猜你想问 / 标题），
-      // 上游一慢它们可能迟到；startTurn 那次清扫挡不住迟到的（fable 评审 P2）。
-      if (turnStartedAt && mark.at && mark.at < turnStartedAt) {
-        console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} 丢弃回合外的半截标记（${mark.reason}，早于本回合开始）`);
-        return false;
-      }
-      const used = continuationCounts.get(runId) || 0;
-      const sidShort = sessionId.slice(0, 8);
-      if (used >= MAX_CONTINUATIONS) {
-        console.warn(`[session-loop] sid=${sidShort} run=${runId} 半截续接已用满 ${used} 次（${mark.reason}），按现状收尾`);
-        sharedCtx.emit(Events.notification('upstream_truncated', `上游连着把回答掐断了 ${used + 1} 次，这段可能没说完。重发一次试试。`, 'warn'));
-        return false;
-      }
-      const pushed = pushUnclaimedMessage(sessionId, {
-        type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text: CONTINUATION_PROMPT }] },
-        parent_tool_use_id: null,
-      });
-      if (!pushed) return false;
-      continuationCounts.set(runId, used + 1);
-      // 第一轮的账要结转，否则被下一个 result 的 absorbResult 整个覆盖（fable 评审 P0）
-      truncationCarry = sharedCtx.takeCarry();
-      console.warn(`[session-loop] sid=${sidShort} run=${runId} 上一条回复被上游掐断（${mark.reason}）→ 自动续接第 ${used + 1}/${MAX_CONTINUATIONS} 次`);
-      sharedCtx.emit(Events.notification('upstream_truncated', '上游把回答掐断了，正在让它接着说完。', 'info'));
-      return true;
-    };
-
-    for await (const message of stream) {
-      // 每条 SDK message 都是活跃信号 —— 老逻辑只有 push / turn 边界算活跃，
-      // 单个 turn 跑超 30 分钟（多页 deck + 子代理）会被 idle timeout 掐死（P8）
-      markSessionActivity(sessionId);
-
-      // ── 回显锚（2026-08-20，run 记账错位案）──
-      // CLI 开了 --replay-user-messages：我们 push 的每条用户消息会在**真正被并进
-      // 对话的那一刻**回显回来（带 push 时盖的 uuid）。按 uuid 认领它的 run：
-      //   promoted → 它的 turn 现在开始（下面的边界检测接手 startTurn）
-      //   merged   → 它被并进了正在跑的这一轮，就地关账，不另起 turn
-      // 机制与探针证据见 active-runs.js claimRunByUuid 上方的注释。
-      if (message.type === 'user' && message.uuid && !message.parent_tool_use_id) {
-        const claim = claimRunByUuid(sessionId, message.uuid);
-        if (claim?.outcome === 'merged') {
-          closeMergedRun({ runId: claim.runId, intoRunId: claim.intoRunId, sessionId, sdkSessionId: sharedCtx.sdkSessionId, eventBus });
-        } else if (claim?.outcome === 'unknown') {
-          console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} replayed run=${claim.runId} not pending nor current (ignored)`);
-        }
-        if (claim) publishQueueDepth(eventBus, sessionId);
-      } else if (
-        !activeTurnRunId && !getCurrentTurnRunId(sessionId) && getPendingRunCount(sessionId) > 0
-        && (message.type === 'assistant' || message.type === 'stream_event')
-      ) {
-        // 回显锚缺席（CLI 没回显就开始说话了）→ FIFO 兜底，别让排队的 run 没人认领。
-        // 正常运行不该走到这里；走到了就是 CLI 行为变了，warn 让人看见。
-        const promoted = promoteNextPendingRunId(sessionId);
-        console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} replay anchor missing, FIFO fallback promoted run=${promoted}`);
-      }
-
-      // 检测 turn 边界：currentRunId 切换 → 新 turn
-      const cid = getCurrentTurnRunId(sessionId);
-      if (cid && cid !== activeTurnRunId) {
-        // 新 turn 开始（前一 turn 应该已 finishTurn — 防御性兜底）
-        if (activeTurnRunId) {
-          await finishTurn('error', { message: 'turn boundary skipped without result', code: 'TURN_LEAK' });
-        }
-        startTurn(cid);
-      } else if (!cid && !activeTurnRunId && isBackgroundTurnOpener(message)) {
-        // SDK 自发 turn（后台 Task 完成通知唤起 agent）—— 没有用户消息、没有
-        // runId。铸造一个让整回合事件有正确归属（否则全挂在上一个已结束 run 上）。
-        mintBackgroundTurn(`sdk_${message.type}`);
-      }
-
-      // 开局契约自检：init 每次到达都对账（新建/resume 各来一次）
-      if (message.type === 'system' && message.subtype === 'init') {
-        // 开局契约自检（空壳钩子灭门案第 3 层）—— 全文见 init-contract.js
-        assertInitContract(message, { sessionId, projectId, isResume, initialPermissionMode, platform, sdkModel, nodesignServer });
-      }
-
-      handleSDKMessage(sharedCtx, message);
-
-      if (message.type === 'assistant') {
-        emitContextUsage();
-        maybeSpriteSummary(message);
-      }
-
-      if (message.type === 'result') {
-        // 计量断链修复（2026-07-30）：result message 的 usage/total_cost_usd 是
-        // 本 turn 真增量，从前直接丢弃 → runs 表 token counters 常年全 0。
-        // cancelled 也吸收 —— 取消掉的 turn 已经烧了 token，配额要计
-        sharedCtx.absorbResult(message);
-        // 上游自报费用（/zen/go 的 cost）覆盖 SDK/表价算出来的数：取走 ingress 本轮累计（没报就 null，不动）
-        sharedCtx.applyUpstreamBilling(takeUpstreamBilling(sessionId));
-        // 半截续接过的回合：把续接前那一轮的账加回来（absorbResult 是赋值不是累加）。
-        // 放在 applyUpstreamBilling 之后 —— 上游自报 cost 只覆盖**本轮**那条，加完 carry 才是整回合的总账。
-        if (truncationCarry) { sharedCtx.addCarry(truncationCarry); truncationCarry = null; }
-        const isCancelled = message.terminal_reason === 'aborted_streaming'
-          || message.terminal_reason === 'aborted_tools';
-
-        if (isCancelled) {
-          await finishTurn('cancelled', { reason: message.terminal_reason });
-        } else if (message.subtype === 'success' && !message.is_error && maybeContinueTruncated()) {
-          // 半截续接：这一轮的收尾响应是"说到一半被上游掐了"，已经推了续接消息，
-          // **不结账**（同一个 run 接着跑，下一个 result 才是真收尾）。
-        } else if (message.subtype === 'success' && message.is_error) {
-          // 08-21 晚：API 层以 4xx 收场（如 ingress 连续失败止损回的 400）时，SDK 给的是
-          // subtype=success + is_error=true + result=错误文案（假上游实测）。以前走下一分支当成功，
-          // run 标 succeeded、错误文案当最终回答。现在按 error 结账，文案原样给用户。
-          await finishTurn('error', { message: message.result || 'API error', code: 'API_ERROR' });
-        } else if (message.subtype === 'success') {
-          await finishTurn('success', { finalText: message.result || '' });
-        } else {
-          await finishTurn('error', {
-            message: `agent run failed: ${message.subtype}`
-              + (message.errors?.length ? ` — ${message.errors.join('; ')}` : ''),
-            code: message.subtype,
-          });
-        }
-        // turn 处理完 emit 当前 queue 积压（让前端"已排队 N 条"递减）
-        publishQueueDepth(eventBus, sessionId);
-        // 不 throw —— query 继续等下一条 user message
-      }
+    while (!sessionAbortController.signal.aborted && !piExited) {
+      const item = await inputQueue.next();   // close → done
+      if (item.done) break;
+      const { runId, text, images } = item.value;
+      await runTurn({ runId, text, images });   // 一条消息 = 一个完整 turn
+      // turn 结束后原子释放 + FIFO 提升下一条（串行化后安全：turn 边界就是我们
+      // 自己的 settle 点，不再需要 SDK 时代的 uuid 回显锚）
+      takeNextRunId(sessionId);
+      publishQueueDepth(eventBus, sessionId);   // 让前端"已排队 N 条"递减
     }
-
-    // for-await-of 自然结束（inputQueue.close 触发）→ session 完整收尾
-    if (activeTurnRunId) {
-      // input 关闭时还有 in-flight turn —— 当作 cancelled 收尾
-      await finishTurn('cancelled', { reason: 'session_closed' });
-    }
+    // 循环结束三种情形：inputQueue close（session close / pi 退出） / session abort /
+    // piExited。活跃 turn 已在 runTurn 内经 onSessionAbort / onPiExit settle
+    // （cancelled / PI_EXITED），这里不存在 in-flight turn。
   } catch (err) {
-    // 区分两种"抛错"：
-    //   1. 用户主动 close session（abortController.abort() 触发 SDK binary
-    //      子进程被 SIGTERM kill → 抛"Claude Code process aborted by user"）
-    //      —— 这是预期行为，不是 error，不应该让前端弹"运行失败"toast
-    //   2. 真错（网络断、SDK init 失败、Kimi gateway 5xx 等）—— 走 error 路径
+    // 真错路径（消息循环本身炸了 —— runTurn 内部已自结账，这里只剩意外）
     if (sessionAbortController.signal.aborted) {
-      // close session 路径：当前 turn 当 cancelled 收尾，不 emit run.error
-      if (activeTurnRunId) {
-        await finishTurn('cancelled', {
-          reason: sessionAbortController.signal.reason || 'session_closed',
-        });
-      }
-      // 静默退出 —— finally 仍 emit run.query.end 让前端识别 session 关了
+      // close session 路径：静默退出，finally 发 run.query.end
     } else {
-      // 真错路径
-      if (activeTurnRunId) {
-        await finishTurn('error', err);
-      } else if (initialRunId) {
-        // 错误发生在 startTurn 之前（如 SDK query() 启动权限冲突 / workspace.ensure
-        // 抛错等）→ activeTurnRunId 还是 null，sharedCtx.runId 仍是占位符
-        // '__session_pending__'。直接 emit run.error 会让 enriched event 带这个占位
-        // runId，前端 stale guard `evt.runId !== liveRunId` 把事件吞掉 → 用户看到
-        // "完全没反应"。修：手动把 sharedCtx.runId 设到本次 turn 的 initialRunId 让
-        // emit 出去的 run.error 带正确 runId 让前端能渲染错误。
-        sharedCtx.runId = initialRunId;
-        try { markRunFailed(initialRunId, err.message || 'unknown'); } catch { /* ignore */ }
-      }
+      console.error(`[session-loop] sid=${sessionId.slice(0, 8)} message loop error:`, err.message);
       sharedCtx.emit(Events.error(err.message, err.code, err.stack));
-      throw err;
     }
   } finally {
     clearInterval(idleScanTimer);
-    unregisterIngressSession(sessionId);   // API 会话的 fast 兜底路由配对注销（订阅会话 noop）
-    unregisterSessionNotice(sessionId, noticeHandler);   // ingress → 会话的通知通道配对注销（按身份，别删掉新会话的）
-    takeUpstreamTruncation(sessionId);     // 半截标记跟会话同生命周期，别留
-    // 带 token 比对：sid 若已被新 register 占用（closeQuerySession 已同步让位 +
-    // 用户重发起新 runSession），unregister 看到 _token 不匹配 → noop 不误删新 entry
+    sessionAbortController.signal.removeEventListener('abort', onSessionAbort);
+    // 排队中没跑到的 run 标 failed（run 行不能永远停 pending）；inputQueue 的 close
+    // 归 unregisterQuerySession（它持有 queue 生命周期）
+    drainSession(sessionId);
+    // pi 子进程收尾：abort → 5s → SIGTERM → 2s → SIGKILL（幂等；已死立即返回）
+    try {
+      if (client) {
+        await client.kill();
+        client.dispose();
+      }
+    } catch { /* */ }
+    // 带 token 比对：sid 若已被新 register 占用，unregister 看到 _token 不匹配 → noop
     unregisterQuerySession(sessionId, sessionToken);
-    // session-level end event（Phase 2）
+    // session-level end event
     try {
       eventBus.publish({
         type: 'run.query.end',
         sessionId,
-        reason: sessionAbortController.signal.aborted
-          ? (sessionAbortController.signal.reason || 'aborted')
-          : 'closed',
+        reason: piExited
+          ? 'pi_exited'
+          : sessionAbortController.signal.aborted
+            ? (sessionAbortController.signal.reason || 'aborted')
+            : 'closed',
         ts: new Date().toISOString(),
       });
     } catch { /* */ }
   }
-}
-
-/**
- * 检查给定 sessionId 是否已经有 SDK jsonl 落盘 —— 决定走 resume 还是新建。
- *
- * SDK 落盘路径：<sessionRoot>/.claude/projects/<encoded-cwd>/<sid>.jsonl
- * encoded-cwd 把 cwd 绝对路径里 '/' 换成 '-'。我们不复制 SDK 编码逻辑，
- * 直接遍历 .claude/projects/* 看哪个子目录里有 <sid>.jsonl。
- */
-async function jsonlExistsForSession(sessionRoot, sessionId) {
-  // SDK 将 JSONL 存在 CLAUDE_CONFIG_DIR/projects/<encoded-cwd>/<sid>.jsonl
-  // 编码规则（grep 自 sdk.mjs）：所有非字母数字字符转 '-'
-  const encodedCwd = sessionRoot.replace(/[^a-zA-Z0-9]/g, '-');
-  const globalJsonl = path.join(platform.claudeConfigDir, 'projects', encodedCwd, `${sessionId}.jsonl`);
-  try {
-    await fs.access(globalJsonl);
-    return true;
-  } catch { /* not at global location */ }
-
-  // fallback：检查本地 .claude/projects/（兼容旧行为 / sandbox 模式）
-  const projectsDir = path.join(sessionRoot, '.claude', 'projects');
-  let entries;
-  try {
-    entries = await fs.readdir(projectsDir, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const f = path.join(projectsDir, e.name, `${sessionId}.jsonl`);
-    try {
-      await fs.access(f);
-      return true;
-    } catch { /* not here, try next */ }
-  }
-  return false;
 }

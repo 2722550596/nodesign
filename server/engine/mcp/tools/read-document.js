@@ -12,7 +12,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { extractDocument, isExtractable, DOC_KINDS, MAX_CHARS } from '../../../lib/doc-extract.js';
 

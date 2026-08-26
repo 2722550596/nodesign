@@ -13,6 +13,7 @@ import {
   resolveModelContextWindow,
   pickThinkingConfig,
   resolveModelRoute,
+  isSubscriptionLaneModel,
   resolveWireModel,
   repriceUsageDeltas,
   selectableModelsFor,
@@ -62,7 +63,7 @@ describe('派生导出（旧签名不变）', () => {
     expect(anon).not.toContain('gemini-3.7-flash');
   });
 
-  it('订阅闸（08-21）：没订阅资格的账号看得见 Claude 行但 locked；邀请码号/admin 正常；默认模型=ox-alpha', () => {
+  it('订阅闸（M1）：订阅通道整体禁用 —— Claude 行对**所有**账号 locked（不再看订阅资格）；默认模型=ox-alpha', () => {
     const pub = { role: 'user', plan: 'basic' };
     const sub = { role: 'user', plan: 'pro' };
     const pubSel = selectableModelsFor(pub);
@@ -71,10 +72,14 @@ describe('派生导出（旧签名不变）', () => {
     expect(allowedModelsFor(pub).map((m) => m.id)).not.toContain('claude-sonnet-5[1m]');
     expect(allowedModelsFor(pub).map((m) => m.id)).toContain('ox-alpha');
     expect(isModelLockedFor(pub, 'claude-opus-5[1m]')).toBe(true);
-    expect(isModelLockedFor(sub, 'claude-opus-5[1m]')).toBe(false);
+    // M1：pro / admin 也一样锁 —— 订阅通道随 SDK 一起没了，资格不再是变量
+    expect(isModelLockedFor(sub, 'claude-opus-5[1m]')).toBe(true);
+    expect(isModelLockedFor({ role: 'admin' }, 'claude-opus-5[1m]')).toBe(true);
     expect(isModelLockedFor(pub, 'gemini-3.7-flash')).toBe(false);   // 看不见的不是 locked，是不存在
-    expect(selectableModelsFor(sub).some((m) => m.locked)).toBe(false);
-    expect(selectableModelsFor({ role: 'admin' }).some((m) => m.locked)).toBe(false);
+    expect(selectableModelsFor(sub).some((m) => m.locked)).toBe(true);
+    expect(selectableModelsFor({ role: 'admin' }).some((m) => m.locked)).toBe(true);
+    // 锁行带 M1 原因文案（前端弹框用）
+    expect(pubSel.find((m) => m.id === 'claude-sonnet-5[1m]')?.lockReason).toMatch(/M1/);
     for (const u of [pub, sub, { role: 'admin' }, null]) expect(defaultModelFor(u)).toBe('ox-alpha');
     expect(modelIsFree('ox-alpha')).toBe(true);
     expect(modelIsFree('claude-sonnet-5[1m]')).toBe(false);
@@ -160,7 +165,7 @@ describe('brand（模型出自谁家，08-21）', () => {
 });
 
 describe('路由', () => {
-  it('订阅模型 → subscription，API 模型带全套路由信息', () => {
+  it('订阅模型 → subscription，API 模型带全套路由信息（含 wireModel）', () => {
     expect(resolveModelRoute('claude-sonnet-5[1m]')).toEqual({ mode: 'subscription' });
     expect(resolveModelRoute(null)).toEqual({ mode: 'subscription' });
     const r = resolveModelRoute('gemini-3.7-flash');
@@ -168,6 +173,17 @@ describe('路由', () => {
     expect(r.sdkAlias).toBe('claude-opus-4-6[1m]');
     expect(r.fastModel).toBe('gemini-3.7-flash');
     expect(r.upstream).toBe(UPSTREAMS.lament);
+    expect(r.wireModel).toBe('反重力-流式抗截断/gemini-3.7-flash-high');   // M1：route 直接带出 wireModel
+  });
+
+  it('isSubscriptionLaneModel（M1 订阅闸判据）：表内无 api 的行 true；API 行 / 未知名 false', () => {
+    expect(isSubscriptionLaneModel('claude-sonnet-5[1m]')).toBe(true);
+    expect(isSubscriptionLaneModel('claude-opus-5[1m]')).toBe(true);
+    expect(isSubscriptionLaneModel('ox-alpha')).toBe(false);
+    expect(isSubscriptionLaneModel('gemini-3.7-flash')).toBe(false);
+    // 未知名 false —— 那条归 MODEL_NOT_ALLOWED 白名单闸管，别误报订阅错误码
+    expect(isSubscriptionLaneModel('made-up-model')).toBe(false);
+    expect(isSubscriptionLaneModel(null)).toBe(false);
   });
 
   it('入口反查认三种形态：appModel / alias / 剥[1m]的 alias', () => {

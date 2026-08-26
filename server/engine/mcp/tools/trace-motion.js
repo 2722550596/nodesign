@@ -18,7 +18,7 @@
  *    曲线形状（过冲/硬切/稳定时间）不受影响 —— 它们跟的是页面自己的时钟。
  */
 
-import { tool } from '@anthropic-ai/claude-agent-sdk';
+import { tool } from '../tool-shim.js';
 import { z } from 'zod';
 import { resolveCanvasTarget, CANVAS_PATH_DESC, KIND_SITE, requireBrowsable } from '../../../lib/artifact-target.js';
 import { resolveDeckSize, extractDeckAspect } from '../../../shared/deck.js';
