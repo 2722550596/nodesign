@@ -236,6 +236,14 @@ export function sessionLaunch({ sid, workspaceDir, dataRoot, resume, provider, m
 - 删 ingress / sandbox-shim / 旧测试（hooks×7、isolation、ingress、tier 中 query 断言）
 - 重写保留契约测试（tier、参数校验、事件桥、turn 认领）
 - 前端联调（run.delta.* 契约不变确认 + hydrate 回归 + 换 preset 交互）
+- **rewind 恢复（用户决策 2026-08-27）**：走 pi 会话树，不造文件 checkpoint。
+  - 对话侧：`navigate_tree` RPC（rpc-mode.ts:863，注释原话 "used by the writer process to rewind"）——
+    把叶节点移到目标条目回滚位，`summarize:false` 不走 LLM；旧分支保留在树里，可再导航回去/换分支重来。
+    约束：streaming 中拒绝（须等 turn 结束，与 M1 串行 turn 天然契合）；目标 id 用 `get_tree` 的条目 id。
+  - 文件侧：session-loop finishTurn 每 turn 已 `commitWorkspace`（git，author=agent）——
+    rewind 时 `git revert`/checkout 到目标 turn 之前的 commit，数据已在，pi 无需参与。
+  - 前端：M1 期间 undo 按钮保留（点击 → 501 toast），M3 联调时一并接新后端。
+    已知毛刺：pi-jsonl 映射的 uuid 是 UUID 形态，`canRewindMessage` 门控仍放行 → 按钮可见但必失败。
 
 ## 附录 A　M0 验证结果与偏差记录（2026-08-26，已并入正文，保留追溯）
 
