@@ -6,6 +6,7 @@
     "grep",
     "find",
     "ls",
+    "bash",
     "state_update",
     "get_state",
     "subagent",

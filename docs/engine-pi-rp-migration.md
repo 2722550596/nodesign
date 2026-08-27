@@ -200,7 +200,7 @@ env = {
 ```
 
 - **preset 默认装配**：`agent-dir/prompt-presets/nodesign.json`（`autoActivate:true`）在启动时被 chooseDefaultPreset 选中（唯一 autoActivate）；不传 `--preset` 即默认它。运行中切换走 RPC `set_preset`，写 session JSONL，`--continue` 恢复。**`--preset` 显式传时优先于一切**（含会话恢复）。
-- **agent-dir 内容**：`settings.json`（defaultTools 白名单：read/write/edit/grep/find/ls/state_update/get_state，无 bash/subagent；telemetry off；`defaultPreset: "nodesign"` 双保险）、`prompt-presets/nodesign.json`（M2 第一步填全量平台提示词）。**禁止 SYSTEM.md / APPEND_SYSTEM.md**（短路 preset 编译）。
+- **agent-dir 内容**：`settings.json`（defaultTools 白名单 = pi 内建全集：read/write/edit/grep/find/ls/bash/state_update/get_state/subagent/subagent_profiles，不禁任何 pi 工具；telemetry off；`defaultPreset: "nodesign"` 双保险）、`prompt-presets/nodesign.json`（M2 第一步填全量平台提示词）。**禁止 SYSTEM.md / APPEND_SYSTEM.md**（短路 preset 编译）。
 - **项目级 `.pi/`**（`<pid>/shared/.pi/`，项目初始化写一次，多会话共享）：`prompt-presets/`（项目可选 preset，不带 autoActivate）、`mcp.json`（M1 过渡态，簇 B 删）。
 - **就绪判定**：无 hello。`prompt` 应答（`response{id}`）或 `get_state` 往返即就绪；prompt 是排队语义，尽早发不丢。
 - **kill 链**：`abort` RPC → 5s → SIGTERM → 2s → SIGKILL；异常退出（agent_settled 未收到）→ run 状态机标记 failed，JSONL 在 session-dir 天然可重连续档。
@@ -373,7 +373,9 @@ undefined (reading 'includes')`）。M1.5 只验过同模型 set_model 往返，
 turn，所以一直没炸。补全 `reasoning/input/cost/contextWindow/maxTokens`。
 
 **开放项**（非阻塞，M3/簇 B 复评）：
-- bash 工具：pi defaultTools 白名单暂不含（prelude 装包/脚本段加 `{{//M2-待改}}` 注释）。
+- ~~bash 工具：pi defaultTools 白名单暂不含~~ → 已放开（2026-08-27）：白名单补 bash 成 pi 内建全集，
+  不禁任何 pi 工具；prelude 装包/脚本段的 `{{//M2-待改}}` 注释随之删除。注意 pi 的 bash 无沙盒
+  （M2 已删 bwrap isolation），越界靠 guards 文件工具闸 + 失败建议引导 + prelude 纪律。
 - TaskCreate/TaskUpdate 任务镜像：pi 无任务工具，黑板镜像功能悬空。
 - CLAUDE.md / .claude / Skill 引用：prelude 仍提，pi 无对应物（已注释标记）。
 - ~~会话内热换 qwen3.8-27b 不变 uncensored 政策~~ → 已修：pi-rp 接 live model 进 PromptRuntime，

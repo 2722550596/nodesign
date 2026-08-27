@@ -100,7 +100,7 @@ describe('failureAdvice 失败建议分流', () => {
     expect(a).toContain('fullPage:false');
   });
 
-  it('bash 分支保留（pi 未开 bash，兜底语义）', () => {
+  it('bash 分支（bash 已在白名单，失败建议引导路径/cwd/stderr）', () => {
     const a = run('bash', 'exit 126');
     expect(a).toContain('Bash 命令失败');
     expect(a).toContain('检查 stderr');

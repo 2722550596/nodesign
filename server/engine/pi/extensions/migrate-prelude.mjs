@@ -30,8 +30,6 @@ const COMMENT_ANCHORS = [
   // 引言段提 SDK preset / Skill 加载 / 系统注入 —— pi 无对应物
   { anchor: '本文 append 在 SDK preset', comment: '{{//M2-待改: 引言提 SDK preset/Skill 加载/系统注入，pi 无对应物}}' },
 
-  // pi 当前 defaultTools 无 bash，装包/脚本段暂不生效
-  { anchor: '- **装包可以但别惯性装', comment: '{{//M2-待改: pi defaultTools 暂无 bash，装包/脚本段暂不生效}}' },
   // TaskCreate/TaskUpdate：pi 无任务工具，镜像上板功能悬空
   { anchor: '- **步骤清单自动上板', comment: '{{//M2-待改: pi 无任务工具，TaskCreate/TaskUpdate 镜像上板悬空}}' },
 

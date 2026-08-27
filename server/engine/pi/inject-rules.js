@@ -126,11 +126,12 @@ export function failureAdvice({ toolName, isError, errorText, isInterrupt } = {}
       + '  2. playwright spawn 慢 / 失败 → 换 Read 产物文件让用户看代码\n'
       + '  3. fullPage 截图太大 → 换 fullPage:false 截视口';
   } else if (tool === 'bash') {
-    // pi defaultTools 白名单目前没开 bash，分支保留兜底（将来放开时语义现成）
+    // bash 已在 defaultTools 白名单（2026-08-27 放开）。pi 的 bash 无沙盒（M2 删了
+    // bwrap isolation），越界靠 guards 的项目边界闸 + 本建议引导，不靠 sandbox 拦截。
     advice =
       'Bash 命令失败。常见：\n'
-      + '  1. sandbox 拦截（命令访问越界文件 / 不允许的网络）→ 换 Read / Glob / Grep / MCP 工具\n'
-      + '  2. cwd 越界 → 路径相对 workspace\n'
+      + '  1. 路径越界 / 访问了工作区外文件 → 路径相对 workspace，别用绝对路径出界\n'
+      + '  2. cwd 不对 → 命令默认在工作区根，需要别处就显式 cd 或给绝对路径\n'
       + '  3. 命令本身错（参数 / 文件不存在）→ 检查 stderr';
   } else if (/_batch$/.test(tool)) {
     // batch 一步失败整批标错，但失败步之前的动作（click / type 这类非幂等的）

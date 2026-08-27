@@ -8,7 +8,9 @@
  *   - agent/hooks/site-validate.js             → lintSiteFile / isSitePagePath（站点页 lint）
  *
  * pi 事实（源码核过，pi-rp packages/coding-agent/src/core/tools/）：
- *   - 工具名裸小写：read / write / edit / grep / find / ls（无 bash、无 glob）；
+ *   - 工具名裸小写：read / write / edit / grep / find / ls / bash（无 glob）；
+ *     bash 无 path 字段，不走本文件的路径闸（与 SDK 时代一致：边界闸只管文件工具，
+ *     bash 越界靠失败建议引导 + prelude 纪律，2026-08-27 起 bash 已在白名单）。
  *   - 路径字段统一 `path`（read.ts:22 / write.ts:16 / edit.ts:47 / grep.ts:26 /
  *     find.ts:33 / ls.ts:15；grep/find/ls 的 path 是 optional）。
  *
