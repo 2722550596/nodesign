@@ -8,11 +8,16 @@
  *   - agent/hooks/site-validate.js             → lintSiteFile / isSitePagePath（站点页 lint）
  *
  * pi 事实（源码核过，pi-rp packages/coding-agent/src/core/tools/）：
- *   - 工具名裸小写：read / write / edit / grep / find / ls / bash（无 glob）；
- *     bash 无 path 字段，不走本文件的路径闸（与 SDK 时代一致：边界闸只管文件工具，
- *     bash 越界靠失败建议引导 + prelude 纪律，2026-08-27 起 bash 已在白名单）。
+ *   - 内建工具名全集 read / write / edit / grep / find / ls / bash（无 glob）。
+ *   - 主会话不设 defaultTools 白名单（2026-08-27 删）→ 走 pi 默认激活集
+ *     read/bash/edit/write + state_update/get_state/subagent/subagent_profiles
+ *     （agent-session.ts:3672），grep/find/ls 主会话不激活（bash 覆盖）；
+ *     子代理自带 read/grep/find/ls/bash（subagent/prepare.ts:168）。
+ *   - bash 无 path 字段，不走本文件的路径闸（边界闸只管文件工具，bash 越界靠
+ *     失败建议引导 + prelude 纪律）。
  *   - 路径字段统一 `path`（read.ts:22 / write.ts:16 / edit.ts:47 / grep.ts:26 /
- *     find.ts:33 / ls.ts:15；grep/find/ls 的 path 是 optional）。
+ *     find.ts:33 / ls.ts:15；grep/find/ls 的 path 是 optional）。READ_TOOLS 仍列
+ *     grep/find/ls 是纵深防御：哪天被激活（子代理 / 未来配置）闸自动覆盖。
  *
  * 纪律：
  *   - fail-open：判据自身异常 → 放行（返 null / []）。guards.ts 薄壳里还有一层

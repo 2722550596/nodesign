@@ -1,17 +1,4 @@
 {
-  "defaultTools": [
-    "read",
-    "write",
-    "edit",
-    "grep",
-    "find",
-    "ls",
-    "bash",
-    "state_update",
-    "get_state",
-    "subagent",
-    "subagent_profiles"
-  ],
   "enableInstallTelemetry": false,
   "enableAnalytics": false,
   "defaultPreset": "nodesign",

@@ -126,8 +126,8 @@ export function failureAdvice({ toolName, isError, errorText, isInterrupt } = {}
       + '  2. playwright spawn 慢 / 失败 → 换 Read 产物文件让用户看代码\n'
       + '  3. fullPage 截图太大 → 换 fullPage:false 截视口';
   } else if (tool === 'bash') {
-    // bash 已在 defaultTools 白名单（2026-08-27 放开）。pi 的 bash 无沙盒（M2 删了
-    // bwrap isolation），越界靠 guards 的项目边界闸 + 本建议引导，不靠 sandbox 拦截。
+    // bash 是 pi 默认激活工具（2026-08-27 删 defaultTools 白名单后走 pi 默认集）。
+    // pi 的 bash 无沙盒（M2 删了 bwrap isolation），越界靠 guards 文件工具闸 + 本建议引导。
     advice =
       'Bash 命令失败。常见：\n'
       + '  1. 路径越界 / 访问了工作区外文件 → 路径相对 workspace，别用绝对路径出界\n'
