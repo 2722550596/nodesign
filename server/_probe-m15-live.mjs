@@ -53,6 +53,12 @@ process.env.DB_PATH = dbPath;
 process.env.NODESIGN_PROFILE = 'local';
 process.env.NODESIGN_DATA_DIR = tmpRoot;
 
+// ── 共享 agent-dir/settings.json 快照 ──
+// pi 的 setModel/setThinkingLevel 会自持久化到 PI_CODING_AGENT_DIR/settings.json
+// （共享模板目录）。探针跑完必须还原，否则弄脏 committed 文件。
+const SETTINGS_PATH = path.join(scriptDir, 'engine', 'pi', 'agent-dir', 'settings.json');
+const settingsBackup = fs.existsSync(SETTINGS_PATH) ? fs.readFileSync(SETTINGS_PATH, 'utf8') : null;
+
 // ── sidecar Express server on a free port ──
 const { default: express } = await import('express');
 const { createSidecarRouter } = await import('./engine/pi/sidecar.js');
@@ -185,6 +191,10 @@ if (!query) {
 closeQuerySession(sessionId, 'probe_done');
 await Promise.race([sessionPromise, new Promise((r) => setTimeout(r, 15000))]);
 server.close();
+// 还原共享 settings.json（pi 热切会写它）
+if (settingsBackup != null) {
+  try { fs.writeFileSync(SETTINGS_PATH, settingsBackup); } catch { /* */ }
+}
 
 // ── pass/fail ──
 console.log('\n===== M1.5 LIVE PROBE RESULTS =====');
