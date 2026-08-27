@@ -29,10 +29,6 @@ const CUSTOM_TOOLS_NOTE = 'In addition to the tools above, you may have access t
 const COMMENT_ANCHORS = [
   // 引言段提 SDK preset / Skill 加载 / 系统注入 —— pi 无对应物
   { anchor: '本文 append 在 SDK preset', comment: '{{//M2-待改: 引言提 SDK preset/Skill 加载/系统注入，pi 无对应物}}' },
-
-  // TaskCreate/TaskUpdate：pi 无任务工具，镜像上板功能悬空
-  { anchor: '- **步骤清单自动上板', comment: '{{//M2-待改: pi 无任务工具，TaskCreate/TaskUpdate 镜像上板悬空}}' },
-
 ];
 
 /**

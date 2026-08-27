@@ -48,6 +48,8 @@ const GUARDS_EXT = path.join(__dirname, 'extensions', 'guards.ts');
 const PROMPT_SUPPORT_EXT = path.join(__dirname, 'extensions', 'prompt-support.ts');
 /** 懒注入扩展（M2：工具 cookbook 懒注入 + 失败建议 + rate-limit 判别；-e 显式挂载）。 */
 const INJECT_EXT = path.join(__dirname, 'extensions', 'inject.ts');
+/** 任务清单扩展（todo 复刻：TaskCreate/TaskUpdate/TaskList → run.todo.updated 板书镜像；-e 显式挂载）。 */
+const TASK_TOOLS_EXT = path.join(__dirname, 'extensions', 'task-tools.ts');
 
 /** C1 剔除项：这些 env 会污染 pi 子进程（NODE_ENV=production 会让依赖走精简路径等）。 */
 const ENV_BLACKLIST = [
@@ -128,6 +130,7 @@ export function sessionLaunch({
     '-e', GUARDS_EXT,                                             // 安全闸（M2：边界/隐私/lint）
     '-e', PROMPT_SUPPORT_EXT,                                     // ndPolicy 宏（M2 preset 消费）
     '-e', INJECT_EXT,                                             // 懒注入 + 失败建议 + rate-limit（M2）
+    '-e', TASK_TOOLS_EXT,                                         // 任务清单（todo 复刻：run.todo.updated 板书镜像）
     '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
   );
   if (resume) args.push('--continue');

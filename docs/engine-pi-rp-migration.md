@@ -377,7 +377,14 @@ turn，所以一直没炸。补全 `reasoning/input/cost/contextWindow/maxTokens
   **整个删掉 defaultTools 白名单**（白名单是 pi 工具面冻结快照，pi 更新拿不到）→ 走 pi 默认激活集
   （含 bash/subagent），自动跟随 pi。prelude 装包/脚本段的 `{{//M2-待改}}` 注释已删。注意 pi 的
   bash 无沙盒（M2 已删 bwrap isolation），越界靠 guards 文件工具闸 + 失败建议引导 + prelude 纪律。
-- TaskCreate/TaskUpdate 任务镜像：pi 无任务工具，黑板镜像功能悬空。
+- ~~TaskCreate/TaskUpdate 任务镜像：pi 无任务工具，黑板镜像功能悬空~~ → 已复刻（2026-08-27）：
+  `task-tools.ts` 扩展 registerTool ×3（TaskCreate/TaskUpdate/TaskList，裸名）+ `task-store.js`
+  纯逻辑存储（per-turn，agent_start 时 reset；taskId 归一 "t1"/"1"/"#1" 三形态）→ 每次改 store
+  经 sidecar /emit 发 `run.todo.updated`（payload [{content,status,activeForm?}] 对齐 SDK 形状）→
+  消费端零改动：board-tasklist.js 板书镜像 + live-turn todos 快照全通。三工具标
+  executionMode:"sequential"（pi 默认 parallel，并发 TaskCreate 会让板书落盘竞态）。
+  `_probe-todo-live.mjs` GATE PASS（7/7：事件收到 + 形状对 + TaskUpdate 生效 + 板书落盘含勾选）。
+  子代理时间轴（run.task.*）仍悬空：pi subagent 同步跑在工具里、无中途进度事件，需改 pi-rp，另排期。
 - CLAUDE.md / .claude / Skill 引用：prelude 仍提，pi 无对应物（已注释标记）。
 - ~~会话内热换 qwen3.8-27b 不变 uncensored 政策~~ → 已修：pi-rp 接 live model 进 PromptRuntime，
   ndPolicy 宏每轮按 runtime.model 查无审查集合，热换即翻转（见上「政策块」条 + Phase 4 探针）。

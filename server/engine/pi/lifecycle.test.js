@@ -24,6 +24,7 @@ const ASK_USER_EXT = path.join(__dirname, 'extensions', 'ask-user.ts');
 const GUARDS_EXT = path.join(__dirname, 'extensions', 'guards.ts');
 const PROMPT_SUPPORT_EXT = path.join(__dirname, 'extensions', 'prompt-support.ts');
 const INJECT_EXT = path.join(__dirname, 'extensions', 'inject.ts');
+const TASK_TOOLS_EXT = path.join(__dirname, 'extensions', 'task-tools.ts');
 const STANDALONE_JS = fileURLToPath(new URL('../mcp/standalone.js', import.meta.url));
 
 /** process.env 快照/还原（黑名单与 UPSTREAM 断言要改真实 env）。 */
@@ -110,11 +111,12 @@ describe('sessionLaunch args（C2）', () => {
       '-e', GUARDS_EXT,                                               // 安全闸（M2）
       '-e', PROMPT_SUPPORT_EXT,                                       // ndPolicy 宏（M2 preset 消费）
       '-e', INJECT_EXT,                                               // 懒注入 + 失败建议 + rate-limit（M2）
+      '-e', TASK_TOOLS_EXT,                                           // 任务清单（todo 复刻）
       '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
       '--continue',
     ]);
-    // 恰好六个 -e：providers + adapter + ask-user + guards + prompt-support + inject（M2 全集）
-    expect(launch.args.filter((a) => a === '-e')).toHaveLength(6);
+    // 恰好七个 -e：providers + adapter + ask-user + guards + prompt-support + inject + task-tools
+    expect(launch.args.filter((a) => a === '-e')).toHaveLength(7);
     // --session-dir 绝对
     expect(path.isAbsolute(launch.args[launch.args.indexOf('--session-dir') + 1])).toBe(true);
   });
