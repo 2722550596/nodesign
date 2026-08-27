@@ -256,10 +256,11 @@ export default function ChatComposer({
             }}
             style={{ display: 'none' }}
           />
-          {/* 模型 picker：切换从下一条消息生效（服务端空闲时重启 query），
-              正在跑时禁用 —— 不给"点了立刻切"的错觉 */}
+          {/* 模型 picker：M1.5 起 run 飞行中也可热切（set_model RPC，下一条回复生效）——
+              不再用 isRunning 禁用。空闲时切换走 Sessions.setModel（重启空闲 query），
+              飞行中走 Turn.setRunModel（picker 内部按 activeRun 分流）。 */}
           <ModelPicker
-            disabled={disabled || isRunning}
+            disabled={disabled}
             projectId={projectId}
             sessionId={sessionId}
             contextTokens={contextUsage?.totalTokens || 0}

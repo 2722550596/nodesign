@@ -440,7 +440,8 @@ export function createEventBridge({ emit, run = {}, isTurnActive } = {}) {
       case 'queue_update': return handleQueueUpdate(line);
       // watch_state 订阅协议内部事件，无前端消费方
       case 'state_changed': return null;
-      // 会话树内部（preset 激活 / reroll 分支切换 / edit_message），不是 run 流事件
+      // 会话级事件（preset 激活 / reroll 分支切换 / edit_message），不是 run 流事件。
+      // preset_activated 由 session-loop onEvent 直接发 eventBus（会话级，bridge 是 per-turn 会漏）。
       case 'preset_activated':
       case 'leaf_changed':
       case 'entry_edited': return null;

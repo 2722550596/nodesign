@@ -219,6 +219,9 @@ export const Events = {
   querySessionEnd: (sessionId, reason) => ({ type: 'run.query.end', sessionId, reason }),
   // 排队提示：用户在 agent 跑时追加消息，UI 显示"已排队 N 条"
   queueDepth: (sessionId, depth) => ({ type: 'run.queue.depth', sessionId, depth }),
+  // preset 切换感知（M2 前置）：pi set_preset / --preset 激活后广播，前端据此刷新
+  // 当前 preset 显示。presetId = 激活的 preset id（'pi-default' = 内建默认）。
+  presetActivated: (presetId) => ({ type: 'run.preset_activated', presetId }),
 
   // ── 会话收敛 E1a（2026-08-13）：项目级 active session 指针变更广播 ──
   //

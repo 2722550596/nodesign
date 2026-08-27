@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Check, Loader2, Lock } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
-import { Sessions, Me } from '../../lib/api.js';
+import { Sessions, Me, Turn } from '../../lib/api.js';
 import { FALLBACK_MODELS, isModelPrefStale } from '../../lib/models.js';
 import ModelMark from '../ui/ModelMark.jsx';
 
@@ -75,6 +75,10 @@ export default function ModelPicker({
   const setModelPref = useGlobalStore(s => s.setModelPref);
   const showToast = useGlobalStore(s => s.showToast);
   const confirmDialog = useGlobalStore(s => s.confirm);
+  // M1.5 热换：run 飞行中也能切（set_model RPC 直通 pi，下次 LLM 调用生效）。
+  // activeRun = { pid, runId }，ProjectWorkspace 在 run.start/done 时维护（同 AskUserQuestionView 的取法）。
+  const activeRun = useGlobalStore(s => s.activeRun);
+  const hotSwitch = !!(activeRun && activeRun.pid === projectId);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   // 服务端口径：{ model, override, default, options }。没有会话时为 null
@@ -170,8 +174,15 @@ export default function ModelPicker({
     // 乐观更新：点完立刻变，失败再退回去
     setRemote(r => ({ ...(r || {}), override: id, model: id || r?.default || null }));
     try {
-      const r = await Sessions.setModel(projectId, sessionId, id);
-      setRemote(r);
+      if (hotSwitch) {
+        // run 在飞 → 热换（set_model RPC，不重启进程，下次 LLM 调用生效）。
+        // 服务端同时落 session 覆盖，pi 重启后不丢。
+        await Turn.setRunModel({ pid: projectId, runId: activeRun.runId, model: id });
+        showToast(`已切到 ${shortLabel(id, options)}，下一条回复生效`, 'success');
+      } else {
+        const r = await Sessions.setModel(projectId, sessionId, id);
+        setRemote(r);
+      }
       // 本地偏好跟着走：下次在别处新建会话时用同一个选择
       setModelPref(id);
     } catch (err) {
@@ -180,7 +191,7 @@ export default function ModelPicker({
     } finally {
       setSaving(false);
     }
-  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens, options, confirmDialog]);
+  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens, options, confirmDialog, hotSwitch, activeRun]);
 
   const label = none ? '未配置模型' : shortLabel(effective, options);
   const busy = disabled || saving;
@@ -204,10 +215,12 @@ export default function ModelPicker({
         onClick={() => !busy && setOpen(v => !v)}
         disabled={busy}
         title={
-          disabled ? '这一轮跑完再切（切换从下一条消息生效）'
+          disabled ? '会话不可用，暂时无法切换模型'
             : none ? '还没有可用的模型'
             : hasSession
-              ? `这个会话跑在 ${effective}。切换从下一条消息生效，对话不丢`
+              ? (hotSwitch
+                ? `这个会话跑在 ${effective}。run 飞行中可热切，下一条回复生效`
+                : `这个会话跑在 ${effective}。切换从下一条消息生效，对话不丢`)
               : `新会话将用 ${label}`
         }
         style={{

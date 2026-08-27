@@ -185,13 +185,24 @@ if (!query) {
   } catch (err) {
     results.jsonl = { error: err.message };
   }
+
+  // 5. 共享 settings.json 不被污染验证（persistSettings:false 生效）：
+  //    setModel/setThinkingLevel 之后，agent-dir/settings.json 应与快照逐字节一致。
+  try {
+    const after = fs.existsSync(SETTINGS_PATH) ? fs.readFileSync(SETTINGS_PATH, 'utf8') : null;
+    results.settingsClean = settingsBackup === after;
+    console.log(`[probe] 共享 settings.json ${results.settingsClean ? '未被污染 ✓' : '被污染 ✗（persistSettings 未生效）'}`);
+  } catch (err) {
+    results.settingsClean = false;
+  }
 }
 
 // ── cleanup ──
 closeQuerySession(sessionId, 'probe_done');
 await Promise.race([sessionPromise, new Promise((r) => setTimeout(r, 15000))]);
 server.close();
-// 还原共享 settings.json（pi 热切会写它）
+// 兜底还原共享 settings.json（正常路径 persistSettings:false 已保证不写；
+// 这里只是防御性清理，万一 pi 侧回归弄脏了也不留在工作区）
 if (settingsBackup != null) {
   try { fs.writeFileSync(SETTINGS_PATH, settingsBackup); } catch { /* */ }
 }
@@ -206,6 +217,7 @@ const checks = [
   ['contextUsage present', results.stats?.hasContextUsage === true],
   ['JSONL model_change persisted', results.jsonl?.hasModelChange === true],
   ['JSONL thinking_level_change persisted', results.jsonl?.hasThinkingChange === true],
+  ['共享 settings.json 未被污染（persistSettings:false）', results.settingsClean === true],
 ];
 let allPass = true;
 for (const [name, pass] of checks) {

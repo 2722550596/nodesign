@@ -368,6 +368,17 @@ export const Turn = {
   rewind: ({ pid, runId, messageId }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/rewind`, { messageId }),
 
+  /**
+   * M1.5 热换模型：run 飞行中切模型（set_model RPC 直通 pi，下次 LLM 调用生效）。
+   * 与 Sessions.setModel 的区别：那个改配置 + 重启空闲 query（run 没在跑时用）；
+   * 这个不重启进程，活会话里直接切（run 在跑时用）。服务端同时落 session 覆盖，
+   * 重启后不丢。
+   * 200 { ok, model, wire } / 403 MODEL_LOCKED|SUBSCRIPTION_LANE_M1_DISABLED /
+   * 400 UNKNOWN_MODEL / 409 LANE_SWITCH|RUN_NOT_ACTIVE / 502 NO_UPSTREAM_ROUTE|PI_SET_MODEL_FAILED
+   */
+  setRunModel: ({ pid, runId, model }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/model`, { model: model ?? null }),
+
 };
 
 // ── Instruction（项目级 .claude/CLAUDE.md 读写）──

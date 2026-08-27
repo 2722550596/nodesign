@@ -309,6 +309,13 @@ export async function runSession({
           && obj.message?.usage && turnState) {
           accumulateUsage(turnState.usageAcc, obj.message.usage);
         }
+        // preset 激活是**会话级**事件（set_preset 可在 turn 之间发），bridge 是 per-turn
+        // 的会漏 —— 直接发 eventBus，runId 置 null。前端据此刷新 preset 显示。
+        if (obj?.type === 'preset_activated') {
+          try {
+            eventBus.publish({ type: 'run.preset_activated', sessionId, presetId: obj.presetId ?? null, ts: new Date().toISOString() });
+          } catch { /* bus 异常不弄死会话 */ }
+        }
         currentBridge?.handleLine(obj);
         if (obj?.type === 'agent_settled') onSettled();
       },
@@ -336,6 +343,9 @@ export async function runSession({
       setModel: (provider, modelId) => client.setModel(provider, modelId),
       setThinkingLevel: (level) => client.setThinkingLevel(level),
       getSessionStats: () => client.getSessionStats(),
+      // M2 前置：preset 运行中切换（set_preset RPC）+ 状态现问（activePresetId 可观测）。
+      setPreset: (presetId) => client.setPreset(presetId),
+      getState: () => client.getState(),
     });
 
     await client.start();   // get_state 探活；失败抛错（带 stderr 尾巴）

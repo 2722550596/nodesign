@@ -1,8 +1,10 @@
 # Engine 替换：CC SDK → pi-rp RPC（定稿 v3）
 
 > 状态：**M1 完成**（2026-08-27）——CC SDK 依赖已移除，pi-rp 为唯一执行引擎；live 探针 GATE PASS，
-> `npm run test:server` 778/778 全绿。M0 探针全绿（2026-08-26）。
-> **M1.5 / M2 / 簇 B / M3 已排期**（2026-08-27 grill 定案，见 §6）。
+> `npm run test:server` 778/778 全绿。**M1.5（簇 A RPC 接线）完成**（2026-08-27）：热换模型 /
+> thinking 档位 / context usage / 默认模型 fail-loud / env 全家桶 fallback 全部接线，
+> `_probe-m15-live.mjs` GATE PASS；set_preset live 验证 `_probe-preset-live.mjs` GATE PASS（pre-M2）。
+> **M2 / 簇 B / M3 已排期**（2026-08-27 grill 定案，见 §6）。
 > 目标：把 `@anthropic-ai/claude-agent-sdk`（`query()` 子进程）整个摘掉，agent loop 交给 pi-rp
 > （`pi --mode rpc`），工具面最终走 pi 扩展 `registerTool` 直挂（MCP 层为 M1 过渡态）。
 > 作者同时是 pi-rp 维护者：pi-rp 侧的缺口就地补（见 §5.6），不做版本防御。
@@ -33,14 +35,12 @@ M1 文档曾把若干能力标为"pi 无对应物"，审计后**多数是假缺�
 | 能力 | RPC 命令 | 状态 |
 |---|---|---|
 | 热换模型 | `set_model {provider, modelId}` + `cycle_model` | ✅ 存在（rpc-mode.ts:629），M1 误标 501 |
-| thinking 档位 | `set_thinking_level {level}` + `cycle_thinking_level` + `get_available_thinking_levels` | ✅ 存在（rpc-mode.ts:656），rpc-client.js 已封装 |
+| preset 切换 | `set_preset {presetId}` | ✅ 源码存在（rpc-mode.ts:678），dist 已重建（2026-08-27），live 验证 GATE PASS |
 | context usage | `get_session_stats` → `SessionStats.contextUsage?: ContextUsage` | ✅ 存在（rpc-mode.ts:767，agent-session.ts:336） |
-| preset 切换 | `set_preset {presetId}` | ✅ 源码存在（rpc-mode.ts:678），**dist 未重建**（PATH 上的 pi 是旧构建） |
 | 会话树导航 | `navigate_tree {targetId}` + `get_tree` + `fork` + `reroll` + `clone` | ✅ 存在；navigate_tree 注释原话 "used by the writer process to rewind" |
 | 压缩 | `compact` + `set_auto_compaction` | ✅ 存在 |
-| 模型查询 | `get_available_models` | ✅ 存在 |
+| 状态 | `get_state` / `update_state` / `watch_state` | ✅ 存在；`get_state` 新增 `activePresetId` 字段（2026-08-27，preset 可观测） |
 | 会话管理 | `new_session` / `switch_session` / `set_session_name` / `get_messages` / `get_entries` | ✅ 存在 |
-| 状态 | `get_state` / `update_state` / `watch_state` | ✅ 存在 |
 | bash | `bash` + `abort_bash` | ✅ 存在 |
 | 导出 | `export_html` | ✅ 存在 |
 | 重试 | `set_auto_retry` / `abort_retry` | ✅ 存在 |
@@ -99,7 +99,7 @@ M1 文档曾把若干能力标为"pi 无对应物"，审计后**多数是假缺�
 - 本地真实上游 key 在 `~/.nodesign/.env`（profile.js:62-69）。
 - model-table 行字段 `api.wireModel` 与 pi wire id 同构；`--model` 部分匹配已实测。
 - **M1 生产提示词状态**：agent-dir 唯一 preset 是 `nodesign-base.json`（`autoActivate: false`，内容只有 M0 探针标记）；settings.json 无 `defaultPreset` → `chooseDefaultPreset` 落空 → **回退 pi 内建 pi-default preset**。Nodesign 平台协议（prelude 32.7KB + 注入族 123KB）一个字没进生产。M2 第一步修复。
-- 官方 rpc-client 已存在：pi-rp `packages/coding-agent/src/modes/rpc/rpc-client.ts`（42 方法）；Nodesign 移植版 `server/engine/pi/rpc-client.js` 已封装 setPreset / setThinkingLevel（setModel 待 M1.5 加）。
+- 官方 rpc-client 已存在：pi-rp `packages/coding-agent/src/modes/rpc/rpc-client.ts`（42 方法）；Nodesign 移植版 `server/engine/pi/rpc-client.js` 已封装 setPreset / setThinkingLevel / setModel / getSessionStats / getAvailableModels（M1.5 补齐）。setModel/setThinkingLevel 默认传 `persistSettings:false`（不写共享 agent-dir/settings.json，见 §5.2）。
 
 ## 3. 目标架构
 
@@ -165,7 +165,7 @@ M1 文档曾把若干能力标为"pi 无对应物"，审计后**多数是假缺�
 
 ### 5.1 pi 子进程生命周期
 
-**版本策略**（2026-08-27 定案）：开发期跟 PATH（`resolvePiBinary()`），pi-rp 正式发版后 vendor/pin 进 Nodesign。当前 PATH 上的 pi 指向开发中的 pi-rp checkout（symlink → dist/cli.js），**dist 落后源码**（set_preset 在源码有、dist 无）——M1.5 前须重建 dist。
+**版本策略**（2026-08-27 定案）：开发期跟 PATH（`resolvePiBinary()`），pi-rp 正式发版后 vendor/pin 进 Nodesign。当前 PATH 上的 pi 指向开发中的 pi-rp checkout（symlink → dist/cli.js）。dist 已于 2026-08-27 重建（set_preset / persistSettings / activePresetId 均已生效）。
 
 **spawn 参数**（`engine/pi/lifecycle.js`，已实现）：
 
@@ -270,9 +270,9 @@ env = {
 **RPC `set_preset` 命令**（✅ 源码已实现，rpc-mode.ts:678）：
 - `{"type":"set_preset","presetId":"<id|none>"}` → 调 `session.setActivePreset(id)`。
 - 行为：写 session JSONL `preset_change` 条目、同步工具策略、广播 `preset_activated` 线上事件。
-- **dist 未重建**：PATH 上的 pi 是旧构建（0 处 set_preset）。M1.5 前须在 pi-rp 仓库重建 dist。
+- **dist 已重建**（2026-08-27）：set_preset / persistSettings opt-out / get_state.activePresetId 均在 dist 生效。
 
-**交付节奏**：pi-rp 重建 dist → Nodesign rpc-client 封装 setPreset（已有）→ 探针验证切换 + `--continue` 恢复 + preset_activated 事件。
+**交付节奏**（✅ 全部完成）：pi-rp 重建 dist → Nodesign rpc-client 封装 setPreset → `_probe-preset-live.mjs` 验证切换 + `--continue` 恢复 + preset_activated 事件（GATE PASS，2026-08-27）。
 
 ## 6. 里程碑
 
@@ -302,13 +302,19 @@ env = {
 - 截断续写 → M1 不做
 - 订阅通道 → 永久禁用，M3 删干净
 
-### M1.5 RPC 接线（簇 A）
-1. pi-rp 重建 dist（set_preset 生效）
-2. 热换模型：rpc-client.setModel + turn-model-switch 合法路径 + session meta 持久化
-3. thinking 档位：API endpoint + 前端入口（rpc-client.setThinkingLevel 已有）
-4. context usage：`get_session_stats.contextUsage` API endpoint + 前端 ContextMeter
-5. 默认模型：`defaultModel()` 去掉 `claude-sonnet-5[1m]` 回退，`NODESIGN_MODEL` 未设时报错
-6. env 全家桶：`NODESIGN_BASE_URL` + `NODESIGN_KEY` 作为 fallback（manifest 没匹配时才用）
+### M1.5 RPC 接线（簇 A）（✅ 2026-08-27）
+1. pi-rp 重建 dist（set_preset 生效）✅
+2. 热换模型：rpc-client.setModel + turn-model-switch 合法路径 + session meta 持久化 ✅
+3. thinking 档位：API endpoint + 前端入口（rpc-client.setThinkingLevel 已有）✅
+4. context usage：`get_session_stats.contextUsage` API endpoint + 前端 ContextMeter ✅
+5. 默认模型：`defaultModel()` 去掉 `claude-sonnet-5[1m]` 回退，`NODESIGN_MODEL` 未设时报错 ✅（workspace.js MAIN_MODEL 同步去兜底）
+6. env 全家桶：`NODESIGN_BASE_URL` + `NODESIGN_KEY` 作为 fallback（manifest 没匹配时才用）✅
+
+**pre-M2 补强**（✅ 2026-08-27，M1.5 收尾 + M2 前置）：
+- pi-rp `set_model`/`set_thinking_level` 加 `persistSettings` opt-out（默认 true 不变；Nodesign 传 false，不写共享 agent-dir/settings.json）。`_probe-m15-live.mjs` 加"settings 未被污染"断言。
+- pi-rp `get_state` 加 `activePresetId` 字段（preset 可观测）。
+- `set_preset` live 验证：`_probe-preset-live.mjs`（切换 + preset_activated 事件 + --continue 恢复）GATE PASS。session-loop onEvent 直接发 `run.preset_activated`（会话级，bridge per-turn 会漏）。
+- 前端热换入口：ModelPicker run 飞行中不再禁用，按 activeRun 分流走 `Turn.setRunModel`（POST /runs/:runId/model）。
 
 ### M2 提示词收敛
 **第一步：prelude 迁移**（M1.5 后立即）：
@@ -385,5 +391,6 @@ env = {
 8. pi 0.84.2 无 glob 工具：需要 glob 语义的工具走 registerTool 或确认工具集
 9. session-dir 每会话独立 JSONL 是续档/崩溃恢复的唯一事实源——禁止清理
 10. `--system-prompt ""` 是 preset 编译路径的触发条件，不要改成不传或传非空值
-11. pi-rp dist 落后源码时 set_preset 不可用——重建 dist 后再测 preset 切换
+11. pi-rp dist 落后源码时 set_preset 不可用——重建 dist 后再测 preset 切换（2026-08-27 已重建）
 12. 默认模型回退不能是订阅行（M1 订阅通道禁用后必 403）
+13. pi 的 setModel/setThinkingLevel 默认写全局 settings.json——共享 agent-dir 的宿主必须传 `persistSettings:false`（Nodesign rpc-client 已默认），否则一个会话的热切换污染所有会话的默认。会话级持久化靠 session JSONL（model_change/thinking_level_change），不受影响。

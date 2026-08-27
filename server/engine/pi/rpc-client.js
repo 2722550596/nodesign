@@ -154,14 +154,20 @@ export class PiRpcClient {
     return this.send({ type: 'set_preset', presetId });
   }
 
-  /** set_thinking_level。返回 response。 */
-  setThinkingLevel(level) {
-    return this.send({ type: 'set_thinking_level', level });
+  /** set_thinking_level。返回 response。
+   *  persistSettings 默认 false：Nodesign 的 agent-dir 是所有会话共享的模板目录，
+   *  pi 写全局 settings.json 会让一个会话的档位污染共享默认。会话级持久化靠 pi
+   *  自己写的 session JSONL（thinking_level_change 条目，resume 恢复的事实源），
+   *  不受此参数影响。pi-rp 侧该参数默认 true（既有行为不变），这里显式 opt-out。 */
+  setThinkingLevel(level, persistSettings = false) {
+    return this.send({ type: 'set_thinking_level', level, persistSettings });
   }
 
-  /** set_model（M1.5）。provider + modelId 是 pi wire 名（piProviderModelFor 反查）。返回 response。 */
-  setModel(provider, modelId) {
-    return this.send({ type: 'set_model', provider, modelId });
+  /** set_model（M1.5）。provider + modelId 是 pi wire 名（piProviderModelFor 反查）。
+   *  返回 response。persistSettings 默认 false，理由同 setThinkingLevel；Nodesign 侧
+   *  的模型持久化走 writeSessionModelOverride（.nd/<sid> 配置），不依赖 pi settings。 */
+  setModel(provider, modelId, persistSettings = false) {
+    return this.send({ type: 'set_model', provider, modelId, persistSettings });
   }
 
   /** get_session_stats → response.data（SessionStats，含 contextUsage）。失败抛错。 */
