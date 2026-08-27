@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Plus, Paperclip, FoldVertical } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SIZE, FONT_SANS, FONT_MONO } from '../../lib/theme.js';
 import { ContextDetail, usageColor, formatK, clamp } from './ContextMeter.jsx';
-import { Me } from '../../lib/api.js';
+import { Me, Sessions } from '../../lib/api.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 
 /**
@@ -27,6 +27,8 @@ export default function ComposerMenu({
   onRefreshUsage,
   isStreaming = false,
   disabled = false,
+  projectId = null,
+  sessionId = null,
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
@@ -45,6 +47,34 @@ export default function ComposerMenu({
     Me.usage().then((u) => { if (alive) setAccount(u); }).catch(() => { /* fail-soft：不显示这一段 */ });
     return () => { alive = false; };
   }, [open]);
+
+  // thinking 档位（M1.5）。展开时现问；pi 侧自己持久化，这里只是读 + 写。
+  // 非活会话 PUT 会 409 —— 档位要等活会话才能改（pi 进程在才有得 set）。
+  const [thinking, setThinking] = useState(null);   // { level, levels, live }
+  const [thinkingBusy, setThinkingBusy] = useState(false);
+  const showToast = useGlobalStore(s => s.showToast);
+  useEffect(() => {
+    if (!open || !projectId || !sessionId) return undefined;
+    let alive = true;
+    Sessions.thinking(projectId, sessionId)
+      .then((t) => { if (alive) setThinking(t); })
+      .catch(() => { /* fail-soft：不显示这一段 */ });
+    return () => { alive = false; };
+  }, [open, projectId, sessionId]);
+
+  async function pickThinking(level) {
+    if (!projectId || !sessionId || thinkingBusy) return;
+    setThinkingBusy(true);
+    try {
+      const r = await Sessions.setThinking(projectId, sessionId, level);
+      setThinking((t) => (t ? { ...t, level: r.level } : t));
+      showToast(`思考深度：${level}`, 'success');
+    } catch (err) {
+      showToast(`切换失败：${err?.message || err}`, 'error');
+    } finally {
+      setThinkingBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) return undefined;
@@ -146,6 +176,47 @@ export default function ComposerMenu({
               disabled={isStreaming || !usage}
               onClick={() => { setOpen(false); onCompact(); }}
             />
+          )}
+
+          {thinking && (
+            <>
+              <Divider />
+              <SectionLabel>思考深度</SectionLabel>
+              <div style={{ padding: `${GAP.xxs}px ${GAP.md}px ${GAP.sm}px`, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {thinking.levels.map((lv) => {
+                  const active = thinking.level === lv;
+                  return (
+                    <button
+                      key={lv}
+                      disabled={thinkingBusy || !thinking.live}
+                      onClick={() => pickThinking(lv)}
+                      title={thinking.live ? `切到 ${lv}` : '没有活跃会话，发消息后才能切'}
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: RADIUS.sm,
+                        border: `1px solid ${active ? COLOR.text2 : COLOR.borderLt}`,
+                        background: active ? COLOR.text2 : 'transparent',
+                        color: active ? COLOR.bgWhite : COLOR.text3,
+                        fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs,
+                        cursor: thinkingBusy || !thinking.live ? 'not-allowed' : 'pointer',
+                        opacity: thinkingBusy || !thinking.live ? 0.5 : 1,
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      {lv}
+                    </button>
+                  );
+                })}
+              </div>
+              {!thinking.live && (
+                <div style={{
+                  padding: `0 ${GAP.md}px ${GAP.sm}px`,
+                  fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub,
+                }}>
+                  当前没有活跃会话 · 发一条消息后可切换
+                </div>
+              )}
+            </>
           )}
 
           {account && (

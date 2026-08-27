@@ -58,10 +58,39 @@ function loadIndex() {
  * @param {string} appModel - app 侧模型 id（如 'minimax-m3'）
  * @returns {{provider: string, model: string} | null} 无映射返回 null
  *   （订阅模型查不到 → 调用方抛错；M1 订阅通道禁用，见 model-context.js）
+ *
+ * M1.5 env 全家桶 fallback：manifest 没命中且 appModel === NODESIGN_MODEL 且
+ * NODESIGN_BASE_URL + NODESIGN_KEY 都配了 → 返回 custom provider 映射。
+ * 与 extensions/providers.ts 的 custom provider 注册同口径（provider='custom'，
+ * wireModel = NODESIGN_MODEL 原值）。
  */
 export function piProviderModelFor(appModel) {
   if (typeof appModel !== 'string' || !appModel) return null;
-  return loadIndex().get(appModel) ?? null;
+  const hit = loadIndex().get(appModel);
+  if (hit) return hit;
+  // env 全家桶 fallback（manifest 优先，没匹配才走这里）
+  const customModel = process.env.NODESIGN_MODEL?.trim();
+  if (customModel && appModel === customModel
+      && process.env.NODESIGN_BASE_URL && process.env.NODESIGN_KEY) {
+    return { provider: 'custom', model: customModel };
+  }
+  return null;
+}
+
+/**
+ * 这个 appModel 是不是「env 全家桶 fallback」模型（M1.5）。
+ * 判据与 piProviderModelFor 的 fallback 分支完全同口径：NODESIGN_MODEL 命中、
+ * BASE_URL + KEY 都配了、且 manifest 没覆盖。turn.js 的白名单闸用它放行，
+ * 避免自定义上游模型被 allowedModelsFor 403 掉。
+ * @param {string} appModel
+ * @returns {boolean}
+ */
+export function isEnvBundleModel(appModel) {
+  if (typeof appModel !== 'string' || !appModel) return false;
+  const customModel = process.env.NODESIGN_MODEL?.trim();
+  return !!customModel && appModel === customModel
+    && !!process.env.NODESIGN_BASE_URL && !!process.env.NODESIGN_KEY
+    && !loadIndex().has(appModel);
 }
 
 /** 测试钩子：清缓存强制重读文件 */

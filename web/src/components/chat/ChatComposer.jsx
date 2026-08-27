@@ -240,6 +240,8 @@ export default function ChatComposer({
             onRefreshUsage={onRefreshUsage}
             isStreaming={isRunning}
             disabled={disabled}
+            projectId={projectId}
+            sessionId={sessionId}
           />
           <input
             ref={fileInputRef}

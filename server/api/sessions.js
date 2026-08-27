@@ -18,7 +18,7 @@ import { promises as fs } from 'fs';
 import { randomUUID } from 'crypto';
 import { setActiveSession } from '../projects/store.js';
 import { guardProject, modelUserFor } from './_guard.js';
-import { closeQuerySession, hasActiveQuerySession } from '../engine/runs/active-runs.js';
+import { closeQuerySession, hasActiveQuerySession, getQuerySession } from '../engine/runs/active-runs.js';
 import {
   getProjectWorkspace,
   getWorkspaceRoot,
@@ -36,6 +36,7 @@ import {
   readPiSessionMessages,
   readPiSessionInfo,
   readLastAssistantUsage,
+  readLastThinkingLevel,
 } from '../engine/pi/pi-jsonl.js';
 import { getProjectBus } from '../ws/broker.js';
 import { getLastContextUsage } from '../engine/runs/live-turn.js';
@@ -47,6 +48,7 @@ import {
   selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, modelSwitchRejection,
   resolveModelContextWindow, brandOfModel,
 } from '../engine/agent/model-context.js';
+import { isEnvBundleModel } from '../engine/pi/model-map.js';
 
 /**
  * 进行中的 rewind 操作 sid 集 —— 供 turn.js startNewRunSession 守卫使用。
@@ -153,13 +155,12 @@ router.get('/:pid/sessions/:sid', async (req, res, next) => {
  * run.context_usage 是 turn 内推的，turn 一结束前端就只剩一个空值。可用户想看
  * "现在装了多少、要不要压缩"恰恰是在两轮之间。composer 的 [+] 菜单展开时打这条。
  *
- * M1 近似口径（pi 引擎，SDK query.getContextUsage 权威路径随引擎换掉）：取最新
- * jsonl 里**最后一条 assistant message 的 usage**，input + cacheRead + cacheWrite
- * 当 used —— pi 的 usage.input 是本次请求未命中缓存的增量、cacheRead/cacheWrite
- * 是缓存命中/写入部分，三者之和 ≈ 模型这次实际看到的上下文大小。分母从会话
- * session-config 的 model 查 resolveModelContextWindow 真实窗口（与
- * Events.contextUsage 的分母同源，前端 ContextMeter 形状逐字段对齐）。
- * 近似误差：最后一条消息的 usage 不含其后工具结果的增量，M2 复评。
+ * M1.5（2026-08-27）：活会话走权威路径 —— `get_session_stats` RPC 的
+ * `SessionStats.contextUsage`（{ tokens, contextWindow, percent }，pi 自己算的
+ * 上下文估算，compaction 后下一条 LLM 响应前 tokens 为 null）。非活会话回落
+ * M1 近似口径：最新 jsonl 最后一条 assistant message 的 usage（input + cacheRead
+ * + cacheWrite）。分母与 Events.contextUsage 同源（resolveModelContextWindow），
+ * 前端 ContextMeter 形状逐字段对齐。
  * 拿不到 usage → 内存记忆值兜底；再没有 → 零用量（前端进度条低于阈值自动隐藏）。
  */
 router.get('/:pid/sessions/:sid/context-usage', async (req, res, next) => {
@@ -169,11 +170,43 @@ router.get('/:pid/sessions/:sid/context-usage', async (req, res, next) => {
     if (!project) return;
 
     const sid = req.params.sid;
+    const { model: appModel } = await resolveSessionModel(getSessionMetaDir(req.params.pid, sid));
+    const realMax = resolveModelContextWindow(appModel) ?? null;
+
+    // 权威路径：活会话现问 pi（get_session_stats.contextUsage）
+    const query = getQuerySession(sid)?.query;
+    if (query && typeof query.getSessionStats === 'function') {
+      try {
+        const stats = await query.getSessionStats();
+        const cu = stats?.contextUsage;
+        if (cu && cu.tokens != null) {
+          return res.json({
+            type: 'run.context_usage',
+            totalTokens: cu.tokens,
+            maxTokens: cu.contextWindow || realMax,
+            sdkMaxTokens: null,
+            percentage: cu.percent != null ? Math.round(cu.percent) : (cu.contextWindow > 0 ? Math.round((cu.tokens / cu.contextWindow) * 100) : 0),
+            autoCompactThreshold: null,
+            isAutoCompactEnabled: null,
+            model: appModel,
+            brand: brandOfModel(appModel),
+            messageBreakdown: null,
+            memoryFilesTokens: 0,
+            mcpToolsTokens: 0,
+            agentsTokens: 0,
+            live: true,
+          });
+        }
+        // cu.tokens == null（compaction 后未响应）→ 落 jsonl 近似
+      } catch (err) {
+        console.warn(`[sessions] sid=${sid.slice(0, 8)} get_session_stats 失败，落 jsonl 近似:`, err.message);
+      }
+    }
+
+    // 近似路径：jsonl 最后一条 assistant usage
     const usage = await readLastAssistantUsage(piSessionDir(PROJECTS_DATA_ROOT, sid));
     if (usage) {
       const totalTokens = (usage.input || 0) + (usage.cacheRead || 0) + (usage.cacheWrite || 0);
-      const { model: appModel } = await resolveSessionModel(getSessionMetaDir(req.params.pid, sid));
-      const realMax = resolveModelContextWindow(appModel) ?? null;
       return res.json({
         type: 'run.context_usage',
         totalTokens,
@@ -252,7 +285,7 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     if (raw !== null && isModelLockedFor(modelUser, raw)) {
       return res.status(403).json({ error: '这个模型仅限 Pro 档，暂未对外开放', code: 'MODEL_LOCKED', model: raw });
     }
-    if (typeof raw === 'string' && !allowedModelsFor(modelUser).some((m) => m.id === raw)) {
+    if (typeof raw === 'string' && !isEnvBundleModel(raw) && !allowedModelsFor(modelUser).some((m) => m.id === raw)) {
       return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
     }
 
@@ -283,6 +316,61 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
       restarted: result.restarted,
       options: selectableModelsFor(req.user),
     });
+  } catch (err) { next(err); }
+});
+
+/**
+ * ── thinking 档位（M1.5，2026-08-27）──
+ *
+ * pi 的 setThinkingLevel 自己持久化：写 session JSONL thinking_level_change 条目
+ * + settings defaultThinkingLevel；resume 时 getSessionContextSettings 从条目恢复。
+ * Nodesign 侧不需要额外落盘 —— 真相在 pi 的 session-dir。
+ *
+ * GET  → { level, levels, live }
+ *        活会话：get_state RPC 现问（live:true）；非活：jsonl 最后一条
+ *        thinking_level_change（live:false）；都没有 → null（pi 默认 medium）。
+ * PUT  → body { level }，活会话走 set_thinking_level RPC；非活 409。
+ *        pi 侧 clamp 到模型支持的档位（setThinkingLevel 内部 _clampThinkingLevel）。
+ */
+const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+router.get('/:pid/sessions/:sid/thinking', async (req, res, next) => {
+  try {
+    validateSessionId(req.params.sid);
+    const project = guardProject(req, res);
+    if (!project) return;
+    const sid = req.params.sid;
+
+    // pi 的 setThinkingLevel 同步落 jsonl（thinking_level_change 条目），
+    // 活/非活都从 jsonl 读即真值，不需要 RPC 往返。live 只标会话是否活着。
+    const level = await readLastThinkingLevel(piSessionDir(PROJECTS_DATA_ROOT, sid));
+    const live = !!getQuerySession(sid)?.query;
+    res.json({ level, levels: THINKING_LEVELS, live });
+  } catch (err) { next(err); }
+});
+
+router.put('/:pid/sessions/:sid/thinking', async (req, res, next) => {
+  try {
+    validateSessionId(req.params.sid);
+    const project = guardProject(req, res);
+    if (!project) return;
+    const sid = req.params.sid;
+
+    const { level } = req.body || {};
+    if (typeof level !== 'string' || !THINKING_LEVELS.includes(level)) {
+      return res.status(400).json({ error: `level must be one of: ${THINKING_LEVELS.join(', ')}`, code: 'INVALID_THINKING_LEVEL' });
+    }
+
+    const query = getQuerySession(sid)?.query;
+    if (!query || typeof query.setThinkingLevel !== 'function') {
+      return res.status(409).json({ error: '没有活跃会话，thinking 档位随下次会话启动生效（pi 默认 medium）', code: 'NO_ACTIVE_SESSION' });
+    }
+
+    const rpcRes = await query.setThinkingLevel(level);
+    if (!rpcRes?.success) {
+      return res.status(502).json({ error: `pi set_thinking_level 失败: ${rpcRes?.error ?? 'unknown'}`, code: 'PI_SET_THINKING_FAILED' });
+    }
+    res.json({ ok: true, level });
   } catch (err) { next(err); }
 });
 

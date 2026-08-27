@@ -29,15 +29,18 @@ import { getQuerySession, closeQuerySession } from '../runs/active-runs.js';
 const CONFIG_NAME = 'session-config.json';
 
 /**
- * NODESIGN_MODEL 没配时的兜底。原值是 kimi 网关时代的 'kimi-k2.6'，08-21 深夜 kimi 行从模型表删除后
- * 改成订阅默认行（一个不在表里的名字会被 resolveModelRoute 当订阅模型，兜底必须是真名）；
- * 正常部署 .env 里一定有 NODESIGN_MODEL，走不到这里。
+ * 全局默认模型（不含会话覆盖）。每次现读 env —— 进程内改 env 也能生效。
+ *
+ * M1.5（2026-08-27）fail-loud：NODESIGN_MODEL 未设时**抛错**，不再回退到
+ * 订阅行 claude-sonnet-5[1m]（M1 订阅通道禁用后那个名字必 403，静默回退等于
+ * 给每个用户埋一条必死的消息）。部署必须显式配 NODESIGN_MODEL。
  */
-const LEGACY_FALLBACK_MODEL = 'claude-sonnet-5[1m]';
-
-/** 全局默认模型（不含会话覆盖）。每次现读 env —— 进程内改 env 也能生效 */
 export function defaultModel() {
-  return process.env.NODESIGN_MODEL || LEGACY_FALLBACK_MODEL;
+  const m = process.env.NODESIGN_MODEL;
+  if (!m || !m.trim()) {
+    throw new Error('NODESIGN_MODEL 未配置：M1 起没有默认模型回退，请在 .env 或部署环境里显式设置（如 NODESIGN_MODEL=minimax-m3）');
+  }
+  return m.trim();
 }
 
 // ── config 文件的读改写串行化 ──

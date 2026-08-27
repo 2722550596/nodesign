@@ -404,6 +404,11 @@ export const Sessions = {
    *  两者都没有 → null（从没跑过 turn / 服务端重启过）。 */
   contextUsage: (pid, sid) =>
     jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/context-usage`),
+  /** thinking 档位（M1.5）→ { level, levels, live }。level=null 表示没设过（pi 默认 medium） */
+  thinking: (pid, sid) => jsonRequest('GET', `/api/projects/${pid}/sessions/${sid}/thinking`),
+  /** 设 thinking 档位（仅活会话；pi 侧 clamp 到模型支持的档位并自己持久化） */
+  setThinking: (pid, sid, level) =>
+    jsonRequest('PUT', `/api/projects/${pid}/sessions/${sid}/thinking`, { level }),
   /** Fork 出一个新 session，可指定截断点和标题 */
   fork: (pid, sid, { upToMessageId, title } = {}) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/fork`, { upToMessageId, title }),

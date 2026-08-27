@@ -159,6 +159,25 @@ export class PiRpcClient {
     return this.send({ type: 'set_thinking_level', level });
   }
 
+  /** set_model（M1.5）。provider + modelId 是 pi wire 名（piProviderModelFor 反查）。返回 response。 */
+  setModel(provider, modelId) {
+    return this.send({ type: 'set_model', provider, modelId });
+  }
+
+  /** get_session_stats → response.data（SessionStats，含 contextUsage）。失败抛错。 */
+  async getSessionStats() {
+    const res = await this.send({ type: 'get_session_stats' });
+    if (!res.success) throw new Error(`get_session_stats 失败: ${res.error ?? 'unknown error'}`);
+    return res.data;
+  }
+
+  /** get_available_models → response.data（模型快照数组）。失败抛错。 */
+  async getAvailableModels() {
+    const res = await this.send({ type: 'get_available_models' });
+    if (!res.success) throw new Error(`get_available_models 失败: ${res.error ?? 'unknown error'}`);
+    return res.data;
+  }
+
   /**
    * 内部发送：无 id 自动分配 req_N；写 stdin（JSON + '\n'）；
    * 返回 Promise<response>，按 id 关联。进程未运行/已退出 → reject。

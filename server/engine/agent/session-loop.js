@@ -331,6 +331,11 @@ export async function runSession({
         }, 5000).unref?.();
         return p;
       },
+      // M1.5 RPC 直通：热换模型 / thinking 档位 / 会话统计。
+      // 调用方（turn-model-switch.js 等）经 getQuerySession(sid).query 拿到。
+      setModel: (provider, modelId) => client.setModel(provider, modelId),
+      setThinkingLevel: (level) => client.setThinkingLevel(level),
+      getSessionStats: () => client.getSessionStats(),
     });
 
     await client.start();   // get_state 探活；失败抛错（带 stderr 尾巴）

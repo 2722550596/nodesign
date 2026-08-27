@@ -259,3 +259,26 @@ export async function readLastAssistantUsage(sessionDir) {
   }
   return null;
 }
+
+/**
+ * 最新 jsonl 里**最后一条 thinking_level_change 条目**的档位（M1.5）。
+ * pi 的 setThinkingLevel 自己落这个条目（session-manager.ts:1100），resume 时
+ * getSessionContextSettings 从它恢复 —— 非活会话查当前档位就读它。拿不到 → null。
+ */
+export async function readLastThinkingLevel(sessionDir) {
+  const file = await findLatestSessionFile(sessionDir);
+  if (!file) return null;
+  let raw;
+  try { raw = await fs.readFile(file, 'utf8'); } catch { return null; }
+  const lines = raw.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+    let obj;
+    try { obj = JSON.parse(trimmed); } catch { continue; }
+    if (obj?.type === 'thinking_level_change' && typeof obj.thinkingLevel === 'string') {
+      return obj.thinkingLevel;
+    }
+  }
+  return null;
+}
