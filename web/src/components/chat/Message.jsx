@@ -15,6 +15,11 @@ import { getToolIcon, isSubagentTool } from './tool-icons.js';
 import { useTimelinePosition } from './TimelineGroupContext.js';
 import { PAPER_SHADOW } from '../../lib/paper.js';
 
+/** 提问工具名归一：SDK 时代 'AskUserQuestion'，M2 pi 扩展 'ask_user_question'。 */
+export function isAskQuestionTool(toolName) {
+  return toolName === 'AskUserQuestion' || toolName === 'ask_user_question';
+}
+
 /**
  * 单条消息渲染。4 种 role：
  *   - user      用户气泡（亮黑底，靠右）
@@ -48,18 +53,20 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
 
   if (role === 'tool') {
     // C27：AskUserQuestion 走专门卡片渲染（不当普通 tool message）
-    // A4.3：toolUseId 直传 = message.id（ProjectWorkspace 创建 tool 消息时
-    // id 用 evt.blockId，blockId 就是 SDK tool_use_id）。
+    // 工具名两代并存：SDK 时代 'AskUserQuestion'；M2 换 pi 后 event-bridge
+    // 原样透传 registerTool 名 'ask_user_question'（小写下划线）。判据归一在
+    // isAskQuestionTool，卡片 / 图标 / 舞台三处共用。
+    // A4.3 → M2：答案路由只认 runId（服务端经 runId 解析 sid，忽略 toolUseId），
+    // 卡片不再需要 toolUseId 直传。
     //
-    // SDK streaming 设计：run.tool_use.started 事件不含 input（仅 blockId+name），
-    // 之后才推 run.delta.tool_use 带完整 input；中间 toolInput===undefined 期间
-    // 直接走 AskUserQuestionView 会触发 questions 长度 0 的 fallback "调用了但没填"。
-    // 这里在路由层先拦一次：streaming 中（status=running 且 toolInput 还没到）
-    // 渲染 timeline pending 节点（参考 ToolMessage 的 nd-shimmer 模式）。
-    if (toolName === 'AskUserQuestion' && status === 'running' && !toolInput) {
-      return <ToolPendingNode toolName="AskUserQuestion" />;
+    // streaming 中间态：input 还没到齐时直接走 AskUserQuestionView 会触发
+    // questions 长度 0 的 fallback "调用了但没填"。路由层先拦一次：running 且
+    // toolInput 还没到 → 渲染 timeline pending 节点（参考 ToolMessage 的
+    // nd-shimmer 模式）。
+    if (isAskQuestionTool(toolName) && status === 'running' && !toolInput) {
+      return <ToolPendingNode toolName={toolName} />;
     }
-    if (toolName === 'AskUserQuestion') {
+    if (isAskQuestionTool(toolName)) {
       // 2026-07-28：问题面板的主场在工作台画布（StageLayer 的 QuestionStageCard）。
       // 侧边栏只留一张摘要卡——同一个 /answer 端点两处都能答，但聊天栏默认不再
       // 铺一整个 wizard 抢戏；画布卡被关掉 / 刷新丢了时点"在这里答"展开兜底。
@@ -68,7 +75,6 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
           toolInput={toolInput}
           toolOutput={toolOutput}
           status={status}
-          toolUseId={message.id}
         />
       );
     }
@@ -118,15 +124,16 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
 }
 
 /**
- * AskUserQuestionView —— SDK 内置 AskUserQuestion 工具的卡片渲染（wizard 步进版）
+ * AskUserQuestionView —— 提问工具的卡片渲染（wizard 步进版）
  *
- * SDK 内置 AskUserQuestion 工具的 input schema：
+ * 工具 input schema（SDK 'AskUserQuestion' 与 M2 pi 扩展 'ask_user_question'
+ * 完全一致，见 server/engine/pi/extensions/ask-user.ts）：
  *   {
  *     questions: [{
  *       question: string,
- *       header: string,
- *       options: [{ label, description, preview? }],
- *       multiSelect: boolean,
+ *       header?: string,
+ *       options: [{ label, description?, preview? }],
+ *       multiSelect?: boolean,
  *     }]
  *   } —— 单次调用 1-4 个 question，每题 2-4 个 option
  *
@@ -134,12 +141,16 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
  *   - 单选 q：点 option 高亮选中；改主意可点别的覆盖
  *   - 多选 q：option 可勾可去；至少选 1 个才能下一步
  *   - 导航：[← 上一题] [跳过本题] [下一题 →] / [✓ 提交全部 (N 题)]
- *   - 跳过的题不进 answers payload —— 模型看不到这条 q（SDK 工具
- *     mapToolResultToToolResultBlockParam 只 iterate Object.entries，缺的不显示）
- *   - 全部答完按"提交全部"才一次性 POST，对应 SDK answers map 的真实语义
+ *   - 跳过的题在 answers 数组里落空对象 {} —— 服务端按 index 对齐，
+ *     模型看到"（未选）"
+ *   - 全部答完按"提交全部"才一次性 POST
  *
- * 提交后流程（同 A4.3）：POST /answer → backend resolve canUseTool →
- * binary tool.call → run.delta.tool_result → status='success' → 卡片 disable
+ * 提交契约（M2 方案 A）：POST /api/projects/:pid/runs/:runId/answer，
+ * body { answers: [{ selectedLabels?: string[], customText?: string }] } ——
+ * answers 与 questions 平行。服务端经 runId 解析 sid，忽略 toolUseId。
+ * 提交后流程：POST /answer → ask-registry resolve → sidecar /ask 长轮询返回 →
+ * pi 工具 execute 拿到答案返回 → run.delta.tool_result → status='success' →
+ * 卡片 disable。
  *
  * 历史卡片（已 cancelled / 已答 / 老 session）：isAnswered=true 一开始就 disable
  * 整张卡，progress 直接显 "已完成"，所有按钮灰；POST 路径不会触发。
@@ -354,13 +365,24 @@ function ToolPendingNode({ toolName }) {
 }
 
 /**
- * tool_result 里捞 { 问题: 答案 }。SDK 的回填是一句自由文本：
- *   Your questions have been answered: "问题"="答案". You can now continue…
- * 先按这个形状抠引号对，抠不出再当 JSON 试一次，都不行就返 null（卡片退回整段回显）。
+ * tool_result 里捞 { 问题: 答案 }。两代回填形状都认：
+ *   - M2 pi 扩展（ask-user.ts）多行文本：
+ *       用户回答：\n\n问：{q}\n答：{picks}[\n用户补充：{custom}]
+ *   - SDK 时代一句自由文本：
+ *       Your questions have been answered: "问题"="答案". You can now continue…
+ * 先按 pi 形状抠"问/答"对，再按 SDK 形状抠引号对，再当 JSON 试一次，
+ * 都不行返 null（卡片退回整段回显）。
  */
 function answerMapOf(toolOutput) {
   let v = toolOutput;
   if (typeof v === 'string') {
+    // M2 pi 形状：问：…\n答：…（答案到行尾；补充说明另起一行不算进答案）
+    const piPairs = {};
+    const piRe = /问：([\s\S]*?)\n答：([^\n]*)/g;
+    let pm;
+    while ((pm = piRe.exec(v))) piPairs[pm[1].trim()] = pm[2].trim();
+    if (Object.keys(piPairs).length) return piPairs;
+    // SDK 形状：引号对
     const pairs = {};
     const re = /"([^"]+)"\s*=\s*"([^"]*)"/g;
     let m;
@@ -384,7 +406,7 @@ function answerMapOf(toolOutput) {
  * "问了什么 / 答了什么"，需要时点开兜底 wizard（画布卡关掉、刷新丢了、
  * 或者用户就想在聊天栏答）。两处走同一个 /answer，谁先答谁生效。
  */
-function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
+function AskUserQuestionBrief({ toolInput, toolOutput, status }) {
   const [expanded, setExpanded] = useState(false);
   const questions = Array.isArray(toolInput?.questions) ? toolInput.questions : [];
   const answered = (status === 'success' && toolOutput) || status === 'error';
@@ -400,7 +422,6 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
         toolInput={toolInput}
         toolOutput={toolOutput}
         status={status}
-        toolUseId={toolUseId}
       />
     );
   }
@@ -477,7 +498,7 @@ function AskUserQuestionBrief({ toolInput, toolOutput, status, toolUseId }) {
 }
 
 // export：工作台画布的舞台层也渲染这张卡（agent 提问直接在画布里答）
-export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }) {
+export function AskUserQuestionView({ toolInput, toolOutput, status }) {
   const showToast = useGlobalStore(s => s.showToast);
   const activeRun = useGlobalStore(s => s.activeRun);
   // collected: { [questionText]: answerString }；submitted 后等 status 推回
@@ -577,44 +598,44 @@ export function AskUserQuestionView({ toolInput, toolOutput, status, toolUseId }
     submitAll(collected, customReplies);
   };
 
-  // 真正的 POST。allCollected：可能含 undefined 表示跳过 → 过滤掉
-  // customMap：textarea 自由输入；非空时优先于 collected[q] 用作 answer
+  // 真正的 POST。M2 契约：answers 是**与 questions 平行的数组**，
+  // 每项 { selectedLabels?: string[], customText?: string }（服务端 ask-user.ts
+  // 按 index 对齐；跳过的题落空对象 {}，模型看到"（未选）"）。
+  // allCollected：{ [questionText]: label / 多选 csv }；customMap：textarea 自由
+  // 输入，非空时进 customText（与选项并存，不互斥 —— 服务端两条都收）。
   const submitAll = async (allCollected, customMap = {}) => {
     if (!activeRun?.pid || !activeRun?.runId) {
       showToast('当前无活跃 run，无法回答历史问题', 'info');
       return;
     }
-    if (!toolUseId) {
-      showToast('卡片缺 toolUseId（不应发生）', 'error');
-      return;
-    }
 
-    // 过滤 undefined（跳过的题）+ 合并 customReplies（textarea 优先级高于 option）
-    // 对每条 question：textarea 非空 trim 后用 textarea；否则 fallback option label
-    const answers = {};
-    const allKeys = new Set([...Object.keys(allCollected), ...Object.keys(customMap)]);
-    for (const k of allKeys) {
-      const custom = (customMap[k] || '').trim();
-      const opt = allCollected[k];
-      const v = custom || opt;
-      if (typeof v === 'string' && v.length > 0) answers[k] = v;
-    }
+    const answers = questions.map((q) => {
+      const entry = {};
+      const opt = allCollected[q.question];
+      if (typeof opt === 'string' && opt.length > 0) {
+        entry.selectedLabels = q.multiSelect ? opt.split(', ') : [opt];
+      }
+      const custom = (customMap[q.question] || '').trim();
+      if (custom) entry.customText = custom;
+      return entry;
+    });
 
     setSubmitting(true);
     try {
       await Turn.answer({
         pid: activeRun.pid,
         runId: activeRun.runId,
-        toolUseId,
         answers,
       });
       // 不 setSubmitting(false) —— 等 run.delta.tool_result 把 status 推成
       // success，isAnswered 接管 disable。
     } catch (err) {
       setSubmitting(false);
-      const msg = err.code === 'NO_PENDING_QUESTION'
+      const msg = err.code === 'NO_PENDING_ASK'
         ? '问题已不在等待中（可能已被回答 / cancel / run 结束）'
-        : `回答失败：${err.message}`;
+        : err.code === 'ASK_RUN_MISMATCH'
+          ? '问题属于另一轮对话，无法在此回答'
+          : `回答失败：${err.message}`;
       showToast(msg, 'error');
     }
   };

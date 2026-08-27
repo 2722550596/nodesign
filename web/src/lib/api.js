@@ -351,14 +351,16 @@ export const Turn = {
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/cancel`, {}),
 
   /**
-   * A4.2：把用户在 AskUserQuestionView 卡片里点的答案回传后端。
-   * 后端 provideAnswer resolve loop.js canUseTool 等待的 Promise →
-   * binary 拿到 updatedInput 调 tool.call → 模型看到 "User has answered..."。
-   * answers: { [questionText]: optionLabel }
-   * 200 ok / 400 缺字段 / 404 code='NO_PENDING_QUESTION'
+   * M2 方案 A：把用户在 AskUserQuestionView 卡片里点的答案回传后端。
+   * 服务端 ask-registry answerAsk resolve sidecar /ask 长轮询挂起的 Promise →
+   * pi 扩展 ask_user_question 的 execute 拿到 answers 返回 → 模型看到
+   * "用户回答：问：…答：…"。sid 经 runId 解析，toolUseId 不需要。
+   * answers: [{ selectedLabels?: string[], customText?: string }]
+   *   —— 与 questions 平行的数组（按 index 对齐；跳过的题落空对象 {}）
+   * 200 ok / 404 code='NO_PENDING_ASK' / 409 code='ASK_RUN_MISMATCH'
    */
-  answer: ({ pid, runId, toolUseId, answers }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/answer`, { toolUseId, answers }),
+  answer: ({ pid, runId, answers }) =>
+    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/answer`, { answers }),
 
   /**
    * SDK Query control: rewindFiles —— 把 cwd 文件回滚到指定 user message 时点。

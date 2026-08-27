@@ -13,34 +13,31 @@ import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import { composeUserMessage } from './turn-compose.js';
 
-const EMPTY_PENDING = { count: 0, summary: '' };
 const texts = (blocks) => blocks.filter((b) => b.type === 'text').map((b) => b.text);
 
 describe('composeUserMessage 基数', () => {
   it('纯文字：正好一个 text block，就是用户那句话', async () => {
-    const { blocks } = await composeUserMessage('你好！', [], EMPTY_PENDING, os.tmpdir());
+    const { blocks } = await composeUserMessage('你好！', [], os.tmpdir());
     expect(blocks).toHaveLength(1);
     expect(blocks[0]).toEqual({ type: 'text', text: '你好！' });
   });
 
-  it('带 pendingSummary：system 块 + 用户那句话各一份', async () => {
-    const { blocks } = await composeUserMessage(
-      '继续', [], { count: 2, summary: '用户改了 2 处' }, os.tmpdir(),
-    );
+  it('pendingSummary 注入已搬走：compose 不再产出 <system> 块（session-loop runTurn 执行时点装配）', async () => {
+    const { blocks } = await composeUserMessage('继续', [], os.tmpdir());
     expect(texts(blocks).filter((t) => t === '继续')).toHaveLength(1);
-    expect(texts(blocks).filter((t) => t.startsWith('<system>'))).toHaveLength(1);
+    expect(texts(blocks).filter((t) => t.startsWith('<system>'))).toHaveLength(0);
   });
 
   it('只发附件没文字：占位句只出现一次，素材清单也只有一份', async () => {
     const { blocks } = await composeUserMessage(
-      '', [{ path: 'assets/nope.zip', name: 'nope.zip' }], EMPTY_PENDING, os.tmpdir(),
+      '', [{ path: 'assets/nope.zip', name: 'nope.zip' }], os.tmpdir(),
     );
     expect(texts(blocks).filter((t) => t.includes('用户只发了附件'))).toHaveLength(1);
     expect(texts(blocks).filter((t) => t.includes('可用素材'))).toHaveLength(1);
   });
 
   it('displayText 不重复用户那句话', async () => {
-    const { displayText } = await composeUserMessage('唯一一句', [], EMPTY_PENDING, os.tmpdir());
+    const { displayText } = await composeUserMessage('唯一一句', [], os.tmpdir());
     expect(displayText.split('唯一一句')).toHaveLength(2); // 出现 1 次
   });
 });

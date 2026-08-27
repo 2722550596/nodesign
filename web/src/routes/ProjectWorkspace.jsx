@@ -641,6 +641,15 @@ export default function ProjectWorkspace() {
     if (CHAT_STREAM_EVENTS.has(evt.type)) {
       if (isStale) return;
       if (evt.type === 'run.delta.text') setThinkingTokens(null);
+      // run.ask_user_question：答题卡 POST /answer 要 activeRun。正常 run.start 已认领，
+      // 但首条消息 / 重连时 run.start 可能整段丢（见 ws.connected 案）—— 这里兜底
+      // 再认领一次（同值幂等；跨会话/旧 run 已被 isStale 滤掉）。
+      if (evt.type === 'run.ask_user_question' && evt.runId && currentRunIdRef.current !== evt.runId) {
+        currentRunIdRef.current = evt.runId;
+        setCurrentRunId(evt.runId);
+        setActiveRun({ pid: id, runId: evt.runId });
+        setIsStreaming(true);
+      }
       setMessages(prev => reduceChatEvent(prev, evt));
       return;
     }

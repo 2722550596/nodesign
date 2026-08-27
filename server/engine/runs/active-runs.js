@@ -28,6 +28,7 @@
  */
 
 import { markRunFailed } from './store.js';
+import { cancelAsksForSession } from '../pi/ask-registry.js';
 
 /**
  * @typedef {object} PendingQuestion
@@ -355,6 +356,9 @@ export function cancelRun(runId, reason = 'user_cancel') {
   // 调 session.query.interrupt() 中断当前 turn，query 不死继续等下条 message
   for (const [sid, qRec] of activeQuerySessions) {
     if (qRec.currentRunId === runId) {
+      // 挂起的 AskUserQuestion 立刻作废（用户按停时问题卡片同步消失；
+      // pi 侧 execute 的 fetch 经 abort signal / 连接断收尾）
+      cancelAsksForSession(sid, reason);
       if (qRec.query && typeof qRec.query.interrupt === 'function') {
         qRec.query.interrupt().catch((err) => {
           console.warn(`[active-runs] query.interrupt failed for run ${runId} in session ${sid.slice(0, 8)}:`, err?.message);
@@ -635,6 +639,8 @@ export function unregisterQuerySession(sessionId, expectedToken = null) {
     try { p.reject(new Error('session ended before MCP elicitation answered')); } catch { /* */ }
   }
   rec.pendingElicitations.clear();
+  // M2 AskUserQuestion 挂起态同清（closeQuerySession / runSession 自然结束都经此）
+  try { cancelAsksForSession(sessionId, 'session_ended'); } catch { /* */ }
   // 排队中还没跑到的 turn：run 行不能永远停 pending，标 failed 让前端/审计有终态
   for (const rid of (rec.pendingRunIds || [])) {
     try { markRunFailed(rid, 'session ended before queued turn started'); } catch { /* */ }

@@ -11,7 +11,7 @@
  *
  * 行为（streamInput 重构后）：
  *   1. 校验 project + 解析 input
- *   2. composeUserMessage：拼成 SDK content blocks（多模态 / system 提示注入）
+ *   2. composeUserMessage：拼成 content blocks（多模态；system 注入 08-27 起归 session-loop runTurn 执行时点）
  *   3. createRun（pending） — per-turn record，前端按 runId 跟踪
  *   4. 立即返回 runId + sessionId（agent 异步在后端跑）
  *   5. 看 hasActiveQuerySession(sid)：
@@ -42,7 +42,7 @@ import {
 import { createRun } from '../engine/runs/store.js';
 import { runSession } from '../engine/agent/session-loop.js';
 import {
-  cancelRun, hasActiveQuerySession, getQuerySession,
+  cancelRun, hasActiveQuerySession, getQuerySession, getSessionIdByRunId,
 } from '../engine/runs/active-runs.js';
 import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
 import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
@@ -53,9 +53,11 @@ import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkFreeQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
 import { shouldModerate, moderateText, recordViolation, levelFor } from '../lib/moderation.js';
 import { getProjectBus } from '../ws/broker.js';
-import { readPendingSummary } from './pending-changes.js';
+import { Events } from '../engine/agent/events.js';
+// （readPendingSummary 08-27 搬去 session-loop runTurn 执行时点采集 —— 排队消息不带过期状态）
 import { pendingRewinds } from './sessions.js';
 import { composeUserMessage } from './turn-compose.js';
+import { getPendingAsk, answerAsk } from '../engine/pi/ask-registry.js';
 
 const router = express.Router();
 
@@ -107,8 +109,8 @@ router.post('/:pid/turn', async (req, res, next) => {
 
     const finalSkillId = (typeof skillId === 'string' && skillId) || project.skillId;
 
-    // C4：先确定 sessionRoot，给 composeUserMessage 看 pending-changes buffer
-    // （sid 解析逻辑下面已写）—— 提早 ensure 一次让 buffer 检查能命中真路径。
+    // C4：先确定 sessionRoot（sid 解析逻辑下面已写）。pendingSummary 的注入 08-27
+    // 搬到 session-loop runTurn 执行时点；这里 ensure 只为附件解析和 runSession 落根。
 
     // session id 解析逻辑（streamInput 模式）：
     //   - body.sessionId === string → 用该 sid（已有活 query 就 push，没有就起新 runSession）
@@ -247,9 +249,9 @@ router.post('/:pid/turn', async (req, res, next) => {
       }
     }
 
-    // 取 sessionRoot + workspace 主动提示：
-    //   - pendingSummary（C4）：用户在 chat 间隔做的直接编辑/评论 buffer
-    //   （素材摘要 08-21 起由 UserPromptSubmit hook 注入，首轮全量之后只报变化）
+    // 取 sessionRoot：附件 inline 解析 + runSession 的工作区根。
+    //   （pendingSummary 注入 08-27 起在 session-loop runTurn 执行时点采集 ——
+    //     消息可能在 inputQueue 排队，API 时点采的状态会过期）
     await ensureProjectWorkspace(project.id);
     const sessionRoot = await ensureSessionWorkspace(project.id, sid);
 
@@ -273,12 +275,13 @@ router.post('/:pid/turn', async (req, res, next) => {
       await applySessionModel(sid, getSessionMetaDir(project.id, sid), requestedModel, 'turn');
     }
 
-    const pendingSummary = isNewSession ? { count: 0, summary: '' } : await readPendingSummary(sessionRoot);
-    // raw：纯文本直达 SDK，不加任何装饰块 —— 斜杠命令（/compact 等）要求消息
-    // 就是命令本身，多包一层 system 注入就不会被识别
-    const { displayText, blocks } = raw === true && chatText.trim()
+    // raw：纯文本直达引擎，不加任何装饰块 —— 斜杠命令（/compact 等）要求消息
+    // 就是命令本身，多包一层 system 注入就不会被识别。raw 标志随 queue item 传到
+    // runTurn，执行时点同样跳过动态注入装配（状态块 / pendingSummary）。
+    const isRaw = raw === true && !!chatText.trim();
+    const { displayText, blocks } = isRaw
       ? { displayText: chatText.trim(), blocks: [{ type: 'text', text: chatText.trim() }] }
-      : await composeUserMessage(chatText, attachments, pendingSummary, sessionRoot);
+      : await composeUserMessage(chatText, attachments, sessionRoot);
 
     // 上传/附件诊断：NODESIGN_DEBUG_TURN=1 时打印 blocks 概况，定位 image 体积/媒体类型
     // 引发的 400/超 token 类问题（配合 binary-fixup-proxy 的 /tmp dump）
@@ -314,7 +317,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     res.status(202).json({ runId: run.id, sessionId: sid });
     const bus = getProjectBus(project.id);
 
-    // M1 pi-rp 消息形状：{ text, images }。compose 出的是 Anthropic content blocks，
+    // M1 pi-rp 消息形状：{ text, images, raw? }。compose 出的是 Anthropic content blocks，
     // 这里翻译：text blocks 拼接；image block {source:{base64,media_type,data}} →
     // {type:'image', data, mimeType}（rpc-client prompt 的 images 形状）。
     const textParts = [];
@@ -325,7 +328,7 @@ router.post('/:pid/turn', async (req, res, next) => {
         images.push({ type: 'image', data: b.source.data, mimeType: b.source.media_type });
       }
     }
-    const piMessage = { text: textParts.join('\n\n'), images };
+    const piMessage = { text: textParts.join('\n\n'), images, ...(isRaw ? { raw: true } : {}) };
 
     if (hasActiveQuerySession(sid)) {
       // pi-rp 模式：session 已有 pi 子进程在跑 →
@@ -375,12 +378,12 @@ router.post('/:pid/turn', async (req, res, next) => {
 
 /**
  * 起一个新的 runSession（pi-rp long-running 子进程），并预 push 首条 user
- * message（{runId, text, images}）让 pi 启动后立即处理。fire-and-forget — 不阻塞 HTTP response。
+ * message（{runId, text, images, raw?}）让 pi 启动后立即处理。fire-and-forget — 不阻塞 HTTP response。
  */
 function startNewRunSession({ runId, sid, sessionRoot, message, eventBus, project, finalSkillId, chat }) {
   const inputQueue = new AsyncQueue();
   // 首条消息直接 push 进 queue —— runSession 启动后用 initialRunId 关联
-  inputQueue.push({ runId, text: message.text, images: message.images });
+  inputQueue.push({ runId, text: message.text, images: message.images, ...(message.raw === true ? { raw: true } : {}) });
 
   runSession({
     sessionId: sid,
@@ -432,19 +435,34 @@ router.post('/:pid/runs/:runId/cancel', async (req, res, next) => {
 /**
  * A4.2：POST /api/projects/:pid/runs/:runId/answer
  *
- * M1 换源后 501：AskUserQuestion 靠 SDK canUseTool 拦截实现，pi-rp 没有对应
- * 机制（M2 评估用 MCP 工具 + sidecar 回传重做）。路由保留，前端拿到 501
- * 能区分"功能暂不可用"和"请求错了"。
+ * M2 实装（doc §5.3 方案 A）：AskUserQuestion 复刻。pi 扩展 ask-user.ts 的
+ * registerTool execute 长轮询 sidecar /ask 挂着；本路由把前端答案 resolve 进
+ * ask-registry，/ask 随之返回，工具拿到答案继续跑。
+ *
+ * body: { answers: [{ selectedLabels?: string[], customText?: string }] }
+ *   （answers 数组与 questions 平行；"Other" 自由输入走 customText）
+ *
+ * 200 { ok: true }           答案已送达
+ * 404 NO_PENDING_ASK         该会话没有挂起的问题（超时/已答/已取消）
+ * 409 ASK_RUN_MISMATCH       问题属于另一个 turn
  */
 router.post('/:pid/runs/:runId/answer', async (req, res, next) => {
   try {
     const project = guardProject(req, res);
     if (!project) return;
     if (!guardRunInProject(req, res)) return;
-    return res.status(501).json({
-      error: 'AskUserQuestion 交互 M1 暂不支持（引擎已换 pi-rp）',
-      code: 'M1_NOT_SUPPORTED',
-    });
+    const { runId } = req.params;
+    const sid = getSessionIdByRunId(runId);
+    const pendingAsk = sid ? getPendingAsk(sid) : null;
+    if (!pendingAsk) {
+      return res.status(404).json({ error: '没有等待回答的问题', code: 'NO_PENDING_ASK' });
+    }
+    if (pendingAsk.runId && pendingAsk.runId !== runId) {
+      return res.status(409).json({ error: '问题属于另一个 turn', code: 'ASK_RUN_MISMATCH' });
+    }
+    const answers = req.body?.answers ?? req.body;
+    answerAsk(sid, answers);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

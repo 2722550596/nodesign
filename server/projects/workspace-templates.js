@@ -54,3 +54,8 @@ export const DEFAULT_CLAUDE_MD = `# 项目档案
 ## 用户习惯
 （称呼、语气、工作方式偏好。）
 `;
+
+/** 记忆目录名（工作区根相对）。画布可见是设计要求，不是巧合。
+ * M2 删除波从 engine/agent/memory-config.js 搬来：那份是 SDK auto-memory 的配置，
+ * 随 SDK 引擎删除；目录名本身是工作区布局事实，住模板层（本文件零 import，无环）。 */
+export const MEMORY_DIR_NAME = '记忆';

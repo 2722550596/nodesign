@@ -34,20 +34,13 @@ const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'imag
  * Anthropic image content block 仅支持 jpeg/png/gif/webp，不支持 svg/heic 等。
  * 不在白名单的 image mime → 按文本路径降级。
  */
-export async function composeUserMessage(chat, attachments, pendingSummary, sessionRoot) {
+export async function composeUserMessage(chat, attachments, sessionRoot) {
   const blocks = [];
 
-  // C4：用户在过去时段做的 direct edit + comment → prepend system 提示
-  // 不灌详情（让 agent 主动调 get_pending_changes 拉），省 token
-  if (pendingSummary && pendingSummary.count > 0) {
-    blocks.push({
-      type: 'text',
-      text: `<system>${pendingSummary.summary}。可调 get_pending_changes 查看详情；处理完调 clear_pending_changes 清 buffer。</system>`,
-    });
-  }
-
-  // （素材摘要 08-21 搬去 hooks/user-prompt-submit.js 的状态块：首轮全量、之后只报变化；
-  //   这里不再拼进用户消息 —— 两条线两个真相源的病，顺手把"assets 是 symlink"那句假话删了。）
+  // （pendingSummary 注入 08-27 搬去 session-loop runTurn 执行时点：消息可能在
+  //   inputQueue 排队等前一个 turn settle，API 时点采的状态会过期。<system> 块的
+  //   约定由那边的装配继承。素材摘要更早（08-21）就搬去了每轮状态块 —— 现在住
+  //   engine/agent/turn-state.js，首轮全量之后只报变化。）
 
   // 空文字块会被 API 直接判 400（text content block 不许为空），所以只发附件的
   // 那条消息这里不能盲推。改成一句交代处境的话 —— agent 得知道"用户没说话"是

@@ -33,7 +33,7 @@ async function main() {
   _truncateRunsTable();
 
   // ==== 生产那条路：turn.js 就是这样拼首条消息的 ====
-  const { blocks } = await composeUserMessage(CHAT, [], { count: 0, summary: '' }, sessionRoot);
+  const { blocks } = await composeUserMessage(CHAT, [], sessionRoot);
   console.log(`[probe] composeUserMessage → ${blocks.length} block(s):`);
   for (const b of blocks) console.log(`  - ${b.type}: ${JSON.stringify((b.text || '').slice(0, 60))}`);
 

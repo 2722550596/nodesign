@@ -7,10 +7,13 @@
     "find",
     "ls",
     "state_update",
-    "get_state"
+    "get_state",
+    "subagent",
+    "subagent_profiles"
   ],
   "enableInstallTelemetry": false,
   "enableAnalytics": false,
+  "defaultPreset": "nodesign",
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,

@@ -33,8 +33,9 @@ import { getRun, markRunFailed } from './store.js';
  *
  * @param {string} sessionId
  * @param {string} runId  - 这条消息对应的 run record id（前端按它跟踪）
- * @param {object} message  - compose 好的 pi 输入 { text, images }
+ * @param {object} message  - compose 好的 pi 输入 { text, images, raw? }
  *   images: [{type:'image', data:<base64>, mimeType}]（rpc-client prompt 形状）
+ *   raw: true = 斜杠命令（/compact 等），runTurn 跳过动态注入装配，消息零装饰直达
  * @returns {{queued: boolean} | false} false = session 不存在 / 已 abort / push 失败；
  *   queued=false 表示立即成为当前 turn，queued=true 表示排队等前一个 settle。
  */
@@ -54,6 +55,8 @@ export function pushUserMessage(sessionId, runId, message) {
       runId,
       text: typeof message?.text === 'string' ? message.text : '',
       images: Array.isArray(message?.images) ? message.images : [],
+      // raw 只在为 true 时带上 —— 非 raw 消息的 item 形状不变（turn-relay.test.js 钉着）
+      ...(message?.raw === true ? { raw: true } : {}),
     });
     return { queued: !becameCurrent };
   } catch (err) {

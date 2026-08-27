@@ -55,10 +55,12 @@ import {
 } from '../runs/active-runs.js';
 import { takeNextRunId, publishQueueDepth, drainSession } from '../runs/turn-relay.js';
 import { loadProjectConfig } from '../../projects/project-config.js';
-import { resolveModelRoute } from './model-context.js';
+import { resolveModelRoute, isUncensoredModel } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
+import { levelFor } from '../../lib/moderation.js';
+import { getUserById } from '../../auth/users-store.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
-import { detectArtifact } from './agent-shared.js';
+import { detectArtifact } from '../../lib/artifact-target.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
 import { commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { commitStaging } from '../../projects/board-store.js';
@@ -67,6 +69,10 @@ import { sessionLaunch, createSessionProcess } from '../pi/lifecycle.js';
 import { createEventBridge } from '../pi/event-bridge.js';
 import { hasPiSession, piSessionDir } from '../pi/pi-jsonl.js';
 import { piProviderModelFor } from '../pi/model-map.js';
+// M2 每 turn 动态注入：状态块装配（首轮全量 / 指纹 diff）+ compaction 后重置记忆。
+import { assembleTurnContext, resetTurnStateMemory } from './turn-state.js';
+// pendingSummary 搬到执行时点采集（原 turn.js API 时点读 —— 排队消息会带过期状态）
+import { readPendingSummary } from '../../api/pending-changes.js';
 // mcp/index.js 此刻仍 transitively import SDK（wave 4 才拆），import 没问题。
 // 进程内跑一遍 buildNodesignTools 只为拿名字（handler 不用）—— 真注册在
 // standalone 子进程（同一函数 + 同一份 disabledTools 过滤 → 名字集严格一致）。
@@ -285,6 +291,18 @@ export async function runSession({
     // 与 server/index.js 的 PORT 解析同口径。
     const port = Number(process.env.PORT || 4001);
 
+    // M2：政策节渲染维度（prelude 的「底线」节 + 成人段）。level 走 moderation
+    // 双旋钮（用户显式值 > 账号档位默认），uncensored 查模型表位（今天只有
+    // qwen3.8-27b）。spawn 时定，经 env 进 pi 子进程，prompt-support.ts 的
+    // ndPolicy 宏消费。ownerId 为 null（本地 profile）→ levelFor 落 'off'。
+    // env 覆盖（NODESIGN_ADULT_LEVEL / NODESIGN_UNCENSORED）是测试/运维钩子：
+    // 显式设置时压过计算值（live probe 用它驱动三档），未设置走生产计算。
+    const adultLevel = process.env.NODESIGN_ADULT_LEVEL
+      || levelFor(ownerId ? getUserById(ownerId) : null, model);
+    const uncensored = process.env.NODESIGN_UNCENSORED === '1'
+      ? true
+      : isUncensoredModel(model);
+
     const launch = sessionLaunch({
       sid: sessionId,
       projectId,
@@ -297,6 +315,8 @@ export async function runSession({
       port,
       directTools,
       disabledTools,
+      adultLevel,
+      uncensored,
     });
     child = createSessionProcess(launch);
 
@@ -316,6 +336,9 @@ export async function runSession({
             eventBus.publish({ type: 'run.preset_activated', sessionId, presetId: obj.presetId ?? null, ts: new Date().toISOString() });
           } catch { /* bus 异常不弄死会话 */ }
         }
+        // compaction 后旧状态块已被摘要吞了，"同上轮"没有所指 —— 清指纹记忆，
+        // 下一轮 assembleTurnContext 重新全量（事件名对齐 event-bridge.js handleCompactionEnd）
+        if (obj?.type === 'compaction_end') resetTurnStateMemory(sessionId);
         currentBridge?.handleLine(obj);
         if (obj?.type === 'agent_settled') onSettled();
       },
@@ -402,10 +425,11 @@ export async function runSession({
 
   /**
    * 一条用户消息 = 一个完整 turn。
-   * 流程：重置 sharedCtx → 建桥 → registerRun → markRunStarted → prompt →
-   * await settle → finishTurn。settle 之前绝不返回（串行纪律的锚）。
+   * 流程：重置 sharedCtx → 建桥 → registerRun → markRunStarted → 装配注入
+   * （状态块 + pendingSummary，raw 跳过）→ prompt → await settle → finishTurn。
+   * settle 之前绝不返回（串行纪律的锚）。
    */
-  async function runTurn({ runId, text, images }) {
+  async function runTurn({ runId, text, images, raw }) {
     // per-turn 重置（context-counters.test.js 钉着 counters 这行的形状）
     sharedCtx.runId = runId;
     sharedCtx.counters = freshTurnCounters();
@@ -433,9 +457,28 @@ export async function runSession({
     }
     // run.start 由桥在首个 agent_start 时发（带 model/pid）—— 这里不另发 Events.start()
 
+    // M2 动态注入（执行时点装配，不在 API 时点）：消息可能在 inputQueue 里排队等
+    // 前一个 turn settle，API 时点采的状态会过期 —— pendingSummary 尤其如此（排队
+    // 期间用户可能又改了画布 / 清了 buffer）。所以在 prompt 发出前这一刻采集。
+    // raw（/compact 等斜杠命令）要求消息就是命令本身：跳过全部装配，零装饰。
+    let promptText = text;
+    if (!raw) {
+      const turnCtx = await assembleTurnContext({ sessionId, workspaceRoot: cwdRoot, projectId });
+      let pendingBlock = null;
+      try {
+        const ps = await readPendingSummary(cwdRoot);   // sessionRoot === cwdRoot（08-07 扁平化）
+        if (ps && ps.count > 0) {
+          pendingBlock = `<system>${ps.summary}。可调 get_pending_changes 查看详情；处理完调 clear_pending_changes 清 buffer。</system>`;
+        }
+      } catch (err) {
+        console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} readPendingSummary failed（跳过注入）: ${err.message}`);
+      }
+      promptText = [turnCtx, pendingBlock, text].filter(Boolean).join('\n\n');
+    }
+
     try {
       // response 行不进桥（rpc-client 内部消化）—— success:false 直接判返回值
-      const resp = await client.prompt(text, { id: runId, images: images?.length ? images : undefined });
+      const resp = await client.prompt(promptText, { id: runId, images: images?.length ? images : undefined });
       if (resp && resp.success === false) {
         settleTurn({ outcome: 'error', code: 'PROMPT_REJECTED', message: resp.error || 'prompt rejected' });
       }
@@ -568,8 +611,8 @@ export async function runSession({
     while (!sessionAbortController.signal.aborted && !piExited) {
       const item = await inputQueue.next();   // close → done
       if (item.done) break;
-      const { runId, text, images } = item.value;
-      await runTurn({ runId, text, images });   // 一条消息 = 一个完整 turn
+      const { runId, text, images, raw } = item.value;
+      await runTurn({ runId, text, images, raw });   // 一条消息 = 一个完整 turn
       // turn 结束后原子释放 + FIFO 提升下一条（串行化后安全：turn 边界就是我们
       // 自己的 settle 点，不再需要 SDK 时代的 uuid 回显锚）
       takeNextRunId(sessionId);

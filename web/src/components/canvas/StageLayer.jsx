@@ -503,7 +503,6 @@ function QuestionStageCard({ card, onDismiss }) {
           toolInput={card.input}
           toolOutput={card.output}
           status={status}
-          toolUseId={card.blockId}
         />
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', gap: GAP.sm, fontFamily: FONT_MONO, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>

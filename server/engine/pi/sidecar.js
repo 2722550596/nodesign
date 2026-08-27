@@ -18,6 +18,9 @@
  *   POST /emit       {sid, pid, event}      → getBus(pid).publish（富化对齐 AgentContext.emit）
  *   POST /tool-gate  {sid, pid, capability, toolName} → 主进程权威 tier/quota 判定（C8）
  *   POST /charge     {sid, name, usd}       → 活跃 turn 的 ctx.addToolCharge
+ *   POST /ask        {sid, pid, questions}   → AskUserQuestion 长轮询（M2 方案 A）：
+ *                                               登记挂起 + emit run.ask_user_question，
+ *                                               阻塞到 /answer（turn.js）resolve 才返回
  */
 import crypto from 'node:crypto';
 import express from 'express';
@@ -26,6 +29,7 @@ import { getCurrentTurnRunId, getRun } from '../runs/active-runs.js';
 import { tierDenial, ownerOfProject } from '../mcp/tools/tier-gate.js';
 import { checkQuota } from '../../lib/quota.js';
 import { DENIAL } from '../../auth/tier.js';
+import { registerAsk, cancelAskById } from './ask-registry.js';
 
 // ── secret / token ──
 
@@ -155,6 +159,44 @@ export function createSidecarRouter({ getBus = getProjectBus } = {}) {
       return res.json({ ok: true });
     } catch (err) {
       return res.status(500).json({ error: String(err?.message || err) });
+    }
+  });
+
+  // POST /ask —— AskUserQuestion 长轮询（doc §5.3 方案 A）。pi 扩展 ask-user.ts 的
+  // registerTool execute 里调：登记挂起 Promise → emit run.ask_user_question 给前端
+  // → 阻塞等 answerAsk（turn.js /answer 路由）resolve。pi 工具 execute 无限阻塞合法
+  //（agent-loop 裸 await 无超时），turn abort 经 cancelAsksForSession reject 收尾。
+  router.post('/ask', async (req, res) => {
+    try {
+      const denied = gate(req);
+      if (denied) return res.status(denied[0]).json(denied[1]);
+      const { sid, pid, questions } = req.body || {};
+      if (!questions || typeof questions !== 'object') {
+        return res.status(400).json({ error: 'questions required' });
+      }
+      const runId = getCurrentTurnRunId(sid);
+      const entry = registerAsk({ sid, runId, questions });
+      if (!entry) {
+        // 串行 turn 下理论不会并发 ask；真撞了说明状态机漏了，fail-loud 让模型重试
+        return res.status(409).json({ error: 'an ask is already pending for this session' });
+      }
+      // HTTP 连接断（pi 进程被杀 / abort 链）→ 清挂起态，别留永远没人答的 ask。
+      // 挂 res 而非 req：express.json 已消费完 body，req 的 'close' 早就发过了；
+      // res 'close' 在连接终止（正常结束或提前断）时发。
+      // （reject 的 unhandled 防护在 ask-registry 建 Promise 时已挂 noop catch）
+      res.on('close', () => cancelAskById(entry.askId, 'ask_connection_closed'));
+      try {
+        getBus(pid).publish({
+          type: 'run.ask_user_question',
+          runId, sessionId: sid, askId: entry.askId, questions,
+          ts: new Date().toISOString(),
+        });
+      } catch { /* bus 异常不弄死 ask：前端看不到问题会超时，好过静默挂死 */ }
+      const answers = await entry.promise;   // reject → 走 catch 返 503
+      return res.json({ ok: true, answers });
+    } catch (err) {
+      // 挂起被 cancel（run 取消 / session 关闭）→ 503，pi 侧 execute 抛错收尾
+      return res.status(503).json({ error: String(err?.message || err) });
     }
   });
 

@@ -14,7 +14,7 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { safeSegment, parseNoteFrontmatter } from './helpers.js';
 import { patchBoard } from '../../projects/board-store.js';
-import { MEMORY_DIR_NAME } from '../../engine/agent/memory-config.js';
+import { MEMORY_DIR_NAME } from '../../projects/workspace-templates.js';
 
 /**
  * @param {object} deps

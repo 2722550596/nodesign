@@ -69,8 +69,8 @@ The JSON you output MUST conform to this JSON Schema:
 }
 ```
 
-The full schema is at `agents/schemas/design-system.json` if you need
-to verify a field shape.
+The full schema is at `agents/schemas/design-system.json` (mirrored to the
+pi agent-dir `schemas/` for preset wiring) if you need to verify a field shape.
 
 ## Extraction guidelines
 
@@ -126,7 +126,7 @@ note like "could not extract typography — no <style> tag found".
 
 ## Constraints
 
-- Single Read of canvas.html (and optionally spec.json) — don't poll.
-- No screenshots. No tool calls beyond Read.
+- Single `read` of canvas.html (and optionally spec.json) — don't poll.
+- No screenshots. No tool calls beyond `read`.
 - Strict JSON output (parsable by `JSON.parse`).
 - Don't invent tokens — be honest about what's actually in the canvas.

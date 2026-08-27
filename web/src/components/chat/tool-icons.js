@@ -31,6 +31,7 @@ export const TOOL_ICONS = {
   WebSearch: Globe,
   Task: Bot,                                   // 通用 fallback（无 agentType 时）
   AskUserQuestion: HelpCircle,                 // 问号 = 主动问用户
+  ask_user_question: HelpCircle,               // M2 pi 扩展名（同上一名，透传 registerTool 名）
   Skill: BookOpen,                             // SDK 内置 Skill 工具 — agent 加载方法论 body
                                                // （跟 mcp__nodesign__read_page 视觉同源 = "在读方法论"）
   // ── 看自己的成品（感知量具）──

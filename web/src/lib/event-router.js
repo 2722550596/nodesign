@@ -45,6 +45,10 @@ export const STAGE_EVENTS = new Set([
 export const CHAT_STREAM_EVENTS = new Set([
   'run.delta.text', 'run.delta.thinking', 'run.tool_use_summary',
   'run.tool_use.started', 'run.delta.tool_use', 'run.delta.tool_result',
+  // M2 方案 A：pi 扩展 ask_user_question 挂起时 sidecar 直发（带 askId，无
+  // toolUseId）。reducer 落成可答卡片；与 run.delta.tool_use 那路同题双卡由
+  // reducer 的 askId 去重挡掉（chat-stream.js run.ask_user_question 案）。
+  'run.ask_user_question',
 ]);
 
 /**

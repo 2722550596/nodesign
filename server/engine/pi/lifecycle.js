@@ -40,6 +40,14 @@ const AGENT_DIR = path.join(__dirname, 'agent-dir');
 const PROVIDERS_EXT = path.join(__dirname, 'extensions', 'providers.ts');
 /** pi-mcp-adapter 扩展（-e 显式挂载；消费 .pi/mcp.json 拉起 standalone MCP 子进程）。 */
 const ADAPTER_EXT = path.join(AGENT_DIR, 'npm', 'node_modules', 'pi-mcp-adapter', 'index.ts');
+/** AskUserQuestion 扩展（M2 方案 A；-e 显式挂载，registerTool ask_user_question）。 */
+const ASK_USER_EXT = path.join(__dirname, 'extensions', 'ask-user.ts');
+/** 安全闸扩展（M2：workspace 边界 / 演出隐私 / canvas+site lint；-e 显式挂载）。 */
+const GUARDS_EXT = path.join(__dirname, 'extensions', 'guards.ts');
+/** 提示词宏扩展（M2：注册 ndPolicy 宏，nodesign.json preset 消费；-e 显式挂载）。 */
+const PROMPT_SUPPORT_EXT = path.join(__dirname, 'extensions', 'prompt-support.ts');
+/** 懒注入扩展（M2：工具 cookbook 懒注入 + 失败建议 + rate-limit 判别；-e 显式挂载）。 */
+const INJECT_EXT = path.join(__dirname, 'extensions', 'inject.ts');
 
 /** C1 剔除项：这些 env 会污染 pi 子进程（NODE_ENV=production 会让依赖走精简路径等）。 */
 const ENV_BLACKLIST = [
@@ -96,6 +104,7 @@ export function resolvePiBinary() {
 export function sessionLaunch({
   sid, projectId, ownerId, workspaceDir, dataRoot,
   resume = false, provider, model, presetId, port, directTools = [], disabledTools = [],
+  adultLevel = 'loose', uncensored = false,
 }) {
   if (!sid) throw new Error('sessionLaunch: sid 必填');
   if (!workspaceDir) throw new Error('sessionLaunch: workspaceDir 必填');
@@ -113,8 +122,12 @@ export function sessionLaunch({
     '--config-dir', '.pi',                                        // 相对 cwd（绝对会拼坏）
     '--session-dir', path.join(dataRoot, 'pi-sessions', sid),     // 绝对直通
     '--system-prompt', '',
-    '-e', PROVIDERS_EXT,                                          // 上游 providers 扩展（guards M2）
+    '-e', PROVIDERS_EXT,                                          // 上游 providers 扩展
     '-e', ADAPTER_EXT,                                            // MCP adapter（消费 .pi/mcp.json）
+    '-e', ASK_USER_EXT,                                           // AskUserQuestion（M2 方案 A）
+    '-e', GUARDS_EXT,                                             // 安全闸（M2：边界/隐私/lint）
+    '-e', PROMPT_SUPPORT_EXT,                                     // ndPolicy 宏（M2 preset 消费）
+    '-e', INJECT_EXT,                                             // 懒注入 + 失败建议 + rate-limit（M2）
     '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
   );
   if (resume) args.push('--continue');
@@ -150,6 +163,10 @@ export function sessionLaunch({
     NODESIGN_TOKEN: sidToken(sid),
     DB_PATH: dbPath,
     NODESIGN_DISABLED_TOOLS: disabledTools.join(','),
+    // M2：政策节渲染维度（prompt-support.ts 的 ndPolicy 宏消费）。spawn 时定，
+    // 会话内热换模型不随之变（已知限制，见迁移文档开放项）。
+    NODESIGN_ADULT_LEVEL: adultLevel,
+    NODESIGN_UNCENSORED: uncensored ? '1' : '',
     ...upstream,
   });
 

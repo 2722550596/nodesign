@@ -316,19 +316,51 @@ env = {
 - `set_preset` live 验证：`_probe-preset-live.mjs`（切换 + preset_activated 事件 + --continue 恢复）GATE PASS。session-loop onEvent 直接发 `run.preset_activated`（会话级，bridge per-turn 会漏）。
 - 前端热换入口：ModelPicker run 飞行中不再禁用，按 activeRun 分流走 `Turn.setRunModel`（POST /runs/:runId/model）。
 
-### M2 提示词收敛
-**第一步：prelude 迁移**（M1.5 后立即）：
-- prelude 32.7KB 全文进 nodesign.json preset，`autoActivate: true`
-- settings.json 加 `defaultPreset: "nodesign"` 双保险
-- 工具命名 mcp__nodesign__<tool> → 裸名；删 ToolSearch 段
-- 可疑段落加注释标记
+### M2 提示词收敛（✅ 2026-08-27）
 
-**第二步：注入族 + guards**：
-- 注入族静态部分并入 preset；动态内容走 prompt 消息装配
-- guards.ts 扩展（安全闸全集）
-- AskUserQuestion 复刻（方案 A：pi 扩展 registerTool + sidecar /ask /answer）
-- 删 hooks/ + isolation + init-contract + memory-config
-- agents/*.md → delegatable presets
+**第一步：prelude 迁移**：
+- prelude 32.7KB 全文进 `agent-dir/prompt-presets/nodesign.json`，`autoActivate: true`；
+  生成器 `extensions/migrate-prelude.mjs`（改 prelude 改 md 再跑脚本，prelude-render.test.js 钉新鲜度）。
+- settings.json 加 `defaultPreset: "nodesign"` 双保险。
+- 工具命名 `mcp__nodesign__<tool>` → 裸名；删 ToolSearch 段；可疑段落加 `{{//M2-待改: ...}}` 注释标记。
+- 政策块（`nd:policy:full/min` + `{{ADULT_POLICY}}`）抽成 `{{ndPolicy}}` 宏：
+  `policy-render.js`（纯函数，模块级缓存 prelude 块）+ `extensions/prompt-support.ts` 注册宏。
+  档位由 spawn env 定（`NODESIGN_ADULT_LEVEL` off/loose/strict + `NODESIGN_UNCENSORED`），
+  session-loop init 从 `levelFor(user,model)` + `isUncensoredModel(model)` 计算（env 显式值优先，测试/运维钩子）。
+- 验证：`_probe-m2-prelude-live.mjs` GATE PASS（启动即 nodesign preset / 便利贴问答命中 notes/ /
+  loose·off·uncensored-min 三档政策在场且互斥）。
+
+**第二步：注入族 + guards + AskUserQuestion + 子代理**：
+- 注入族：静态部分并入 preset；动态内容（工作区状态块 + pendingSummary）走 `turn-state.js`
+  在 runTurn 执行时点装配进 prompt 消息（pendingSummary 从 API 时点挪到执行时点，排队消息不带过期状态）。
+  懒注入族（首调注入 / 失败建议 / rate-limit）迁 `inject-rules.js`（纯判据）+ `extensions/inject.ts`（薄壳）。
+- guards.ts 扩展（安全闸全集）：`guard-rules.js`（项目边界 / 演出隐私 / canvas+site lint 纯判据）
+  + `extensions/guards.ts`（tool_call 拦截 fail-open + session_start 装配断言心跳）。
+  装配断言 fail-loud 不 fail-block：发非终态 `run.error code=INIT_CONTRACT`（同时是扩展挂载 + sidecar 通路心跳）。
+- AskUserQuestion 复刻（方案 A）：`ask-user.ts`（registerTool）+ `ask-registry.js`（挂起/应答登记，promise 安全）
+  + sidecar `/ask`（long-poll）`/answer` + turn.js `/answer` 路由（404 NO_PENDING_ASK / 409 ASK_RUN_MISMATCH）
+  + 前端 ask 回路（run.ask_user_question 事件消费 + 答案并行数组回流）。
+- 子代理：agents/*.md → 4 个 pi delegatable presets（`nd-explorer` / `nd-vision-checker` /
+  `nd-ds-extractor` / `nd-tweak-proposer`，`delegatable:true` `autoActivate:false`），
+  schemas 镜像进 agent-dir/schemas/；settings.json defaultTools 启用 `subagent` / `subagent_profiles`；
+  prelude 子代理段重写为 pi `subagent { profileId, task }` 同步阻塞语法。
+- 删除波：hooks/ + hooks.js + isolation + init-contract + memory-config + auto-mode-rules +
+  sandbox-shim + system-prompts + agent-shared + task-events + agents/index.js。
+  两处活引用先搬再删：`detectArtifact` → `lib/artifact-target.js`；`MEMORY_DIR_NAME` → `projects/workspace-templates.js`。
+  （`nodesign-prelude.md` 保留：policy-render.js 模块级读它当政策块真相源。）
+- 验证：`_probe-m2-step2-live.mjs` GATE PASS（扩展健康 / 无 EXTENSION_ERROR / INIT_CONTRACT 心跳 /
+  activePresetId=nodesign / AskUserQuestion 全链路 ask→answer→续写→最终文本反映所选）。
+
+**回归**：server 818/818 绿（baseline 778，+40）；web 425/431（仅 6 个 ChatDock 预存失败，
+clean tree 同样失败，与 M2 无关）。顺手修一处 HEAD 潜伏 bug：turn.js 用 `Events.projectActiveSession`
+但漏 import（被 try/catch 静默吞，project.active_session 广播一直失效），补 import。
+
+**开放项**（非阻塞，M3/簇 B 复评）：
+- bash 工具：pi defaultTools 白名单暂不含（prelude 装包/脚本段加 `{{//M2-待改}}` 注释）。
+- TaskCreate/TaskUpdate 任务镜像：pi 无任务工具，黑板镜像功能悬空。
+- CLAUDE.md / .claude / Skill 引用：prelude 仍提，pi 无对应物（已注释标记）。
+- 会话内热换 qwen3.8-27b 不变 uncensored 政策（env spawn 时定，见附录 D 已知限制）。
+- `server/ops/fix-sdk-musl.mjs`（postinstall）：SDK 已删，脚本是 no-op，未列入删除清单，留 M3 复评。
 
 ### 簇 B 工具管线重构（单独排期）
 - 写 nodesign-tools.ts pi 扩展（registerTool + zod→TypeBox）

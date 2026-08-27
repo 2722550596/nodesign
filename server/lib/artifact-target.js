@@ -154,6 +154,39 @@ export async function listWorkspaceDecks(workspaceRoot) {
     .map(a => a.rel);
 }
 
+/** 旧式探测兜底候选（listWorkspaceArtifacts 扫不动时用） */
+const ARTIFACT_CANDIDATES = ['canvas.html', 'deck.html', 'index.html', 'output.html'];
+
+/**
+ * 本轮的主产物是哪份（写进 run.metadata.artifactPath）。session-loop 在 turn
+ * 成功收尾时调。
+ *
+ * M2 删除波从 engine/agent/agent-shared.js 搬来（该文件其余部分——SDK 消息翻译层
+ * 与 options 默认值——随 SDK 引擎删除；产物探测是工作区事实，住这里）。逻辑逐字不变：
+ * 先用 listWorkspaceArtifacts 全量扫（收集器稳定序取第一份），扫不动回落旧式四候选。
+ *
+ * 2026-07-28 修：原来只探 cwd 根的四个候选文件名，而任务模型（2026-07-28 上线）
+ * 把产物搬进了 `tasks/<任务>/`，于是这个函数**自任务模型上线起恒返 null** ——
+ * artifactPath 一直是空的，没人发现，因为它不报错只是没值。
+ */
+export async function detectArtifact(ctx) {
+  const root = typeof ctx?.workspace?.root === 'function' ? ctx.workspace.root() : null;
+  if (root) {
+    try {
+      const artifacts = await listWorkspaceArtifacts(root);
+      if (artifacts.length > 0) {
+        // 扁平模型：没有"会话名下的任务"了，取第一份（列表序=收集器的
+        // 稳定序）。老的 startsWith('tasks/') 优先级从扁平化起就是死代码。
+        return artifacts[0].rel;
+      }
+    } catch { /* 扫不动就回落到旧式探测 */ }
+  }
+  for (const candidate of ARTIFACT_CANDIDATES) {
+    if (await ctx.workspace.exists(candidate)) return candidate;
+  }
+  return null;
+}
+
 /**
  * 解析产物目标。
  *

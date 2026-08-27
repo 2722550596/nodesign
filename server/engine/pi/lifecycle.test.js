@@ -20,6 +20,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_DIR = path.join(__dirname, 'agent-dir');
 const PROVIDERS_EXT = path.join(__dirname, 'extensions', 'providers.ts');
 const ADAPTER_EXT = path.join(AGENT_DIR, 'npm', 'node_modules', 'pi-mcp-adapter', 'index.ts');
+const ASK_USER_EXT = path.join(__dirname, 'extensions', 'ask-user.ts');
+const GUARDS_EXT = path.join(__dirname, 'extensions', 'guards.ts');
+const PROMPT_SUPPORT_EXT = path.join(__dirname, 'extensions', 'prompt-support.ts');
+const INJECT_EXT = path.join(__dirname, 'extensions', 'inject.ts');
 const STANDALONE_JS = fileURLToPath(new URL('../mcp/standalone.js', import.meta.url));
 
 /** process.env 快照/还原（黑名单与 UPSTREAM 断言要改真实 env）。 */
@@ -100,13 +104,17 @@ describe('sessionLaunch args（C2）', () => {
       '--config-dir', '.pi',                                          // 相对值（绝对会拼坏）
       '--session-dir', path.join(dataRoot, 'pi-sessions', BASE_OPTS.sid), // 绝对直通
       '--system-prompt', '',
-      '-e', PROVIDERS_EXT,                                            // providers 扩展要传；guards M2 不传
+      '-e', PROVIDERS_EXT,                                            // providers 扩展
       '-e', ADAPTER_EXT,                                              // MCP adapter（消费 .pi/mcp.json）
+      '-e', ASK_USER_EXT,                                             // AskUserQuestion（M2 方案 A）
+      '-e', GUARDS_EXT,                                               // 安全闸（M2）
+      '-e', PROMPT_SUPPORT_EXT,                                       // ndPolicy 宏（M2 preset 消费）
+      '-e', INJECT_EXT,                                               // 懒注入 + 失败建议 + rate-limit（M2）
       '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
       '--continue',
     ]);
-    // 恰好两个 -e：providers + adapter（guards.ts M2 才有，不传；adapter 漏挂 = 工具全丢）
-    expect(launch.args.filter((a) => a === '-e')).toHaveLength(2);
+    // 恰好六个 -e：providers + adapter + ask-user + guards + prompt-support + inject（M2 全集）
+    expect(launch.args.filter((a) => a === '-e')).toHaveLength(6);
     // --session-dir 绝对
     expect(path.isAbsolute(launch.args[launch.args.indexOf('--session-dir') + 1])).toBe(true);
   });

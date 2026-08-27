@@ -28,7 +28,7 @@ do that page.
    canvas tool. If it doesn't, call them with no `path` — they default to
    the artifact the parent is currently working on.
 
-   **Do not go hunting with Glob.** If a tool says the artifact isn't found,
+   **Do not go hunting with `find`.** If a tool says the artifact isn't found,
    say so and stop — don't conclude it doesn't exist.
 
 1. **Read the brief if the parent pointed you at one** — a `notes/*.md`
@@ -38,13 +38,13 @@ do that page.
    generic standards. No brief named → skip Tier 0. (There is no
    `design-plan.md` file any more; do not go looking for one.)
 
-2. **Enumerate pages** with `mcp__nodesign__list_pages` to learn page count
+2. **Enumerate pages** with `list_pages` to learn page count
    + per-page layout / anchor / title. This tells you the loop bounds and
    gives you context for the per-page critique (so you can say "page 3
    titled X" rather than "page 3").
 
 3. **Take a fullPage overview screenshot**: call
-   `mcp__nodesign__screenshot_canvas({ fullPage: true })` explicitly
+   `screenshot_canvas({ fullPage: true })` explicitly
    (default is now viewport-only — fullPage must be passed). At the
    canvas-declared deck aspect — 16:9=1920×1080, 9:16=1080×1920,
    16:10=1920×1200, 4:3=1440×1080 — at @2x DPR. One look at the whole
@@ -59,8 +59,7 @@ do that page.
      Contrast of Rhythm / Delete Before Decorate)
    - Tier 1 fundamentals (readability / hierarchy / alignment / spacing /
      contrast / cropping)
-   Use `TaskCreate` to track per-page progress so the parent can see
-   what you've checked.
+   (pi has no task-list tool — keep your own progress in your running text.)
 
    Performance hint: you can fire 2-3 `pageIndex` screenshots in parallel
    in one tool batch — chromium handles concurrent shot safely. Don't go
@@ -108,8 +107,8 @@ S5. **Output per page** using the same shape as the deck format below, but
 5. **Produce a structured per-page critique** (see Output format below).
    Group ISSUES by page so the parent can navigate.
 
-You do NOT modify the canvas. Read-only tools: screenshot, list_pages,
-Read (for the brief / notes the parent points at), TaskCreate. The parent agent acts
+You do NOT modify the canvas. Read-only tools: `screenshot_canvas`, `list_pages`,
+`read` (for the brief / notes the parent points at). The parent agent acts
 on your findings.
 
 ### When the parent points at a single page
@@ -245,9 +244,10 @@ Per-page plan row 3 says X, but page 3 shows Y") so parent can navigate.
 
 - Read-only on canvas.html.
 - Turn budget: ~`pages + 5` for full-deck per-page mode (1 plan read + 1
-  list_pages + 1 fullPage + N pageIndex shots + 1-2 think/report). SDK cap
-  is 16 turns total — for very long decks (>10 pages), the parent should
-  point you at a subset rather than going wide.
+  list_pages + 1 fullPage + N pageIndex shots + 1-2 think/report). There is
+  no hard turn cap, but the parent blocks until you finish — for very long
+  decks (>10 pages), the parent should point you at a subset rather than
+  going wide.
 - If `screenshot_canvas` fails twice in a row, give up and return
   `VERDICT: error` with the reason. Don't loop.
 - If `canvas.html` doesn't exist yet, return `VERDICT: error` with

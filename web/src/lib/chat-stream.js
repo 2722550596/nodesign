@@ -111,6 +111,27 @@ export function reduceChatEvent(messages, evt) {
         updated[idx] = { ...updated[idx], toolInput: evt.input };
         return updated;
       }
+      // ask_user_question 去重另一路：run.ask_user_question（sidecar 直发，
+      // 带 askId 无 blockId）先到已落卡时，这路不再插第二张 —— 把 input 补进
+      // 那张卡，并收养 blockId：终态 run.delta.tool_result 只认 blockId，卡片
+      // id 不换过去就永远收不到 success/error（卡死在 running）。
+      if (evt.name === 'ask_user_question') {
+        const askIdx = messages.findIndex(m =>
+          m.role === 'tool' && m.toolName === 'ask_user_question' && m.status === 'running'
+          && (!m.runId || !evt.runId || m.runId === evt.runId));
+        if (askIdx >= 0) {
+          const updated = [...messages];
+          // input 只在真带 questions 时覆盖 —— 空 {} 不能把 sidecar 那路已落好的
+          // 问题冲掉（bridge 对非对象参数会兜底成 {}）
+          const hasQ = evt.input && Array.isArray(evt.input.questions);
+          updated[askIdx] = {
+            ...updated[askIdx],
+            id: evt.blockId || updated[askIdx].id,
+            ...(hasQ ? { toolInput: evt.input } : {}),
+          };
+          return updated;
+        }
+      }
       return [...messages, {
         id: evt.blockId || newId('tool'),
         role: 'tool',
@@ -119,6 +140,42 @@ export function reduceChatEvent(messages, evt) {
         status: 'running',
         runId: evt.runId,
         ...(evt.parentToolUseId ? { parentToolUseId: evt.parentToolUseId } : {}),
+      }];
+    }
+
+    case 'run.ask_user_question': {
+      // M2 方案 A：sidecar 在 pi 工具 ask_user_question 挂起时直发
+      // { askId, questions, runId, sessionId }（无 toolUseId）。落成一条可答的
+      // tool 卡片：id 先用 askId —— 服务端忽略答案里的 toolUseId（sid 经 runId
+      // 解析），askId 只作卡片 key 与两路事件的去重锚；run.delta.tool_use 那路
+      // 到达时会把 id 换成 blockId（终态 tool_result 按 blockId 投递）。
+      //
+      // 去重（同题两路）：event-bridge 也会把这次工具调用翻成
+      // run.delta.tool_use{name:'ask_user_question'}（blockId = pi toolCallId）。
+      // 串行 turn + 一会话至多一个挂起 ask，按"running 中的 ask 卡"互认：
+      //   - delta.tool_use 先到：本路不新插，给那张卡补 askId + questions（本路权威）
+      //   - 本路先到：delta 案补 input + 收养 blockId，不新插
+      if (!evt.askId || !Array.isArray(evt.questions)) return messages;
+      const idx = messages.findIndex(m =>
+        m.role === 'tool' && m.toolName === 'ask_user_question' && m.status === 'running'
+        && (!m.runId || !evt.runId || m.runId === evt.runId));
+      if (idx >= 0) {
+        const updated = [...messages];
+        updated[idx] = {
+          ...updated[idx],
+          askId: evt.askId,
+          toolInput: { questions: evt.questions },
+        };
+        return updated;
+      }
+      return [...messages, {
+        id: evt.askId,
+        role: 'tool',
+        toolName: 'ask_user_question',
+        toolInput: { questions: evt.questions },
+        status: 'running',
+        runId: evt.runId,
+        askId: evt.askId,
       }];
     }
 

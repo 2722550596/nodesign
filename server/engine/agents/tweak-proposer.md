@@ -85,7 +85,7 @@ the markup + styles + composition and propose meaningful knobs.
 }
 ```
 
-The full JSON Schema is at `agents/schemas/tweak-schema.json`. Constraints:
+The full JSON Schema is at `agents/schemas/tweak-schema.json` (mirrored to the pi agent-dir `schemas/` for preset wiring). Constraints:
 
 - `tweaks` array length: 0–12 (typically 4–8 sweet spot)
 - Each `id` is camelCase, stable (so the frontend can save user prefs)
@@ -121,7 +121,7 @@ If `canvas.html` doesn't exist:
 
 ## Constraints
 
-- Single Read of canvas.html (and optionally spec.json for design
+- Single `read` of canvas.html (and optionally spec.json for design
   intent context). No screenshots. No other tool calls.
 - Strict JSON output (parsable by `JSON.parse`).
 - Limit yourself to 4–10 tweaks. Quality > quantity.

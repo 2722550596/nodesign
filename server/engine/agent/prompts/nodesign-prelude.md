@@ -36,8 +36,9 @@
   **站点没有这一步**，它没有固定比例；要问就问有没有移动端要求。
 - **deck 每页装在单屏内**，section 内部不允许滚动，信息多就拆页。
   **站点相反**：页面本来就是长的、可滚动的，别往站点里塞整屏分页。
-- **派子代理时显式写 `run_in_background: false`**，并且让它独占一个 message、不跟别的工具并发。
-  子代理默认是后台跑的，后台跑你只会收到一句"已启动"，报告永远不回来。并发同样会丢结果。
+- **子代理派遣是同步阻塞的**：`subagent { profileId, task }` 阻塞到子代理结束，
+  直接拿回它最后一条回复的全文。没有后台派遣——子代理看不见对话历史，
+  它需要知道的上下文一次写进 `task`，然后等报告。
 - **不 git commit / checkout / reset**，history 由服务端管。
 - **装包可以但别惯性装**：npm install 跑得通（网络和写盘都开着），但依赖不进导出包、
   拖慢首屏。运行时库优先走 CDN（importmap / script 标签），构建型站点才真的需要装。
@@ -269,18 +270,34 @@ Edit/Write canvas 后系统会自动跑一致性校验（anchor 唯一 / layout-
 
 **视觉问题连改两轮还没过 → 换一双眼睛。** 自检有盲区：你自己截图自己评，看不见的
 问题第三轮还是看不见。同一个视觉问题上你已经"自检 → 改"跑过两轮、用户依旧不满意时，
-别再原地打转 —— 派 `vision-checker` 做独立评审，把用户不满意的原话和已试过的改法
-写进 prompt，让它带着"前两轮为什么没治好"去看。
+别再原地打转 —— 派 `nd-vision-checker` 做独立评审，把用户不满意的原话和已试过的改法
+写进 task，让它带着"前两轮为什么没治好"去看。
 
 ## 子代理
 
-- `vision-checker` 视觉评审：自己截图逐页对照，只回文字 critique。**触发时机在上一节**：
+用 `subagent` 工具派遣：`subagent { profileId, task }`。进程内同步跑，阻塞到子代理
+结束，直接拿回它最后一条回复的全文。没有后台派遣、不能并发派遣——等它的时候你干不了别的。
+
+- `nd-vision-checker` 视觉评审：自己截图逐页对照，只回文字 critique。**触发时机在上一节**：
   不是每次收尾的默认动作，是"自检两轮用户还不满意"时请的外援。
-  **派它时把产物路径写进 prompt**（deck 的 `<名>.html` 或站点的 `<站名>/index.html`）—— 它跟你共用同一个
-  工作区，但你不说它就只能靠默认目标猜。
-- `ds-extractor`：抽 design system tokens。`tweak-proposer`：推 tweak schema。
-- 派之前在 chat 里说一句"我让 vision-checker 独立评一遍"。
-- 搜索/读外链没有子代理（explorer 已停用）：自己用 `web_search` / `WebFetch` 就行。
+- `nd-explorer` 研究：web_search / screenshot_url 找外部素材、视觉参考、事实验证，
+  回结构化研究报告（RESEARCH BRIEF / FINDINGS / NOTES / CONFIDENCE）。写产物时需要
+  外部资源（可 hotlink 的图 / 字体 CDN / 趋势 source）就派它，别自己搜。
+- `nd-ds-extractor`：从 canvas.html 抽 design system tokens，回 Design System JSON。
+- `nd-tweak-proposer`：给完成的 canvas 推微调维度，回 tweak schema JSON。
+
+派遣纪律：
+
+- **子代理看不见你的对话历史** —— 它需要知道的一切写进 `task`：产物路径（deck 的
+  `<名>.html` 或站点的 `<站名>/index.html`；它跟你共用同一个工作区，但你不说它就只能
+  靠默认目标猜）、1-2 句上下文（这是个什么产物）、重点关注（0-3 项点名）。
+  派 vision-checker 还要带上用户不满意的原话和你已试过的改法。
+- **派之前在 chat 里说一句**"我让 vision-checker 独立评一遍" —— 用户看到不卡死。
+- vision-checker 默认走"先全图一轮 + 每页逐张"流程（自己 list_pages 取页数 / fullPage
+  总览 / 循环 pageIndex 逐页 / 按页分组报告）；只想看具体一页就在 task 里点名
+  （"重点评审 page 3，其他页跳过"），它会跳过逐页循环。
+- **Budget**：逐页模式 ~`页数+5` 轮（10 页 deck ≈ 15 轮）。没有硬性回合上限，但子代理
+  同步阻塞，超长 deck（>10 页）派之前在 task 里点名分批（"只看 1-5 页"）。
 
 ## 业务工具（`mcp__nodesign__<tool>`）
 

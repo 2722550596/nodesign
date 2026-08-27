@@ -11,8 +11,7 @@
 
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { MEMORY_DIR_NAME } from '../engine/agent/memory-config.js';
-import { DEFAULT_CLAUDE_MD } from './workspace-templates.js';
+import { DEFAULT_CLAUDE_MD, MEMORY_DIR_NAME } from './workspace-templates.js';
 
 /** 改版前的默认模板原文（迁移判据用：全文相等 = 用户没写过一个字，不搬） */
 const OLD_DEFAULT_CLAUDE_MD = `# Project Instructions

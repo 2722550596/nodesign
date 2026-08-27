@@ -17,6 +17,7 @@ const TOOL_STAGE_KIND = {
   Bash: 'terminal',
   mcp__nodesign__generate_image: 'image',
   AskUserQuestion: 'question',   // 交互卡直接上画布（dock），聊天栏那张照旧
+  ask_user_question: 'question', // M2 pi 扩展名（event-bridge 原样透传 registerTool 名）
 };
 
 // 不上舞台的工具：聊天栏已有完整交互卡，舞台重复出现只会抢镜头。
