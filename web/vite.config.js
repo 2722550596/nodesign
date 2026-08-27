@@ -32,4 +32,9 @@ export default defineConfig({
       },
     },
   },
+  // vitest 读同一份 config。setup 补丁见 src/setup-tests.js（Node 22+ 实验性
+  // localStorage 全局挡住 happy-dom 桥接 + React act 环境标志）。
+  test: {
+    setupFiles: ['./src/setup-tests.js'],
+  },
 });
