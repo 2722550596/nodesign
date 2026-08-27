@@ -281,6 +281,15 @@ export function isUncensoredModel(appModel) {
   return BY_ID.get(appModel)?.uncensored === true;
 }
 
+/**
+ * 表里所有带 `uncensored` 位的行 id（今天只有 qwen3.8-27b）。
+ * session-loop spawn 时用它算「无审查 wire-key 集合」经 env 交给 pi 子进程，
+ * ndPolicy 宏按**当轮实际模型**查集合（会话内热换模型政策随之翻转，见 policy-render.js）。
+ */
+export function uncensoredModelIds() {
+  return [...BY_ID.values()].filter((r) => r.uncensored === true).map((r) => r.id);
+}
+
 /** 决定 sdkOptions.model 喂什么。API 行给 alias；订阅/未知原样返回（让 SDK 自己 fallback） */
 export function resolveSdkSpoofModel(appModel) {
   if (!appModel) return appModel;

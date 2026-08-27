@@ -101,7 +101,19 @@ export default function setup(pi) {
 			baseUrl: customBaseUrl,
 			apiKey: "$NODESIGN_KEY",
 			api: process.env.NODESIGN_API || "anthropic-messages",
-			models: [{ id: customModel, name: customModel }],
+			models: [{
+				id: customModel,
+				name: customModel,
+				// extension registerProvider 路径（applyExtension）对 model 定义是原样
+				// spread，不像 models.json 路径（modelFromJson）会补默认值 —— input /
+				// cost / contextWindow / maxTokens 缺了就是 undefined，read.ts 的
+				// model.input.includes("image") 当场炸。这里显式给全。
+				reasoning: false,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 128000,
+				maxTokens: 16384,
+			}],
 		});
 	}
 }

@@ -104,7 +104,7 @@ export function resolvePiBinary() {
 export function sessionLaunch({
   sid, projectId, ownerId, workspaceDir, dataRoot,
   resume = false, provider, model, presetId, port, directTools = [], disabledTools = [],
-  adultLevel = 'loose', uncensored = false,
+  adultLevel = 'loose', uncensoredModels = [],
 }) {
   if (!sid) throw new Error('sessionLaunch: sid 必填');
   if (!workspaceDir) throw new Error('sessionLaunch: workspaceDir 必填');
@@ -163,10 +163,12 @@ export function sessionLaunch({
     NODESIGN_TOKEN: sidToken(sid),
     DB_PATH: dbPath,
     NODESIGN_DISABLED_TOOLS: disabledTools.join(','),
-    // M2：政策节渲染维度（prompt-support.ts 的 ndPolicy 宏消费）。spawn 时定，
-    // 会话内热换模型不随之变（已知限制，见迁移文档开放项）。
+    // M2：政策节渲染维度（prompt-support.ts 的 ndPolicy 宏消费）。
+    // level spawn 时定（热换模型锁同 lane，旋钮不变；空闲换模型重启新 env）。
+    // uncensored 是 wire-key 集合（`${provider}/${model}`，与 pi runtime.model 同形）：
+    // 宏每轮按当轮实际模型查集合，会话内热换模型政策随之翻转（不再 spawn 定死）。
     NODESIGN_ADULT_LEVEL: adultLevel,
-    NODESIGN_UNCENSORED: uncensored ? '1' : '',
+    NODESIGN_UNCENSORED_MODELS: uncensoredModels.join(','),
     ...upstream,
   });
 

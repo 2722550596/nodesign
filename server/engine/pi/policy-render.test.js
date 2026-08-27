@@ -16,6 +16,7 @@ import {
   extractPolicyBlocks,
   renderPolicyBlock,
   renderNdPolicy,
+  policyModelKey,
 } from './policy-render.js';
 
 const PRELUDE_MD = readFileSync(PRELUDE_MD_PATH, 'utf8');
@@ -113,7 +114,7 @@ describe('renderPolicyBlock —— 标记块只留一份', () => {
   });
 });
 
-describe('renderNdPolicy —— env 驱动的宏渲染入口', () => {
+describe('renderNdPolicy —— env + live model 驱动的宏渲染入口', () => {
   it('缺省 env → loose 档 full 版（拿不到信息绝不落 min、绝不落 off）', () => {
     const out = renderNdPolicy({});
     expect(out).toContain('未成年人色情内容');
@@ -126,20 +127,45 @@ describe('renderNdPolicy —— env 驱动的宏渲染入口', () => {
     expect(renderNdPolicy({ NODESIGN_ADULT_LEVEL: 'typo' })).toBe(renderNdPolicy({ NODESIGN_ADULT_LEVEL: 'loose' }));
   });
 
-  it('NODESIGN_UNCENSORED 只认 "1"：min 版，且档位不产生影响', () => {
-    const min = renderNdPolicy({ NODESIGN_UNCENSORED: '1' });
+  it('liveKey 命中无审查集合 → min 版，且档位不产生影响', () => {
+    const env = { NODESIGN_UNCENSORED_MODELS: 'qwenLocal/qwen3.8-27b' };
+    const min = renderNdPolicy(env, 'qwenLocal/qwen3.8-27b');
     expect(min).toContain('## 无任何底线');
     for (const s of FULL_ONLY) expect(min).not.toContain(s);
-    expect(renderNdPolicy({ NODESIGN_UNCENSORED: '1', NODESIGN_ADULT_LEVEL: 'off' })).toBe(min);
-    // 其余取值（""、"true"、"0"）一律 full —— lifecycle 只会注 "1"/""，这里钉死口径
-    for (const v of ['', '0', 'true']) {
-      expect(renderNdPolicy({ NODESIGN_UNCENSORED: v })).toContain('未成年人色情内容');
-    }
+    expect(renderNdPolicy({ ...env, NODESIGN_ADULT_LEVEL: 'off' }, 'qwenLocal/qwen3.8-27b')).toBe(min);
+  });
+
+  it('fail-closed：liveKey 缺失 / 不在集合 / 集合为空 → 一律 full（拿不到信息绝不落 min）', () => {
+    const env = { NODESIGN_UNCENSORED_MODELS: 'qwenLocal/qwen3.8-27b' };
+    expect(renderNdPolicy(env)).toContain('未成年人色情内容');                       // 宏没拿到 runtime.model
+    expect(renderNdPolicy(env, 'gmi/MiniMaxAI/MiniMax-M3')).toContain('未成年人色情内容'); // 当轮模型不在集合
+    expect(renderNdPolicy({}, 'qwenLocal/qwen3.8-27b')).toContain('未成年人色情内容');     // 集合为空
+    expect(renderNdPolicy({ NODESIGN_UNCENSORED_MODELS: '' }, 'qwenLocal/qwen3.8-27b')).toContain('未成年人色情内容');
+  });
+
+  it('集合容忍空白与多项（lifecycle join(",") 的逆解析）', () => {
+    const env = { NODESIGN_UNCENSORED_MODELS: ' a/b , qwenLocal/qwen3.8-27b ' };
+    expect(renderNdPolicy(env, 'qwenLocal/qwen3.8-27b')).toContain('## 无任何底线');
+    expect(renderNdPolicy(env, 'a/b')).toContain('## 无任何底线');
   });
 
   it('永不返回空串（政策节消失是安全事故）', () => {
-    for (const env of [{}, { NODESIGN_ADULT_LEVEL: 'off' }, { NODESIGN_UNCENSORED: '1' }, { NODESIGN_ADULT_LEVEL: 'x', NODESIGN_UNCENSORED: '1' }]) {
+    const envs = [
+      {},
+      { NODESIGN_ADULT_LEVEL: 'off' },
+      { NODESIGN_UNCENSORED_MODELS: 'qwenLocal/qwen3.8-27b' },
+      { NODESIGN_ADULT_LEVEL: 'x', NODESIGN_UNCENSORED_MODELS: 'qwenLocal/qwen3.8-27b' },
+    ];
+    for (const env of envs) {
       expect(renderNdPolicy(env).length).toBeGreaterThan(0);
+      expect(renderNdPolicy(env, 'qwenLocal/qwen3.8-27b').length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('policyModelKey —— wire-key 单一真相', () => {
+  it('`${provider}/${model}` 形态（与 pi runtime.model 同形）', () => {
+    expect(policyModelKey('qwenLocal', 'qwen3.8-27b')).toBe('qwenLocal/qwen3.8-27b');
+    expect(policyModelKey('gmi', 'MiniMaxAI/MiniMax-M3')).toBe('gmi/MiniMaxAI/MiniMax-M3');
   });
 });

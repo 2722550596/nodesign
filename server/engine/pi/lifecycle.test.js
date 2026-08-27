@@ -204,6 +204,21 @@ describe('sessionLaunch env（C1）', () => {
     const withoutEnv = sessionLaunch({ ...BASE_OPTS, workspaceDir, dataRoot }).env;
     expect(withoutEnv.DB_PATH).toBe(path.resolve(__dirname, '../../db/nodesign.db'));
   });
+
+  it('政策节 env：NODESIGN_ADULT_LEVEL 透传；NODESIGN_UNCENSORED_MODELS 是 wire-key 集合（逗号 join，缺省空串）', () => {
+    const { workspaceDir, dataRoot } = mkTmpDirs();
+    const withPolicy = sessionLaunch({
+      ...BASE_OPTS, workspaceDir, dataRoot,
+      adultLevel: 'strict',
+      uncensoredModels: ['qwenLocal/qwen3.8-27b', 'custom/other'],
+    }).env;
+    expect(withPolicy.NODESIGN_ADULT_LEVEL).toBe('strict');
+    expect(withPolicy.NODESIGN_UNCENSORED_MODELS).toBe('qwenLocal/qwen3.8-27b,custom/other');
+
+    const defaults = sessionLaunch({ ...BASE_OPTS, workspaceDir, dataRoot }).env;
+    expect(defaults.NODESIGN_ADULT_LEVEL).toBe('loose');
+    expect(defaults.NODESIGN_UNCENSORED_MODELS).toBe('');
+  });
 });
 
 describe('ensureProjectPiConfig（C9 幂等）', () => {

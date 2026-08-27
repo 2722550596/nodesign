@@ -325,10 +325,18 @@ env = {
 - 工具命名 `mcp__nodesign__<tool>` → 裸名；删 ToolSearch 段；可疑段落加 `{{//M2-待改: ...}}` 注释标记。
 - 政策块（`nd:policy:full/min` + `{{ADULT_POLICY}}`）抽成 `{{ndPolicy}}` 宏：
   `policy-render.js`（纯函数，模块级缓存 prelude 块）+ `extensions/prompt-support.ts` 注册宏。
-  档位由 spawn env 定（`NODESIGN_ADULT_LEVEL` off/loose/strict + `NODESIGN_UNCENSORED`），
-  session-loop init 从 `levelFor(user,model)` + `isUncensoredModel(model)` 计算（env 显式值优先，测试/运维钩子）。
+  档位 `NODESIGN_ADULT_LEVEL`（off/loose/strict）spawn env 定 —— 热换模型被通路闸锁在
+  同 lane（moderation 旋钮不变），空闲换模型是重启新 env，所以 level 是会话常量。
+  **uncensored 不再 spawn 定死**：pi-rp 已把 live model 接进 `PromptRuntime`
+  （`runtime.model` = `{provider, id}`，commit a3a5a46a2），宏是 dynamic（static:false）
+  每轮重展开，拿 `ctx.runtime.model` 现算 wire key 查**无审查集合**。集合 spawn 时由
+  主进程从模型表算好经 env `NODESIGN_UNCENSORED_MODELS`（逗号分隔 wire key）交给子进程。
+  会话内 `set_model` 热换到无审查模型，下一轮政策节当场翻成 min 版，不用重启 pi 进程。
+  fail-closed：liveKey 缺失 / 不在集合 / 集合为空 → 一律 full（拿不到信息绝不落 min）。
 - 验证：`_probe-m2-prelude-live.mjs` GATE PASS（启动即 nodesign preset / 便利贴问答命中 notes/ /
-  loose·off·uncensored-min 三档政策在场且互斥）。
+  loose·off·uncensored-min 三档政策在场且互斥 / **Phase 4 同会话 live-flip**：turn 1 真模型
+  full 政策在场 → set_model 切 fake 无审查模型 → turn 2 的 system prompt 政策节翻成 min 版，
+  full 块特征缺席。fake 上游捕获请求 body.system 断言）。
 
 **第二步：注入族 + guards + AskUserQuestion + 子代理**：
 - 注入族：静态部分并入 preset；动态内容（工作区状态块 + pendingSummary）走 `turn-state.js`
@@ -351,15 +359,25 @@ env = {
 - 验证：`_probe-m2-step2-live.mjs` GATE PASS（扩展健康 / 无 EXTENSION_ERROR / INIT_CONTRACT 心跳 /
   activePresetId=nodesign / AskUserQuestion 全链路 ask→answer→续写→最终文本反映所选）。
 
-**回归**：server 818/818 绿（baseline 778，+40）；web 425/431（仅 6 个 ChatDock 预存失败，
-clean tree 同样失败，与 M2 无关）。顺手修一处 HEAD 潜伏 bug：turn.js 用 `Events.projectActiveSession`
-但漏 import（被 try/catch 静默吞，project.active_session 广播一直失效），补 import。
+**回归**：server 822/822 绿（baseline 778，+44；policy live-model 改造 +4：policy-render
+liveKey/集合语义 + lifecycle `NODESIGN_UNCENSORED_MODELS` env）；web 425/431（仅 6 个 ChatDock
+预存失败，clean tree 同样失败，与 M2 无关）。顺手修一处 HEAD 潜伏 bug：turn.js 用
+`Events.projectActiveSession` 但漏 import（被 try/catch 静默吞，project.active_session 广播
+一直失效），补 import。
+
+**顺手修一处 env 全家桶潜伏 bug**（Phase 4 live-flip 探针逼出来的）：`providers.ts` 的 custom
+provider 注册只给 `{ id, name }`，pi 的 extension registerProvider 路径（applyExtension）对
+model 定义是原样 spread，不像 models.json 路径（modelFromJson）会补默认值 —— `input` 缺了就是
+undefined，read.ts 的 `model.input.includes("image")` 当场炸（`Cannot read properties of
+undefined (reading 'includes')`）。M1.5 只验过同模型 set_model 往返，没真跑过 env 全家桶模型的
+turn，所以一直没炸。补全 `reasoning/input/cost/contextWindow/maxTokens`。
 
 **开放项**（非阻塞，M3/簇 B 复评）：
 - bash 工具：pi defaultTools 白名单暂不含（prelude 装包/脚本段加 `{{//M2-待改}}` 注释）。
 - TaskCreate/TaskUpdate 任务镜像：pi 无任务工具，黑板镜像功能悬空。
 - CLAUDE.md / .claude / Skill 引用：prelude 仍提，pi 无对应物（已注释标记）。
-- 会话内热换 qwen3.8-27b 不变 uncensored 政策（env spawn 时定，见附录 D 已知限制）。
+- ~~会话内热换 qwen3.8-27b 不变 uncensored 政策~~ → 已修：pi-rp 接 live model 进 PromptRuntime，
+  ndPolicy 宏每轮按 runtime.model 查无审查集合，热换即翻转（见上「政策块」条 + Phase 4 探针）。
 - `server/ops/fix-sdk-musl.mjs`（postinstall）：SDK 已删，脚本是 no-op，未列入删除清单，留 M3 复评。
 
 ### 簇 B 工具管线重构（单独排期）
@@ -426,3 +444,7 @@ clean tree 同样失败，与 M2 无关）。顺手修一处 HEAD 潜伏 bug：t
 11. pi-rp dist 落后源码时 set_preset 不可用——重建 dist 后再测 preset 切换（2026-08-27 已重建）
 12. 默认模型回退不能是订阅行（M1 订阅通道禁用后必 403）
 13. pi 的 setModel/setThinkingLevel 默认写全局 settings.json——共享 agent-dir 的宿主必须传 `persistSettings:false`（Nodesign rpc-client 已默认），否则一个会话的热切换污染所有会话的默认。会话级持久化靠 session JSONL（model_change/thinking_level_change），不受影响。
+14. pi extension `registerProvider` 的 model 定义是**原样 spread**（applyExtension），不像
+    models.json 路径（modelFromJson）会补默认值 —— `input`/`cost`/`contextWindow`/`maxTokens`
+    缺了就是 undefined，read.ts 的 `model.input.includes("image")` 当场炸。注册自定义模型必须
+    给全这些字段（providers.ts env 全家桶已补）。

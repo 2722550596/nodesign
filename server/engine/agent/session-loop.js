@@ -55,7 +55,7 @@ import {
 } from '../runs/active-runs.js';
 import { takeNextRunId, publishQueueDepth, drainSession } from '../runs/turn-relay.js';
 import { loadProjectConfig } from '../../projects/project-config.js';
-import { resolveModelRoute, isUncensoredModel } from './model-context.js';
+import { resolveModelRoute, uncensoredModelIds } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { levelFor } from '../../lib/moderation.js';
 import { getUserById } from '../../auth/users-store.js';
@@ -69,6 +69,7 @@ import { sessionLaunch, createSessionProcess } from '../pi/lifecycle.js';
 import { createEventBridge } from '../pi/event-bridge.js';
 import { hasPiSession, piSessionDir } from '../pi/pi-jsonl.js';
 import { piProviderModelFor } from '../pi/model-map.js';
+import { policyModelKey } from '../pi/policy-render.js';
 // M2 每 turn 动态注入：状态块装配（首轮全量 / 指纹 diff）+ compaction 后重置记忆。
 import { assembleTurnContext, resetTurnStateMemory } from './turn-state.js';
 // pendingSummary 搬到执行时点采集（原 turn.js API 时点读 —— 排队消息会带过期状态）
@@ -291,17 +292,26 @@ export async function runSession({
     // 与 server/index.js 的 PORT 解析同口径。
     const port = Number(process.env.PORT || 4001);
 
-    // M2：政策节渲染维度（prelude 的「底线」节 + 成人段）。level 走 moderation
-    // 双旋钮（用户显式值 > 账号档位默认），uncensored 查模型表位（今天只有
-    // qwen3.8-27b）。spawn 时定，经 env 进 pi 子进程，prompt-support.ts 的
-    // ndPolicy 宏消费。ownerId 为 null（本地 profile）→ levelFor 落 'off'。
-    // env 覆盖（NODESIGN_ADULT_LEVEL / NODESIGN_UNCENSORED）是测试/运维钩子：
-    // 显式设置时压过计算值（live probe 用它驱动三档），未设置走生产计算。
+    // M2：政策节渲染维度（prelude 的「底线」节 + 成人段）。
+    // level 走 moderation 双旋钮（用户显式值 > 账号档位默认），spawn 时定 —— 热换模型
+    // 被通路闸锁在同 lane 内（hotSwitchLaneReason），旋钮不会变；空闲换模型是重启新 env。
+    // uncensored 不再是 spawn 定死的布尔：**无审查 wire-key 集合** spawn 时算好经 env
+    // 交给 pi 子进程，ndPolicy 宏每轮按 runtime.model（pi-rp 已接 live model）查集合 ——
+    // 会话内 set_model 热换到 qwen3.8-27b，下一轮政策节自动翻成 min 版，不用重启。
+    // ownerId 为 null（本地 profile）→ levelFor 落 'off'。
+    // env 覆盖是测试/运维钩子：NODESIGN_ADULT_LEVEL 压过档位；NODESIGN_UNCENSORED_MODELS
+    // （逗号分隔 appModel id）整组替换无审查集合（live probe 用它驱动三档）。
     const adultLevel = process.env.NODESIGN_ADULT_LEVEL
       || levelFor(ownerId ? getUserById(ownerId) : null, model);
-    const uncensored = process.env.NODESIGN_UNCENSORED === '1'
-      ? true
-      : isUncensoredModel(model);
+    const uncensoredSource = process.env.NODESIGN_UNCENSORED_MODELS;
+    const uncensoredAppModels = (uncensoredSource != null && uncensoredSource !== '')
+      ? uncensoredSource.split(',').map((s) => s.trim()).filter(Boolean)
+      : uncensoredModelIds();
+    // appModel → pi wire key（`${provider}/${model}`，与 runtime.model 同形）。
+    const uncensoredModels = uncensoredAppModels
+      .map((id) => piProviderModelFor(id))
+      .filter(Boolean)
+      .map((w) => policyModelKey(w.provider, w.model));
 
     const launch = sessionLaunch({
       sid: sessionId,
@@ -316,7 +326,7 @@ export async function runSession({
       directTools,
       disabledTools,
       adultLevel,
-      uncensored,
+      uncensoredModels,
     });
     child = createSessionProcess(launch);
 

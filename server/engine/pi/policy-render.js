@@ -91,6 +91,15 @@ export function renderPolicyBlock(blocks, level, uncensored) {
   return body.replace('{{ADULT_POLICY}}', ADULT_POLICY[level] || ADULT_POLICY.loose).trim();
 }
 
+/**
+ * 无审查集合的 wire-key 形态：`${provider}/${model}` —— 与 pi runtime.model
+ * （provider + model.id）同形。session-loop 建集合、ndPolicy 宏查集合都走这一个
+ * 函数，两边永远对得上（同一件事不许有两个实例）。
+ */
+export function policyModelKey(provider, modelId) {
+  return `${provider}/${modelId}`;
+}
+
 // ── 模块级缓存的 prelude 块（同 system-prompts.js 的 NODESIGN_PRELUDE 模式）──
 // 宏 render 是同步的，md 只在模块加载时读一次。读失败不 throw（扩展加载期炸会
 // 拖垮整个 pi 进程）—— 记 warn，renderNdPolicy 走保守兜底。
@@ -107,15 +116,22 @@ try {
  * {{ndPolicy}} 宏的渲染入口（prompt-support.ts 直接调这个）。
  *
  * 档位来自 env（lifecycle spawn 时注入，主进程算好）：
- * - NODESIGN_ADULT_LEVEL：off|loose|strict，缺省/未知落 loose
- * - NODESIGN_UNCENSORED："1" → min 版，其余一律 full（拿不到信息绝不落 min）
+ * - NODESIGN_ADULT_LEVEL：off|loose|strict，缺省/未知落 loose。spawn 时定 ——
+ *   热换模型被通路闸锁在同 lane（旋钮不变），空闲换模型是重启新 env。
+ * - NODESIGN_UNCENSORED_MODELS：逗号分隔的 wire-key 集合（`${provider}/${model}`，
+ *   与 pi runtime.model 同形）。宏每轮拿**当轮实际模型**（pi-rp PromptRuntime.model，
+ *   会话内 set_model 热换随之变）查集合：命中 → min 版。集合 spawn 时由主进程从
+ *   模型表算好注入，所以热换到无审查模型政策当场翻转，不用重启。
  *
+ * fail-closed：liveKey 缺失 / 不在集合 / 集合为空 → full 版（拿不到信息绝不落 min）。
  * 失败兜底：md 读不到 / 标记块缺失 → 返回 full 块的保守替代。绝不返回空串 ——
  * 政策节消失是安全事故；宁可返回最严的 loose 版 full 块原文。
  */
-export function renderNdPolicy(env = process.env) {
+export function renderNdPolicy(env = process.env, liveKey = null) {
   const level = env.NODESIGN_ADULT_LEVEL || 'loose';
-  const uncensored = env.NODESIGN_UNCENSORED === '1';
+  const set = (env.NODESIGN_UNCENSORED_MODELS || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const uncensored = liveKey != null && set.includes(liveKey);
   if (cachedBlocks) return renderPolicyBlock(cachedBlocks, level, uncensored);
   // 兜底：缓存没建起来（md 缺失/标记被删）。full 块拿不到就退到内嵌的 loose 一句话，
   // 保证政策节永远非空、且永远不往宽了放。
