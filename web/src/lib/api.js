@@ -362,21 +362,14 @@ export const Turn = {
   answer: ({ pid, runId, answers }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/answer`, { answers }),
 
-  /**
-   * SDK Query control: rewindFiles —— 把 cwd 文件回滚到指定 user message 时点。
-   * 配合 enableFileCheckpointing。前端 user message 旁的 undo 按钮调这个。
-   * 200 { ok:true } / 404 code='RUN_NOT_ACTIVE' / 501 code='METHOD_NOT_AVAILABLE'
-   */
-  rewind: ({ pid, runId, messageId }) =>
-    jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/rewind`, { messageId }),
 
   /**
    * M1.5 热换模型：run 飞行中切模型（set_model RPC 直通 pi，下次 LLM 调用生效）。
    * 与 Sessions.setModel 的区别：那个改配置 + 重启空闲 query（run 没在跑时用）；
    * 这个不重启进程，活会话里直接切（run 在跑时用）。服务端同时落 session 覆盖，
    * 重启后不丢。
-   * 200 { ok, model, wire } / 403 MODEL_LOCKED|SUBSCRIPTION_LANE_M1_DISABLED /
-   * 400 UNKNOWN_MODEL / 409 LANE_SWITCH|RUN_NOT_ACTIVE / 502 NO_UPSTREAM_ROUTE|PI_SET_MODEL_FAILED
+   * 200 { ok, model, wire } / 400 UNKNOWN_MODEL /
+   * 409 LANE_SWITCH|RUN_NOT_ACTIVE / 502 NO_UPSTREAM_ROUTE|PI_SET_MODEL_FAILED
    */
   setRunModel: ({ pid, runId, model }) =>
     jsonRequest('POST', `/api/projects/${pid}/runs/${runId}/model`, { model: model ?? null }),
@@ -436,9 +429,9 @@ export const Sessions = {
   close: (pid, sid) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/close`),
   /**
-   * 调 SDK Query.rewindFiles(userMessageId) 把所有文件回滚到 userMessageId 之前。
-   * 仅 streamInput query 活着时可用 —— session 已 close 时返 410。
-   * 200 → { canRewind, filesChanged?, insertions?, deletions? }
+   * M3c rewind：调 pi navigate_tree（对话截回该 user entry）+ git rewindWorkspace
+   * （文件精确回到该轮开始前）。活会话直通 RPC；死会话临时 spawn 裸 pi（3-5s）。
+   * 200 → { canRewind, filesChanged?, conversationTruncated? }
    */
   rewind: (pid, sid, userMessageId) =>
     jsonRequest('POST', `/api/projects/${pid}/sessions/${sid}/rewind`, { userMessageId }),

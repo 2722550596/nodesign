@@ -184,6 +184,23 @@ export class PiRpcClient {
     return res.data;
   }
 
+  /** navigate_tree（M3c rewind）。把会话树 leaf 移到 targetId 的回滚位。
+   *  summarize 固定 false（不走 LLM 摘要）。label 必传 'rewind' —— 触发 pi 侧
+   *  appendLabelChange 落盘 leaf（pi-rp C0），否则重启后导航位置丢失。
+   *  isStreaming 时 pi 侧抛错。失败抛错，返回 res.data（{ cancelled, editorText? }）。 */
+  async navigateTree(targetId, label = 'rewind') {
+    const res = await this.send({ type: 'navigate_tree', targetId, label });
+    if (!res.success) throw new Error(`navigate_tree 失败: ${res.error ?? 'unknown error'}`);
+    return res.data;
+  }
+
+  /** get_tree → response.data（{ tree: SessionTreeNode[], leafId }）。失败抛错。 */
+  async getTree() {
+    const res = await this.send({ type: 'get_tree' });
+    if (!res.success) throw new Error(`get_tree 失败: ${res.error ?? 'unknown error'}`);
+    return res.data;
+  }
+
   /**
    * 内部发送：无 id 自动分配 req_N；写 stdin（JSON + '\n'）；
    * 返回 Promise<response>，按 id 关联。进程未运行/已退出 → reject。

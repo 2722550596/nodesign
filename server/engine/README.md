@@ -21,7 +21,8 @@ engine/
 │   ├── events.js                EventBus + 标准事件 schema（run.* 全家）
 │   ├── turn-state.js            每 turn 动态状态注入装配（工作区状态块 + pendingSummary）
 │   ├── model-context.js         模型路由 / 上下文窗口 / uncensored 判定
-│   ├── model-table.js           模型表（M3 降级，models.json 为唯一真相源）
+│   ├── models.json              模型表 + 上游注册表（M3a 起唯一真相源，手编辑）
+│   ├── models-json.js           models.json 加载器（baseUrlEnv 覆盖 + deepFreeze）
 │   ├── session-model.js         会话级模型解析
 │   ├── skill.js                 SKILL.md loader（frontmatter + body）
 │   ├── plugin-loader.js         用户级 plugin 加载
@@ -43,13 +44,12 @@ engine/
 │   ├── mcp-config.js            每项目 .pi/mcp.json 装配
 │   ├── agent-dir/               共享 agent 目录：settings.json（defaultPreset）+ prompt-presets/nodesign.json
 │   └── extensions/              pi 扩展（jiti 加载，-e 挂载）
-│       ├── providers.ts         注册上游 provider（读 providers-models.json）
+│       ├── providers.ts         注册上游 provider（读 ../../agent/models.json + 外部插槽）
 │       ├── ask-user.ts          AskUserQuestion 工具（registerTool + sidecar /ask /answer）
 │       ├── guards.ts            安全闸（tool_call 拦截 + session_start 装配断言心跳）
 │       ├── inject.ts            懒注入 + 失败建议 + rate-limit 上报
 │       ├── prompt-support.ts    注册 {{ndPolicy}} 宏
-│       ├── migrate-prelude.mjs  nodesign-prelude.md → nodesign.json preset 生成器
-│       └── migrate-models.mjs   model-table → providers-models.json 生成器
+│       └── migrate-prelude.mjs  nodesign-prelude.md → nodesign.json preset 生成器
 │
 ├── mcp/                         工具工厂（buildNodesignTools，零改动复用）
 │   ├── index.js                 buildNodesignTools：45+ 工具装配 + tier gate + 项目级禁用

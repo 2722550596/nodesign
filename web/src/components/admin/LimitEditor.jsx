@@ -8,7 +8,8 @@ import { Segmented } from '../../routes/Issues.jsx';
 import { Chip, Field, NumInput, PrimaryBtn, GhostBtn } from './primitives.jsx';
 
 // 外审档章：显示实际生效档，显式设过的加个点（区分"我设的"和"跟着默认走"）。
-// 08-20 起两个旋钮并排：订阅模型（Sonnet/Opus）一枚、本地/中转（qwen、gemini）一枚。
+// M3b（2026-08-28）订阅通道删除后只剩一枚旋钮：所有模型都走 API 通路，
+// 原来的「订阅/本地中转」双旋钮合并成 moderationLevelApi 单旋钮。
 const MOD_LEVEL_META = {
   off: { label: '外审关', color: COLOR.sub },
   loose: { label: '外审宽松', color: COLOR.text3 },
@@ -16,22 +17,13 @@ const MOD_LEVEL_META = {
 };
 
 export function ModLevelChip({ u }) {
-  const knobs = [
-    ['订阅', u.effectiveModerationLevel, u.moderationLevel],
-    ['本地/中转', u.effectiveModerationLevelApi, u.moderationLevelApi],
-  ];
+  const eff = u.effectiveModerationLevelApi;
+  const pinned = !!u.moderationLevelApi;
+  const meta = MOD_LEVEL_META[eff || 'loose'] || MOD_LEVEL_META.loose;
   return (
-    <>
-      {knobs.map(([name, eff, explicit]) => {
-        const meta = MOD_LEVEL_META[eff || 'loose'] || MOD_LEVEL_META.loose;
-        const pinned = !!explicit;
-        return (
-          <span key={name} title={`${name}模型：${pinned ? '按账号单独设置' : '跟随默认档'}`}>
-            <Chip color={meta.color}>{name} · {meta.label.replace('外审', '')}{pinned ? ' ·' : ''}</Chip>
-          </span>
-        );
-      })}
-    </>
+    <span title={`外审：${pinned ? '按账号单独设置' : '跟随默认档'}`}>
+      <Chip color={meta.color}>{meta.label}{pinned ? ' ·' : ''}</Chip>
+    </span>
   );
 }
 
@@ -39,8 +31,7 @@ export function LimitEditor({ u, onDone, onCancel }) {
   const showToast = useGlobalStore(s => s.showToast);
   const [daily, setDaily] = useState(u.dailyCostLimitUsd ?? '');
   const [lifetime, setLifetime] = useState(u.lifetimeCostLimitUsd ?? '');
-  // '' = 跟随默认档（存 null）；其余三档是显式覆盖。两个旋钮各自独立（08-20）。
-  const [level, setLevel] = useState(u.moderationLevel ?? '');
+  // '' = 跟随默认档（存 null）；其余三档是显式覆盖（M3b 起只剩这一枚外审旋钮）。
   const [levelApi, setLevelApi] = useState(u.moderationLevelApi ?? '');
   const [localGen, setLocalGen] = useState(u.allowLocalGen ? '1' : '0');
   const [plan, setPlan] = useState(u.plan === 'pro' ? 'pro' : 'basic');   // 档位真相源（08-21 晚，auth/tier.js）：订阅/生图/发布/外审默认档全从它派生
@@ -56,7 +47,6 @@ export function LimitEditor({ u, onDone, onCancel }) {
     setSaving(true);
     try {
       const patch = {
-        moderationLevel: level === '' ? null : level,
         moderationLevelApi: levelApi === '' ? null : levelApi,
       };
       if (!isAdmin) {
@@ -88,18 +78,13 @@ export function LimitEditor({ u, onDone, onCancel }) {
           </Field>
         </>
       )}
-      <Field label="内容外审 · 订阅模型（Sonnet/Opus）">
-        <Segmented value={level} onChange={setLevel} options={[
-          ['', '跟随默认'], ['off', '关闭'], ['loose', '宽松'], ['strict', '严格'],
-        ]} />
-      </Field>
-      <Field label="内容外审 · 本地/中转（Qwen、Gemini）">
+      <Field label="内容外审（全部模型走 API 通路，一枚旋钮管全部）">
         <Segmented value={levelApi} onChange={setLevelApi} options={[
           ['', '跟随默认'], ['off', '关闭'], ['loose', '宽松'], ['strict', '严格'],
         ]} />
       </Field>
       {!isAdmin && (
-        <Field label="账号档位（订阅 Claude / 生图 / 发布 / 外审默认档 全由它派生）">
+        <Field label="账号档位（生图 / 发布 / 外审默认档 全由它派生）">
           <Segmented value={plan} onChange={setPlan} options={[
             ['basic', 'basic（公开注册）'], ['pro', 'pro（邀请码）'],
           ]} />
@@ -114,9 +99,9 @@ export function LimitEditor({ u, onDone, onCancel }) {
       )}
       <div style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, flex: 1, minWidth: 220, lineHeight: 1.5 }}>
         {!isAdmin && <>终身额度非空即生效且取代日限：对全史花费封顶、不刷新（试用码口径）—— 它只是花费上限，不决定档位。<br /></>}
-        档位：basic = 免费模型 + 联网搜索（每天有上限），不开生图/发布/订阅 Claude；pro = 全开（本地产线另需下方单独批准）。<br />
-        两个外审旋钮按模型通路各自生效（订阅模型跑在站主账号上，本地/中转只花电费或 API 钱），互不牵连。
-        外审默认档两边相同：非 admin 一律严格（08-21 起）/ admin 关闭；想放宽某个人在这里单独钉。宽松只拦硬违规
+        档位：basic = 免费模型 + 联网搜索（每天有上限），不开生图/发布；pro = 全开（本地产线另需下方单独批准）。<br />
+        外审一枚旋钮管全部模型（M3b 起订阅通道删除，所有模型都走 API 通路）。
+        外审默认档：非 admin 一律严格（08-21 起）/ admin 关闭；想放宽某个人在这里单独钉。宽松只拦硬违规
         （未成年人色情、恐怖主义、武器毒品、犯罪教程、恶意软件、教唆自残、人肉），
         虚构里的暴力与成人向情节放行；严格再加色情、美化暴力、群体仇恨。
       </div>

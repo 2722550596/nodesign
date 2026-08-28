@@ -36,7 +36,7 @@ describe('tierOf / can', () => {
     expect(tierOf(null)).toBeNull();
   });
   it('能力表：admin/pro 全开；basic = webSearch + imageGen（08-21 深夜开放，按张计价）；null 全关', () => {
-    for (const cap of ['subscription', 'webSearch', 'imageGen', 'localGen', 'publishSite']) {
+    for (const cap of ['performance', 'webSearch', 'imageGen', 'localGen', 'publishSite']) {
       expect(can(admin, cap), cap).toBe(true);
       expect(can(pro, cap), cap).toBe(true);
       expect(can(null, cap), cap).toBe(false);
@@ -76,7 +76,7 @@ describe('tierOf / can', () => {
     expect(localGenApproved(null)).toBe(false);
   });
   it('拒绝话术齐全且是字符串', () => {
-    for (const k of ['imageGen', 'imageQuota', 'localGenTier', 'localGenApproval', 'publishSite', 'subscription']) {
+    for (const k of ['imageGen', 'imageQuota', 'localGenTier', 'localGenApproval', 'publishSite', 'performance']) {
       expect(typeof DENIAL[k]).toBe('string');
       expect(DENIAL[k].length).toBeGreaterThan(8);
       expect(DENIAL[k]).not.toMatch(/邀请码|找站主|找管理员/);   // 口径：不给"去要码"的路径

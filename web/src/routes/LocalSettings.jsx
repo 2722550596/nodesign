@@ -85,20 +85,7 @@ export default function LocalSettings() {
           </Card>
         </Section>
 
-        <Section title="模型" desc="两种接入方式并列，配好任一种，模型选择器里就有可选项">
-          <Card style={{ marginBottom: GAP.md }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: GAP.sm }}>
-              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text }}>Claude 官方</span>
-              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub }}>Anthropic 的 Sonnet / Opus。填 API Key，或在终端 claude login 用订阅</span>
-              <span style={{ flex: 1 }} />
-              <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: status?.claudeAuth ? COLOR.success : COLOR.sub }}>
-                <Dot ok={status?.claudeAuth ? true : false} />
-                {status?.claudeAuth === 'api_key' ? '已配（API Key）' : status?.claudeAuth === 'login' ? '已配（本机 claude login 登录态）' : '未配'}
-              </span>
-            </div>
-            <EnvKeys only={['模型']} bare showToast={showToast} onSaved={() => Local.status().then(setStatus).catch(() => {})}
-              onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
-          </Card>
+        <Section title="模型" desc="配好自定义接入，模型选择器里就有可选项">
           <Card>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: GAP.md, marginBottom: GAP.md }}>
               <span style={{ fontFamily: FONT_SANS, fontSize: FONT_SIZE.md, fontWeight: 600, color: COLOR.text }}>自定义接入</span>
@@ -121,7 +108,7 @@ export default function LocalSettings() {
         </Section>
 
         <Section title="其他钥匙与开关" desc={`写进 ${status?.dataRoot || '~/.nodesign'}/.env，钥匙类保存即生效`}>
-          <EnvKeys exclude={['模型']} showToast={showToast} onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
+          <EnvKeys showToast={showToast} onCapabilities={(caps) => setStatus((s) => (s ? { ...s, capabilities: caps.map((c) => ({ ...c, tools: s.capabilities.find((x) => x.id === c.id)?.tools || [] })) } : s))} />
         </Section>
       </div>
     </AppShell>

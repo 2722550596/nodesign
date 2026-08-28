@@ -8,8 +8,8 @@
  * DELETE /api/projects/:pid/sessions/:sid           rm pi 转录目录 + 私档目录
  *
  * M1 换源（doc §5.5）：转录从 SDK ~/.claude/projects/ 搬到 <PROJECTS_DATA_ROOT>/
- * pi-sessions/<sid>/（解析在 engine/pi/pi-jsonl.js）。rewind 无 pi 对应物，暂禁 501
- * （M3 复评，设计决策 3）。
+ * pi-sessions/<sid>/（解析在 engine/pi/pi-jsonl.js）。M3c：rewind 复活 —— 对话侧
+ * pi navigate_tree + 文件侧 rewindWorkspace（见下方 POST rewind 端点）。
  */
 
 import express from 'express';
@@ -45,15 +45,15 @@ import {
   resolveSessionModel, applySessionModel, defaultModel, readSessionConfigFile,
 } from '../engine/agent/session-model.js';
 import {
-  selectableModelsFor, allowedModelsFor, isModelLockedFor, defaultModelFor, modelSwitchRejection,
+  selectableModelsFor, allowedModelsFor, defaultModelFor, modelSwitchRejection,
   resolveModelContextWindow, brandOfModel,
 } from '../engine/agent/model-context.js';
 import { isEnvBundleModel } from '../engine/pi/model-map.js';
 
 /**
  * 进行中的 rewind 操作 sid 集 —— 供 turn.js startNewRunSession 守卫使用。
- * M1：pi 引擎 rewind 已禁（下面 501），此 Set 恒空；export 保留给 turn.js 的 import
- * 兼容（G2 改造 turn.js 前不动它）。
+ * M3c：死会话 rewind（临时 spawn 裸 pi）期间 add，turn.js 据此拒同 sid 新 turn
+ * （REWIND_BUSY）—— 避免新 turn 的 pi 进程与 rewind 的裸 pi 双写同一 session JSONL。
  */
 export const pendingRewinds = new Set();
 
@@ -261,8 +261,8 @@ router.get('/:pid/sessions/:sid/model', async (req, res, next) => {
     const { model, override, fallback } = await resolveSessionModel(
       getSessionMetaDir(req.params.pid, req.params.sid),
     );
-    // default 按**项目 owner** 算（08-21；_guard.modelUserFor）：公开注册号的默认不是环境变量里的订阅行；
-    // 没覆盖时按钮上显示的就是它。admin 代看 basic 项目时清单也按 owner（订阅行 locked），跟 turn.js 一致
+    // default 按**项目 owner** 算（08-21；_guard.modelUserFor）；没覆盖时按钮上显示的就是它。
+    // admin 代看 basic 项目时清单也按 owner，跟 turn.js 一致
     const modelUser = modelUserFor(req, project);
     const userDefault = defaultModelFor(modelUser) || fallback;
     res.json({ model: override || userDefault, override, default: userDefault, options: selectableModelsFor(modelUser) });
@@ -282,9 +282,6 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     // 只收清单里的 id：随手传个拼错的 model 进去，SDK 会自己 fallback、真实容量
     // 查不到，两处都不报错，事后只能从"怎么变慢了"倒推
     const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）
-    if (raw !== null && isModelLockedFor(modelUser, raw)) {
-      return res.status(403).json({ error: '这个模型仅限 Pro 档，暂未对外开放', code: 'MODEL_LOCKED', model: raw });
-    }
     if (typeof raw === 'string' && !isEnvBundleModel(raw) && !allowedModelsFor(modelUser).some((m) => m.id === raw)) {
       return res.status(400).json({ error: `unknown model: ${raw}`, code: 'UNKNOWN_MODEL' });
     }
@@ -296,7 +293,7 @@ router.put('/:pid/sessions/:sid/model', async (req, res, next) => {
     // 的第一行 `fromModel === toModel` 直接返回 null，一次都没拦住过；而且就算能拦，文件已经写了、
     // 空闲的 query 也已经被 applySessionModel 关掉重启了，409 只是句马后炮。
     // 现在：**apply 之前**读、拿 apply 之前的有效模型比。`raw === null`（清覆盖回默认）同样要判 ——
-    // 从 Ox 会话清回订阅默认，是同一个病。
+    // 从 Ox 会话清回全局默认，是同一个病。
     const before = await resolveSessionModel(metaDir);
     const target = raw ?? defaultModel();
     // 只对**跑过的会话**拦：这条闸防的是历史里那些没有 signature 的 thinking 块被回传给真 Anthropic
@@ -503,17 +500,69 @@ router.delete('/:pid/sessions/:sid', async (req, res, next) => {
 
 
 // ── POST /:pid/sessions/:sid/rewind ──
-// M1：SDK Query.rewindFiles 的文件 checkpoint 活在 SDK jsonl 里，pi 引擎无对应物，
-// 暂禁 —— M3 复评（设计决策 3）。turn.js 里的 run 级 rewind 归 G2，这里不碰。
+// M3c：rewind = 对话侧 pi navigate_tree（leaf 移到目标 user entry 的回滚位，
+// label:'rewind' 落盘）+ 文件侧 rewindWorkspace（git 精确回到 turn 开始前的树）。
+// 目标 sha 从 .nd/<sid>/rewind-index.json 查（session-loop finishTurn 每 turn 记
+// 一条 entryId → headShaBefore）。响应形状见 useRewind.js 消费契约：
+// 200 { canRewind, filesChanged?, conversationTruncated? } / 无索引 200 canRewind:false / 失败 500 REWIND_FAILED。
 router.post('/:pid/sessions/:sid/rewind', async (req, res, next) => {
   try {
     validateSessionId(req.params.sid);
     const project = guardProject(req, res);
     if (!project) return;
-    return res.status(501).json({
-      code: 'REWIND_NOT_SUPPORTED_PI',
-      message: 'pi 引擎暂不支持 rewind（M3 复评）',
-    });
+    const { userMessageId } = req.body;
+    if (!userMessageId || typeof userMessageId !== 'string') {
+      return res.status(400).json({ code: 'BAD_REQUEST', message: 'userMessageId required' });
+    }
+    const sid = req.params.sid;
+    const metaDir = getSessionMetaDir(req.params.pid, sid);
+    const { findRewindTarget } = await import('../engine/agent/rewind-index.js');
+    const targetSha = await findRewindTarget(metaDir, userMessageId);
+    if (!targetSha) {
+      return res.status(200).json({ canRewind: false, error: '此处不支持回滚（无索引记录）' });
+    }
+
+    // 对话侧：navigate_tree。活会话直接走 session-loop attach 的 shim RPC；
+    // 死会话临时 spawn 裸 pi 挂原 session-dir 执行（lifecycle.js spawnBarePiForRewind，
+    // M3c C6 —— wave 2 补实现）。
+    const rec = getQuerySession(sid);
+    let conversationTruncated = false;
+    if (rec?.query?.navigateTree) {
+      try {
+        await rec.query.navigateTree(userMessageId);
+        conversationTruncated = true;
+      } catch (err) {
+        return res.status(500).json({ code: 'REWIND_FAILED', message: `对话回滚失败：${err.message}` });
+      }
+    } else {
+      const { spawnBarePiForRewind } = await import('../engine/pi/lifecycle.js');
+      try {
+        pendingRewinds.add(sid);   // turn.js 守卫据此拒同 sid 新 turn（REWIND_BUSY）
+        await spawnBarePiForRewind({
+          sid, dataRoot: PROJECTS_DATA_ROOT,
+          workspaceDir: getWorkspaceRoot(req.params.pid),
+          targetId: userMessageId,
+        });
+        conversationTruncated = true;
+      } catch (err) {
+        return res.status(500).json({ code: 'REWIND_FAILED', message: `对话回滚失败：${err.message}` });
+      } finally {
+        pendingRewinds.delete(sid);
+      }
+    }
+
+    // 文件侧：rewindWorkspace。对话已回滚后文件失败 → 部分成功（warn 不 500，
+    // 前端按 canRewind:true 收场；文件侧可再点一次 undo 重试）。
+    const { rewindWorkspace } = await import('../projects/workspace.js');
+    let filesChanged = [];
+    try {
+      const result = await rewindWorkspace(req.params.pid, sid, targetSha);
+      filesChanged = result?.filesChanged ?? [];
+    } catch (err) {
+      console.warn('[rewind] file rollback failed:', err.message);
+    }
+
+    res.json({ canRewind: true, filesChanged, conversationTruncated });
   } catch (err) { next(err); }
 });
 

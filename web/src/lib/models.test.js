@@ -6,18 +6,15 @@
 import { describe, it, expect } from 'vitest';
 import { isModelPrefStale, FALLBACK_MODELS, DEFAULT_MODEL_ID } from './models.js';
 
-const SERVER = [{ id: 'claude-sonnet-5[1m]' }, { id: 'claude-opus-5[1m]' }, { id: 'gemini-3.7-flash' }];
+const SERVER = [{ id: 'ox-alpha' }, { id: 'gemini-3.7-flash' }];
 
 describe('isModelPrefStale', () => {
   it('偏好指向已下架的模型 → 过期', () => {
     expect(isModelPrefStale('qwen3.8-27b', SERVER)).toBe(true);
   });
   it('偏好还在清单里（含带闸门的）→ 不过期', () => {
-    expect(isModelPrefStale('claude-sonnet-5[1m]', SERVER)).toBe(false);
+    expect(isModelPrefStale('ox-alpha', SERVER)).toBe(false);
     expect(isModelPrefStale('gemini-3.7-flash', SERVER)).toBe(false);
-  });
-  it('偏好指向 locked 的订阅行（公开注册号）→ 过期，自净成默认', () => {
-    expect(isModelPrefStale('claude-sonnet-5[1m]', [{ id: 'ox-alpha' }, { id: 'claude-sonnet-5[1m]', locked: true }])).toBe(true);
   });
   it('⚠️ 拿不到服务端清单时一律当"没过期" —— 拿兜底清单判会把带闸门的模型误伤', () => {
     for (const opts of [null, undefined, []]) {

@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  resolvePiBinary, sessionLaunch, createSessionProcess, _liveChildCount,
+  resolvePiBinary, sessionLaunch, createSessionProcess, _liveChildCount, spawnBarePiForRewind,
 } from './lifecycle.js';
 import { ensureProjectPiConfig } from './mcp-config.js';
 import { sidToken } from './sidecar.js';
@@ -289,6 +289,122 @@ describe('createSessionProcess 孤儿回收记账', () => {
     expect(_liveChildCount()).toBe(before + 1);
     child.kill('SIGKILL');
     await new Promise((resolve) => child.once('exit', resolve));
+    expect(_liveChildCount()).toBe(before);
+  });
+});
+
+// ── spawnBarePiForRewind（M3c C6）─────────────────────────────────────────────
+// 不起真 pi：fake pi 脚本（node + shebang）走真 spawn + 真 RPC 帧，记录 argv/cwd/env
+// 供断言，回应 get_state / navigate_tree，abort 即退（kill 链快速收敛）。
+
+const FAKE_PI_SRC = `#!/usr/bin/env node
+import fs from 'node:fs';
+const rec = process.env.FAKE_PI_RECORD;
+fs.writeFileSync(rec, JSON.stringify({
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  env: {
+    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+    PI_TELEMETRY: process.env.PI_TELEMETRY,
+    upstream: Object.fromEntries(
+      Object.entries(process.env).filter(([k]) => k.startsWith('NODESIGN_UPSTREAM_')),
+    ),
+  },
+}));
+let buf = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buf += chunk;
+  let idx;
+  while ((idx = buf.indexOf('\\n')) >= 0) {
+    const line = buf.slice(0, idx);
+    buf = buf.slice(idx + 1);
+    if (!line.trim()) continue;
+    const cmd = JSON.parse(line);
+    const respond = (obj) => process.stdout.write(
+      JSON.stringify({ type: 'response', id: cmd.id, ...obj }) + '\\n');
+    if (cmd.type === 'get_state') respond({ success: true, data: {} });
+    else if (cmd.type === 'navigate_tree') {
+      fs.appendFileSync(rec + '.nav', JSON.stringify(cmd) + '\\n');
+      if (process.env.FAKE_PI_FAIL_NAV) respond({ success: false, error: 'simulated' });
+      else respond({ success: true, data: { cancelled: false } });
+    } else if (cmd.type === 'abort') {
+      process.exit(0);
+    }
+  }
+});
+`;
+
+/** 写 fake pi 可执行脚本并 pin 到 PI_BIN；返回记录文件路径。 */
+function mkFakePi() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nd-c6-fakepi-'));
+  const bin = path.join(tmp, 'pi-fake.mjs');
+  fs.writeFileSync(bin, FAKE_PI_SRC);
+  fs.chmodSync(bin, 0o755);
+  process.env.PI_BIN = bin;
+  const record = path.join(tmp, 'record.json');
+  process.env.FAKE_PI_RECORD = record;
+  return record;
+}
+
+describe('spawnBarePiForRewind（M3c C6）', () => {
+  it('args/env 组装 + navigate_tree 发出（label 默认 rewind）+ 进程回收', async () => {
+    const record = mkFakePi();
+    const { workspaceDir, dataRoot } = mkTmpDirs();
+    process.env.NODESIGN_UPSTREAM_GMI_KEY = 'sk-test-123';
+    process.env.NODESIGN_UPSTREAM_EMPTY = '';   // 空值不进子进程
+    const before = _liveChildCount();
+
+    await spawnBarePiForRewind({
+      sid: 'sess-rewind-01', dataRoot, workspaceDir, targetId: 'abcd1234',
+    });
+
+    const rec = JSON.parse(fs.readFileSync(record, 'utf8'));
+    // args：裸配置——nd-probe preset、原 session-dir、--continue、唯一扩展 providers.ts
+    expect(rec.argv).toEqual([
+      '--mode', 'rpc', '--approve',
+      '--preset', 'nd-probe',
+      '--config-dir', '.pi',
+      '--session-dir', path.join(dataRoot, 'pi-sessions', 'sess-rewind-01'),
+      '--continue',
+      '--system-prompt', '',
+      '-e', PROVIDERS_EXT,
+      '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
+    ]);
+    expect(rec.argv.filter((a) => a === '-e')).toHaveLength(1); // 不挂 nodesign 工具面七个 -e
+    expect(rec.cwd).toBe(workspaceDir);                          // .pi/ 在 cwd 下
+    // env：AGENT_DIR（找 nd-probe preset）+ 关遥测 + 上游 key 过滤注入
+    expect(rec.env.PI_CODING_AGENT_DIR).toBe(AGENT_DIR);
+    expect(rec.env.PI_TELEMETRY).toBe('0');
+    expect(rec.env.upstream).toEqual({ NODESIGN_UPSTREAM_GMI_KEY: 'sk-test-123' });
+    // navigate_tree：targetId 透传 + label 'rewind'（落盘 leaf，pi-rp C0）
+    const nav = JSON.parse(fs.readFileSync(record + '.nav', 'utf8').trim());
+    expect(nav).toMatchObject({ type: 'navigate_tree', targetId: 'abcd1234', label: 'rewind' });
+    // kill 链收敛后孤儿记账归零
+    expect(_liveChildCount()).toBe(before);
+  });
+
+  it('navigate_tree 失败 → 抛错且 finally 仍 kill（进程不泄漏）', async () => {
+    const record = mkFakePi();
+    const { workspaceDir, dataRoot } = mkTmpDirs();
+    process.env.FAKE_PI_FAIL_NAV = '1';
+    const before = _liveChildCount();
+
+    await expect(spawnBarePiForRewind({
+      sid: 'sess-rewind-02', dataRoot, workspaceDir, targetId: 'deadbeef',
+    })).rejects.toThrow(/navigate_tree/);
+
+    expect(fs.existsSync(record)).toBe(true);      // 进程确实起来了
+    expect(_liveChildCount()).toBe(before);        // finally kill 生效
+  });
+
+  it('sid/dataRoot/workspaceDir/targetId 缺失 → 抛错（不 spawn）', async () => {
+    const { workspaceDir, dataRoot } = mkTmpDirs();
+    const base = { sid: 's', dataRoot, workspaceDir, targetId: 'aaaaaaaa' };
+    const before = _liveChildCount();
+    for (const key of ['sid', 'dataRoot', 'workspaceDir', 'targetId']) {
+      await expect(spawnBarePiForRewind({ ...base, [key]: '' })).rejects.toThrow(new RegExp(key));
+    }
     expect(_liveChildCount()).toBe(before);
   });
 });

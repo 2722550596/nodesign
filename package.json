@@ -29,7 +29,6 @@
     "!web/dist/mock/"
   ],
   "scripts": {
-    "postinstall": "node server/ops/fix-sdk-musl.mjs",
     "start": "node --env-file-if-exists=.env server/index.js",
     "dev": "node --env-file-if-exists=.env --watch server/index.js",
     "smoke:engine": "node --env-file-if-exists=.env server/engine/_smoke.js",

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "nd-probe",
+  "autoActivate": false,
+  "tools": { "deny": ["*"] },
+  "items": [
+    { "kind": "block", "id": "role", "content": "You are a helpful assistant." },
+    { "kind": "slot", "id": "chat", "slot": "chat-history" }
+  ]
+}

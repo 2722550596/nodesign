@@ -17,12 +17,12 @@ import path from 'node:path';
 import { platform } from '../runtime/platform.js';
 import { loadLocalConfig, saveLocalConfig, CONFIG_ENUMS } from '../runtime/local-config.js';
 import { MODEL_CONFIG_ERRORS, externalModelIds } from '../engine/agent/model-context.js';
-import { UPSTREAMS_BUILTIN, SHARED_SDK_ALIAS } from '../engine/agent/model-table.js';
+import { UPSTREAMS_BUILTIN } from '../engine/agent/models-json.js';
 import { capabilitySnapshot } from '../runtime/capabilities.js';
 import { TOOL_CAPABILITIES } from '../engine/mcp/capability-gate.js';
 import { probeCapabilities } from '../runtime/capabilities.js';
 import { envView, setEnvValues, envPath } from '../runtime/local-env.js';
-import { probeModel } from '../lib/ingress/slot-probe.js';
+import { probeModel } from '../lib/probe-pi.js';
 import { selectableModelsFor } from '../engine/agent/model-context.js';
 
 export const RESTART_EXIT_CODE = 75;
@@ -42,10 +42,6 @@ router.get('/status', (_req, res) => {
     modelConfigErrors: MODEL_CONFIG_ERRORS,
     // 本机能力位 + 每个能力位管着哪些工具（配置页那张表）
     capabilities: capabilitySnapshot().map((c) => ({ ...c, tools: Object.entries(TOOL_CAPABILITIES).filter(([, v]) => v.cap === c.id).map(([t]) => t) })),
-    // 外部插槽（和一切不写 sdkAlias 的行）借用的共用 spoof 名。响应字段名保持 externalSdkAlias 不动（对外形状）
-    externalSdkAlias: SHARED_SDK_ALIAS,
-    // 内置 Claude 行现在能不能选：'api_key' | 'login' | null（设置页「模型」那块的状态行）
-    claudeAuth: platform.claudeAuthPresent(),
     // 内置上游（只报名字和是否配了钥匙，不报钥匙）：配置页提示「这些名字被占了」
     builtinUpstreams: Object.fromEntries(Object.entries(UPSTREAMS_BUILTIN).map(([id, u]) => [id, { label: u.label, keyPresent: u.authStyle === 'none' || !!(u.keyEnv && process.env[u.keyEnv]) }])),
   });
@@ -89,7 +85,7 @@ router.put('/env', async (req, res) => {
   }
 });
 
-// ── 插槽体检（穿进程内入口打五发最小请求，见 lib/ingress/slot-probe.js）──
+// ── 插槽体检（临时 spawn 裸 pi 打一发最小文本请求，见 lib/probe-pi.js）──
 const probing = new Set();
 router.post('/models/:id/probe', async (req, res) => {
   const id = req.params.id;
@@ -97,9 +93,9 @@ router.post('/models/:id/probe', async (req, res) => {
   if (probing.has(id)) return res.status(409).json({ error: '这一行正在体检，等它完' });
   probing.add(id);
   try {
-    const vision = req.query.vision !== '0';
+    // vision 参数保留接收但不再消费：裸 pi 探针只发文本（M3a）
     const timeoutMs = Math.min(120_000, Math.max(5_000, Number(req.query.timeoutMs) || 45_000));
-    res.json(await probeModel(id, { vision, timeoutMs }));
+    res.json(await probeModel(id, { timeoutMs }));
   } catch (err) {
     res.status(500).json({ error: `体检出错：${err.message}` });
   } finally {

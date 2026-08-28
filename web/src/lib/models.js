@@ -51,14 +51,10 @@ export const DEFAULT_BRAND = 'opencode';
  */
 export function isModelPrefStale(pref, serverOptions) {
   if (!pref || !serverOptions?.length) return false;
-  // locked（看得见选不了的订阅行，08-21）也算过期：公开注册号浏览器里存着 Sonnet 偏好
-  // 照发就是 403，自净成该用户的默认模型
-  return !serverOptions.some((o) => o?.id === pref && !o.locked);
+  return !serverOptions.some((o) => o?.id === pref);
 }
 
 /** 服务端拿不到时的兜底清单（离线 / 接口挂了也别让按钮变成死的） */
 export const FALLBACK_MODELS = [
   { id: DEFAULT_MODEL_ID, label: 'Ox Alpha（免费）', desc: '限时免费 · 1M 上下文 · 有视觉 · 人人可用', brand: DEFAULT_BRAND },
-  { id: 'claude-sonnet-5[1m]', label: 'Sonnet 5', desc: '快 · 日常改稿和铺页够用', brand: 'claude' },
-  { id: 'claude-opus-5[1m]', label: 'Opus 5', desc: '前端与审美更强 · 烧订阅额度快得多，重活再开', brand: 'claude' },
 ];

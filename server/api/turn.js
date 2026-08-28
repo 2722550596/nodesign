@@ -47,7 +47,7 @@ import {
 import { pushUserMessage, getQueueDepth } from '../engine/runs/turn-relay.js';
 import { applySessionModel, resolveSessionModel } from '../engine/agent/session-model.js';
 import { lruGet, lruPut, inflightTurns, INFLIGHT_RETENTION_MS } from './turn-inflight.js';
-import { allowedModelsFor, isModelLockedFor, defaultModelFor, modelIsFree, hasSubscriptionAccess, modelSwitchRejection, isSubscriptionLaneModel } from '../engine/agent/model-context.js';
+import { allowedModelsFor, defaultModelFor, modelIsFree, modelSwitchRejection } from '../engine/agent/model-context.js';
 import { isEnvBundleModel } from '../engine/pi/model-map.js';
 import { AsyncQueue } from '../lib/async-queue.js';
 import { checkQuota, checkFreeQuota, checkConcurrency, fmtUsd } from '../lib/quota.js';
@@ -72,7 +72,7 @@ router.post('/:pid/turn', async (req, res, next) => {
     const project = guardProject(req, res);
     if (!project) return;
 
-    const { chat, attachments, skillId, sessionId, permissionMode, requestId, raw } = req.body || {};
+    const { chat, attachments, skillId, sessionId, requestId, raw } = req.body || {};
     // 只发附件不打字也是一条完整消息（2026-08-17，issue #1 第 8 条）：拖张参考图
     // 进来就该能发，逼用户补一句"看看这个"是白要的动作。
     // 空文字 **且** 空附件才是空消息 —— 那个仍然拦。
@@ -133,8 +133,9 @@ router.post('/:pid/turn', async (req, res, next) => {
     const sid = isNewSession ? randomUUID() : resumeSessionId;
     validateSessionId(sid);
 
-    // 守卫：临时 rewind query 在跑时拒绝同 sid 新 turn —— 防止两个 SDK subprocess
-    // 同时写同一 jsonl。临时 query ~3-5s，用户重试一次就 OK。
+    // 守卫：死会话 rewind（临时 spawn 裸 pi，sessions.js pendingRewinds）在跑时
+    // 拒绝同 sid 新 turn —— 防止两个 pi 进程同时写同一 session JSONL。裸 pi
+    // navigate_tree ~3-5s，用户重试一次就 OK。
     if (pendingRewinds.has(sid)) {
       return res.status(409).json({ error: 'rewind in progress, retry shortly', code: 'REWIND_BUSY' });
     }
@@ -149,28 +150,9 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 模型解析提前到配额之前（08-21，配额按是否免费分岔）：body.model > 会话覆盖 > 默认（defaultModelFor）
     const requestedModelEarly = typeof req.body?.model === 'string' && req.body.model.trim() ? req.body.model.trim() : null;
     const sessionModelEarly = await resolveSessionModel(getSessionMetaDir(project.id, sid));
-    const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）：admin 代看 basic 项目时老会话不许落回订阅行，否则 202 后 INIT_FAILED
-    // 老用户没覆盖的老会话保持全局默认，不静默切 Ox；新会话/公开号 → defaultModelFor
-    const keepLegacyDefault = !isNewSession && !sessionModelEarly.override && hasSubscriptionAccess(modelUser);
-    const turnModel = requestedModelEarly || sessionModelEarly.override
-      || (keepLegacyDefault ? sessionModelEarly.model : defaultModelFor(modelUser)) || sessionModelEarly.model;
-    // M1 订阅闸（三层防御第一层）：订阅通道随 SDK 一起禁用 —— 解析出来的模型
-    // 落在订阅行（claude-sonnet-5[1m] 等）一律 403，不看资格（M1 对所有人锁死）。
-    // 老会话跑在全局默认订阅行上的，会在这里拿到明确的 M1 错误码而不是后面的
-    // INIT_FAILED。另两层：session-loop init 抛错、selectableModelsFor 锁行。
-    if (isSubscriptionLaneModel(turnModel)) {
-      return res.status(403).json({
-        error: `这个模型（${turnModel}）走订阅通道，M1 阶段整体禁用。请换一个 API 模型`,
-        code: 'SUBSCRIPTION_LANE_M1_DISABLED', model: turnModel,
-      });
-    }
+    const modelUser = modelUserFor(req, project);   // 资格按项目 owner 算（_guard.js）
+    const turnModel = requestedModelEarly || sessionModelEarly.override || defaultModelFor(modelUser) || sessionModelEarly.model;
     // 解析出来的模型一律过白名单（不只 body.model）：旧覆盖/资格收回/无 select 裸名都在此拦（fable P0）
-    if (isModelLockedFor(modelUser, turnModel)) {
-      return res.status(403).json({
-        error: `这个模型（${turnModel}）仅限 Pro 档，暂未对外开放。换成免费模型继续`,
-        code: 'MODEL_LOCKED', model: turnModel,
-      });
-    }
     // env 全家桶 fallback（M1.5）：NODESIGN_MODEL 指向 manifest 外的自定义上游时，
     // 它不在模型表里，白名单会 403 —— 但 pi 侧已注册 custom provider，放行。
     if (!isEnvBundleModel(turnModel) && !allowedModelsFor(modelUser).some((m) => m.id === turnModel)) {   // 清单整个为空（本地版没 key/没登录/没插槽）→ 指路设置页，别让人去选择器里找
@@ -216,15 +198,15 @@ router.post('/:pid/turn', async (req, res, next) => {
     }
 
     // ── 内容外审（2026-08-02）：消息先过分类器再进 agent。拦下 = 零成本，run 都不建。
-    // 强度按账号（users.moderation_level，站主在控制台调），判定 / 留证 / 连坐封禁的
+    // 强度按账号（users.moderation_level_api，站主在控制台调），判定 / 留证 / 连坐封禁的
     // 口径全在 lib/moderation.js。
     // 没有文字就没有可审的东西（附件本来就不审，见 lib/moderation.js）——
     // 拿空串去问分类器只是白花一次调用和 1 秒。
     //
-    // 08-20 起外审档按模型通路取旋钮（订阅 / 本地与中转各一个），所以这里要先知道
-    // 这条消息会落在哪个模型上：新会话带 body.model 就是它（白名单校验在下面那段，
-    // 这里只是读；非法名最终会 400），否则读该会话的 session-config（新会话没文件
-    // → 全局默认）。只读不写 —— 模型持久化仍在外审之后，拦下的消息不该改会话配置。
+    // M3b 起外审是单旋钮（不再按模型通路分），但保留先算 turnModel 的顺序：
+    // 新会话带 body.model 就是它（白名单校验在下面那段，这里只是读；非法名最终会 400），
+    // 否则读该会话的 session-config（新会话没文件 → 全局默认）。只读不写 ——
+    // 模型持久化仍在外审之后，拦下的消息不该改会话配置。
     if (shouldModerate(req.user, turnModel) && chatText.trim()) {
       const verdict = await moderateText(chatText, levelFor(req.user, turnModel));
       if (!verdict.ok) {
@@ -262,13 +244,12 @@ router.post('/:pid/turn', async (req, res, next) => {
     // 这里之所以不再无脑接受 body.model：前端每条消息都带偏好的话，在另一台机器上
     // 为这个会话选的模型会被本机的旧偏好悄悄改回去 —— 一次发消息顺带改配置，
     // 用户完全看不见。
-    // 没带 body.model 且会话无覆盖 → 默认模型写进会话（否则 session-loop 吃 NODESIGN_MODEL，对公开号是锁着的订阅行）
-    const requestedModel = requestedModelEarly || ((!sessionModelEarly.override && !keepLegacyDefault) ? turnModel : null);
+    // 没带 body.model 且会话无覆盖 → 默认模型写进会话
+    const requestedModel = requestedModelEarly || (!sessionModelEarly.override ? turnModel : null);
     if (requestedModel) {
       // 与 PUT /sessions/:sid/model 同一道闸（2026-08-19 评审抓的洞）：这条路
-      // 以前不校验，等于绕过 picker 白名单的后门 —— model-ingress 上线后表里
-      // 有带真钥匙的 API 模型（gemini），裸 POST 就能替会话选中它烧上游的钱。
-      // 校验用 allowedModelsFor（不含 locked）—— locked 的在上面已经 403 过了。
+      // 以前不校验，等于绕过 picker 白名单的后门 —— 表里有带真钥匙的 API 模型，
+      // 裸 POST 就能替会话选中它烧上游的钱。校验用 allowedModelsFor。
       if (!isEnvBundleModel(requestedModel) && !allowedModelsFor(modelUserFor(req, project)).some((m) => m.id === requestedModel)) {
         return res.status(400).json({ error: `unknown model: ${requestedModel}`, code: 'UNKNOWN_MODEL' });
       }
@@ -484,28 +465,6 @@ router.post('/:pid/runs/:runId/elicit/:reqId/answer', async (req, res, next) => 
   } catch (err) { next(err); }
 });
 
-// ─────────────────────────────────────────────────────────────────────
-// SDK Query control method endpoints —— M1 换源后整体 501
-// （rewindFiles 是 SDK Query 接口方法，pi-rp RPC 没有对应命令；M2 评估）
-// ─────────────────────────────────────────────────────────────────────
-
-/**
- * POST /api/projects/:pid/runs/:runId/rewind
- *
- * M1 换源后 501：文件回滚 + JSONL 截断靠 SDK rewindFiles 实现，pi-rp 没有
- * 对应命令。路由保留，前端 undo 按钮拿到 501 自行降级。
- */
-router.post('/:pid/runs/:runId/rewind', async (req, res, next) => {
-  try {
-    const project = guardProject(req, res);
-    if (!project) return;
-    if (!guardRunInProject(req, res)) return;
-    return res.status(501).json({
-      error: 'rewind M1 暂不支持（引擎已换 pi-rp）',
-      code: 'M1_NOT_SUPPORTED',
-    });
-  } catch (err) { next(err); }
-});
 
 import { hotSwitchModelHandler } from './turn-model-switch.js';
 

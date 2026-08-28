@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "brands": ["claude", "deepseek", "opencode", "gemini", "qwen", "minimax", "kimi", "custom"],
+  "upstreams": {
+    "lament": {
+      "label": "中转站 api.lament0.link",
+      "baseUrl": "https://api.lament0.link",
+      "keyEnv": "NODESIGN_UPSTREAM_LAMENT_KEY",
+      "authStyle": "x-api-key",
+      "countTokens": false
+    },
+    "qwenLocal": {
+      "label": "本地 llama-server（SSH 隧道）",
+      "baseUrl": "http://127.0.0.1:8080",
+      "baseUrlEnv": "NODESIGN_UPSTREAM_QWEN_LOCAL_URL",
+      "keyEnv": null,
+      "authStyle": "none",
+      "countTokens": true,
+      "imageFormats": ["image/png", "image/jpeg"]
+    },
+    "zen": {
+      "label": "OpenCode Zen",
+      "baseUrl": "https://opencode.ai/zen/v1",
+      "baseUrlEnv": "NODESIGN_UPSTREAM_ZEN_URL",
+      "keyEnv": "NODESIGN_UPSTREAM_ZEN_KEY",
+      "authStyle": "bearer",
+      "protocol": "openai-chat",
+      "countTokens": false
+    },
+    "gmi": {
+      "label": "GMI Cloud api.gmi-serving.com",
+      "baseUrl": "https://api.gmi-serving.com",
+      "baseUrlEnv": "NODESIGN_UPSTREAM_GMI_URL",
+      "keyEnv": "NODESIGN_UPSTREAM_GMI_KEY",
+      "authStyle": "bearer",
+      "countTokens": false
+    },
+    "nvidia": {
+      "label": "NVIDIA build integrate.api.nvidia.com",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "baseUrlEnv": "NODESIGN_UPSTREAM_NVIDIA_URL",
+      "keyEnv": "NODESIGN_UPSTREAM_NVIDIA_KEY",
+      "authStyle": "bearer",
+      "protocol": "openai-chat",
+      "countTokens": false
+    },
+    "zenGo": {
+      "label": "OpenCode Zen Go",
+      "baseUrl": "https://opencode.ai/zen/go/v1",
+      "baseUrlEnv": "NODESIGN_UPSTREAM_ZEN_GO_URL",
+      "keyEnv": "NODESIGN_UPSTREAM_ZEN_KEY",
+      "authStyle": "bearer",
+      "protocol": "openai-chat",
+      "countTokens": false
+    }
+  },
+  "models": [
+    {
+      "id": "qwen3.8-27b",
+      "window": 131072,
+      "brand": "qwen",
+      "uncensored": true,
+      "api": {
+        "upstream": "qwenLocal",
+        "wireModel": "qwen3.8-27b",
+        "prices": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "window": 1000000,
+      "brand": "gemini",
+      "select": { "label": "Gemini 3.7 Flash（中转）", "desc": "反重力通道 · 随时可能 500 · 思考档 high", "gate": "localGen" },
+      "api": {
+        "upstream": "lament",
+        "wireModel": "反重力-流式抗截断/gemini-3.7-flash-high",
+        "prices": { "input": 0.75, "output": 3.75, "cacheRead": 0.075, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-vision",
+      "window": 272000,
+      "brand": "deepseek",
+      "select": { "label": "DeepSeek V4 Flash · 视觉", "desc": "快 · 有视觉 · 272k 上下文 · 按用量计入每日额度（高峰 $0.44/$1.32 缓存 $0.014）" },
+      "api": {
+        "upstream": "zenGo",
+        "wireModel": "deepseek-v4-flash-vision-exp",
+        "maxOutput": 128000,
+        "prices": { "input": 0.44, "output": 1.32, "cacheRead": 0.014, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "ox-alpha",
+      "window": 1000000,
+      "brand": "opencode",
+      "select": { "label": "Ox Alpha（免费）", "desc": "限时免费 · 1M 上下文 · 有视觉 · 人人可用 · 思考档 high", "default": true },
+      "api": {
+        "upstream": "zenGo",
+        "wireModel": "ox-alpha-free",
+        "maxOutput": 131072,
+        "prices": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "ox-alpha-max",
+      "window": 1000000,
+      "brand": "opencode",
+      "select": { "label": "Ox Alpha · 深想（免费）", "desc": "同一个 Ox · 思考档 max · 想得久，首字可能等几分钟 · 重活再开" },
+      "api": {
+        "upstream": "zenGo",
+        "wireModel": "ox-alpha-free",
+        "maxOutput": 131072,
+        "prices": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "ox-alpha-helper",
+      "window": 1000000,
+      "brand": "opencode",
+      "api": {
+        "upstream": "zenGo",
+        "wireModel": "ox-alpha-free",
+        "maxOutput": 131072,
+        "prices": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "minimax-m3",
+      "window": 272000,
+      "brand": "minimax",
+      "select": { "label": "MiniMax M3（免费）", "desc": "免费 · 有视觉 · 272k 上下文 · 自己决定想多久" },
+      "api": {
+        "upstream": "gmi",
+        "wireModel": "MiniMaxAI/MiniMax-M3",
+        "prices": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "window": 272000,
+      "brand": "kimi",
+      "select": { "label": "Kimi K3（免费）", "desc": "免费 · 有视觉 · 272k 上下文 · 思考档 max，首字可能等 · 上游限流，偶尔要等自动重试", "gate": "localGen" },
+      "api": {
+        "upstream": "nvidia",
+        "wireModel": "moonshotai/kimi-k3",
+        "prices": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-helper",
+      "window": 272000,
+      "brand": "deepseek",
+      "api": {
+        "upstream": "zenGo",
+        "wireModel": "deepseek-v4-flash-vision-exp",
+        "prices": { "input": 0.44, "output": 1.32, "cacheRead": 0.014, "cacheWrite": 0 }
+      }
+    }
+  ]
+}

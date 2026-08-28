@@ -24,7 +24,7 @@ import { platform } from '../runtime/platform.js';
 /**
  * 登录墙关闭时的请求者（HTTP / WS / 工具内 owner 反查三处共用同一个对象）。
  * 形状对齐 rowToUser：role admin ⇒ tier admin ⇒ 全能力、免额度、免外审；没有 plan /
- * moderationLevel ⇒ 档位默认值。id 进 projects.owner_id / runs.user_id 这些列，所以
+ * moderationLevelApi ⇒ 档位默认值。id 进 projects.owner_id / runs.user_id 这些列，所以
  * 必须稳定不变 —— 改了它，老项目在本地版里会「找不到」。
  */
 export const LOCAL_OWNER = Object.freeze({ id: '_anon', username: 'anon', role: 'admin', dailyTokenLimit: null, disabled: false });
@@ -94,6 +94,13 @@ if (!userCols.has('moderation_level_api')) {
   db.exec('ALTER TABLE users ADD COLUMN moderation_level_api TEXT');
   const n = db.prepare('UPDATE users SET moderation_level_api = moderation_level WHERE moderation_level IS NOT NULL').run().changes;
   console.log(`[users-store] users.moderation_level_api column added (copied ${n} explicit level(s) from moderation_level)`);
+}
+// M3b（08-28）：订阅通道删除，moderation_level（订阅旋钮）退役，双旋钮合并成
+// moderation_level_api 单旋钮。合并规则：api 显式 ?? 订阅显式 ?? 默认 ——
+// 已有 api 值的不动，没有的从 moderation_level 复制（幂等，每次启动跑一遍）。
+if (userCols.has('moderation_level') && userCols.has('moderation_level_api')) {
+  const n = db.prepare('UPDATE users SET moderation_level_api = moderation_level WHERE moderation_level_api IS NULL AND moderation_level IS NOT NULL').run().changes;
+  if (n) console.log(`[users-store] moderation_level → moderation_level_api 合并 ${n} 行`);
 }
 // 本地产线（roll_film/paint_still）批准制：admin 天生有，其余账号站主点开才有
 if (!userCols.has('local_gen')) {
@@ -166,8 +173,7 @@ function rowToUser(row) {
     dailyCostLimitUsd: row.daily_cost_limit_usd ?? null,
     lifetimeCostLimitUsd: row.lifetime_cost_limit_usd ?? null,
     dailyTokenLimit: row.daily_token_limit ?? null,   // 老口径存量，只读不用
-    moderationLevel: row.moderation_level ?? null,    // 订阅模型的外审档；null = 跟随默认档
-    moderationLevelApi: row.moderation_level_api ?? null,  // 本地 qwen / 中转站的外审档；null = 跟随默认档
+    moderationLevelApi: row.moderation_level_api ?? null,  // 外审档（M3b 起单旋钮）；null = 跟随默认档
     allowLocalGen: !!row.local_gen,                   // 本地产线逐人批准（叠在档位之上；见 auth/tier.js localGenApproved）
     plan: row.plan === 'pro' ? 'pro' : 'basic',       // 档位真相源：pro（邀请码）| basic（公开注册）；admin 看 role。能力问 auth/tier.js
     disabled: !!row.disabled,
@@ -182,7 +188,7 @@ const userCache = new Map();   // id → { user, at }
 const USER_CACHE_MS = 60_000;
 
 export function getUserById(id) {
-  // 登录墙关闭时 owner 是 LOCAL_OWNER，它不在表里。不在这里接住，session-loop 的订阅资格断言 /
+  // 登录墙关闭时 owner 是 LOCAL_OWNER，它不在表里。不在这里接住，session-loop /
   // tier-gate / paint_still 这些按 ownerId 反查的地方会拿到 null ⇒ fail-closed ⇒ 本地版什么都跑不了。
   // 登录墙开着时 '_anon' 不是合法身份（表里没有这行），照常查表得 null。
   if (id === LOCAL_OWNER.id && !authEnabled()) return LOCAL_OWNER;
@@ -215,11 +221,10 @@ export function listUsers() {
   return db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(rowToUser);
 }
 
-export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevel, moderationLevelApi, localGen, plan } = {}) {
+export function updateUser(id, { disabled, dailyTokenLimit, dailyCostLimitUsd, lifetimeCostLimitUsd, role, moderationLevelApi, localGen, plan } = {}) {
   const sets = [];
   const args = [];
   if (disabled !== undefined) { sets.push('disabled = ?'); args.push(disabled ? 1 : 0); }
-  if (moderationLevel !== undefined) { sets.push('moderation_level = ?'); args.push(moderationLevel ?? null); }
   if (moderationLevelApi !== undefined) { sets.push('moderation_level_api = ?'); args.push(moderationLevelApi ?? null); }
   if (localGen !== undefined) { sets.push('local_gen = ?'); args.push(localGen ? 1 : 0); }
   if (plan !== undefined) {

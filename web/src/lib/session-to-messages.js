@@ -57,9 +57,9 @@ export function sessionMessagesToDisplay(sessionMessages) {
     if (!Array.isArray(content)) continue;
 
     // user role 单独处理：合并所有 text block 推一条 display msg，id 用纯 sm.uuid
-    // —— SDK Query.rewindFiles(userMessageId) 只认 SDKUserMessage.uuid（纯 36-char），
-    // 之前 hydrate 加 ':text' 后缀让 SDK 不识别，"回到此处"按钮看似无反应 = 后端
-    // 返 canRewind:false，toast 一闪即逝。
+    // —— pi entry.id（8 位 hex），rewind 端点用它查 rewind-index.json（M3c）。
+    // 之前 hydrate 加 ':text' 后缀让后端查不到索引，"回到此处"按钮看似无反应 =
+    // 后端返 canRewind:false，toast 一闪即逝。
     // composeUserMessage 注入的 <system>...</system> 也会变成 user text block，跟用户
     // chat 文本一起 join；显示侧的 noise 是另一回事，不影响 id 正确性。
     if (role === 'user') {
@@ -96,7 +96,7 @@ export function sessionMessagesToDisplay(sessionMessages) {
       }
       if (userTexts.length > 0) {
         display.push({
-          id: sm.uuid,  // 纯 SDK uuid → SDK rewindFiles 能认
+          id: sm.uuid,  // 纯 pi entry id → rewind 端点能认
           role: 'user',
           content: userTexts.join('\n\n'),
         });

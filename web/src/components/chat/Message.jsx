@@ -166,10 +166,10 @@ function Message({ message, projectId, sessionId, onCanvasReload }) {
  *   - 成功 → toast + onCanvasReload()（让 iframe bump reloadToken）
  *   - 410 (session 已 close) → toast 'session 已关闭，无法撤销'
  */
-// SDK uuid 36-char 形态（"abc12345-1234-1234-1234-123456789abc"）—— SDK Query.rewindFiles
-// 只认这个；前端乐观插入的 newId('msg') = "msg_xxx" 拿来调会被 SDK 拒（canRewind:false）
-// 一闪即逝，用户感觉"无反应"。所以 undo 按钮只在 hydrate 来的真 uuid 上启用。
-// （uuid 形态判断收敛到 hooks/useRewind.js 的 canRewindMessage）
+// 8 位 hex pi entry id 才启用 undo（M3c）—— 前端乐观插入的 newId('msg') = "msg_xxx"
+// 拿来调会被后端拒（rewind-index 查无此 id → canRewind:false 一闪即逝，用户感觉
+// "无反应"）。所以 undo 按钮只在 hydrate 来的真 entry id 上启用。
+// （id 形态判断收敛到 hooks/useRewind.js 的 canRewindMessage）
 
 function UserMessage({ message, projectId, sessionId, onCanvasReload }) {
   const [hover, setHover] = useState(false);

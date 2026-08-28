@@ -63,17 +63,17 @@ describe('runtime/profile', () => {
     expect(r.stderr).toMatch(/NODESIGN_PROFILE=locl 不认识/);
   });
 
-  it('local 下登录墙钉死关闭，匿名 owner 反查得到 LOCAL_OWNER 且有订阅资格（session-loop 的断言靠这个）', () => {
+  it('local 下登录墙钉死关闭，匿名 owner 反查得到 LOCAL_OWNER 且有演出资格（session-loop 的断言靠这个）', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'nd-profile-'));
     const code = `import { authEnabled, getUserById, LOCAL_OWNER } from '../auth/users-store.js'; import { can } from '../auth/tier.js';
-      console.log(JSON.stringify({ enabled: authEnabled(), owner: getUserById(LOCAL_OWNER.id), sub: can(getUserById(LOCAL_OWNER.id), 'subscription') }));`;
+      console.log(JSON.stringify({ enabled: authEnabled(), owner: getUserById(LOCAL_OWNER.id), perf: can(getUserById(LOCAL_OWNER.id), 'performance') }));`;
     const r = probe({ NODESIGN_PROFILE: 'local', NODESIGN_DATA_DIR: dir, NODESIGN_AUTH_PASSWORD: 'would-enable-in-hosted' }, code);
     expect(r.status, r.stderr).toBe(0);
     const p = r.json();
     expect(p.enabled).toBe(false);
     expect(p.owner.id).toBe('_anon');
     expect(p.owner.role).toBe('admin');
-    expect(p.sub).toBe(true);
+    expect(p.perf).toBe(true);
   });
 
   it('hosted 下登录墙开着时 _anon 不是合法身份', () => {

@@ -55,23 +55,25 @@ import {
 } from '../runs/active-runs.js';
 import { takeNextRunId, publishQueueDepth, drainSession } from '../runs/turn-relay.js';
 import { loadProjectConfig } from '../../projects/project-config.js';
-import { resolveModelRoute, uncensoredModelIds } from './model-context.js';
+import { uncensoredModelIds } from './model-context.js';
 import { resolveSessionModel } from './session-model.js';
 import { levelFor } from '../../lib/moderation.js';
 import { getUserById } from '../../auth/users-store.js';
 import { AsyncQueue } from '../../lib/async-queue.js';
 import { detectArtifact } from '../../lib/artifact-target.js';
 import { autoNameProjectFromSession } from '../../projects/auto-name.js';
-import { commitWorkspace, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
+import { commitWorkspace, getHeadSha, PROJECTS_DATA_ROOT } from '../../projects/workspace.js';
 import { commitStaging } from '../../projects/board-store.js';
 import { PiRpcClient } from '../pi/rpc-client.js';
 import { sessionLaunch, createSessionProcess } from '../pi/lifecycle.js';
 import { createEventBridge } from '../pi/event-bridge.js';
-import { hasPiSession, piSessionDir } from '../pi/pi-jsonl.js';
+import { hasPiSession, piSessionDir, readLastUserEntryId } from '../pi/pi-jsonl.js';
 import { piProviderModelFor } from '../pi/model-map.js';
 import { policyModelKey } from '../pi/policy-render.js';
 // M2 每 turn 动态注入：状态块装配（首轮全量 / 指纹 diff）+ compaction 后重置记忆。
 import { assembleTurnContext, resetTurnStateMemory } from './turn-state.js';
+// M3c rewind：turn 结束写 rewind-index.json（entryId → turn 开始时的 git HEAD）
+import { appendRewindEntry } from './rewind-index.js';
 // pendingSummary 搬到执行时点采集（原 turn.js API 时点读 —— 排队消息会带过期状态）
 import { readPendingSummary } from '../../api/pending-changes.js';
 // mcp/index.js 此刻仍 transitively import SDK（wave 4 才拆），import 没问题。
@@ -263,17 +265,11 @@ export async function runSession({
   try {
     wsRoot = await sharedCtx.workspace.ensure();
 
-    // 模型路由：M1 只跑 API 行。订阅行（claude-sonnet-5[1m] 等）在 M1 整体禁用 ——
-    // 这是三层防御的第二层（turn.js 403 是第一层，selectableModelsFor 锁行是第三层）。
-    const route = resolveModelRoute(model);
-    if (route.mode !== 'api') {
-      throw new Error(`M1 订阅通道整体禁用，模型=${model} 不可路由（换 API 模型）`);
-    }
-    // appModel → pi 扩展 (provider, wireModel)。查不到 = providers-models.json 没
-    // 覆盖这行 → init 失败（别静默让 pi 用它自己的默认模型跑）。
+    // appModel → pi 扩展 (provider, wireModel)。查不到 = models.json 没
+    // 覆盖这行（或上游缺钥匙）→ init 失败（别静默让 pi 用它自己的默认模型跑）。
     const piRoute = piProviderModelFor(model);
     if (!piRoute) {
-      throw new Error(`模型 ${model} 没有 pi-rp 扩展映射（providers-models.json _appModels 未命中）`);
+      throw new Error(`模型 ${model} 没有 pi-rp 扩展映射（models.json 未覆盖或上游缺钥匙）`);
     }
 
     // 工具清单：与 standalone 注册集严格一致（同一个 buildNodesignTools + 同一份
@@ -293,8 +289,8 @@ export async function runSession({
     const port = Number(process.env.PORT || 4001);
 
     // M2：政策节渲染维度（prelude 的「底线」节 + 成人段）。
-    // level 走 moderation 双旋钮（用户显式值 > 账号档位默认），spawn 时定 —— 热换模型
-    // 被通路闸锁在同 lane 内（hotSwitchLaneReason），旋钮不会变；空闲换模型是重启新 env。
+    // level 走 moderation 单旋钮（用户显式值 > 账号档位默认），spawn 时定。
+    // 空闲换模型是重启新 env。
     // uncensored 不再是 spawn 定死的布尔：**无审查 wire-key 集合** spawn 时算好经 env
     // 交给 pi 子进程，ndPolicy 宏每轮按 runtime.model（pi-rp 已接 live model）查集合 ——
     // 会话内 set_model 热换到 qwen3.8-27b，下一轮政策节自动翻成 min 版，不用重启。
@@ -379,6 +375,11 @@ export async function runSession({
       // M2 前置：preset 运行中切换（set_preset RPC）+ 状态现问（activePresetId 可观测）。
       setPreset: (presetId) => client.setPreset(presetId),
       getState: () => client.getState(),
+      // M3c rewind：活会话对话侧回滚（navigate_tree RPC，label 默认 'rewind' 落盘
+      // leaf，见 rpc-client.js C1）+ 会话树现问（get_tree）。sessions.js rewind 端点
+      // 经 getQuerySession(sid).query 拿到。
+      navigateTree: (targetId) => client.navigateTree(targetId),
+      getTree: () => client.getTree(),
     });
 
     await client.start();   // get_state 探活；失败抛错（带 stderr 尾巴）
@@ -466,6 +467,11 @@ export async function runSession({
       console.warn(`[session-loop] sid=${sessionId.slice(0, 8)} markRunStarted(${runId}) failed: ${err.message}`);
     }
     // run.start 由桥在首个 agent_start 时发（带 model/pid）—— 这里不另发 Events.start()
+
+    // M3c rewind：捕获 turn 开始时的 git HEAD（本轮改动前的树状态）。finishTurn
+    // 在 commitWorkspace 后把它和本轮 user entry id 写进 rewind-index.json ——
+    // rewind 端点据此把文件侧精确回到「本轮开始前」。无 git 仓 → null，跳过索引。
+    st.headShaBefore = await getHeadSha(cwdRoot);
 
     // M2 动态注入（执行时点装配，不在 API 时点）：消息可能在 inputQueue 里排队等
     // 前一个 turn settle，API 时点采的状态会过期 —— pendingSummary 尤其如此（排队
@@ -593,6 +599,19 @@ export async function runSession({
         const { committed } = await commitStaging(projectId);
         if (committed > 0) sharedCtx.emit({ type: 'board.updated', sessionId: null, summary: `黑板草稿落定 ${committed} 件` });
       } catch (err) { console.warn('[board] commitStaging failed:', err.message); }
+    }
+
+    // M3c rewind：写 rewind-index.json（本轮 user entry id → turn 开始前的 HEAD）。
+    // 必须在 commitWorkspace 之后：记的是本轮改动前的树状态，rewind 回滚到的就是
+    // 这个 commit。entryId 走活动分支读（pi-jsonl.js readLastUserEntryId），rewind
+    // 后不会误记旧分支。失败只 warn —— 索引缺失只影响 rewind，不影响 turn 结账。
+    if (st.headShaBefore) {
+      try {
+        const entryId = await readLastUserEntryId(piSessionDir(PROJECTS_DATA_ROOT, sessionId));
+        if (entryId) {
+          await appendRewindEntry(sessionMetaRoot, { entryId, headShaBefore: st.headShaBefore });
+        }
+      } catch (err) { console.warn('[rewind-index] write failed:', err.message); }
     }
 
     unregisterRun(runId);

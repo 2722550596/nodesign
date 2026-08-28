@@ -1,12 +1,12 @@
 /**
- * 品牌标覆盖对账（2026-08-21）。
+ * 品牌标覆盖对账（2026-08-21；M3a 起读 models.json）。
  *
- * 服务端声明"这个模型出自谁家"（model-context.js 的 BRANDS + 每行的 brand），前端按 brand
+ * 服务端声明"这个模型出自谁家"（models.json 的 brands + 每行的 brand），前端按 brand
  * 画标。两边各改各的就会出现：服务端新加一家 → 前端没有那枚标 → 图标**静默消失**
  * （ModelMark 认不出 brand 时返回 null，是刻意的 fail-soft，因为画错一家的标比不画更糟）。
  * 静默的东西必须有 lint 钉着 —— 同仓的规矩：注释里写"调用方必须处理 X"拦不住任何人。
  *
- * 判据直接读服务端源文件的 BRANDS（不是抄一份常量在这里，那就是第二个真相源）。
+ * 判据直接读服务端 models.json 的 brands（不是抄一份常量在这里，那就是第二个真相源）。
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -15,12 +15,11 @@ import { fileURLToPath } from 'node:url';
 import { MARKS } from './ModelMark.jsx';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const SRC = fs.readFileSync(path.join(REPO, 'server/engine/agent/model-table.js'), 'utf8');
+const SRC = JSON.parse(fs.readFileSync(path.join(REPO, 'server/engine/agent/models.json'), 'utf8'));
 
 function serverBrands() {
-  const m = SRC.match(/export const BRANDS = Object\.freeze\(\[([^\]]+)\]\)/);
-  if (!m) throw new Error('model-table.js 里找不到 BRANDS —— 它改名了？这条 lint 要跟着改');
-  return m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  if (!Array.isArray(SRC.brands)) throw new Error('models.json 里找不到 brands —— 它改形了？这条 lint 要跟着改');
+  return SRC.brands;
 }
 
 describe('ModelMark 品牌覆盖', () => {
@@ -45,8 +44,8 @@ describe('ModelMark 品牌覆盖', () => {
   });
 
   it('模型表里每一行都声明了 brand（漏写在服务端加载时就会炸，这里再钉一道防注释掉断言）', () => {
-    const rows = SRC.match(/^\s*\{?\s*id: '[^']+',/gm) || [];
-    const withBrand = SRC.match(/brand: '/g) || [];
-    expect(withBrand.length).toBe(rows.length);
+    const rows = SRC.models ?? [];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((m) => typeof m.brand === 'string' && m.brand).length).toBe(rows.length);
   });
 });

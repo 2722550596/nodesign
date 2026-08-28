@@ -402,3 +402,61 @@ describe('dispose', () => {
     expect(client.isTurnActive()).toBe(false);
   });
 });
+
+describe('navigateTree / getTree（M3c rewind）', () => {
+  it('navigateTree 默认带 label:rewind；返回 res.data；失败抛错', async () => {
+    const child = mkFakeChild();
+    const { client } = mkClient(child);
+    const startP = client.start();
+    pushFrame(child, { type: 'response', id: 'req_init', command: 'get_state', success: true, data: {} });
+    await startP;
+
+    const p = client.navigateTree('abcd1234');
+    // label 必带 'rewind'：触发 pi 侧 appendLabelChange 落盘 leaf（C0），
+    // 否则重启后导航位置丢失 —— 这条 wire 形状是 rewind 正确性的锚
+    expect(sentCmds(child).at(-1)).toMatchObject({
+      type: 'navigate_tree', targetId: 'abcd1234', label: 'rewind',
+    });
+    pushFrame(child, {
+      type: 'response', id: 'req_1', command: 'navigate_tree', success: true,
+      data: { cancelled: false, editorText: '回填文本' },
+    });
+    expect(await p).toEqual({ cancelled: false, editorText: '回填文本' });
+
+    const p2 = client.navigateTree('dead0000');
+    pushFrame(child, {
+      type: 'response', id: 'req_2', command: 'navigate_tree', success: false, error: 'Entry dead0000 not found',
+    });
+    await expect(p2).rejects.toThrow('Entry dead0000 not found');
+  });
+
+  it('navigateTree 自定义 label 透传', async () => {
+    const child = mkFakeChild();
+    const { client } = mkClient(child);
+    const startP = client.start();
+    pushFrame(child, { type: 'response', id: 'req_init', command: 'get_state', success: true, data: {} });
+    await startP;
+    const p = client.navigateTree('abcd1234', 'checkpoint');
+    expect(sentCmds(child).at(-1)).toMatchObject({ type: 'navigate_tree', targetId: 'abcd1234', label: 'checkpoint' });
+    pushFrame(child, { type: 'response', id: 'req_1', command: 'navigate_tree', success: true, data: { cancelled: false } });
+    await p;
+  });
+
+  it('getTree 返回 { tree, leafId }；失败抛错', async () => {
+    const child = mkFakeChild();
+    const { client } = mkClient(child);
+    const startP = client.start();
+    pushFrame(child, { type: 'response', id: 'req_init', command: 'get_state', success: true, data: {} });
+    await startP;
+
+    const p = client.getTree();
+    expect(sentCmds(child).at(-1)).toMatchObject({ type: 'get_tree' });
+    const tree = [{ id: 'm1', parentId: null }];
+    pushFrame(child, { type: 'response', id: 'req_1', command: 'get_tree', success: true, data: { tree, leafId: 'm1' } });
+    expect(await p).toEqual({ tree, leafId: 'm1' });
+
+    const p2 = client.getTree();
+    pushFrame(child, { type: 'response', id: 'req_2', command: 'get_tree', success: false, error: 'no session' });
+    await expect(p2).rejects.toThrow('no session');
+  });
+});

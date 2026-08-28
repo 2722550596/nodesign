@@ -8,7 +8,7 @@
  * 再写就是在造下一窝。
  *
  * 刻意保留的兼容点加行内 `legacy-ok` 标记放行（目前仅 noteTask 兼容老数据
- * 一处）；迁移器本体（workspace.js）整文件豁免 —— 它的工作就是消化旧形状。
+ * 一处）；迁移器本体（workspace-flatten.js，M3b 从 workspace.js 搬出）整文件豁免 —— 它的工作就是消化旧形状。
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const EXEMPT_FILES = new Set([
-  'server/projects/workspace.js',   // tasks/→扁平迁移器：消化旧形状是它的本职
+  'server/projects/workspace-flatten.js',   // tasks/→扁平迁移器：消化旧形状是它的本职（M3b 从 workspace.js 搬出）
 ]);
 
 /**

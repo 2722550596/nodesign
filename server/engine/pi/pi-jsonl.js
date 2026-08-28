@@ -162,19 +162,83 @@ async function parseMessageEntries(file) {
 }
 
 /**
- * 读会话全部消息 → SDK SessionMessage[]（时间顺序）。
+ * 活动分支（active branch）：从 leaf 沿 parentId 走到根的 entry 路径（根→leaf 序）。
+ *
+ * pi JSONL 是 append-only 树（每 entry 带 id/parentId）。rewind（navigate_tree）后
+ * 旧分支 entry 仍留在文件里 —— 按文件顺序平铺会把新旧两个分支的消息都显示出来。
+ * pi 重启加载时 leaf = 文件最后一条 entry（session-manager.ts L993-996），所以
+ * 「最后一条 entry 沿 parentId 向根走」就是 pi 语义的活动分支。
+ *
+ * 兜底：无树结构的老 JSONL（v1 迁移前，entry 没有 id/parentId 键）退回全量平铺 ——
+ * 判据是最后一条 entry 没有 parentId 键（v2 根节点 parentId 是 null 而非缺失）。
+ * 单链文件（M3c 前无 rewind）活动分支 = 全文件，行为与旧实现一致。
+ */
+function activeBranchEntries(entries) {
+  const last = entries[entries.length - 1];
+  if (!last || last.parentId === undefined) return entries;   // 无树结构 → 平铺兜底
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  const path = [];
+  let cur = last;
+  const seen = new Set();   // 环保护：坏文件 parentId 成环时不死循环
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    path.push(cur);
+    cur = cur.parentId ? byId.get(cur.parentId) : null;
+  }
+  path.reverse();   // 根 → leaf 时间序
+  return path;
+}
+
+/**
+ * 读会话活动分支的全部消息 → SDK SessionMessage[]（时间顺序）。
  * 目录 / 文件不存在 → []（新会话还没跑过 turn 是常态，不是错误）。
+ * M3c：改走活动分支（activeBranchEntries），rewind 后 hydrate 不再显示旧分支。
  */
 export async function readPiSessionMessages(sessionDir) {
   const file = await findLatestSessionFile(sessionDir);
   if (!file) return [];
   const entries = await parseMessageEntries(file);
+  if (entries.length === 0) return [];
   const out = [];
-  for (const entry of entries) {
+  for (const entry of activeBranchEntries(entries)) {
     const sm = mapMessageEntry(entry);
     if (sm) out.push(sm);
   }
   return out;
+}
+
+/**
+ * 活动分支上最后一条 user entry 的 id（8 位 hex）。M3c rewind 索引用（C3b）。
+ *
+ * 从 leaf 沿 parentId 向根走，找第一条 role==='user'（即活动分支上最新的 user
+ * 消息）。⚠️ 不能倒扫文件 —— rewind 后旧分支的 user entry 仍在文件里，倒扫会
+ * 读到旧分支。finishTurn 写索引时本轮 user entry 刚被 pi append 为 leaf 或 leaf
+ * 的祖先，必在活动分支上（串行 turn 保证它是活动分支最新的 user 消息）。
+ * 无树结构的老 JSONL 退回倒扫（单链语义等价）。拿不到 → null。
+ */
+export async function readLastUserEntryId(sessionDir) {
+  const file = await findLatestSessionFile(sessionDir);
+  if (!file) return null;
+  const entries = await parseMessageEntries(file);
+  if (entries.length === 0) return null;
+  const last = entries[entries.length - 1];
+  if (last.parentId === undefined) {
+    // 无树结构兜底：倒扫找最后一条 user message entry
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.type === 'message' && e.message?.role === 'user' && e.id) return e.id;
+    }
+    return null;
+  }
+  const byId = new Map(entries.map((e) => [e.id, e]));
+  let cur = last;
+  const seen = new Set();
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    if (cur.type === 'message' && cur.message?.role === 'user' && cur.id) return cur.id;
+    cur = cur.parentId ? byId.get(cur.parentId) : null;
+  }
+  return null;
 }
 
 /**

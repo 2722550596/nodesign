@@ -1,11 +1,12 @@
 /**
  * server/engine/pi/lifecycle.js — pi 会话子进程生命周期（M1）
  *
- * 三件事：
+ * 四件事：
  *  1. resolvePiBinary()   — pi 二进制解析：env PI_BIN（存在则用）→ PATH 'pi'；都无抛错。
  *  2. sessionLaunch()     — 组装 spawn 四元组 { binary, args, cwd, env }（契约 C1/C2），
  *                           spawn 前写项目级 .pi/mcp.json（C9，ensureProjectPiConfig）。
  *  3. createSessionProcess() — spawn + 孤儿回收（模块级 Set + 进程退出钩子 SIGKILL）。
+ *  4. spawnBarePiForRewind() — 临时 spawn 裸 pi 执行 navigate_tree（死会话 rewind，M3c C6）。
  *
  * 契约锚点（local://m1-plan.md）：
  *  - C1 env：PI_CODING_AGENT_DIR / PI_TELEMETRY=0 / NODESIGN_SID|UID|PROJECT|WORKSPACE|
@@ -31,12 +32,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sidToken } from './sidecar.js';
 import { ensureProjectPiConfig } from './mcp-config.js';
+import { loadLocalConfig } from '../../runtime/local-config.js';
+import { PiRpcClient } from './rpc-client.js';
+import { piSessionDir } from './pi-jsonl.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Nodesign 侧 pi 资产目录（settings.json / prompt-presets / vendored adapter npm）。 */
 const AGENT_DIR = path.join(__dirname, 'agent-dir');
-/** 上游 providers 扩展（-e 显式挂载；清单 providers-models.json 由 migrate-models.mjs 生成）。 */
+/** 上游 providers 扩展（-e 显式挂载；清单读 server/engine/agent/models.json，M3a 起无生成链）。 */
 const PROVIDERS_EXT = path.join(__dirname, 'extensions', 'providers.ts');
 /** pi-mcp-adapter 扩展（-e 显式挂载；消费 .pi/mcp.json 拉起 standalone MCP 子进程）。 */
 const ADAPTER_EXT = path.join(AGENT_DIR, 'npm', 'node_modules', 'pi-mcp-adapter', 'index.ts');
@@ -80,6 +84,21 @@ export function resolvePiBinary() {
   throw new Error(
     '找不到 pi 可执行文件：设置 PI_BIN 指向 pi 构建产物，或安装 @earendil-works/pi-coding-agent 使 pi 进 PATH',
   );
+}
+
+/**
+ * 从 process.env 收集上游 key（原内联在 sessionLaunch；M3c C6 抽出与
+ * spawnBarePiForRewind 共用）。返回 { NODESIGN_UPSTREAM_*: value }，空值不收
+ * ——providers.ts 按「有值」判断注册，空 key 等同不传。
+ */
+function collectUpstreamEnv() {
+  const upstream = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith('NODESIGN_UPSTREAM_') && value != null && value !== '') {
+      upstream[key] = value;
+    }
+  }
+  return upstream;
 }
 
 /**
@@ -139,12 +158,28 @@ export function sessionLaunch({
   const env = { ...process.env };
   for (const key of ENV_BLACKLIST) delete env[key];
 
-  const upstream = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (key.startsWith('NODESIGN_UPSTREAM_')) {
-      if (value != null && value !== '') upstream[key] = value;
-      else delete env[key]; // 空值 key 也不带给 pi（providers.ts 按"有值"判断注册）
+  // 上游 key：非空的经 collectUpstreamEnv 收集（与 spawnBarePiForRewind 共用 helper）；
+  // 继承来的 env 里 NODESIGN_UPSTREAM_* 先整体剔除（空值不带给 pi，非空的由下方
+  // ...upstream 重新并入，净效果与抽取前一致）。
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('NODESIGN_UPSTREAM_')) delete env[key];
+  }
+  const upstream = collectUpstreamEnv();
+
+  // 外部插槽（M3a A7）：config.json 里的外部上游 inline key 注入 env，providers.ts 按
+  // NODESIGN_UPSTREAM_<NAME>_KEY 有值注册（修 M1 起外部行进 picker 却不进 pi 注册面的回归）。
+  // hosted profile 下 loadLocalConfig 返空配置，循环 no-op。⚠️ sessionLaunch 是同步函数，
+  // loadLocalConfig 走顶层静态 import（local-config.js 不 import lifecycle，无循环）。
+  const extCfg = loadLocalConfig();
+  for (const [name, up] of Object.entries(extCfg.upstreams)) {
+    if (up.key && up.authStyle !== 'none') {
+      env[`NODESIGN_UPSTREAM_${name.toUpperCase()}_KEY`] = up.key;
     }
+  }
+  // 外部模型清单路径：providers.ts 读原始 JSON 注册外部 provider（它不能 import
+  // local-config.js —— zod 依赖 + JS/TS 混合，见 providers.ts 注释）
+  if (extCfg.models.length > 0 && extCfg.path) {
+    env.NODESIGN_EXTERNAL_MODELS = extCfg.path;
   }
 
   // DB_PATH：主进程真实 DB 路径（standalone 的 store.js 多进程 WAL 读）。
@@ -224,4 +259,59 @@ export function createSessionProcess(launch) {
 /** 测试钩子：只读快照（当前存活 child 数）。 */
 export function _liveChildCount() {
   return liveChildren.size;
+}
+
+/**
+ * 临时 spawn 裸 pi 执行 navigate_tree（死会话 rewind，M3c C6）。
+ *
+ * 只挂 providers.ts + nd-probe preset，不挂 nodesign 工具扩展——sessionLaunch 的七个
+ * -e 硬编码不可裁剪，所以这里自组 args。--continue 挂已有 session-dir（死会话必有
+ * 转录，否则谈不上 rewind），发 navigate_tree（label 默认 'rewind' 触发 pi 侧
+ * appendLabelChange 落盘 leaf，pi-rp C0 / rpc-client C1）后 kill。死会话无 streaming，
+ * navigate_tree 不会撞 pi 的 isStreaming 拒绝。
+ *
+ * 孤儿回收：child 经 createSessionProcess 进模块级 liveChildren + 钩子，天然覆盖。
+ *
+ * @param {object} opts
+ * @param {string} opts.sid          Nodesign sessionId（转录目录 = piSessionDir(dataRoot, sid)）
+ * @param {string} opts.dataRoot     PROJECTS_DATA_ROOT 绝对路径
+ * @param {string} opts.workspaceDir 项目共享工作区绝对路径（pi 的 cwd，.pi/ 在其下）
+ * @param {string} opts.targetId     回滚目标 pi entry id（8 位 hex，目标轮 user entry）
+ */
+export async function spawnBarePiForRewind({ sid, dataRoot, workspaceDir, targetId }) {
+  if (!sid) throw new Error('spawnBarePiForRewind: sid 必填');
+  if (!dataRoot) throw new Error('spawnBarePiForRewind: dataRoot 必填');
+  if (!workspaceDir) throw new Error('spawnBarePiForRewind: workspaceDir 必填');
+  if (!targetId) throw new Error('spawnBarePiForRewind: targetId 必填');
+
+  const binary = resolvePiBinary();
+  const args = [
+    '--mode', 'rpc', '--approve',
+    '--preset', 'nd-probe',                                         // 轻量 preset（A8）：tools.deny ["*"]，不载工具面
+    '--config-dir', '.pi',                                          // 相对 cwd（绝对会拼坏；与 sessionLaunch 同约定）
+    '--session-dir', piSessionDir(dataRoot, sid),                   // 与 sessionLaunch --session-dir 同公式
+    '--continue',                                                   // 挂已有 JSONL
+    '--system-prompt', '',
+    '-e', PROVIDERS_EXT,                                            // 唯一扩展：上游 providers 注册
+    '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
+  ];
+  // env：继承 process.env，但 NODESIGN_UPSTREAM_* 先整体剔除再由 collectUpstreamEnv
+  // 重新并入——与 sessionLaunch 同语义（空值 key 不带给 pi，providers.ts 按「有值」注册）。
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('NODESIGN_UPSTREAM_')) delete env[key];
+  }
+  Object.assign(env, {
+    PI_CODING_AGENT_DIR: AGENT_DIR,   // pi 据此找到 agent-dir/prompt-presets/nd-probe.json
+    PI_TELEMETRY: '0',
+    ...collectUpstreamEnv(),          // 上游 key（非空才收）
+  });
+  const child = createSessionProcess({ binary, args, cwd: workspaceDir, env });
+  const client = new PiRpcClient({ child, onEvent: () => {}, onExit: () => {} });
+  try {
+    await client.start();
+    await client.navigateTree(targetId);   // label 默认 'rewind'（rpc-client C1）
+  } finally {
+    await client.kill();
+  }
 }

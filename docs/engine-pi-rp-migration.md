@@ -4,7 +4,8 @@
 > `npm run test:server` 778/778 全绿。**M1.5（簇 A RPC 接线）完成**（2026-08-27）：热换模型 /
 > thinking 档位 / context usage / 默认模型 fail-loud / env 全家桶 fallback 全部接线，
 > `_probe-m15-live.mjs` GATE PASS；set_preset live 验证 `_probe-preset-live.mjs` GATE PASS（pre-M2）。
-> **M2 / 簇 B / M3 已排期**（2026-08-27 grill 定案，见 §6）。
+> **M2 完成**（2026-08-27，server 822/822 绿）。**M3 已定案**（2026-08-28 grill，四子阶段
+> M3a 模型层 / M3b 删除波 / M3c rewind / M3d 前端联调，见 §6）。簇 B 单独排期。
 > 目标：把 `@anthropic-ai/claude-agent-sdk`（`query()` 子进程）整个摘掉，agent loop 交给 pi-rp
 > （`pi --mode rpc`），工具面最终走 pi 扩展 `registerTool` 直挂（MCP 层为 M1 过渡态）。
 > 作者同时是 pi-rp 维护者：pi-rp 侧的缺口就地补（见 §5.6），不做版本防御。
@@ -396,17 +397,61 @@ turn，所以一直没炸。补全 `reasoning/input/cost/contextWindow/maxTokens
 - buildNodesignTools / tool-shim.js / 45+ 工具文件零改动
 - sidecar 三桥保留
 
-### M3 清理回归
-- 删 ingress / sandbox-shim / 旧测试
-- 重写保留契约测试（tier、参数校验、事件桥、turn 认领）
-- 订阅通道删干净（三层禁用代码 + 前端锁行文案）
-- models.json 为唯一真相源，model-table.js 降级
-- permissionMode 死字段清理
-- **rewind 恢复**（2026-08-27 定案）：走 pi 会话树，不造文件 checkpoint。
-  - 对话侧：`navigate_tree` RPC——把叶节点移到目标条目回滚位，`summarize:false` 不走 LLM；旧分支保留在树里，可再导航回去/换分支重来。约束：streaming 中拒绝（与 M1 串行 turn 天然契合）。
-  - 文件侧：session-loop finishTurn 每 turn 已 `commitWorkspace`（git，author=agent）——rewind 时 `git revert`/checkout 到目标 turn 之前的 commit。
-  - 前端：undo 按钮接新后端（navigate_tree + git 回滚）。
-- 前端联调（run.delta.* 契约不变确认 + hydrate 回归 + 换 preset 交互）
+### M3 清理回归（2026-08-28 grill 定案，四子阶段）
+
+**M3a 模型层**（M3b 前置）：
+- **models.json 唯一真相源（单文件，删生成链）**：新写 `models.json`（upstreams + models，
+  路由字段 + 业务字段全量）手编辑；**删** model-table.js + providers-models.json + migrate-models.mjs；
+  model-context.js / local-config.js / providers.ts / model-map.js 全改读它。
+  providers.ts 已有 MODEL_FIELDS 白名单，天然承担 pi 视图过滤。
+- **外部插槽修复（M1 引入的回归）**：local-config.js 外部行进 picker 但不进 manifest →
+  piProviderModelFor 查不到 → 选了 INIT_FAILED。修法：lifecycle 读 config.json，外部上游
+  inline key 转 `NODESIGN_UPSTREAM_<NAME>_KEY` env 注入（现有过滤通道兼容），providers.ts
+  加一段读外部清单（清单经 env 传）。models.json 只放内置行，外部行运行时合并。
+- **体检探针重写（pi live 探针 + nd-probe 最小 preset）**：slot-probe 穿 ingress 的路没了。
+  新方案：`agent-dir/prompt-presets/nd-probe.json`（`autoActivate:false`，
+  `tools.deny:["*"]`——pi 文档确认 deny 作用于真实工具注册，schema 都不发，省 token；
+  items 只有 "You are a helpful assistant." block + chat-history slot）。体检时临时 spawn
+  裸 pi（只挂 providers.ts）`--preset nd-probe --provider/--model` 指向被检行，一发 "Reply OK"。
+- Gate：`_probe-m3a-live.mjs`（models.json 模型 turn + 外部插槽模型 turn + 体检探针 PASS）。
+
+**M3b 删除波**：
+- ingress 全家：lib/model-ingress.js + lib/ingress/ + index.js stopIngress + context.js
+  applyUpstreamBilling（死代码）+ 5 个 ingress 系探针脚本 + 8 个 ingress 系测试。
+  计费口径落 pi 表价（usage.cost.total 已在 accumulateUsage 累计），上游自报 cost 覆盖随 ingress 消失。
+- **订阅通道彻底删**（用户拍板：pi 无 Claude OAuth 通路，订阅模式永久死，不留复活基建）：
+  订阅行 + 三层禁用代码 + 前端锁行文案/兜底清单/错误码；tier `subscription` 能力**改名
+  `performance`**（chatai 演出资格闸，语义=非 basic 档）；moderation 双旋钮**合并单旋钮**
+  （全走 api 旋钮；存量列合并规则：api 显式 ?? 订阅显式 ?? 默认）；turn.js keepLegacyDefault 删。
+- 死字段清理：permissionMode（turn.js 解构 + 前端 api.js）、platform.js 的
+  sandboxEnabled/permissionModeDefault/autoMode*、local-env.js 的 NODESIGN_SANDBOX/
+  NODESIGN_PERMISSION_MODE/NODESIGN_MAX_TURNS 条目。
+- fix-sdk-musl.mjs + package.json postinstall 行。
+- 测试：重写 8 个被波及的（model-context / tier / moderation / platform / context-counters /
+  users-store / turn-compose / local-config）。事件桥、turn 认领测试已绿不动。
+- Gate：server 全绿 + `_probe-m3b-live.mjs`（订阅模型选择 → 明确拒绝码、API 模型 turn 正常）。
+
+**M3c rewind**（独立，可与 a/b 并行）：
+- 对话侧：`navigate_tree` RPC（`summarize:false` 不走 LLM；isStreaming 抛错与串行 turn 契合；
+  `_moveLeafAndRestoreState` 连 StateManager 状态一起回卷；旧分支留树里可再导航）。
+  rpc-client.js 补 navigateTree/getTree 封装。
+- 文件侧：**显式索引，不做 commit-message 考古**。`.nd/<sid>/rewind-index.json` append-only
+  存 `{entryId, headShaBefore}`：runTurn 开始捕获 HEAD，finishTurn 从 JSONL 读本 turn user
+  entry id（串行 = 最后一条）急切写入。rewind 查索引 → `git checkout <sha> -- .` + 新 commit
+  （保留历史；不用 revert——与后续 commit 冲突且抵消不了画布 agent-edit commit）。
+- 死会话：临时 spawn 裸 pi（nd-probe preset）`--continue` 挂 JSONL → navigate_tree → kill（~2-3s，
+  对上现有前端"历史会话首次回滚需 3-5 秒"文案）。
+- 老会话（M3 前无索引）：canRewind:false，undo 按钮不亮，不做时间戳猜测匹配。
+- 前端：canRewindMessage 的 36-char uuid 正则改 8 位 hex（pi entry id 是
+  `randomUUID().slice(0,8)`，pi-jsonl 已把 entry.id 映射进 hydrate uuid 字段）；
+  pendingRewinds 守卫保留。runs/:runId/rewind 端点直接删（无前端调用方）。
+- Gate：`_probe-m3c-live.mjs`（turn1 → turn2 → rewind → 对话树 + 文件回滚双断言）。
+
+**M3d 前端联调 + 全回归**：run.delta.* 契约不变确认 + hydrate 回归 + 换 preset 交互。
+Gate：server + web 全绿 + 手工前端走查。
+
+**新契约测试（M3a/c 各带）**：models.json 加载/校验、rewind-index 写入/读取/回滚定位、
+外部插槽→pi env 注入、nd-probe preset 形状。
 
 ## 附录 A M0 验证结果与偏差记录（2026-08-26，已并入正文，保留追溯）
 

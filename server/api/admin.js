@@ -67,8 +67,7 @@ router.get('/users', (_req, res) => {
     tokensToday: usedTokensToday(u.id),       // 参考
     effectiveDailyLimitUsd: limitFor(u),
     flagsCount: flags.get(u.id) || 0,
-    effectiveModerationLevel: levelForKnob(u, 'subscription'),  // 订阅模型：默认档算完的实际生效值
-    effectiveModerationLevelApi: levelForKnob(u, 'api'),         // 本地/中转旋钮的生效值
+    effectiveModerationLevelApi: levelForKnob(u, 'api'),         // 外审档生效值（M3b 起单旋钮）
   }));
   res.json({ users });
 });
@@ -79,20 +78,19 @@ router.patch('/users/:id', (req, res) => {
   const patch = {};
   if (typeof req.body?.disabled === 'boolean') patch.disabled = req.body.disabled;
   // 外审强度：null = 跟随默认档（按档位：basic strict / pro loose / admin off，auth/tier.js）
-  // 两个旋钮（08-20）：订阅模型 / 本地与中转（见 lib/moderation.js 文件头）
-  for (const key of ['moderationLevel', 'moderationLevelApi']) {
-    if (!(key in (req.body || {}))) continue;
-    const lv = req.body[key];
+  // M3b 起单旋钮 moderationLevelApi（订阅旋钮退役）
+  if ('moderationLevelApi' in (req.body || {})) {
+    const lv = req.body.moderationLevelApi;
     if (lv !== null && !LEVELS.includes(lv)) {
-      return res.status(400).json({ error: `${key} 需为 ${LEVELS.join('/')} 或 null` });
+      return res.status(400).json({ error: `moderationLevelApi 需为 ${LEVELS.join('/')} 或 null` });
     }
-    patch[key] = lv;
+    patch.moderationLevelApi = lv;
   }
   if ('localGen' in (req.body || {})) {
     patch.localGen = !!req.body.localGen;
   }
   if ('plan' in (req.body || {})) {
-    // 08-21 晚：档位真相源（auth/tier.js）。订阅/生图/发布/外审默认档全从它派生；admin 的 plan 不可改（role 派生）
+    // 08-21 晚：档位真相源（auth/tier.js）。生图/发布/外审默认档全从它派生；admin 的 plan 不可改（role 派生）
     if (user.role === 'admin') return res.status(400).json({ error: 'admin 的档位由 role 派生，不可改' });
     if (!PLANS.includes(req.body.plan)) return res.status(400).json({ error: `plan 需为 ${PLANS.join('/')}` });
     patch.plan = req.body.plan;

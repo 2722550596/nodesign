@@ -30,75 +30,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const isMac = process.platform === 'darwin';
 const isWin = process.platform === 'win32';
 
-/**
- * CLAUDE 配置目录（SDK JSONL / settings 的全局根）
- *
- * SDK binary 把 session JSONL 落到 `<configDir>/projects/<encoded-cwd>/<sid>.jsonl`，
- * encoded-cwd = sessionRoot.replace(/[^a-zA-Z0-9]/g, '-')。这个路径是 SDK 内部
- * 硬编码（不能 per-session 自定义）—— 所有 NoDesign session 必须共用一个 configDir，
- * 通过不同 cwd 的编码自然分隔。
- *
- * NODESIGN_CONFIG_DIR 可显式覆盖（容器化 / 多实例共享持久化卷场景）。
- */
-const claudeConfigDir = process.env.NODESIGN_CONFIG_DIR
-  || path.join(process.env.HOME || os.homedir(), '.claude');
 
-/**
- * 本机有没有能跑内置 Claude 行的凭据（本地版 picker 的闸，08-22）：
- *   - ANTHROPIC_API_KEY 在 env 里（设置页存进 .env 后 setEnvValues 会同步进 process.env，所以每次现查）
- *   - 或 `claude login` 过：<claudeConfigDir>/.credentials.json（Linux/Windows 的 OAuth 落盘处），
- *     或 .claude.json 里有 oauthAccount（mac 走钥匙串时凭据不落文件，但这个账号记录在）。
- * 只是「像是配过」的判据，不是验资格 —— 真假由第一次会话说了算；没配时 picker 空着、
- * 设置页指路，比让用户点一个必失败的 Claude 行强。hosted 不走这条（订阅行按档位放）。
- */
-export function claudeAuthPresent() {
-  if (process.env.ANTHROPIC_API_KEY) return 'api_key';
-  if (fs.existsSync(path.join(claudeConfigDir, '.credentials.json'))) return 'login';
-  for (const f of [path.join(claudeConfigDir, '.claude.json'), path.join(process.env.HOME || os.homedir(), '.claude.json')]) {
-    try { if (JSON.parse(fs.readFileSync(f, 'utf8'))?.oauthAccount) return 'login'; } catch { /* 没这个文件或不是 JSON */ }
-  }
-  return null;
-}
-
-/**
- * Sandbox 是否开启
- *
- * 2026-08-15 实测重开（此前因 bwrap 不解析 session root 的 symlink 关了三个月；
- * 08-07 工作区扁平化之后软链已经一条都没有，那个阻碍自然消失）。
- * bwrap 0.8.0 在位、user namespace 可用，探针跑通：写只落 cwd、/tmp 与 HOME 都
- * 拒、凭据读不到、外网走代理照常、npm i / vite build / chromium / ffmpeg / codex
- * 全部能跑。
- *
- * ⚠️ 沙盒**只管 Bash**。Read / Grep / Glob / Write 这些结构化工具是 SDK 进程内
- * 实现，不进 bwrap —— 它们靠 protectedPathRules() 那套 permissions.deny 拦。
- * 两套东西缺一不可，改一边记得看另一边。
- *
- * 开关仍然显式：`NODESIGN_SANDBOX=on`。exp 实例已在 ecosystem.exp.config.cjs 里
- * 打开，生产要等 exp 跑一段没事再说 —— 别把它改成默认开，那等于让一次 merge
- * 顺手改了线上进程模型。
- */
-const sandboxEnabled = process.env.NODESIGN_SANDBOX === 'on';
-
-/**
- * 权限模式 & auto 模式分类器
- *
- * 历史上一直是 `bypassPermissions`（没有人能回答权限弹窗，只能全放）。
- * SDK 还有个 `auto`：**用一个模型分类器**判每次工具调用该放行还是该拦，
- * 规则从 settings 的 `autoMode` 段注入它的系统提示（见 agent/auto-mode-rules.js）。
- *
- * 分类器用哪个模型由 `CLAUDE_CODE_AUTO_MODE_MODEL` 定 —— 判"这个动作越不越界"
- * 是个需要判断力的活，用强模型，别在这儿省。
- *
- * 开关：`NODESIGN_PERMISSION_MODE=auto`（exp 已开，生产仍是 bypass）。
- * 分类器判不了、升级到 host 的那些调用走 canUseTool，处理策略见
- * `NODESIGN_AUTO_MODE_ESCALATION`（allow=记账放行/deny=拦）。
- */
-const permissionModeDefault =
-  process.env.NODESIGN_PERMISSION_MODE === 'auto' ? 'auto' : 'bypassPermissions';
-const autoModeEnabled = permissionModeDefault === 'auto';
-const autoModeModel = process.env.NODESIGN_AUTO_MODE_MODEL || 'opus';
-const autoModeEscalation =
-  process.env.NODESIGN_AUTO_MODE_ESCALATION === 'deny' ? 'deny' : 'allow';
 
 /**
  * WebFetch preflight 是否跳过
@@ -290,8 +222,8 @@ function repoChildrenOutside(dataRoot) {
 /**
  * 启动时 dump 平台决策到日志
  *
- * 让运维一眼看到：当前进程跑在什么 OS / HOME 是什么 / claudeConfigDir 指哪 /
- * sandbox 开没开 / preflight 关没关。Linux 服务器排查问题的第一信号。
+ * 让运维一眼看到：当前进程跑在什么 OS / HOME 是什么 / preflight 关没关。
+ * Linux 服务器排查问题的第一信号。
  */
 function dump() {
   const info = {
@@ -301,14 +233,10 @@ function dump() {
     arch: process.arch,
     node: process.version,
     home: os.homedir(),
-    claudeConfigDir,
-    sandboxEnabled,
     skipWebFetchPreflight,
-    // 沙盒真开没开一眼看到，另外报一下两道闸各盖了多少条 —— 归零就是配错了
+    // 报一下两道闸各盖了多少条 —— 归零就是配错了
     protectedPaths: credentialBlacklist().length,
     scrubbedEnvVars: secretEnvVarNames().length,
-    permissionMode: permissionModeDefault,
-    ...(autoModeEnabled ? { autoModeModel, autoModeEscalation } : {}),
   };
   console.log('[platform]', JSON.stringify(info, null, 2));
   return info;
@@ -327,13 +255,6 @@ export const platform = {
   isMac,
   isWin,
   repoRoot,
-  claudeConfigDir,
-  claudeAuthPresent,
-  sandboxEnabled,
-  permissionModeDefault,
-  autoModeEnabled,
-  autoModeModel,
-  autoModeEscalation,
   skipWebFetchPreflight,
   credentialBlacklist,
   secretEnvVarNames,

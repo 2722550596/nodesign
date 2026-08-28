@@ -2,7 +2,7 @@
  * server/runtime/local-config.js — 用户自己的模型插槽（本地分发版）。
  *
  * 文件：<dataRoot>/config.json（local profile；hosted 下不读，除非 NODESIGN_MODELS_CONFIG 指了路径——给测试用）。
- * 形状故意跟 model-table.js 的内置行**同一套字段名**：一个事实一种写法，配置页的表单、内置表的注释、
+ * 形状故意跟 models.json 的内置行**同一套字段名**：一个事实一种写法，配置页的表单、内置表的注释、
  * 这里的 schema 三处说的是同一个东西。
  *
  *   {
@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { profile } from './profile.js';
-import { BRANDS, UPSTREAMS_BUILTIN, MODELS_BUILTIN } from '../engine/agent/model-table.js';
+import { BRANDS, UPSTREAMS_BUILTIN, MODELS_BUILTIN } from '../engine/agent/models-json.js';
 
 export const PROTOCOLS = Object.freeze(['anthropic', 'openai-chat']);
 export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'none']);

@@ -3,7 +3,7 @@ import { Sessions } from '../lib/api.js';
 import { useGlobalStore } from '../stores/globalStore.js';
 
 /**
- * 聊天+文件回滚（SDK rewindFiles + jsonl 截断）的共享逻辑。
+ * 聊天+文件回滚（M3c：pi navigate_tree + git rewindWorkspace）的共享逻辑。
  *
  * 两处入口共用：
  *   - Message.jsx 用户消息悬停「回到此处」（回滚到某条用户消息）
@@ -15,10 +15,13 @@ import { useGlobalStore } from '../stores/globalStore.js';
  *     监听后重拉消息列表（免传三层 props）
  *   - 兼容：onCanvasReload 兜底 bump（active query 路径同步返回时也调）
  */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// M3c：消息 id 是 pi entry.id（8 位 hex，pi-jsonl.js 映射 sm.uuid = entry.id）。
+// 前端乐观插入的 newId('msg') = "msg_xxx" 不匹配 → undo 按钮只在 hydrate 来的
+// 真 entry id 上启用（乐观消息没有 rewind-index 记录，回滚必 canRewind:false）。
+const PI_ENTRY_ID_RE = /^[0-9a-f]{8}$/i;
 
 export function canRewindMessage(message) {
-  return !!(message?.id && UUID_RE.test(message.id));
+  return !!(message?.id && PI_ENTRY_ID_RE.test(message.id));
 }
 
 export function useRewind({ projectId, sessionId, onCanvasReload }) {

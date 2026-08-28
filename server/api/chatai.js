@@ -242,9 +242,9 @@ router.post('/:pid/chatai/turn', async (req, res, next) => {
       return res.status(422).json({ error: `input 超长（上限 ${MAX_INPUT_CHARS} 字符）` });
     }
 
-    // 08-21 经营态：演出通路烧的是带钥匙的 API 钱，公开注册号（免费档）不开 —— 跟订阅 Claude 同一把资格
-    if (!can(req.user, 'subscription')) {
-      return res.status(403).json({ error: '演出模式仅限 Pro 档，暂未对外开放；当前档位请用设计会话', code: 'MODEL_LOCKED' });
+    // 08-21 经营态：演出通路烧的是带钥匙的 API 钱，公开注册号（免费档）不开（M3b：subscription 键改名 performance）
+    if (!can(req.user, 'performance')) {
+      return res.status(403).json({ error: '演出模式仅限 Pro 档，暂未对外开放；当前档位请用设计会话' });
     }
     const quota = checkQuota(req.user);
     if (!quota.ok) {

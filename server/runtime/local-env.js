@@ -1,7 +1,7 @@
 /**
  * server/runtime/local-env.js — 本地分发版的钥匙与开关（<dataRoot>/.env）读写，白名单制。
  *
- * 配置页「钥匙」那一栏的后端：只暴露 ENV_KEYS 里列的键（搜索 / 生图 / 发布 / Anthropic 直连 / 沙盒开关），
+ * 配置页「钥匙」那一栏的后端：只暴露 ENV_KEYS 里列的键（搜索 / 生图 / 发布 / 引擎），
  * 值在 GET 时打码（只报配没配 + 末四位），PUT 时改文件并同步进 process.env（web_search 这类调用时读 env 的
  * 工具立刻生效；能力表由调用方 probeCapabilities({force:true}) 重探）。.env 里不在白名单的行原样保留。
  */
@@ -11,8 +11,6 @@ import path from 'node:path';
 import { profile } from './profile.js';
 
 export const ENV_KEYS = Object.freeze([
-  { key: 'ANTHROPIC_API_KEY', group: '模型', label: 'API Key', secret: true, hint: '不填也行：本机 claude login 过就用那份登录态。别家服务商的钥匙不填这里，在「自定义接入」里配' },
-  { key: 'ANTHROPIC_BASE_URL', group: '模型', label: '接口地址（可选）', secret: false, hint: '不填 = Anthropic 官方；用 Anthropic 格式的中转站就填它给的地址，Claude 行直接打到那里' },
   { key: 'NODESIGN_TAVILY_KEY', group: '联网搜索', label: 'Tavily', secret: true, hint: 'web_search 四家任一即可；英文检索优先用它' },
   { key: 'NODESIGN_EXA_KEY', group: '联网搜索', label: 'Exa', secret: true },
   { key: 'NODESIGN_BAIDU_QIANFAN_KEY', group: '联网搜索', label: '百度千帆', secret: true, hint: '中文检索自动路由到它' },
@@ -26,9 +24,6 @@ export const ENV_KEYS = Object.freeze([
   { key: 'CLOUDFLARE_API_TOKEN', group: '发布', label: 'Cloudflare API Token', secret: true, hint: 'publish_site 一键上线；还要装 wrangler' },
   { key: 'NODESIGN_PUBLISH_DOMAIN', group: '发布', label: '发布域名后缀', secret: false, hint: '如 share.example.com；站点发到 <slug>.<这个>' },
   { key: 'NODESIGN_CF_ACCOUNT_ID', group: '发布', label: 'Cloudflare Account ID', secret: false },
-  { key: 'NODESIGN_SANDBOX', group: '运行', label: '沙盒（Bash 隔离）', secret: false, options: ['', 'on'], hint: 'Linux bwrap / macOS sandbox-exec；Windows 没有。默认关（本地版靠 CLI 自己的权限模式）' },
-  { key: 'NODESIGN_PERMISSION_MODE', group: '运行', label: '权限模式', secret: false, options: ['', 'auto'], hint: "空 = bypassPermissions（全放）；auto = 模型分类器判每次工具调用，多花 15~20 秒/轮" },
-  { key: 'NODESIGN_MAX_TURNS', group: '引擎', label: '单会话最大轮次', secret: false, validate: (v) => (v && !/^\d{1,4}$/.test(v) ? '只能填 1-4 位数字' : ''), hint: 'agent 单轮可跑的工具步骤上限，跨消息全局累计（不是每条消息重置）。默认 100；复杂多页 deck 不够就调高——轮次越宽，token 烧得越快' },
   { key: 'NODESIGN_MCP_SERVERS', group: '引擎', label: '外部 MCP 服务（JSON）', secret: false,
     hint: '消费第三方 MCP server：{"名字":{"type":"sse","url":"http://127.0.0.1:8233/sse"}}。模型将看到 mcp__<名字>__* 工具（名字只允许字母数字 _-）。改完重启生效' },
 ]);

@@ -183,7 +183,7 @@ runSynthetic({
     { type: 'tool_execution_update', toolCallId: 'call_101', toolName: 'bash', args: { command: 'ls -la' }, partialResult: { content: [{ type: 'text', text: 'partial…' }], details: {} } },
     { type: 'tool_execution_end', toolCallId: 'call_101', toolName: 'bash', result: { content: [{ type: 'text', text: 'total 48\n' }, { type: 'text', text: 'drwxr-xr-x' }], details: {} }, isError: false },
   ],
-  expect: ['run.delta.tool_use', 'run.delta.tool_result'],
+  expect: ['run.delta.tool_use', 'run.tool_progress', 'run.delta.tool_result'],   // M1：tool_execution_update → run.tool_progress（event-bridge.js，单测钉着）
   check: (b, types) => {
     if (b.state.counters.toolCalls !== 1) return `toolCalls=${b.state.counters.toolCalls}`;
     // 从最后映射出的 tool_result 载荷验证 output —— 用内部 state 拿不到 payload，直接扫结果太绕，

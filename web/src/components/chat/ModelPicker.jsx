@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Check, Loader2, Lock } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { COLOR, GAP, RADIUS, SHADOW, FONT_SANS, FONT_MONO, FONT_SIZE } from '../../lib/theme.js';
 import { useGlobalStore } from '../../stores/globalStore.js';
 import { Sessions, Me, Turn } from '../../lib/api.js';
@@ -74,7 +74,6 @@ export default function ModelPicker({
   const modelPref = useGlobalStore(s => s.modelPref);
   const setModelPref = useGlobalStore(s => s.setModelPref);
   const showToast = useGlobalStore(s => s.showToast);
-  const confirmDialog = useGlobalStore(s => s.confirm);
   // M1.5 热换：run 飞行中也能切（set_model RPC 直通 pi，下次 LLM 调用生效）。
   // activeRun = { pid, runId }，ProjectWorkspace 在 run.start/done 时维护（同 AskUserQuestionView 的取法）。
   const activeRun = useGlobalStore(s => s.activeRun);
@@ -127,7 +126,7 @@ export default function ModelPicker({
    */
   useEffect(() => {
     if (hasSession) return;
-    if (isModelPrefStale(modelPref, remote?.options)) setModelPref(remote.default || remote.options.find(o => !o.locked)?.id || remote.options[0].id);
+    if (isModelPrefStale(modelPref, remote?.options)) setModelPref(remote.default || remote.options[0]?.id);
   }, [hasSession, remote, modelPref, setModelPref]);
   /**
    * 现在跑的是哪个。两条路都保证是个具体模型：有会话看服务端（`remote.model`
@@ -142,17 +141,6 @@ export default function ModelPicker({
 
   const select = useCallback(async (id) => {
     setOpen(false);
-    // 看得见选不了的订阅行（08-21 公开注册号）：弹框说清楚是更高档位，不发请求。
-    // 口径（08-21 深夜）：pro 不对外分发，留着锁行只是让人知道有更高档，文案不给任何"去哪里拿资格"的路径
-    const lockedOpt = options.find(o => o.id === id && o.locked);
-    if (lockedOpt) {
-      await confirmDialog({
-        title: '这个模型仅限 Pro 档',
-        message: `${lockedOpt.label} 跑在站主的 Claude 订阅上，属于 Pro 档，暂未对外开放。当前档位可用的模型都在列表里，不带锁的随便选。`,
-        confirmLabel: '知道了', cancelLabel: '关闭',
-      });
-      return;
-    }
     if (!hasSession) { setModelPref(id); return; }
     // 点的就是正在跑的那个 → 什么也不做。别拿"覆盖字段是不是空"当判据：override
     // 为 null 时写一次会让 changed=true，服务端顺手把空闲的 query 关掉重开，
@@ -191,7 +179,7 @@ export default function ModelPicker({
     } finally {
       setSaving(false);
     }
-  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens, options, confirmDialog, hotSwitch, activeRun]);
+  }, [hasSession, effective, remote, projectId, sessionId, setModelPref, showToast, contextTokens, options, hotSwitch, activeRun]);
 
   const label = none ? '未配置模型' : shortLabel(effective, options);
   const busy = disabled || saving;
@@ -271,8 +259,7 @@ export default function ModelPicker({
               key={o.id}
               active={effective === o.id}
               label={o.label}
-              desc={o.locked ? `${o.lockReason || '仅限 Pro 档'} · ${o.desc}` : o.desc}
-              locked={!!o.locked}
+              desc={o.desc}
               onClick={() => select(o.id)}
             />
           ))}
@@ -292,7 +279,7 @@ export default function ModelPicker({
   );
 }
 
-function Option({ active, label, desc, locked = false, onClick }) {
+function Option({ active, label, desc, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -308,10 +295,9 @@ function Option({ active, label, desc, locked = false, onClick }) {
     >
       <span style={{ width: 13, flexShrink: 0, marginTop: GAP.xxs }}>
         {active && <Check size={12} color={COLOR.text} />}
-        {!active && locked && <Lock size={11} color={COLOR.sub} />}
       </span>
       <span style={{ flex: 1 }}>
-        <span style={{ display: 'block', fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: locked ? COLOR.sub : COLOR.text }}>
+        <span style={{ display: 'block', fontFamily: FONT_MONO, fontSize: FONT_SIZE.sm, fontWeight: 500, color: COLOR.text }}>
           {label}
         </span>
         <span style={{ display: 'block', fontFamily: FONT_SANS, fontSize: FONT_SIZE.xs, color: COLOR.sub, marginTop: 1 }}>

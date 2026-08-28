@@ -130,7 +130,7 @@ export default function AuthGate({ children }) {
   const form = (
     <>
       <h2>来访登记</h2>
-      <div className="m">{openReg ? '免费开放中 · 邀请码可解锁 Claude' : '小范围内测中'}</div>
+      <div className="m">{openReg ? '免费开放中 · 邀请码可解锁 Pro 档' : '小范围内测中'}</div>
       <div className="ndw-tabs">
         <button type="button" className={isRegister ? '' : 'on'}
           onClick={() => { setMode('login'); setError(''); }}>
@@ -156,7 +156,7 @@ export default function AuthGate({ children }) {
       {isRegister && (
         <div className="ndw-field">
           <label htmlFor="ndw-i">邀请码 · INVITE{openReg ? '（可选）' : ''}</label>
-          <input id="ndw-i" value={inviteCode} placeholder={openReg ? '有就填，解锁 Claude 订阅模型' : 'nd-xxxxxxxx'}
+          <input id="ndw-i" value={inviteCode} placeholder={openReg ? '有就填，解锁 Pro 档' : 'nd-xxxxxxxx'}
             onChange={(e) => setInviteCode(e.target.value)} />
         </div>
       )}

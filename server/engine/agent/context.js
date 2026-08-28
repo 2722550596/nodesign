@@ -202,10 +202,9 @@ export class AgentContext {
     this.counters.durationMs = result.duration_ms ?? this.counters.durationMs;
     this.counters.durationApiMs = result.duration_api_ms ?? this.counters.durationApiMs;
 
-    // reprice：仅 API 会话 —— key 从 SDK spoof alias 还原成 appModel、按表价
-    // 重算 costUsd（SDK 按 alias 的 Claude 价目表算，Kimi 时代虚高 30×）。
-    // 订阅会话原样过（alias 与真订阅模型名同形，必须以会话通路为准，见
-    // model-context.js repriceUsageDeltas 注释）。
+    // reprice：仅 API 会话 —— 按会话行的表价重算 costUsd（M3b 后 usage key 就是
+    // pi wire model name，无需 alias 还原；非 API 会话原样过，见 model-context.js
+    // repriceUsageDeltas 注释）。
     const deltas = repriceUsageDeltas(this._diffModelUsage(result.modelUsage), this.appModel);
     if (deltas) {
       let inp = 0; let out = 0; let cr = 0; let cc = 0; let cost = 0;
@@ -239,8 +238,8 @@ export class AgentContext {
    * 的增量整个覆盖 → 那一轮等于白跑，日限闸门（quota.usedCostToday 读 run_model_usage）少收。
    * 真路径实测：续接的回合上游真打 2 发、落库只有 1 发的量。
    *
-   * 用法：推续接消息**之前** takeCarry() 存一份，下一个 result 的 absorbResult /
-   * applyUpstreamBilling 跑完后 addCarry(carry) 加回去。多次续接会一路滚下去。
+   * 用法：推续接消息**之前** takeCarry() 存一份，下一个 result 的 absorbResult
+   * 跑完后 addCarry(carry) 加回去。多次续接会一路滚下去。
    *
    * ⚠️ 只加"可累加"的量：token / cost / 时长 / 工具计数。`turns` 不加 —— 它是 SDK 的
    * num_turns，本身带累计语义，加了会双数。
@@ -306,42 +305,6 @@ export class AgentContext {
     this.counters.modelUsage = usage;
     this.counters.totalCostUsd = Object.values(usage).reduce((s, d) => s + (d.costUsd || 0), 0);
     this.counters.toolCharges = {};
-  }
-
-  /**
-   * 上游自报的费用覆盖（08-21 晚，lib/ingress/upstream-billing.js）。
-   * billing = { appModel → { costUsd, responses, promptTokens, completionTokens, cachedTokens } }，
-   * 是 ingress 在本轮累加、session-loop 结账前取走的。规则：
-   *   - 上游报的 cost **> 0**（真扣了余额）→ 覆盖 modelUsage[appModel].costUsd；token 数仍信 SDK 差分（口径不同）
-   *   - 上游报 0 / 没报 → 保留表价算出来的数。OpenCode Go 订阅行（08-21 深夜实测）对订阅额度内的请求报 cost=0，
-   *     但它消耗的是全站共享的 Go 池子（$12/5h），按表价记才能让每用户日限跟着受控；免费行表价本就是 0
-   *   - SDK 没有该模型条目（CLI 失败 / 没覆盖到的 helper）→ 用上游 token 数补一条，按表价算（repriceUsageDeltas）
-   * 覆盖后重算 totalCostUsd。counters.costSource：'upstream'（上游真扣费覆盖过）| 'table'（只按表价）
-   */
-  applyUpstreamBilling(billing) {
-    if (!billing || typeof billing !== 'object') return;
-    let touched = false; let overrode = false;
-    const usage = this.counters.modelUsage && typeof this.counters.modelUsage === 'object' ? this.counters.modelUsage : {};
-    for (const [appModel, acc] of Object.entries(billing)) {
-      if (!acc || !acc.responses) continue;
-      const reported = acc.costUsd != null && Number(acc.costUsd) > 0 ? Number(acc.costUsd) : null;
-      const prev = usage[appModel];
-      if (prev) {
-        if (reported != null) { usage[appModel] = { ...prev, costUsd: reported }; overrode = true; touched = true; }
-        continue;
-      }
-      // SDK 没这条（CLI 失败那类）：用上游 token 数补一条，先按表价，再看上游有没有真扣费
-      const cached = acc.cachedTokens || 0;
-      const raw = { [appModel]: { inputTokens: Math.max(0, (acc.promptTokens || 0) - cached), outputTokens: acc.completionTokens || 0, cacheReadTokens: cached, cacheCreateTokens: 0, costUsd: 0 } };
-      const priced = repriceUsageDeltas(raw, this.appModel)?.[appModel] || raw[appModel];
-      usage[appModel] = reported != null ? { ...priced, costUsd: reported } : priced;
-      if (reported != null) overrode = true;
-      touched = true;
-    }
-    if (!touched) return;
-    this.counters.modelUsage = usage;
-    this.counters.totalCostUsd = Object.values(usage).reduce((s, d) => s + (d.costUsd || 0), 0);
-    this.counters.costSource = overrode ? 'upstream' : 'table';
   }
 
   /**
